@@ -106,7 +106,7 @@ export function create(api) {
     let vi = 0;
     for (let z = 0; z < W.NZ; z++) for (let y = 0; y < W.NY; y++) for (let x = 0; x < W.NX; x++) {
       const m = get(x, y, z);
-      if (!m) continue;
+      if (!m || m === W.M.INVIS) continue;
       const matCol = toLin(hex(W.colorOf(m, se)));
       const em = W.EMISSIVE[m] ? 1 : 0;
       for (let f = 0; f < 6; f++) {
@@ -158,9 +158,71 @@ export function create(api) {
     if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); }
     mesh = new THREE.Mesh(geo, material);
     scene.add(mesh);
-    vtx = { pos: new Float32Array(P), nrm: new Int8Array(N), sun: sunA, target: new Float32Array(vi).fill(1), from: new Float32Array(vi).fill(1), n: vi };
+    vtx = { pos: new Float32Array(P), nrm: new Int8Array(N), sun: sunA, target: new Float32Array(vi).fill(1), from: new Float32Array(vi).fill(1), n: vi, mesh, start: 0.05 };
+    for (const fm of fineMeshes) { scene.remove(fm); fm.geometry.dispose(); }
+    fineMeshes = grid.fine.map(f => buildFine(f, se));
+    parts = [vtx].concat(fineMeshes.map(m => m.userData.vtx));
     sunJob = null; lastSunKey = '';
     builtSeason = se;
+  }
+
+  // ---------- Jemné modely z minikociek (1 blok = 8×8×8) ----------
+  let fineMeshes = [], parts = [];
+  function buildFine(f, se) {
+    const F = W.FINE, { sx, sy, sz, data } = f;
+    const get = (x, y, z) => (y < 0 ? 1 : (x < 0 || z < 0 || x >= sx || y >= sy || z >= sz) ? 0 : data[(z * sy + y) * sx + x]); // pod modelom je zem
+    const P = [], C = [], A = [], E = [], T = [], U = [], N = [], I = [];
+    let vi = 0;
+    for (let z = 0; z < sz; z++) for (let y = 0; y < sy; y++) for (let x = 0; x < sx; x++) {
+      const m = data[(z * sy + y) * sx + x];
+      if (!m) continue;
+      const vary = 0.94 + W.hash(x, y, z) * 0.12; // jemná variácia farby – drevo, kameň, šindle
+      const mc = toLin(hex(W.colorOf(m, se))).map(v => Math.min(1, v * vary));
+      const em = W.EMISSIVE[m] ? 1 : 0;
+      for (let fi = 0; fi < 6; fi++) {
+        const ax = fi >> 1, sg = fi & 1 ? -1 : 1;
+        const n = [0, 0, 0]; n[ax] = sg;
+        if (get(x + n[0], y + n[1], z + n[2])) continue;
+        const [, ua, va] = AXES[ax];
+        const shade = FACE_SHADE[ax === 0 ? (sg > 0 ? 0 : 1) : ax === 1 ? (sg > 0 ? 2 : 3) : (sg > 0 ? 4 : 5)];
+        const corners = sg > 0 ? [[0, 0], [1, 0], [1, 1], [0, 1]] : [[0, 0], [0, 1], [1, 1], [1, 0]];
+        const aoV = [];
+        for (const [du, dv] of corners) {
+          const p = [x, y, z];
+          if (sg > 0) p[ax] += 1;
+          p[ua] += du; p[va] += dv;
+          const L = [x + n[0], y + n[1], z + n[2]];
+          const s1 = L.slice(), s2 = L.slice(), cc = L.slice();
+          s1[ua] += du ? 1 : -1; s2[va] += dv ? 1 : -1; cc[ua] += du ? 1 : -1; cc[va] += dv ? 1 : -1;
+          const o1 = get(...s1) ? 1 : 0, o2 = get(...s2) ? 1 : 0, oc = get(...cc) ? 1 : 0;
+          const ao = o1 && o2 ? 0 : 3 - (o1 + o2 + oc);
+          aoV.push(ao);
+          P.push(f.ox + p[0] / F, f.oy + p[1] / F, f.oz + p[2] / F);
+          C.push(mc[0] * shade, mc[1] * shade, mc[2] * shade);
+          A.push(AO_CURVE[ao]); E.push(em); T.push(0); U.push(0, 0); N.push(n[0], n[1], n[2]);
+        }
+        if (aoV[0] + aoV[2] < aoV[1] + aoV[3]) I.push(vi + 1, vi + 2, vi + 3, vi + 1, vi + 3, vi);
+        else I.push(vi, vi + 1, vi + 2, vi, vi + 2, vi + 3);
+        vi += 4;
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(C, 3));
+    geo.setAttribute('ao', new THREE.Float32BufferAttribute(A, 1));
+    geo.setAttribute('emis', new THREE.Float32BufferAttribute(E, 1));
+    geo.setAttribute('tex', new THREE.Float32BufferAttribute(T, 1));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2));
+    const sunA = new Float32Array(vi).fill(1);
+    geo.setAttribute('sun', new THREE.BufferAttribute(sunA, 1));
+    geo.setIndex(I);
+    geo.computeBoundingSphere();
+    const fmesh = new THREE.Mesh(geo, material);
+    fmesh.userData.tile = f.tile;
+    // lúč tieňa začína až za vlastnou neviditeľnou náhradou modelu v hrubej mriežke
+    fmesh.userData.vtx = { pos: new Float32Array(P), nrm: new Int8Array(N), sun: sunA, target: new Float32Array(vi).fill(1), from: new Float32Array(vi).fill(1), n: vi, mesh: fmesh, start: 0.45 };
+    scene.add(fmesh);
+    return fmesh;
   }
 
   // ---------- Mäkký slnečný tieň: počíta sa postupne (pár tisíc vrcholov na snímku) ----------
@@ -169,32 +231,38 @@ export function create(api) {
     const key = se + ':' + Math.floor(min / 15);  // prepočet každých 15 herných minút
     if (key === lastSunKey || !vtx) return;
     lastSunKey = key;
-    sunJob = { dir: W.sunDir(min + 7, se), i: 0, cache: new Map() };
+    sunJob = { dir: W.sunDir(min + 7, se), i: 0, part: 0, cache: new Map() };
   }
   function stepSun(budget) {
     if (!sunJob) return;
-    const { dir } = sunJob, v = vtx;
-    const end = Math.min(v.n, sunJob.i + budget);
-    for (let i = sunJob.i; i < end; i++) {
-      const nx = v.nrm[i * 3], ny = v.nrm[i * 3 + 1], nz = v.nrm[i * 3 + 2];
-      let s = 0;
-      if (dir && nx * dir.x + ny * dir.y + nz * dir.z > 0.02) {
-        const px = v.pos[i * 3] + nx * 0.02, py = v.pos[i * 3 + 1] + ny * 0.02, pz = v.pos[i * 3 + 2] + nz * 0.02;
-        const k = px.toFixed(2) + ',' + py.toFixed(2) + ',' + pz.toFixed(2);
-        s = sunJob.cache.get(k);
-        if (s === undefined) { s = W.sunVisibility(grid, px, py, pz, dir, 5); sunJob.cache.set(k, s); }
+    const { dir } = sunJob;
+    while (budget > 0 && sunJob.part < parts.length) {
+      const v = parts[sunJob.part];
+      const end = Math.min(v.n, sunJob.i + budget);
+      for (let i = sunJob.i; i < end; i++) {
+        const nx = v.nrm[i * 3], ny = v.nrm[i * 3 + 1], nz = v.nrm[i * 3 + 2];
+        let s = 0;
+        if (dir && nx * dir.x + ny * dir.y + nz * dir.z > 0.02) {
+          const px = v.pos[i * 3] + nx * 0.02, py = v.pos[i * 3 + 1] + ny * 0.02, pz = v.pos[i * 3 + 2] + nz * 0.02;
+          const k = px.toFixed(2) + ',' + py.toFixed(2) + ',' + pz.toFixed(2);
+          s = sunJob.cache.get(k);
+          if (s === undefined) { s = W.sunVisibility(grid, px, py, pz, dir, 5, v.start); sunJob.cache.set(k, s); }
+        }
+        v.target[i] = s;
       }
-      v.target[i] = s;
+      budget -= end - sunJob.i;
+      sunJob.i = end;
+      if (end >= v.n) { sunJob.part++; sunJob.i = 0; }
     }
-    sunJob.i = end;
-    if (end >= v.n) { v.from.set(v.sun); blendT = 0; sunJob = null; }
+    if (sunJob.part >= parts.length) { for (const v of parts) v.from.set(v.sun); blendT = 0; sunJob = null; }
   }
   function blendSun(dt) {
     if (blendT >= 1 || !vtx) return;
     blendT = Math.min(1, blendT + dt / 1.5);
-    const v = vtx;
-    for (let i = 0; i < v.n; i++) v.sun[i] = lerp(v.from[i], v.target[i], blendT);
-    mesh.geometry.attributes.sun.needsUpdate = true;
+    for (const v of parts) {
+      for (let i = 0; i < v.n; i++) v.sun[i] = lerp(v.from[i], v.target[i], blendT);
+      v.mesh.geometry.attributes.sun.needsUpdate = true;
+    }
   }
 
   // ---------- Sprity: kvety, huby, babka, hráči ----------
@@ -356,9 +424,9 @@ export function create(api) {
     const ndc = new THREE.Vector2((clientX - r.left) / r.width * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
     ray.setFromCamera(ndc, camera);
     const sprites = [...[...chars.values()].filter(o => o.alive).map(o => o.sp), ...plantSprites.values(), babka && babka.sp].filter(Boolean);
-    const hits = ray.intersectObjects(sprites.concat(mesh ? [mesh] : []), false);
+    const hits = ray.intersectObjects(sprites.concat(mesh ? [mesh] : [], fineMeshes), false);
     for (const h of hits) {
-      if (h.object.isSprite) return Object.assign({}, h.object.userData.tile);
+      if (h.object.isSprite || h.object.userData.tile) return Object.assign({}, h.object.userData.tile);
       const q = h.point.clone().addScaledVector(h.face.normal, -0.01);
       const x = Math.floor(q.x), y = Math.floor(q.z);
       if (x >= 0 && y >= 0 && x < D.W && y < D.H) return { x, y };
@@ -397,7 +465,7 @@ export function create(api) {
       add(S.me.x, 1.6, S.me.y, 3.2);
       for (const o of S.others.values()) add(o.x, 1.6, o.y, 2.6);
       if (A.hut) { add(A.hut.x + 0.75, 1.7, A.hut.y + 2.3, 2.2); add(A.hut.x + 2.25, 1.7, A.hut.y + 2.3, 2.2); }
-      if (A.house) { add(A.house.x + 0.75, 1.7, A.house.y + 2.3, 2.2); add(A.house.x + 2.25, 1.7, A.house.y + 2.3, 2.2); }
+      if (A.house) { add(A.house.x + 0.62, 2.2, A.house.y + 2.3, 2.2); add(A.house.x + 2.37, 2.2, A.house.y + 2.3, 2.2); add(A.house.x + 2.06, 2.4, A.house.y + 2.06, 1.8); }
       if (A.cauldron) add(A.cauldron.x + 0.5, 2, A.cauldron.y + 0.5, 2.4);
       if (A.stall) add(A.stall.x + 1.5, 2.6, A.stall.y + 0.5, 2.6);
       for (let i = 0; i < S.tiles.length && lights.length < MAX_LIGHTS; i++) {

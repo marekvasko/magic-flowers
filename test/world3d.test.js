@@ -51,3 +51,16 @@ test('v zime majú listnaté stromy holé konáre – pod nimi je viac slnka (re
   }
   assert.ok(cnt > 5 && leafW / cnt > leafS / cnt, `podiel slnka v lese leto ${(leafS / cnt).toFixed(2)} vs zima ${(leafW / cnt).toFixed(2)}`);
 });
+
+test('domček z minikociek (1/8 bloku): detaily, neviditeľná náhrada a tieň', () => {
+  const g = W.buildGrid(tiles, 1);
+  assert.strictEqual(g.fine.length, 1);
+  const f = g.fine[0], has = m => f.data.includes(m);
+  assert.strictEqual(W.FINE, 8);
+  for (const m of [W.M.LOG, W.M.ORN, W.M.WINDOW, W.M.SHUTTER, W.M.SHINGLE, W.M.HANDLE, W.M.LANTERN]) assert.ok(has(m), 'chýba materiál ' + m);
+  assert.ok(g.m.includes(W.M.INVIS), 'neviditeľná náhrada v hrubej mriežke');
+  assert.ok(!W.buildGrid(tiles, 1).m.includes(W.M.ROOF_RED), 'hrubý domček sa už nestavia');
+  assert.ok(W.sunHours(g, 3, 26, 1) < W.sunHours(g, 12, 15, 1) - 5, 'domček vrhá tieň na sever');
+  const winter = W.buildGrid(tiles, 3).fine[0];
+  assert.ok(winter.data.includes(W.M.SNOW) && !f.data.includes(W.M.SNOW), 'v zime sneh na streche');
+});
