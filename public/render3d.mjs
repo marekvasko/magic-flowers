@@ -29,7 +29,7 @@ const FRAG = `
 precision highp float;
 uniform sampler2D map;
 uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec3 emisColor;
-uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount;
+uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount; uniform float opacity;
 varying vec3 vColor; varying float vAo; varying float vSun; varying float vEmis; varying float vTex;
 varying vec2 vUv; varying vec3 vPos;
 void main() {
@@ -42,7 +42,7 @@ void main() {
   }
   vec3 col = base * vAo * light;
   col = max(col, base * emisColor * vEmis);
-  gl_FragColor = vec4(col, 1.0);
+  gl_FragColor = vec4(col, opacity);
 }`;
 
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -92,9 +92,12 @@ export function create(api) {
     uniforms: {
       map: { value: groundTex }, ambient: { value: new THREE.Vector3() }, sunColor: { value: new THREE.Vector3() },
       lampColor: { value: new THREE.Vector3(...toLin([1, 0.78, 0.45])) }, emisColor: { value: new THREE.Vector3(1, 1, 1) },
-      lights: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4()) }, lightCount: { value: 0 }
+      lights: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4()) }, lightCount: { value: 0 }, opacity: { value: 1 }
     }
   });
+  // Rovnaký shader pre objekty, ktoré práve miznú (hráč zašiel za ne): priehľadný, bez zápisu do hĺbky.
+  // Uniformy zdieľa s hlavným materiálom; priehľadnosť sa nastaví pre každý objekt tesne pred vykreslením.
+  const fadeMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms: material.uniforms, transparent: true, depthWrite: false });
   let mesh = null, grid = null, builtSeason = -1;
   let vtx = null; // { pos: Float32Array, nrm: Int8Array, sun: Float32Array, target: Float32Array, n }
   const AXES = [[0, 1, 2], [1, 2, 0], [2, 0, 1]]; // [normálová os, u, v] – u × v = normála
@@ -112,7 +115,8 @@ export function create(api) {
       for (let f = 0; f < 6; f++) {
         const ax = f >> 1, sg = f & 1 ? -1 : 1;
         const n = [0, 0, 0]; n[ax] = sg;
-        if (get(x + n[0], y + n[1], z + n[2])) continue; // skrytá stena
+        const nb = get(x + n[0], y + n[1], z + n[2]);
+        if (nb && nb !== W.M.INVIS) continue; // skrytá stena (zem pod budovou ostáva – keď budova zmizne, nesmie tam byť diera)
         const [, ua, va] = AXES[ax];
         const fi = ax === 0 ? (sg > 0 ? 0 : 1) : ax === 1 ? (sg > 0 ? 2 : 3) : (sg > 0 ? 4 : 5);
         const textured = m < 16 && ax === 1 && sg > 0;   // vrch terénu nesie kresbu zeme
@@ -129,7 +133,9 @@ export function create(api) {
           const L = [x + n[0], y + n[1], z + n[2]];
           const s1 = L.slice(), s2 = L.slice(), cc = L.slice();
           s1[ua] += du ? 1 : -1; s2[va] += dv ? 1 : -1; cc[ua] += du ? 1 : -1; cc[va] += dv ? 1 : -1;
-          const o1 = get(...s1) ? 1 : 0, o2 = get(...s2) ? 1 : 0, oc = get(...cc) ? 1 : 0;
+          // plocha priamo pod jemným modelom: jeho neviditeľnú náhradu do zatienenia nerátame (keď model zmizne, zem nemá byť čierna)
+          const solid = q => { const v = get(...q); return v && !(nb === W.M.INVIS && v === W.M.INVIS); };
+          const o1 = solid(s1) ? 1 : 0, o2 = solid(s2) ? 1 : 0, oc = solid(cc) ? 1 : 0;
           const ao = o1 && o2 ? 0 : 3 - (o1 + o2 + oc);
           aoV.push(ao);
           P.push(p[0] / R, p[1] / R, p[2] / R);
@@ -217,7 +223,12 @@ export function create(api) {
     geo.setAttribute('sun', new THREE.BufferAttribute(sunA, 1));
     geo.setIndex(I);
     geo.computeBoundingSphere();
+    geo.computeBoundingBox();
     const fmesh = new THREE.Mesh(geo, material);
+    fmesh.userData.box = geo.boundingBox;
+    fmesh.userData.fade = 1;
+    fmesh.userData.maskMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    fmesh.onBeforeRender = () => { if (fmesh.material === fadeMaterial) { material.uniforms.opacity.value = fmesh.userData.fade; fadeMaterial.uniformsNeedUpdate = true; } };
     fmesh.userData.tile = f.tile;
     // lúč tieňa začína až za vlastnou neviditeľnou náhradou modelu v hrubej mriežke
     fmesh.userData.vtx = { pos: new Float32Array(P), nrm: new Int8Array(N), sun: sunA, target: new Float32Array(vi).fill(1), from: new Float32Array(vi).fill(1), n: vi, mesh: fmesh, start: 0.45 };
@@ -392,6 +403,79 @@ export function create(api) {
 
   // ---------- Kamera ----------
   let viewTop = 1;
+  // ---------- Objekty, za ktorými stojí hráč: zmiznú a ostane z nich len jemný obrys ----------
+  const occRay = new THREE.Raycaster();
+  let occluders = new Set(), occAt = 0;
+  function computeOccluders(meH) {
+    const set = new Set();
+    const toCam = camera.position.clone().sub(camTarget).normalize();
+    for (const yOff of [0.2, 0.65, 1.15]) {
+      occRay.set(new THREE.Vector3(S.me.x, meH + yOff, S.me.y), toCam);
+      for (const m of fineMeshes) {
+        if (set.has(m) || !occRay.ray.intersectsBox(m.userData.box)) continue;
+        if (occRay.intersectObject(m, false).length) set.add(m);
+      }
+    }
+    return set;
+  }
+  function updateFades(dt, meH) {
+    const now = performance.now();
+    if (now - occAt > 100) { occluders = computeOccluders(meH); occAt = now; }
+    let any = false;
+    for (const m of fineMeshes) {
+      const target = occluders.has(m) ? 0 : 1;
+      const f = m.userData.fade = target > m.userData.fade ? Math.min(1, m.userData.fade + dt * 5) : Math.max(0, m.userData.fade - dt * 5);
+      m.visible = f > 0.02;
+      m.material = f > 0.98 ? material : fadeMaterial;
+      if (f < 0.98) any = true;
+    }
+    return any;
+  }
+  // maska skrytých objektov (biela = objekt) → obrys po jej okraji
+  let maskRT = null;
+  const outlineScene = new THREE.Scene(), outlineCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const outlineMat = new THREE.ShaderMaterial({
+    uniforms: { mask: { value: null }, px: { value: new THREE.Vector2() }, color: { value: new THREE.Vector3(1, 0.97, 0.9) } },
+    vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: `
+      uniform sampler2D mask; uniform vec2 px; uniform vec3 color; varying vec2 vUv;
+      void main() {
+        float c = texture2D(mask, vUv).r, m = c;
+        for (int i = 0; i < 12; i++) {
+          float a = float(i) * 0.5236;
+          m = max(m, texture2D(mask, vUv + px * vec2(cos(a), sin(a))).r);
+        }
+        float edge = m - c;           // len pixely tesne mimo tvaru objektu
+        if (edge < 0.02) discard;
+        gl_FragColor = vec4(color, edge * 0.7);
+      }`,
+    transparent: true, depthTest: false, depthWrite: false
+  });
+  outlineScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), outlineMat));
+  function drawOutlines() {
+    const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+    if (!maskRT || maskRT.width !== size.x || maskRT.height !== size.y) { if (maskRT) maskRT.dispose(); maskRT = new THREE.WebGLRenderTarget(size.x, size.y); }
+    const clear = renderer.getClearColor(new THREE.Color()), clearA = renderer.getClearAlpha();
+    renderer.setRenderTarget(maskRT);
+    renderer.setClearColor(0x000000, 1); renderer.clear();
+    renderer.autoClear = false;
+    for (const m of fineMeshes) {
+      if (m.userData.fade > 0.98) continue;
+      const k = 1 - m.userData.fade, old = m.material, oldV = m.visible;
+      m.userData.maskMat.color.setRGB(k, k, k);
+      m.material = m.userData.maskMat; m.visible = true;
+      renderer.render(m, camera);
+      m.material = old; m.visible = oldV;
+    }
+    renderer.setRenderTarget(null);
+    renderer.setClearColor(clear, clearA);
+    const t = 2 * renderer.getPixelRatio();
+    outlineMat.uniforms.mask.value = maskRT.texture;
+    outlineMat.uniforms.px.value.set(t / size.x, t / size.y);
+    renderer.render(outlineScene, outlineCam);
+    renderer.autoClear = true;
+  }
+
   function resize() {
     const r = api.glCanvas.getBoundingClientRect();
     renderer.setSize(r.width, r.height, false);
@@ -424,7 +508,7 @@ export function create(api) {
     const ndc = new THREE.Vector2((clientX - r.left) / r.width * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
     ray.setFromCamera(ndc, camera);
     const sprites = [...[...chars.values()].filter(o => o.alive).map(o => o.sp), ...plantSprites.values(), babka && babka.sp].filter(Boolean);
-    const hits = ray.intersectObjects(sprites.concat(mesh ? [mesh] : [], fineMeshes), false);
+    const hits = ray.intersectObjects(sprites.concat(mesh ? [mesh] : [], fineMeshes.filter(m => m.userData.fade > 0.5)), false);
     for (const h of hits) {
       if (h.object.isSprite || h.object.userData.tile) return Object.assign({}, h.object.userData.tile);
       const q = h.point.clone().addScaledVector(h.face.normal, -0.01);
@@ -500,7 +584,9 @@ export function create(api) {
     }
     void meO;
 
+    const fading = updateFades(dt, meO ? meO.h : 1);
     renderer.render(scene, camera);
+    if (fading) drawOutlines();
     drawOverlay(t, min, se, night);
   }
 
