@@ -12,9 +12,9 @@ test('svet z kociek je deterministický a má správne výšky', () => {
   assert.strictEqual(W.surfaceY(a, water % D.W, Math.floor(water / D.W)), 0.5);
   assert.strictEqual(W.surfaceY(a, rock % D.W, Math.floor(rock / D.W)), 1.5);
   assert.strictEqual(W.surfaceY(a, grass % D.W, Math.floor(grass / D.W)), 1);
-  // chalupa babky má steny aj strechu nad zemou
-  assert.strictEqual(W.get(a, 30, 3, 5), W.M.PLANK);
-  assert.ok([...Array(W.NY).keys()].some(y => W.get(a, 30, y, 5) === W.M.THATCH));
+  // budovy sú jemné modely; v hrubej mriežke majú neviditeľnú náhradu (chalupa babky stojí na (14,2))
+  assert.deepStrictEqual(a.fine.map(f => f.type).sort(), ['cauldron', 'house', 'hut', 'stall', 'well']);
+  assert.strictEqual(W.get(a, 30, 3, 5), W.M.INVIS);
 });
 
 test('slnko vychádza na východe, na poludnie je na juhu a v zime nižšie', () => {
@@ -54,13 +54,26 @@ test('v zime majú listnaté stromy holé konáre – pod nimi je viac slnka (re
 
 test('domček z minikociek (1/8 bloku): detaily, neviditeľná náhrada a tieň', () => {
   const g = W.buildGrid(tiles, 1);
-  assert.strictEqual(g.fine.length, 1);
-  const f = g.fine[0], has = m => f.data.includes(m);
+  const f = g.fine.find(m => m.type === 'house'), has = m => f.data.includes(m);
   assert.strictEqual(W.FINE, 8);
   for (const m of [W.M.LOG, W.M.ORN, W.M.WINDOW, W.M.SHUTTER, W.M.SHINGLE, W.M.HANDLE, W.M.LANTERN]) assert.ok(has(m), 'chýba materiál ' + m);
   assert.ok(g.m.includes(W.M.INVIS), 'neviditeľná náhrada v hrubej mriežke');
   assert.ok(!W.buildGrid(tiles, 1).m.includes(W.M.ROOF_RED), 'hrubý domček sa už nestavia');
   assert.ok(W.sunHours(g, 3, 26, 1) < W.sunHours(g, 12, 15, 1) - 5, 'domček vrhá tieň na sever');
-  const winter = W.buildGrid(tiles, 3).fine[0];
+  const winter = W.buildGrid(tiles, 3).fine.find(m => m.type === 'house');
   assert.ok(winter.data.includes(W.M.SNOW) && !f.data.includes(W.M.SNOW), 'v zime sneh na streche');
+});
+
+test('chalupa, kotlík, trh a studňa z minikociek majú svoje detaily', () => {
+  const g = W.buildGrid(tiles, 1), by = t => g.fine.find(f => f.type === t), has = (t, m) => by(t).data.includes(m);
+  for (const m of [W.M.PLASTER, W.M.BAND_BLUE, W.M.STRAW, W.M.LAVENDER, W.M.CLAY, W.M.WINDOW]) assert.ok(has('hut', m), 'chalupa: ' + m);
+  for (const m of [W.M.POT, W.M.BREW, W.M.FIRE, W.M.LOG_DARK]) assert.ok(has('cauldron', m), 'kotlík: ' + m);
+  for (const m of [W.M.AWN_RED, W.M.AWN_WHITE, W.M.SIGN, W.M.ORN, W.M.SACK, W.M.LANTERN]) assert.ok(has('stall', m), 'trh: ' + m);
+  for (const m of [W.M.WATER_DEEP, W.M.ROPE, W.M.HANDLE, W.M.SHINGLE]) assert.ok(has('well', m), 'studňa: ' + m);
+  // ťuknutie na model vyberie rovnaké políčko ako v 2D
+  for (const f of g.fine) assert.strictEqual(tiles[f.tile.y * D.W + f.tile.x].g, f.type);
+  // babkina chalupa vrhá tieň na sever (na les)
+  assert.ok(W.sunHours(g, 15, 1, 1) < W.sunHours(g, 12, 15, 1) - 4);
+  // v zime sneh na slamenej streche
+  assert.ok(W.buildGrid(tiles, 3).fine.find(f => f.type === 'hut').data.includes(W.M.SNOW));
 });

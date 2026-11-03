@@ -464,10 +464,10 @@ export function create(api) {
       const add = (x, y, z, r) => { if (lights.length < MAX_LIGHTS) lights.push(new THREE.Vector4(x, y, z, r)); };
       add(S.me.x, 1.6, S.me.y, 3.2);
       for (const o of S.others.values()) add(o.x, 1.6, o.y, 2.6);
-      if (A.hut) { add(A.hut.x + 0.75, 1.7, A.hut.y + 2.3, 2.2); add(A.hut.x + 2.25, 1.7, A.hut.y + 2.3, 2.2); }
+      if (A.hut) { add(A.hut.x + 0.5, 2.05, A.hut.y + 2.2, 2.2); add(A.hut.x + 2.4, 2.05, A.hut.y + 2.2, 2.2); }
       if (A.house) { add(A.house.x + 0.62, 2.2, A.house.y + 2.3, 2.2); add(A.house.x + 2.37, 2.2, A.house.y + 2.3, 2.2); add(A.house.x + 2.06, 2.4, A.house.y + 2.06, 1.8); }
-      if (A.cauldron) add(A.cauldron.x + 0.5, 2, A.cauldron.y + 0.5, 2.4);
-      if (A.stall) add(A.stall.x + 1.5, 2.6, A.stall.y + 0.5, 2.6);
+      if (A.cauldron) add(A.cauldron.x + 0.5, 1.3, A.cauldron.y + 0.5, 2.6);   // oheň pod kotlíkom
+      if (A.stall) add(A.stall.x + 2.94, 2.56, A.stall.y + 0.94, 2.4);           // lampáš na trhu
       for (let i = 0; i < S.tiles.length && lights.length < MAX_LIGHTS; i++) {
         const p = S.tiles[i].s && S.tiles[i].s.p;
         if (p && !p.d && (p.sp === 'papradie' || p.sp === 'duhova') && D.stageOf(p) === 3) add(i % D.W + 0.5, 1.6, ((i / D.W) | 0) + 0.5, 2.2);
