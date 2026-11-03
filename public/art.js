@@ -190,14 +190,18 @@ const Art = (() => {
     }
   }
 
-  // Postavička – x stred, y chodidlá
+  // Postavička – x stred, y chodidlá.
+  // dir: 0 dole, 1 vľavo, 2 vpravo, 3 hore, 4 vľavo dole, 5 vpravo dole, 6 vľavo hore, 7 vpravo hore
   function char(c, x, y, s, look, dir, phase, o) {
     o = o || {};
     const skin = '#f2c9a0';
     let d = dir;
     let bob = Math.abs(Math.sin(phase)) * s * 0.04;
     if (o.dance) { d = Math.floor(phase * 1.2) % 4; bob = Math.abs(Math.sin(phase * 3)) * s * 0.12; }
-    ell(c, x, y, s * 0.24, s * 0.08, 0, 'rgba(0,0,0,0.25)');
+    // uhlopriečne smery kreslíme ako pohľad dole/hore natočený do strany
+    const side = d === 4 || d === 6 ? -1 : d === 5 || d === 7 ? 1 : 0;
+    if (d >= 4) d = d <= 5 ? 0 : 3;
+    if (!o.noShadow) ell(c, x, y, s * 0.24, s * 0.08, 0, 'rgba(0,0,0,0.25)');
     const yb = y - bob;
     const step = Math.sin(phase) * s * 0.06;
     // nohy
@@ -236,17 +240,22 @@ const Art = (() => {
       for (let i = 0; i < 3; i++) circ(c, x - s * 0.1 + i * s * 0.1, hy - s * 0.17, s * 0.022, '#fff');
     } else {
       c.beginPath(); c.arc(x, hy - s * 0.02, s * 0.225, Math.PI, TAU); c.fill();
-      if (d === 3) circ(c, x, hy, s * 0.2, hair);
+      if (d === 3) { circ(c, x, hy, s * 0.2, hair); if (side) circ(c, x + side * s * 0.19, hy + s * 0.03, s * 0.045, skin); }
+      else if (side) c.fillRect(side < 0 ? x + s * 0.12 : x - s * 0.22, hy - s * 0.07, s * 0.1, s * 0.15);
       else if (d === 1) c.fillRect(x, hy - s * 0.08, s * 0.22, s * 0.16);
       else if (d === 2) c.fillRect(x - s * 0.22, hy - s * 0.08, s * 0.22, s * 0.16);
       else { c.fillRect(x - s * 0.22, hy - s * 0.06, s * 0.07, s * 0.14); c.fillRect(x + s * 0.15, hy - s * 0.06, s * 0.07, s * 0.14); }
     }
     // oči
     const eye = '#222';
-    if (d === 0) { circ(c, x - s * 0.075, hy + s * 0.03, s * 0.03, eye); circ(c, x + s * 0.075, hy + s * 0.03, s * 0.03, eye); circ(c, x - s * 0.12, hy + s * 0.09, s * 0.03, 'rgba(255,120,120,0.5)'); circ(c, x + s * 0.12, hy + s * 0.09, s * 0.03, 'rgba(255,120,120,0.5)'); }
+    if (d === 0 && side) {
+      const ex = x + side * s * 0.06;
+      circ(c, ex - s * 0.06, hy + s * 0.03, s * 0.03, eye); circ(c, ex + s * 0.06, hy + s * 0.03, s * 0.03, eye);
+      circ(c, ex + side * s * 0.1, hy + s * 0.09, s * 0.03, 'rgba(255,120,120,0.5)');
+    } else if (d === 0) { circ(c, x - s * 0.075, hy + s * 0.03, s * 0.03, eye); circ(c, x + s * 0.075, hy + s * 0.03, s * 0.03, eye); circ(c, x - s * 0.12, hy + s * 0.09, s * 0.03, 'rgba(255,120,120,0.5)'); circ(c, x + s * 0.12, hy + s * 0.09, s * 0.03, 'rgba(255,120,120,0.5)'); }
     else if (d === 1) circ(c, x - s * 0.1, hy + s * 0.03, s * 0.03, eye);
     else if (d === 2) circ(c, x + s * 0.1, hy + s * 0.03, s * 0.03, eye);
-    if (o.babka && d === 0) { c.strokeStyle = '#555'; c.lineWidth = 1; c.beginPath(); c.arc(x - s * 0.075, hy + s * 0.03, s * 0.055, 0, TAU); c.moveTo(x + s * 0.13, hy + s * 0.03); c.arc(x + s * 0.075, hy + s * 0.03, s * 0.055, 0, TAU); c.stroke(); }
+    if (o.babka && d === 0 && !side) { c.strokeStyle = '#555'; c.lineWidth = 1; c.beginPath(); c.arc(x - s * 0.075, hy + s * 0.03, s * 0.055, 0, TAU); c.moveTo(x + s * 0.13, hy + s * 0.03); c.arc(x + s * 0.075, hy + s * 0.03, s * 0.055, 0, TAU); c.stroke(); }
     // slamený klobúk pre farmára
     if (look.hat) { ell(c, x, hy - s * 0.12, s * 0.32, s * 0.08, 0, '#e8c86a'); ell(c, x, hy - s * 0.2, s * 0.16, s * 0.1, 0, '#e8c86a'); c.fillStyle = '#c0392b'; c.fillRect(x - s * 0.16, hy - s * 0.17, s * 0.32, s * 0.03); }
   }
@@ -492,3 +501,4 @@ const Art = (() => {
 
   return { bloom, plant, char, ground, soil, tree, shroom, boulder, hut, house, stall, well, cauldron, icon, hash, ell, circ };
 })();
+window.Art = Art; // pre 3D modul (render3d.mjs)

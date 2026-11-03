@@ -6,9 +6,9 @@
   <meta name="theme-color" content="#2f5d34">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="manifest" href="/manifest.webmanifest">
   <title>Čarovná záhrada</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <div id="app">
@@ -30,6 +30,8 @@
   <!-- Hra -->
   <div id="game" class="screen hidden">
     <canvas id="cv"></canvas>
+    <button id="rotL" class="rotbtn hidden" title="Otočiť pohľad">⟲</button>
+    <button id="rotR" class="rotbtn hidden" title="Otočiť pohľad">⟳</button>
     <div id="joy" class="hidden"><div id="joyKnob"></div></div>
     <div id="hud">
       <div class="hud-left">
@@ -67,7 +69,8 @@
   <div id="conn" class="hidden">Pripájam sa…</div>
 </div>
 <script src="/shared/data.js"></script>
-<script src="art.js"></script>
-<script src="game.js"></script>
+<script src="/shared/world3d.js"></script>
+<script src="/art.js"></script>
+<script src="/game.js"></script>
 </body>
 </html>

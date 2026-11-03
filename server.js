@@ -18,21 +18,34 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const SHARED_DIR = path.join(__dirname, 'shared');
 
 // ---------- Statické súbory ----------
+const zlib = require('zlib');
+const THREE_DIR = path.join(__dirname, 'node_modules', 'three', 'build');
 const MIME = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json'
 };
+const gzCache = new Map(); // súbor → { mtime, gz } – Three.js má ~2 MB, gzip ho zmenší asi na štvrtinu
 const server = http.createServer((req, res) => {
   let url = decodeURIComponent((req.url || '/').split('?')[0]);
-  if (url === '/') url = '/index.html';
-  const base = url.startsWith('/shared/') ? SHARED_DIR : PUBLIC_DIR;
-  const rel = url.startsWith('/shared/') ? url.slice(8) : url.slice(1);
+  if (url === '/' || url === '/3d' || url === '/3d/') url = '/index.html';
+  let base = PUBLIC_DIR, rel = url.slice(1);
+  if (url.startsWith('/shared/')) { base = SHARED_DIR; rel = url.slice(8); }
+  else if (url.startsWith('/vendor/three/')) { base = THREE_DIR; rel = url.slice(14); }
   const file = path.normalize(path.join(base, rel));
-  if (!file.startsWith(base)) { res.writeHead(403); return res.end(); }
-  fs.readFile(file, (err, buf) => {
-    if (err) { res.writeHead(404); return res.end('Not found'); }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
-    res.end(buf);
+  if (!file.startsWith(base + path.sep)) { res.writeHead(403); return res.end(); }
+  fs.stat(file, (err, st) => {
+    if (err || !st.isFile()) { res.writeHead(404); return res.end('Not found'); }
+    const type = MIME[path.extname(file)] || 'application/octet-stream';
+    const headers = { 'Content-Type': type, 'Cache-Control': base === THREE_DIR ? 'public, max-age=86400' : 'no-cache' };
+    const gzip = /\bgzip\b/.test(req.headers['accept-encoding'] || '') && /text|json|svg/.test(type);
+    fs.readFile(file, (err2, buf) => {
+      if (err2) { res.writeHead(500); return res.end(); }
+      if (!gzip) { res.writeHead(200, headers); return res.end(buf); }
+      let c = gzCache.get(file);
+      if (!c || c.mtime !== st.mtimeMs) { c = { mtime: st.mtimeMs, gz: zlib.gzipSync(buf) }; gzCache.set(file, c); }
+      res.writeHead(200, Object.assign(headers, { 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' }));
+      res.end(c.gz);
+    });
   });
 });
 
@@ -502,6 +515,7 @@ wss.on('connection', ws => {
           pl.x = Math.max(0.2, Math.min(D.W - 0.2, m.x));
           pl.y = Math.max(0.2, Math.min(D.H - 0.2, m.y));
           pl.dir = m.dir | 0;
+          if (typeof m.a === 'number' && isFinite(m.a)) pl.a = +m.a.toFixed(3); // presný smer pohľadu (3D: 8 smerov)
           sv.x = pl.x; sv.y = pl.y;
         }
         break;
@@ -650,7 +664,7 @@ setInterval(() => {
   for (const room of rooms.values()) {
     if (!room.players.size) continue;
     const list = [...room.players.values()].map(p => ({
-      id: p.id, name: p.name, x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, look: p.look,
+      id: p.id, name: p.name, x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, a: p.a, look: p.look,
       e: p.emote && now - p.emoteAt < 6000 ? p.emote : null
     }));
     broadcast(room, { t: 'pl', list });

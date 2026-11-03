@@ -105,6 +105,17 @@ Every flower has a short real-world fact in the 📖 **Herbár** (the in-game pl
 
 </details>
 
+## 3D view (beta) – `/3d`
+
+The same game, server and gardens, rendered with Three.js (`public/render3d.mjs`). Switch in Menu → "🧊 3D (beta)", or open `/3d?room=<code>`.
+
+- **Orthographic camera** at 45° with an isometric tilt (~35°); the ⟲ ⟳ buttons in the top corners (or `[` `]`) rotate the view by 90°.
+- **World of cubes** (`shared/world3d.js`): 1 block = 2×2×2 sub-cubes. Low terrain heights (the pond is lower, the rock garden higher) and procedurally generated low-poly models: trees by season (spring blossom, autumn colours, bare winter branches with snow), spruces, rocks, Babka's hut, the house, the market stall, the well, the cauldron. Only visible faces are meshed.
+- **Textures:** the top of the terrain reuses the 2D game's drawings (grass, path, soil, snow); flowers, mushrooms, Babka and players are 2D sprites from the same art. Characters have 8 directions (diagonals included) and a blob shadow; they show through buildings and trees as a translucent silhouette.
+- **Shading:** flat, no diffuse falloff, no reflections. Fixed brightness per face side (like Minecraft), ambient occlusion in block corners, and a **soft sun shadow** computed by marching rays through the sub-cube grid. The sun moves with the time of day (east → south → west) and is lower in winter, so shadows get longer. At night, light comes from windows, the cauldron, players and glowing flowers.
+- **Gameplay hook:** `World3D.sunHours(grid, x, y, season)` returns how many hours of direct sun a tile gets per day. Leafless deciduous trees let more sun through in winter. In 3D, tapping a plant already shows it; later it can replace the simple "shade = next to a tree" rule on the server.
+- Joystick and keyboard directions are relative to the screen (recomputed for the camera rotation); tapping objects uses a ray into the scene.
+
 ## CI/CD
 
 GitHub Actions (`.github/workflows/ci.yml`) on every push and pull request:
@@ -122,4 +133,5 @@ To run the published image instead of building locally, set `image: ghcr.io/mare
 
 - `server.js` – Node.js HTTP + WebSocket server (`ws`). The game state lives on the server: time, weather, growth, inventory and magic.
 - `shared/data.js` – data shared by the server and the client (flowers, recipes, map).
-- `public/` – client: `index.html`, `style.css`, `art.js` (all graphics are drawn procedurally on a canvas, with no images) and `game.js` (controls, rendering, UI).
+- `public/` – client: `index.html`, `style.css`, `art.js` (all graphics are drawn procedurally on a canvas, with no images), `game.js` (controls, 2D rendering, UI) and `render3d.mjs` (3D view).
+- `shared/world3d.js` – voxel world, generated models, sun position and soft shadows (shared by client and server).

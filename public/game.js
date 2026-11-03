@@ -72,7 +72,7 @@
     S.room = ($('jRoom').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '') || 'zahrada').slice(0, 16);
     S.look = look;
     localStorage.setItem('mf', JSON.stringify({ name: S.name, room: S.room, look }));
-    history.replaceState(null, '', '?room=' + S.room);
+    history.replaceState(null, '', location.pathname + '?room=' + S.room);
     sfx('pop');
     connect();
   };
@@ -128,7 +128,7 @@
           if (p.id === S.id) { S.myEmote = p.e; continue; }
           let o = S.others.get(p.id);
           if (!o) { o = { x: p.x, y: p.y, phase: 0 }; S.others.set(p.id, o); }
-          Object.assign(o, { id: p.id, tx: p.x, ty: p.y, dir: p.dir, look: p.look || {}, name: p.name, e: p.e });
+          Object.assign(o, { id: p.id, tx: p.x, ty: p.y, dir: p.dir, a: p.a, look: p.look || {}, name: p.name, e: p.e });
         }
         for (const id of [...S.others.keys()]) if (!seen.has(id)) S.others.delete(id);
         break;
@@ -159,6 +159,7 @@
     return null;
   }
   function frontTile() {
+    if (MODE3D && S.me.a != null) return { x: Math.floor(S.me.x) + Math.round(Math.cos(S.me.a)), y: Math.floor(S.me.y) + Math.round(Math.sin(S.me.a)) };
     const d = [[0, 1], [-1, 0], [1, 0], [0, -1]][S.me.dir];
     return { x: Math.floor(S.me.x) + d[0], y: Math.floor(S.me.y) + d[1] };
   }
@@ -249,6 +250,7 @@
     if (sp.light !== 'any' && (sp.light === 'shade') !== shade) notes.push(sp.light === 'shade' ? 'chce tieň' : 'chce slnko');
     if (sp.soil && sp.soil !== t.s.k && !(sp.soil === 'rich' && t.s.r) && !(sp.soil === 'sand' && t.s.k === 'rock')) notes.push({ sand: 'chce piesok', rock: 'chce skalku', rich: 'chce kompost' }[sp.soil]);
     if (!t.s.w) notes.push('smäd');
+    if (R3) { const sh = R3.sunHoursAt(tx, ty); if (sh != null) notes.push(`☀️ ~${sh.toFixed(1).replace('.', ',')} h slnka denne`); }
     if (D.stageOf(p) === 3 && p.bt != null && !p.d) notes.push((sp.perennial ? 'odkvitne' : 'zvädne') + ' o ' + fmtLeft(sp.life * TPD - (S.tick - p.bt)));
     toast(`${sp.name}: ${st} (${Math.floor(p.prog)}/${sp.days} dní) · ${'⭐'.repeat(p.q)}${notes.length ? ' · ' + notes.join(', ') : ' · spokojná 😊'}`);
   }
@@ -277,6 +279,8 @@
     if (/^Digit[1-9]$/.test(e.code)) { const ids = hotbarIds(); const id = ids[+e.code.slice(5) - 1]; if (id) selectItem(id); }
     if (e.code === 'KeyQ') { const ids = hotbarIds(); selectItem(ids[(ids.indexOf(S.sel) + 1) % ids.length]); }
     if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
+    if (R3 && e.code === 'BracketLeft') R3.rotate(-1);
+    if (R3 && e.code === 'BracketRight') R3.rotate(1);
   });
   addEventListener('keyup', e => { if (KEYMAP[e.code]) S.keys[KEYMAP[e.code]] = false; });
 
@@ -284,6 +288,23 @@
 
   // Joystick – objaví sa tam, kde hráč začne ťahať prstom (kdekoľvek na obrazovke); kotva sa nehýbe
   const cv = $('cv'), ctx = cv.getContext('2d');
+  // 3D režim (/3d): Three.js kreslí do #gl, #cv zostáva navrchu ako 2D prekrytie (mená, efekty) a prijíma dotyky
+  const MODE3D = /^\/3d\/?$/.test(location.pathname);
+  let R3 = null;
+  if (MODE3D) {
+    const gl = document.createElement('canvas'); gl.id = 'gl';
+    cv.parentNode.insertBefore(gl, cv); cv.classList.add('overlay');
+    $('rotL').classList.remove('hidden'); $('rotR').classList.remove('hidden');
+    $('rotL').onclick = () => R3 && R3.rotate(-1);
+    $('rotR').onclick = () => R3 && R3.rotate(1);
+    import('/render3d.mjs').then(() => {
+      R3 = window.Render3D.create({
+        S, glCanvas: gl, ov: cv, ovCtx: ctx, EMOJI, curMin, season, ctxAction, frontTile,
+        bottomH: () => $('bottom').offsetHeight
+      });
+      window._r3pick = (x, y) => R3.pick(x, y); // pre ladenie / testy
+    }).catch(e => { console.error(e); toast('3D sa nepodarilo načítať – skús 2D verziu.'); });
+  }
   const gameEl = $('game'), joy = $('joy'), joyKnob = $('joyKnob');
   const JOY_R = 50, DRAG_START = 10;
   const ptrs = new Map();
@@ -372,9 +393,13 @@
   }
 
   function tapWorld(cx, cy) {
-    const r = cv.getBoundingClientRect(), k = cv.width / r.width;
-    const wx = ((cx - r.left) * k + cam.x) / cam.ts, wy = ((cy - r.top) * k + cam.y) / cam.ts;
-    const tgt = pickObject(wx, wy);
+    let tgt;
+    if (MODE3D) { if (!R3) return; tgt = R3.pick(cx, cy); if (!tgt) return; } // lúč do 3D scény
+    else {
+      const r = cv.getBoundingClientRect(), k = cv.width / r.width;
+      const wx = ((cx - r.left) * k + cam.x) / cam.ts, wy = ((cy - r.top) * k + cam.y) / cam.ts;
+      tgt = pickObject(wx, wy);
+    }
     if (!tileAt(tgt.x, tgt.y)) return;
     const a = ctxAction(tgt.x, tgt.y);
     S.tapMark = { x: tgt.x, y: tgt.y, t: performance.now(), act: !!a };
@@ -746,7 +771,7 @@
   }
 
   function renderMenu(body) {
-    const link = location.origin + '/?room=' + S.room;
+    const link = location.origin + location.pathname + '?room=' + S.room;
     body.appendChild(h('div', { class: 'row' }, h('div', { class: 'info' }, h('b', null, 'Záhrada: ' + S.room), h('small', null, 'Hráči: ' + S.names.join(', ')))));
     body.appendChild(h('div', { class: 'row' }, h('div', { class: 'info' }, h('b', null, 'Pozvi kamaráta'), h('small', { style: 'word-break:break-all' }, link)),
       h('button', { class: 'btn', onclick: () => { (navigator.share ? navigator.share({ title: 'Čarovná záhrada', url: link }) : navigator.clipboard.writeText(link).then(() => toast('Odkaz skopírovaný 📋'))).catch(() => { }); } }, 'Zdieľať')));
@@ -762,6 +787,7 @@
     body.appendChild(h('div', { class: 'row' }, h('div', { class: 'info' },
       h('b', null, `🕰️ Herný deň trvá ${Math.round(S.daySeconds / 60)} minút`),
       h('small', null, `Ročné obdobie = ${D.DAYS_PER_SEASON} dni (~${Math.round(S.daySeconds * D.DAYS_PER_SEASON / 60)} min), rok ≈ ${Math.round(S.daySeconds * D.DAYS_PER_SEASON * 4 / 3600 * 10) / 10} h.`))));
+    body.appendChild(h('button', { class: 'btn alt', style: 'width:100%;padding:12px;margin-top:6px', onclick: () => { location.href = (MODE3D ? '/' : '/3d') + '?room=' + S.room; } }, MODE3D ? '🗺️ Prepnúť na 2D' : '🧊 Prepnúť na 3D (beta)'));
     body.appendChild(h('button', { class: 'big', style: 'margin:6px 0', onclick: () => openUI('help') }, '❓ Ako hrať'));
     body.appendChild(h('button', { class: 'btn gray', style: 'width:100%;padding:12px', onclick: () => { S.joined = false; S.ws && S.ws.close(); location.reload(); } }, 'Odísť zo záhrady'));
   }
@@ -862,6 +888,7 @@
     cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
     lc.width = cv.width; lc.height = cv.height;
     cam.ts = cv.width / 9;
+    if (R3) R3.resize();
   }
   addEventListener('resize', resize);
 
@@ -869,6 +896,7 @@
     const me = S.me;
     let vx = S.stick.x, vy = S.stick.y;
     if (S.keys.l) vx -= 1; if (S.keys.r) vx += 1; if (S.keys.u) vy -= 1; if (S.keys.d) vy += 1;
+    if (R3 && (vx || vy)) [vx, vy] = R3.screenToWorld(vx, vy); // joystick je vzhľadom na obrazovku, kamera je otočená
     if (vx || vy) stopWalk();
     if (S.path) {
       const pa = S.pendingAct;
@@ -897,6 +925,7 @@
       const ny = me.y + vy * sp;
       if (!solid(me.x - rx, ny - ry) && !solid(me.x + rx, ny - ry) && !solid(me.x - rx, ny + ry) && !solid(me.x + rx, ny + ry)) me.y = ny;
       face(vx, vy);
+      me.a = Math.atan2(vy, vx); // presný smer pre 8-smerový sprite
       me.phase += dt * 11;
       if (S.path) {
         if (Math.hypot(me.x - ox, me.y - oy) < sp * 0.1) { S.stuckT += dt; if (S.stuckT > 0.6) stopWalk(); }
@@ -905,8 +934,8 @@
     } else me.phase = 0;
     // odoslanie pozície
     const now = performance.now();
-    const key = me.x.toFixed(2) + ',' + me.y.toFixed(2) + ',' + me.dir;
-    if (key !== S.lastSent && now - S.sentAt > 90) { send({ t: 'move', x: me.x, y: me.y, dir: me.dir }); S.lastSent = key; S.sentAt = now; }
+    const key = me.x.toFixed(2) + ',' + me.y.toFixed(2) + ',' + me.dir + ',' + (me.a != null ? me.a.toFixed(1) : '');
+    if (key !== S.lastSent && now - S.sentAt > 90) { send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a }); S.lastSent = key; S.sentAt = now; }
     // ostatní hráči
     for (const o of S.others.values()) {
       const dx = o.tx - o.x, dy = o.ty - o.y;
@@ -1114,7 +1143,7 @@
   let last = performance.now();
   function loop(now) {
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
-    if (S.joined) { update(dt); render(now / 1000); }
+    if (S.joined) { update(dt); if (R3) R3.frame(now / 1000); else if (!MODE3D) render(now / 1000); }
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);
