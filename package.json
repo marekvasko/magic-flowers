@@ -1,0 +1,15 @@
+{
+  "name": "magic-flowers",
+  "version": "1.0.0",
+  "description": "Čarovná záhrada – multiplayerová hra o pestovaní kvetov (mobil, vertikálne)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "DAY_SECONDS=60 node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

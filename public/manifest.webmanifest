@@ -1,0 +1,9 @@
+{
+  "name": "Čarovná záhrada",
+  "short_name": "Záhrada",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#2f5d34",
+  "theme_color": "#2f5d34"
+}

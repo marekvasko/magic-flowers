@@ -1,0 +1,24 @@
+services:
+  magicflowers:
+    build: .
+    image: magicflowers:latest
+    container_name: magicflowers
+    restart: unless-stopped
+    volumes:
+      - magicflowers-data:/app/data
+    networks:
+      - web
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=web
+      - traefik.http.routers.magicflowers.rule=Host(`${DOMAIN:?Nastav DOMAIN v .env}`)
+      - traefik.http.routers.magicflowers.entrypoints=websecure
+      - traefik.http.routers.magicflowers.tls.certresolver=tlschallenge
+      - traefik.http.services.magicflowers.loadbalancer.server.port=3000
+
+volumes:
+  magicflowers-data:
+
+networks:
+  web:
+    external: true
