@@ -15,6 +15,10 @@
     LOG: 40, LOG_DARK: 41, ORN: 42, SHINGLE: 43, SHINGLE_DARK: 44, RIDGE: 45, SHUTTER: 46, HANDLE: 47, LANTERN: 48,
     PLASTER: 49, STRAW: 50, STRAW_DARK: 51, CLAY: 52, LAVENDER: 53, CHAMOMILE: 54, FIRE: 55, FLAME: 56, WATER_DEEP: 57,
     ROPE: 58, SACK: 59, BREW_LIGHT: 60, HERB_GREEN: 61, SIGN: 62,
+    // stromy z minikociek
+    LEAF_SPRING: 64, LEAF_SPRING2: 65, LEAF_SUMMER: 66, LEAF_SUMMER2: 67, LEAF_AUT_OR: 68, LEAF_AUT_RED: 69, LEAF_AUT_YEL: 70,
+    LEAF_BROWN: 71, LEAF_LIME: 72, BIRCH: 73, BIRCH_MARK: 74, BARK: 75, BARK_DARK: 76, PINE_BARK: 77, NEEDLE: 78, NEEDLE2: 79,
+    APPLE: 80, BLOSSOM_W: 81, BLOSSOM_P: 82,
     INVIS: 63 // neviditeľná náhrada jemného modelu v hrubej mriežke (tieň, zatienenie, výber)
   };
   // Farby podľa ročného obdobia [jar, leto, jeseň, zima]; emis = svieti v noci
@@ -32,7 +36,11 @@
     [M.RIDGE]: ['#4a3b30'], [M.SHUTTER]: ['#2f6f8f'], [M.HANDLE]: ['#e0b040'], [M.LANTERN]: ['#ffe9a8'],
     [M.PLASTER]: ['#efe9dc'], [M.STRAW]: ['#c99a52'], [M.STRAW_DARK]: ['#9c7238'], [M.CLAY]: ['#b5652a'], [M.LAVENDER]: ['#8e7cc3'],
     [M.CHAMOMILE]: ['#f5f0d0'], [M.FIRE]: ['#ff7a1a'], [M.FLAME]: ['#ffd23a'], [M.WATER_DEEP]: ['#245a80', '#245a80', '#245a80', '#9cc7e0'],
-    [M.ROPE]: ['#d8c08a'], [M.SACK]: ['#c9a46a'], [M.BREW_LIGHT]: ['#c9ffd9'], [M.HERB_GREEN]: ['#6b8f3a'], [M.SIGN]: ['#4a3324']
+    [M.ROPE]: ['#d8c08a'], [M.SACK]: ['#c9a46a'], [M.BREW_LIGHT]: ['#c9ffd9'], [M.HERB_GREEN]: ['#6b8f3a'], [M.SIGN]: ['#4a3324'],
+    [M.LEAF_SPRING]: ['#7cc456'], [M.LEAF_SPRING2]: ['#62b04a'], [M.LEAF_SUMMER]: ['#3f8f3a'], [M.LEAF_SUMMER2]: ['#2f7a30'],
+    [M.LEAF_AUT_OR]: ['#e07b24'], [M.LEAF_AUT_RED]: ['#c0392b'], [M.LEAF_AUT_YEL]: ['#e6c229'], [M.LEAF_BROWN]: ['#a0612a'], [M.LEAF_LIME]: ['#a7d65a'],
+    [M.BIRCH]: ['#eeeae0'], [M.BIRCH_MARK]: ['#3a3a3a'], [M.BARK]: ['#5d4029'], [M.BARK_DARK]: ['#43301f'], [M.PINE_BARK]: ['#a0522d'],
+    [M.NEEDLE]: ['#2e6b3a'], [M.NEEDLE2]: ['#24572f'], [M.APPLE]: ['#d62828'], [M.BLOSSOM_W]: ['#fbe7ef'], [M.BLOSSOM_P]: ['#f5a9c8']
   };
   const EMISSIVE = { [M.WINDOW]: '#ffd27a', [M.BREW]: '#9dffb8', [M.LANTERN]: '#ffe9a8', [M.FIRE]: '#ff9a3a', [M.FLAME]: '#ffe07a', [M.BREW_LIGHT]: '#d8ffe4' };
   function colorOf(mat, season) { const p = PALETTE[mat] || ['#ff00ff']; return p[Math.min(season, p.length - 1)] || p[0]; }
@@ -57,42 +65,6 @@
   function box(g, x0, y0, z0, x1, y1, z1, v) { for (let z = z0; z <= z1; z++) for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set(g, x, y, z, v); }
 
   // ---- Generované modely ----
-  function tree(g, tx, ty, season) {
-    const sx = tx * R, sz = ty * R, base = g.heights[ty * D.W + tx];
-    const h = hash(tx, ty, 3);
-    const cx = sx + (hash(tx, ty, 5) < 0.5 ? 0 : 1), cz = sz + (hash(tx, ty, 6) < 0.5 ? 0 : 1);
-    if (h > 0.55) { // smrek: kmeň a zužujúce sa poschodia
-      const top = base + 7;
-      box(g, cx, base, cz, cx, top - 1, cz, M.TRUNK);
-      const layers = [[base + 2, 2], [base + 3, 2], [base + 4, 1], [base + 5, 1], [base + 6, 0], [top, 0]];
-      for (const [y, r] of layers) for (let dz = -r; dz <= r; dz++) for (let dx = -r; dx <= r; dx++) {
-        if (r === 2 && Math.abs(dx) === 2 && Math.abs(dz) === 2) continue;
-        set(g, cx + dx, y, cz + dz, season === 3 && (y === top || (r && hash(cx + dx, y, cz + dz) < 0.35)) ? M.SNOW : M.SPRUCE);
-      }
-      return;
-    }
-    const th = 3 + (hash(tx, ty, 7) < 0.5 ? 0 : 1);
-    box(g, cx, base, cz, cx, base + th - 1, cz, M.TRUNK);
-    const y0 = base + th - 1;
-    if (season === 3) { // zima: holé konáre so snehom
-      box(g, cx, y0, cz, cx, y0 + 2, cz, M.TRUNK);
-      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (hash(cx + dx, y0, cz + dz) < 0.6) { set(g, cx + dx, y0 + 1, cz + dz, M.TRUNK); set(g, cx + dx, y0 + 2, cz + dz, M.SNOW); }
-      set(g, cx, y0 + 3, cz, M.SNOW);
-      return;
-    }
-    const r = hash(tx, ty, 8) < 0.5 ? 1 : 2;
-    for (let ly = 0; ly < 3; ly++) {
-      const rr = ly === 2 ? Math.max(1, r - 1) : r;
-      for (let dz = -rr; dz <= rr; dz++) for (let dx = -rr; dx <= rr; dx++) {
-        if (rr > 1 && Math.abs(dx) === rr && Math.abs(dz) === rr) continue;
-        const x = cx + dx, y = y0 + ly, z = cz + dz, hv = hash(x, y, z);
-        let mat = hv < 0.5 ? M.LEAF : M.LEAF2;
-        if (season === 0 && h < 0.3 && hv < 0.25) mat = M.BLOSSOM;   // jarné kvitnutie
-        if (season === 1 && h < 0.2 && hv < 0.12) mat = M.BLOSSOM;   // letné plody
-        set(g, x, y, z, mat);
-      }
-    }
-  }
   function boulder(g, tx, ty) {
     const sx = tx * R, sz = ty * R, base = g.heights[ty * D.W + tx];
     box(g, sx, base, sz, sx + 1, base, sz + 1, M.DARKSTONE);
@@ -113,8 +85,7 @@
     const done = {};
     for (let ty = 0; ty < D.H; ty++) for (let tx = 0; tx < D.W; tx++) {
       const t = tiles[ty * D.W + tx].g;
-      if (t === 'tree') tree(g, tx, ty, season);
-      else if (t === 'boulder') boulder(g, tx, ty);
+      if (t === 'boulder') boulder(g, tx, ty); // stromy sú jemné modely (treeModel)
       // chalupa, domček, trh, studňa a kotlík sú jemné modely z minikociek (fineModels)
     }
   }
@@ -371,6 +342,129 @@
     return C.done();
   }
 
+  // ---- Stromy z minikociek: 6 druhov, farby podľa obdobia, v zime holé konáre so snehom ----
+  const L = M;
+  const LEAVES = { // [jar, leto, jeseň]
+    buk: [[L.LEAF_SPRING, L.LEAF_SPRING2], [L.LEAF_SUMMER, L.LEAF_SUMMER2], [L.LEAF_AUT_OR, L.LEAF_AUT_RED, L.LEAF_AUT_YEL]],
+    dub: [[L.LEAF_SPRING2, L.LEAF_SUMMER], [L.LEAF_SUMMER2, L.LEAF_SUMMER], [L.LEAF_BROWN, L.LEAF_AUT_OR]],
+    breza: [[L.LEAF_LIME, L.LEAF_SPRING], [L.LEAF_SPRING, L.LEAF_SUMMER], [L.LEAF_AUT_YEL, L.LEAF_AUT_YEL, L.LEAF_LIME]],
+    jablon: [[L.BLOSSOM_W, L.BLOSSOM_P, L.BLOSSOM_W, L.LEAF_SPRING], [L.LEAF_SUMMER, L.LEAF_SUMMER2], [L.LEAF_AUT_YEL, L.LEAF_SUMMER, L.LEAF_LIME]]
+  };
+  // Elipsoid s nerovným okrajom (a voliteľnými dierami) – základ korún
+  function blob(C, cx, cy, cz, rx, ry, rz, mat, holes, seed) {
+    for (let z = Math.floor(cz - rz - 1); z <= Math.ceil(cz + rz + 1); z++) for (let y = Math.floor(cy - ry - 1); y <= Math.ceil(cy + ry + 1); y++) for (let x = Math.floor(cx - rx - 1); x <= Math.ceil(cx + rx + 1); x++) {
+      const n = hash(x, y, z + (seed || 0));
+      const d = ((x + 0.5 - cx) / rx) ** 2 + ((y + 0.5 - cy) / ry) ** 2 + ((z + 0.5 - cz) / rz) ** 2;
+      if (d <= 1 + (n - 0.5) * 0.45 && !(holes && n < holes && d > 0.45)) { if (!C.getf(x, y, z)) C.put(x, y, z, mat(x, y, z, n)); }
+    }
+  }
+  const pickOf = list => (x, y, z, n) => list[Math.floor(hash(x, y, z + 3) * list.length)];
+  // sneh na vrchu konárov / ihličia (každá vrstva, nielen najvyššia)
+  function snowOn(C, mats, prob, minY) {
+    for (let z = -FM; z < C.D2 + FM; z++) for (let y = C.sy - 2; y >= (minY || 0); y--) for (let x = -FM; x < C.W2 + FM; x++) {
+      if (mats.includes(C.getf(x, y, z)) && !C.getf(x, y + 1, z) && hash(x, y, z + 5) < prob) C.put(x, y + 1, z, M.SNOW);
+    }
+  }
+  const CX = 3.5, CZ = 3.5; // stred políčka v minikockách
+  function roots(C, mat) { for (const [x, z] of [[2, 3], [2, 4], [5, 3], [5, 4], [3, 2], [4, 2], [3, 5], [4, 5]]) C.put(x, 0, z, mat); }
+  function branches(C, y0, count, radius, yEnd, mat, seed) {
+    const ends = [];
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 + hash(i, seed, 1) * 0.8;
+      const e = [CX + Math.cos(a) * radius, yEnd + (i % 2) * 2, CZ + Math.sin(a) * radius];
+      C.line(Math.round(CX), y0, Math.round(CZ), Math.round(e[0]), e[1], Math.round(e[2]), mat);
+      ends.push(e);
+    }
+    return ends;
+  }
+  const TREE_BUILD = {
+    buk(C, se) {
+      C.fbox(3, 0, 3, 4, 14, 4, M.BARK); roots(C, M.BARK);
+      const ends = branches(C, 10, 5, 4.5, 17, M.BARK, 1);
+      C.line(4, 12, 4, 4, 23, 3, M.BARK);
+      if (se === 3) return snowOn(C, [M.BARK], 0.6, 10);
+      const mat = pickOf(LEAVES.buk[se]);
+      blob(C, CX, 21, CZ, 6.5, 5.5, 6.5, mat, 0.05, 1);
+      for (const e of ends) blob(C, e[0], e[1] + 2, e[2], 3.4, 3, 3.4, mat, 0.08, 2);
+    },
+    dub(C, se) {
+      C.fbox(3, 0, 3, 4, 11, 4, M.BARK_DARK); C.fbox(2, 0, 3, 5, 2, 4, M.BARK_DARK); C.fbox(3, 0, 2, 4, 2, 5, M.BARK_DARK);
+      const ends = branches(C, 8, 6, 6.2, 13, M.BARK_DARK, 2);
+      if (se === 3) return snowOn(C, [M.BARK_DARK], 0.6, 8);
+      const mat = pickOf(LEAVES.dub[se]);
+      blob(C, CX, 17, CZ, 7.3, 4.2, 7.3, mat, 0.05, 3);
+      for (const e of ends) blob(C, e[0], e[1] + 2.5, e[2], 3.2, 2.6, 3.2, mat, 0.06, 4);
+    },
+    breza(C, se) {
+      C.fbox(3, 0, 3, 4, 26, 4, (x, y, z) => hash(x, y, z + 21) < 0.22 ? M.BIRCH_MARK : M.BIRCH);
+      // tenké vetvičky smerom hore
+      for (let i = 0; i < 6; i++) { const a = i * 1.1, y = 13 + i * 2; C.line(Math.round(CX), y, Math.round(CZ), Math.round(CX + Math.cos(a) * 3), y + 4, Math.round(CZ + Math.sin(a) * 3), M.BARK_DARK); }
+      if (se === 3) return snowOn(C, [M.BARK_DARK, M.BIRCH, M.BIRCH_MARK], 0.4, 12);
+      const mat = pickOf(LEAVES.breza[se]);
+      for (let k = 0; k < 6; k++) { const a = k * 2.1; blob(C, CX + Math.cos(a) * 2.4, 15 + k * 2.4, CZ + Math.sin(a) * 2.4, 2.8, 2.3, 2.8, mat, 0.22, 10 + k); }
+      blob(C, CX, 29, CZ, 2.4, 2.2, 2.4, mat, 0.15, 17);
+    },
+    jablon(C, se) {
+      C.fbox(3, 0, 3, 4, 6, 4, M.BARK); roots(C, M.BARK);
+      branches(C, 5, 4, 3.2, 9, M.BARK, 3);
+      if (se === 3) return snowOn(C, [M.BARK], 0.6, 6);
+      blob(C, CX, 11, CZ, 5.4, 4.3, 5.4, pickOf(LEAVES.jablon[se]), 0.05, 5);
+      // v lete a na jeseň jablká na povrchu koruny (zboku aj zospodu)
+      if (se >= 1) for (let z = -FM; z < 12; z++) for (let y = 6; y < 18; y++) for (let x = -FM; x < 12; x++) {
+        const m = C.getf(x, y, z);
+        if (!m || m === M.BARK || m === M.APPLE) continue;
+        const exposed = !C.getf(x + 1, y, z) || !C.getf(x - 1, y, z) || !C.getf(x, y, z + 1) || !C.getf(x, y, z - 1) || !C.getf(x, y - 1, z);
+        if (exposed && hash(x, y, z + 31) < (se === 1 ? 0.09 : 0.14)) C.put(x, y, z, M.APPLE);
+      }
+    },
+    smrek(C, se) {
+      C.fbox(3, 0, 3, 4, 28, 4, M.BARK_DARK); // kmeň končí pod vrcholom, aby cez riedke ihličie nepresvital
+      for (let y = 4; y <= 36; y++) {
+        const t = (y - 4) / 32, layer = (y - 4) % 4;
+        const r = Math.max(1.3, (7.2 * (1 - t) + 0.7) * (1 - 0.13 * layer)); // ovisnuté poschodia
+        for (let z = -FM; z < 12; z++) for (let x = -FM; x < 12; x++) {
+          const d = Math.hypot(x + 0.5 - CX, z + 0.5 - CZ), n = hash(x, y, z + 41);
+          if (d <= r + (n - 0.5) * 0.9 && C.getf(x, y, z) !== M.BARK_DARK) C.put(x, y, z, n < 0.5 ? M.NEEDLE : M.NEEDLE2);
+        }
+      }
+      C.fbox(3, 37, 3, 4, 39, 4, M.NEEDLE);
+      if (se === 3) snowOn(C, [M.NEEDLE, M.NEEDLE2], 0.75, 4);
+    },
+    borovica(C, se) {
+      C.fbox(3, 0, 3, 4, 30, 4, M.PINE_BARK);
+      for (const [y, dx, dz] of [[12, 1, 0], [17, 0, -1], [22, -1, 1]]) C.line(Math.round(CX), y, Math.round(CZ), Math.round(CX + dx * 3), y + 1, Math.round(CZ + dz * 3), M.PINE_BARK);
+      const mat = (x, y, z, n) => n < 0.5 ? M.NEEDLE : M.NEEDLE2;
+      blob(C, CX, 31.5, CZ, 5.8, 2.8, 5.8, mat, 0.08, 51);
+      blob(C, 1, 28.5, 6, 3.4, 2.2, 3.4, mat, 0.08, 52);
+      blob(C, 6.5, 29.5, 1.5, 3.2, 2.2, 3.2, mat, 0.08, 53);
+      if (se === 3) snowOn(C, [M.NEEDLE, M.NEEDLE2], 0.8, 24);
+    }
+  };
+  const TREE_KINDS = Object.keys(TREE_BUILD);
+  // Otočenie dát modelu o 90° okolo zvislej osi (pôdorys je štvorcový)
+  function rotate90(f) {
+    const { sx, sy, sz, data } = f, out = new Uint8Array(data.length);
+    for (let j = 0; j < sz; j++) for (let y = 0; y < sy; y++) for (let i = 0; i < sx; i++) out[(j * sy + y) * sx + i] = data[((sx - 1 - i) * sy + y) * sx + j];
+    return { sx, sy, sz, data: out };
+  }
+  const treeCache = new Map();
+  function treeModel(kind, season, rot) {
+    const key = kind + '|' + season + '|' + rot;
+    if (treeCache.has(key)) return treeCache.get(key);
+    let f;
+    if (rot === 0) { const C = fineCanvas(1, 1, 44); TREE_BUILD[kind](C, season); f = C.done(); }
+    else f = rotate90(treeModel(kind, season, rot - 1));
+    treeCache.set(key, f);
+    return f;
+  }
+  // Ktorý druh stromu rastie na políčku (deterministicky); pri babkinej chalúpke je ovocný sad.
+  function treeKind(tx, ty) {
+    if (tx >= 13 && ty <= 7) return 'jablon';
+    if (hash(tx, ty, 3) > 0.55) return hash(tx, ty, 11) < 0.7 ? 'smrek' : 'borovica';
+    const h = hash(tx, ty, 12);
+    return h < 0.34 ? 'buk' : h < 0.67 ? 'dub' : 'breza';
+  }
+
   // Zoznam jemných modelov na mape (pozícia v blokoch, rozmery a minikocky)
   // tile = políčko, ktoré sa vyberie po ťuknutí na model (rovnaké ako v 2D)
   const FINE_TYPES = [
@@ -389,6 +483,13 @@
       const m = ft.build(season);
       out.push(Object.assign(m, { type: ft.g, ox: tx - FM / FINE, oy: groundHeight('grass') / R, oz: ty - FM / FINE, tile: { x: tx + ft.tile[0], y: ty + ft.tile[1] } }));
     }
+    for (let i = 0; i < tiles.length; i++) {
+      if (tiles[i].g !== 'tree') continue;
+      const tx = i % D.W, ty = (i / D.W) | 0, kind = treeKind(tx, ty);
+      const m = treeModel(kind, season, Math.floor(hash(tx, ty, 13) * 4));
+      // dáta modelu sú zdieľané medzi rovnakými stromami – vlastný je len obal s pozíciou
+      out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'tree', kind, ox: tx - FM / FINE, oy: groundHeight('tree') / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.25 });
+    }
     return out;
   }
   // Neviditeľná náhrada jemného modelu v hrubej mriežke: podkocka je plná, ak je aspoň ~40 % jej minikociek plných.
@@ -401,7 +502,7 @@
         const fy = cy * k + y;
         if (fy < fm.sy && fm.data[((cz * k + z) * fm.sy + fy) * fm.sx + cx * k + x]) n++;
       }
-      if (n >= k * k * k * 0.4) set(g, cx0 + cx, cy0 + cy, cz0 + cz, M.INVIS);
+      if (n >= k * k * k * (fm.invis || 0.4)) set(g, cx0 + cx, cy0 + cy, cz0 + cz, M.INVIS);
     }
   }
 
@@ -476,7 +577,7 @@
     return hours;
   }
 
-  const api = { R, NX, NY, NZ, M, FINE, PALETTE, EMISSIVE, colorOf, hash, buildGrid, get, surfaceY, sunDir, daylight, sunVisibility, sunHours, groundHeight };
+  const api = { R, NX, NY, NZ, M, FINE, TREE_KINDS, treeKind, PALETTE, EMISSIVE, colorOf, hash, buildGrid, get, surfaceY, sunDir, daylight, sunVisibility, sunHours, groundHeight };
   root.World3D = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof self !== 'undefined' ? self : this);

@@ -451,7 +451,9 @@ export function create(api) {
     if (builtSeason !== se) { buildMesh(se); refreshGround(se, t, true); drawnSeason = se; }
     if (now - lastGround > 600) { refreshGround(se, t, false); lastGround = now; }
     scheduleSun(min, se);
-    stepSun(2500);
+    // tieň počítame len ~4 ms na snímku, aby výpočet nespomalil hru ani na slabšom mobile
+    const sunT0 = performance.now();
+    while (sunJob && performance.now() - sunT0 < 4) stepSun(400);
     blendSun(dt);
     lighting(min, se);
     placeCamera(dt);

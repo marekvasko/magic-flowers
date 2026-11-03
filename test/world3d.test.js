@@ -13,7 +13,7 @@ test('svet z kociek je deterministický a má správne výšky', () => {
   assert.strictEqual(W.surfaceY(a, rock % D.W, Math.floor(rock / D.W)), 1.5);
   assert.strictEqual(W.surfaceY(a, grass % D.W, Math.floor(grass / D.W)), 1);
   // budovy sú jemné modely; v hrubej mriežke majú neviditeľnú náhradu (chalupa babky stojí na (14,2))
-  assert.deepStrictEqual(a.fine.map(f => f.type).sort(), ['cauldron', 'house', 'hut', 'stall', 'well']);
+  assert.deepStrictEqual(a.fine.filter(f => f.type !== 'tree').map(f => f.type).sort(), ['cauldron', 'house', 'hut', 'stall', 'well']);
   assert.strictEqual(W.get(a, 30, 3, 5), W.M.INVIS);
 });
 
@@ -76,4 +76,24 @@ test('chalupa, kotlík, trh a studňa z minikociek majú svoje detaily', () => {
   assert.ok(W.sunHours(g, 15, 1, 1) < W.sunHours(g, 12, 15, 1) - 4);
   // v zime sneh na slamenej streche
   assert.ok(W.buildGrid(tiles, 3).fine.find(f => f.type === 'hut').data.includes(W.M.SNOW));
+});
+
+test('stromy z minikociek: 6 druhov, ročné obdobia a otáčanie', () => {
+  const sum = W.buildGrid(tiles, 1), win = W.buildGrid(tiles, 3);
+  const trees = sum.fine.filter(f => f.type === 'tree');
+  assert.strictEqual(trees.length, tiles.filter(t => t.g === 'tree').length, 'každý strom na mape má model');
+  assert.deepStrictEqual([...new Set(trees.map(t => t.kind))].sort(), [...W.TREE_KINDS].sort(), 'na mape sú všetky druhy');
+  const filled = f => f.data.reduce((n, v) => n + (v ? 1 : 0), 0);
+  const of = (g, kind) => g.fine.find(f => f.type === 'tree' && f.kind === kind);
+  // listnaté stromy sú v zime holé (oveľa menej minikociek), ihličnany nie
+  for (const k of ['buk', 'dub', 'breza', 'jablon']) assert.ok(filled(of(win, k)) < filled(of(sum, k)) * 0.4, k + ' v zime bez lístia');
+  assert.ok(filled(of(win, 'smrek')) >= filled(of(sum, 'smrek')), 'smrek má v zime ihličie aj sneh');
+  assert.ok(of(win, 'smrek').data.includes(W.M.SNOW));
+  // jabloň na jar kvitne, v lete má jablká
+  assert.ok(of(W.buildGrid(tiles, 0), 'jablon').data.includes(W.M.BLOSSOM_W));
+  assert.ok(of(sum, 'jablon').data.includes(W.M.APPLE));
+  // otočené varianty majú rovnaký počet minikociek, ale iné rozloženie
+  const rots = new Map();
+  for (const t of trees) { const key = t.kind; if (!rots.has(key)) rots.set(key, new Set()); rots.get(key).add(t.data); }
+  assert.ok([...rots.values()].some(s => s.size > 1), 'rovnaký druh sa vyskytuje v rôznych otočeniach');
 });
