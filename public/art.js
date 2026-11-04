@@ -1,4 +1,4 @@
-// Procedurálna grafika – kvety, postavičky, budovy, ikony.
+// Procedurálna grafika – textúry zeme, kvety, postavičky a ikony (3D ich používa ako textúry a sprity).
 const Art = (() => {
   const D = window.GameData;
   const TAU = Math.PI * 2;
@@ -192,18 +192,10 @@ const Art = (() => {
 
   // Postavička – x stred, y chodidlá.
   // dir: 0 dole, 1 vľavo, 2 vpravo, 3 hore, 4 vľavo dole, 5 vpravo dole, 6 vľavo hore, 7 vpravo hore
-  // o.lift: výška skoku v px (tieň ostáva na zemi), o.crawl: plazí sa (pokrčené kolená, predklon)
+  // o.crawl: plazí sa (pokrčené kolená, predklon)
   // o.dig: čas v s, keď hráč hrabe v tráve – je prikrčený a rukami striedavo hrabe pred sebou
   function char(c, x, y, s, look, dir, phase, o) {
     o = o || {};
-    const lift = o.lift || 0;
-    if (lift > 0) {
-      if (!o.noShadow) { const k = Math.max(0.45, 1 - lift / s); ell(c, x, y, s * 0.24 * k, s * 0.08 * k, 0, 'rgba(0,0,0,' + 0.25 * k + ')'); }
-      c.save(); c.translate(0, -lift);
-      char(c, x, y, s, look, dir, phase, Object.assign({}, o, { lift: 0, noShadow: true }));
-      c.restore();
-      return;
-    }
     const skin = '#f2c9a0';
     let d = dir;
     if (o.dig) { o = Object.assign({}, o, { crawl: true }); phase = 0; }
@@ -386,28 +378,6 @@ const Art = (() => {
     if (g === 'ring') { c.fillStyle = 'rgba(255,255,255,0.06)'; c.fillRect(x, y, s, s); }
   }
 
-  // Ľad na políčku: kúsky ľadu na ľadovci (koľko ešte ostáva) a otvor vysekaný do zamrznutej vody
-  function iceTile(c, tl, x, y, s, se, tx, ty) {
-    if (tl.g === 'glacier') { // ľad ako na jazierku, zdvihnutý o toľko vrstiev (po 1/4 bloku), koľko ich tu ešte stojí
-      if (!tl.ice) return;
-      const lift = tl.ice * s * 0.09;
-      c.fillStyle = '#86b9d6'; c.fillRect(x, y + s - lift, s + 1, lift);                 // predná stena
-      c.strokeStyle = 'rgba(255,255,255,0.35)'; c.lineWidth = Math.max(1, s * 0.02);
-      for (let k = 1; k < tl.ice; k++) { const ly = y + s - k * s * 0.09; c.beginPath(); c.moveTo(x, ly); c.lineTo(x + s, ly); c.stroke(); } // vrstvy
-      c.fillStyle = '#a9d4ec'; c.fillRect(x, y - lift, s + 1, s);                         // vrch
-      c.strokeStyle = 'rgba(255,255,255,0.6)'; c.lineWidth = Math.max(1, s * 0.03);
-      for (let i = 0; i < 2; i++) {
-        const wy = y - lift + s * (0.3 + i * 0.4), off = (hash(tx, ty, i + 20) - 0.5) * s * 0.2;
-        c.beginPath(); c.moveTo(x + s * 0.2 + off, wy); c.quadraticCurveTo(x + s * 0.4 + off, wy - s * 0.08, x + s * 0.6 + off, wy); c.stroke();
-      }
-      return;
-    }
-    if (tl.cut) {
-      ell(c, x + s * 0.5, y + s * 0.5, s * 0.28, s * 0.2, 0, '#ffffff');
-      ell(c, x + s * 0.5, y + s * 0.52, s * 0.22, s * 0.15, 0, '#1f5f8a');
-    }
-  }
-
   function soil(c, so, x, y, s, se) {
     const m = s * 0.06;
     let col = so.k === 'sand' ? '#c9a26a' : so.k === 'rock' ? '#8d7b6a' : '#8b5a2b';
@@ -421,35 +391,6 @@ const Art = (() => {
     if (se === 3 && !so.w) { c.fillStyle = 'rgba(255,255,255,0.35)'; c.fillRect(x + m, y + m, s - 2 * m, s * 0.25); }
   }
 
-  function tree(c, x, y, s, se, t, h) {
-    ell(c, x, y - s * 0.05, s * 0.45, s * 0.14, 0, 'rgba(0,0,0,0.22)');
-    c.fillStyle = '#6d4c2f'; c.fillRect(x - s * 0.09, y - s * 0.6, s * 0.18, s * 0.58);
-    const sway = Math.sin(t + h * 10) * s * 0.02;
-    if (h > 0.55) { // smrek
-      const cols = se === 3 ? ['#2f5d3a', '#fff'] : ['#2e6b3a', '#3d8a4a'];
-      for (let i = 0; i < 3; i++) {
-        const ty = y - s * (0.5 + i * 0.38), w = s * (0.62 - i * 0.14);
-        c.fillStyle = cols[0]; c.beginPath(); c.moveTo(x - w + sway, ty); c.lineTo(x + w + sway, ty); c.lineTo(x + sway * 2, ty - s * 0.6); c.fill();
-        if (se === 3) { c.fillStyle = '#fff'; c.beginPath(); c.moveTo(x - w * 0.5 + sway, ty - s * 0.3); c.lineTo(x + w * 0.5 + sway, ty - s * 0.3); c.lineTo(x + sway * 2, ty - s * 0.6); c.fill(); }
-      }
-      return;
-    }
-    if (se === 3) {
-      c.strokeStyle = '#6d4c2f'; c.lineWidth = s * 0.06;
-      for (let i = -1; i <= 1; i++) { c.beginPath(); c.moveTo(x, y - s * 0.55); c.lineTo(x + i * s * 0.35 + sway, y - s * 1.1); c.stroke(); }
-      for (let i = -1; i <= 1; i++) ell(c, x + i * s * 0.33 + sway, y - s * 1.1, s * 0.1, s * 0.05, 0, '#fff');
-      return;
-    }
-    const col = [['#4caf50', '#3e8e41'], ['#3f9a3a', '#2f7a2f'], ['#e08a2b', '#c4621e'], ['', '']][se];
-    if (se === 2 && h < 0.2) { col[0] = '#e6b42b'; col[1] = '#c48a1e'; }
-    circ(c, x - s * 0.25 + sway, y - s * 0.75, s * 0.33, col[1]);
-    circ(c, x + s * 0.25 + sway, y - s * 0.78, s * 0.33, col[1]);
-    circ(c, x + sway, y - s * 1.05, s * 0.4, col[0]);
-    circ(c, x - s * 0.12 + sway, y - s * 1.15, s * 0.14, 'rgba(255,255,255,0.15)');
-    if (se === 0 && h < 0.25) for (let i = 0; i < 5; i++) circ(c, x + (hash(i, 1, h * 99) - 0.5) * s * 0.7 + sway, y - s * (0.8 + hash(i, 2, h * 99) * 0.5), s * 0.05, '#ffd6e8');
-    if (se === 1 && h < 0.2) for (let i = 0; i < 4; i++) circ(c, x + (hash(i, 1, h * 99) - 0.5) * s * 0.7 + sway, y - s * (0.8 + hash(i, 2, h * 99) * 0.5), s * 0.05, '#e53935');
-  }
-
   function shroom(c, x, y, s, night, t) {
     if (night) {
       const g = c.createRadialGradient(x, y - s * 0.15, 0, x, y - s * 0.15, s * 0.5);
@@ -459,114 +400,6 @@ const Art = (() => {
     c.fillStyle = '#f5f0e0'; c.fillRect(x - s * 0.05, y - s * 0.22, s * 0.1, s * 0.2);
     c.beginPath(); c.arc(x, y - s * 0.2, s * 0.17, Math.PI, TAU); c.fillStyle = night ? '#ff6b6b' : '#d32f2f'; c.fill();
     circ(c, x - s * 0.07, y - s * 0.27, s * 0.03, '#fff'); circ(c, x + s * 0.06, y - s * 0.3, s * 0.025, '#fff'); circ(c, x + s * 0.01, y - s * 0.23, s * 0.02, '#fff');
-  }
-
-  // Skalná stena v horách (x,y = ľavý horný roh políčka) – vyčnieva nahor, v zime so snehom
-  function cliff(c, x, y, s, se, tx, ty) {
-    const h = hash(tx, ty, 21), top = y - s * (0.35 + h * 0.4);
-    c.fillStyle = '#6e6861';
-    c.beginPath(); c.moveTo(x - 1, y + s); c.lineTo(x - 1, top + s * 0.2); c.lineTo(x + s * 0.35, top); c.lineTo(x + s * 0.7, top + s * 0.12); c.lineTo(x + s + 1, top + s * 0.25); c.lineTo(x + s + 1, y + s); c.fill();
-    c.fillStyle = '#8a837a';
-    c.beginPath(); c.moveTo(x + s * 0.35, top); c.lineTo(x + s * 0.7, top + s * 0.12); c.lineTo(x + s * 0.6, y + s * 0.7); c.lineTo(x + s * 0.3, y + s * 0.8); c.fill();
-    c.fillStyle = se === 3 || ty < 3 ? '#f4f7f9' : 'rgba(0,0,0,0)';
-    c.beginPath(); c.moveTo(x - 1, top + s * 0.2); c.lineTo(x + s * 0.35, top); c.lineTo(x + s * 0.7, top + s * 0.12); c.lineTo(x + s + 1, top + s * 0.25); c.lineTo(x + s + 1, top + s * 0.38); c.lineTo(x + s * 0.5, top + s * 0.25); c.lineTo(x - 1, top + s * 0.35); c.fill();
-  }
-
-  // Ľadovňa (2×2, x,y = ľavý horný roh): kamenná pivnica do zeme so strmou šindľovou strechou; ukazovateľ ľadu na dverách
-  function icehouse(c, x, y, s, se, fill) {
-    const w = s * 2;
-    ell(c, x + w / 2, y + s * 2, w * 0.55, s * 0.18, 0, 'rgba(0,0,0,0.2)');
-    c.fillStyle = '#9a958d'; c.fillRect(x + s * 0.1, y + s * 0.9, w - s * 0.2, s * 1.1);
-    c.fillStyle = '#7d7872';
-    for (let r = 0; r < 3; r++) for (let k = 0; k < 4; k++) c.fillRect(x + s * (0.15 + k * 0.45 + (r % 2) * 0.2), y + s * (1.0 + r * 0.35), s * 0.3, s * 0.04);
-    c.fillStyle = se === 3 ? '#f2f6f8' : '#7a6450';
-    c.beginPath(); c.moveTo(x - s * 0.15, y + s * 1.0); c.lineTo(x + w / 2, y - s * 0.2); c.lineTo(x + w + s * 0.15, y + s * 1.0); c.fill();
-    c.strokeStyle = se === 3 ? '#d5dde2' : '#5e4c3d'; c.lineWidth = Math.max(1, s * 0.03);
-    for (let k = 1; k < 4; k++) { const yy = y - s * 0.2 + k * s * 0.3, dx = k * s * 0.3 * (w / 2 + s * 0.15) / (s * 1.2); c.beginPath(); c.moveTo(x + w / 2 - dx, yy); c.lineTo(x + w / 2 + dx, yy); c.stroke(); }
-    c.fillStyle = '#5a3d24'; c.fillRect(x + s * 0.7, y + s * 1.2, s * 0.6, s * 0.8);
-    c.fillStyle = '#2b3a44'; c.fillRect(x + s * 0.78, y + s * 1.3, s * 0.44, s * 0.12);
-    c.fillStyle = '#6ec6ff'; c.fillRect(x + s * 0.78, y + s * 1.3, s * 0.44 * Math.max(0, Math.min(1, fill || 0)), s * 0.12);
-    c.font = (s * 0.3 | 0) + 'px serif'; c.textAlign = 'center'; c.fillText('🧊', x + w / 2, y + s * 0.75);
-  }
-
-  function boulder(c, x, y, s, se) {
-    ell(c, x, y - s * 0.08, s * 0.42, s * 0.12, 0, 'rgba(0,0,0,0.2)');
-    ell(c, x, y - s * 0.3, s * 0.42, s * 0.3, 0, '#8a8580');
-    ell(c, x - s * 0.1, y - s * 0.4, s * 0.2, s * 0.12, -0.3, '#a8a39e');
-    if (se === 3) ell(c, x, y - s * 0.52, s * 0.3, s * 0.1, 0, '#fff');
-  }
-
-  function hut(c, x, y, s, se, night) { // x,y = ľavý horný roh 3×2
-    const w = s * 3, h = s * 2;
-    ell(c, x + w / 2, y + h, w * 0.55, s * 0.2, 0, 'rgba(0,0,0,0.2)');
-    c.fillStyle = '#c9a77a'; c.fillRect(x + s * 0.1, y + s * 0.4, w - s * 0.2, h - s * 0.4);
-    c.strokeStyle = '#8b6a45'; c.lineWidth = s * 0.04;
-    for (let i = 1; i < 4; i++) { c.beginPath(); c.moveTo(x + s * 0.1, y + s * 0.4 + i * s * 0.38); c.lineTo(x + w - s * 0.1, y + s * 0.4 + i * s * 0.38); c.stroke(); }
-    c.fillStyle = se === 3 ? '#f2f6f8' : '#b5884a';
-    c.beginPath(); c.moveTo(x - s * 0.2, y + s * 0.6); c.lineTo(x + w / 2, y - s * 0.7); c.lineTo(x + w + s * 0.2, y + s * 0.6); c.fill();
-    c.strokeStyle = se === 3 ? '#cfd8dc' : '#8b6a35'; c.lineWidth = s * 0.03;
-    for (let i = 1; i < 5; i++) { c.beginPath(); c.moveTo(x + w / 2, y - s * 0.7); c.lineTo(x - s * 0.2 + i * (w + s * 0.4) / 5, y + s * 0.6); c.stroke(); }
-    c.fillStyle = '#6d4c2f'; c.fillRect(x + s * 1.2, y + s * 1.15, s * 0.6, s * 0.85);
-    circ(c, x + s * 1.68, y + s * 1.6, s * 0.04, '#ffd54f');
-    const win = night ? '#ffe082' : '#9fd3f0';
-    c.fillStyle = win; c.fillRect(x + s * 0.35, y + s * 0.9, s * 0.5, s * 0.45); c.fillRect(x + s * 2.15, y + s * 0.9, s * 0.5, s * 0.45);
-    c.strokeStyle = '#6d4c2f'; c.lineWidth = s * 0.04; c.strokeRect(x + s * 0.35, y + s * 0.9, s * 0.5, s * 0.45); c.strokeRect(x + s * 2.15, y + s * 0.9, s * 0.5, s * 0.45);
-    // sušené bylinky
-    for (let i = 0; i < 4; i++) { c.fillStyle = ['#8e7cc3', '#ffcf1f', '#e53935', '#7cb342'][i]; c.fillRect(x + s * (0.95 + i * 0.3), y + s * 0.62, s * 0.08, s * 0.22); }
-    c.fillStyle = '#7a5a3a'; c.fillRect(x + s * 2.3, y - s * 0.45, s * 0.22, s * 0.5);
-  }
-
-  function house(c, x, y, s, se, night) {
-    const w = s * 3, h = s * 2;
-    ell(c, x + w / 2, y + h, w * 0.55, s * 0.2, 0, 'rgba(0,0,0,0.2)');
-    c.fillStyle = '#f5efe0'; c.fillRect(x + s * 0.1, y + s * 0.4, w - s * 0.2, h - s * 0.4);
-    c.fillStyle = '#3a6ea5'; c.fillRect(x + s * 0.1, y + s * 1.75, w - s * 0.2, s * 0.25);
-    c.fillStyle = se === 3 ? '#f2f6f8' : '#c0533a';
-    c.beginPath(); c.moveTo(x - s * 0.2, y + s * 0.6); c.lineTo(x + s * 0.4, y - s * 0.6); c.lineTo(x + w - s * 0.4, y - s * 0.6); c.lineTo(x + w + s * 0.2, y + s * 0.6); c.fill();
-    c.fillStyle = '#6d4c2f'; c.fillRect(x + s * 1.2, y + s * 1.1, s * 0.6, s * 0.9);
-    const win = night ? '#ffe082' : '#9fd3f0';
-    c.fillStyle = win; c.fillRect(x + s * 0.4, y + s * 0.9, s * 0.45, s * 0.45); c.fillRect(x + s * 2.15, y + s * 0.9, s * 0.45, s * 0.45);
-    // ornament ako v Čičmanoch
-    c.strokeStyle = '#fff'; c.lineWidth = s * 0.04;
-    for (let i = 0; i < 5; i++) { const ox = x + s * (0.4 + i * 0.55); c.beginPath(); c.moveTo(ox, y + s * 1.55); c.lineTo(ox + s * 0.12, y + s * 1.45); c.lineTo(ox + s * 0.24, y + s * 1.55); c.stroke(); }
-    // kvetináče
-    for (let i = 0; i < 2; i++) { const px = x + s * (0.62 + i * 1.76); c.fillStyle = '#b5652a'; c.fillRect(px - s * 0.2, y + s * 1.35, s * 0.4, s * 0.12); circ(c, px - s * 0.1, y + s * 1.3, s * 0.06, '#e53935'); circ(c, px + s * 0.1, y + s * 1.3, s * 0.06, '#e53935'); }
-  }
-
-  function stall(c, x, y, s, t) { // 3×1
-    const w = s * 3;
-    ell(c, x + w / 2, y + s, w * 0.5, s * 0.15, 0, 'rgba(0,0,0,0.2)');
-    c.fillStyle = '#8b5a2b'; c.fillRect(x + s * 0.1, y - s * 0.9, s * 0.1, s * 1.8); c.fillRect(x + w - s * 0.2, y - s * 0.9, s * 0.1, s * 1.8);
-    c.fillStyle = '#b07840'; c.fillRect(x, y + s * 0.2, w, s * 0.7);
-    c.fillStyle = '#8b5a2b'; c.fillRect(x, y + s * 0.2, w, s * 0.1);
-    for (let i = 0; i < 6; i++) { c.fillStyle = i % 2 ? '#fff' : '#e53935'; c.fillRect(x - s * 0.1 + i * (w + s * 0.2) / 6, y - s * 1.05, (w + s * 0.2) / 6 + 1, s * 0.4); }
-    for (let i = 0; i < 6; i++) { c.fillStyle = i % 2 ? '#fff' : '#e53935'; c.beginPath(); c.arc(x - s * 0.1 + (i + 0.5) * (w + s * 0.2) / 6, y - s * 0.65, (w + s * 0.2) / 12, 0, Math.PI); c.fill(); }
-    const fl = ['tulipan', 'slnecnica', 'mak', 'nevadza', 'ruza'];
-    for (let i = 0; i < 5; i++) { c.fillStyle = '#d9b77e'; c.fillRect(x + s * (0.25 + i * 0.52), y + s * 0.02, s * 0.4, s * 0.2); bloom(c, fl[i], x + s * (0.45 + i * 0.52), y - s * 0.05, s * 0.11, t); }
-    c.fillStyle = '#fff8e7'; c.fillRect(x + s * 1.05, y + s * 0.4, s * 0.9, s * 0.35);
-    c.fillStyle = '#5b3a1a'; c.font = 'bold ' + (s * 0.22 | 0) + 'px sans-serif'; c.textAlign = 'center'; c.fillText('TRH', x + s * 1.5, y + s * 0.65);
-  }
-
-  function well(c, x, y, s, se) {
-    ell(c, x, y - s * 0.05, s * 0.45, s * 0.14, 0, 'rgba(0,0,0,0.2)');
-    c.fillStyle = '#8a8580'; c.beginPath(); c.ellipse(x, y - s * 0.25, s * 0.4, s * 0.22, 0, 0, Math.PI); c.lineTo(x - s * 0.4, y - s * 0.45); c.ellipse(x, y - s * 0.45, s * 0.4, s * 0.2, 0, Math.PI, 0, true); c.fill();
-    ell(c, x, y - s * 0.45, s * 0.33, s * 0.15, 0, '#245a80');
-    c.fillStyle = '#6d4c2f'; c.fillRect(x - s * 0.4, y - s * 1.1, s * 0.07, s * 0.7); c.fillRect(x + s * 0.33, y - s * 1.1, s * 0.07, s * 0.7);
-    c.fillStyle = se === 3 ? '#fff' : '#a0522d'; c.beginPath(); c.moveTo(x - s * 0.55, y - s * 1.0); c.lineTo(x, y - s * 1.35); c.lineTo(x + s * 0.55, y - s * 1.0); c.fill();
-    c.strokeStyle = '#ddd'; c.lineWidth = 1; c.beginPath(); c.moveTo(x, y - s * 1.0); c.lineTo(x, y - s * 0.6); c.stroke();
-    c.fillStyle = '#8b5a2b'; c.fillRect(x - s * 0.08, y - s * 0.62, s * 0.16, s * 0.12);
-  }
-
-  function cauldron(c, x, y, s, t) {
-    ell(c, x, y - s * 0.05, s * 0.42, s * 0.12, 0, 'rgba(0,0,0,0.25)');
-    for (let i = 0; i < 3; i++) circ(c, x + (i - 1) * s * 0.18, y - s * 0.12, s * 0.08 + Math.sin(t * 10 + i) * s * 0.01, ['#ff7043', '#ffca28', '#ff5722'][i]);
-    ell(c, x, y - s * 0.38, s * 0.38, s * 0.3, 0, '#2b2b33');
-    ell(c, x, y - s * 0.58, s * 0.36, s * 0.1, 0, '#3a3a44');
-    ell(c, x, y - s * 0.58, s * 0.3, s * 0.07, 0, '#7cfc9a');
-    for (let i = 0; i < 3; i++) {
-      const p = (t * 0.6 + i / 3) % 1;
-      c.globalAlpha = 1 - p; circ(c, x + Math.sin(t * 2 + i * 2) * s * 0.15, y - s * (0.6 + p * 0.6), s * (0.05 + p * 0.06), '#b9ffcf'); c.globalAlpha = 1;
-    }
   }
 
   // ---- Ikony ----
@@ -676,6 +509,6 @@ const Art = (() => {
     c.textBaseline = 'alphabetic';
   }
 
-  return { bloom, plant, char, ground, soil, iceTile, tree, shroom, boulder, cliff, icehouse, hut, house, stall, well, cauldron, icon, hash, ell, circ, bubble, wrapText };
+  return { plant, char, ground, soil, shroom, icon, hash, circ, bubble };
 })();
 window.Art = Art; // pre 3D modul (render3d.mjs)

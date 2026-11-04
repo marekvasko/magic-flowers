@@ -29,7 +29,9 @@ const MIME = {
 const gzCache = new Map(); // súbor → { mtime, gz } – Three.js má ~2 MB, gzip ho zmenší asi na štvrtinu
 const server = http.createServer((req, res) => {
   let url = decodeURIComponent((req.url || '/').split('?')[0]);
-  if (url === '/' || url === '/3d' || url === '/3d/') url = '/index.html';
+  // hra je len v 3D na '/'; staré odkazy na /3d presmerujeme (aj s ?room=…)
+  if (url === '/3d' || url === '/3d/') { const q = (req.url || '').indexOf('?'); res.writeHead(301, { Location: '/' + (q >= 0 ? req.url.slice(q) : '') }); return res.end(); }
+  if (url === '/') url = '/index.html';
   let base = PUBLIC_DIR, rel = url.slice(1);
   if (url.startsWith('/shared/')) { base = SHARED_DIR; rel = url.slice(8); }
   else if (url.startsWith('/vendor/three/')) { base = THREE_DIR; rel = url.slice(14); }
