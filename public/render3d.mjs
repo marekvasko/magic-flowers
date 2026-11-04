@@ -272,7 +272,7 @@ export function create(api) {
 
   // ---------- Mapa tieňov od slnka (GPU) ----------
   // Svet sa z pohľadu slnka nakreslí len do hĺbky. Ortogonálna kamera slnka presne obopína celú mapu.
-  // Prekresľuje sa len pri posune slnka o ~0,2° alebo po prestavbe sveta – vždy na začiatku snímky.
+  // Prekresľuje sa raz za herný krok (5 herných minút) alebo po prestavbe sveta – vždy na začiatku snímky.
   const shadowRT = new THREE.WebGLRenderTarget(SHADOW_SIZE, SHADOW_SIZE, { depthBuffer: true });
   shadowRT.depthTexture = new THREE.DepthTexture(SHADOW_SIZE, SHADOW_SIZE);
   material.uniforms.shadowMap.value = shadowRT.depthTexture;
@@ -282,14 +282,17 @@ export function create(api) {
   const shadowDepthMat = new THREE.MeshBasicMaterial({ side: THREE.BackSide, colorWrite: false });
   const worldCorners = [];
   for (const x of [0, D.W]) for (const y of [0, 7]) for (const z of [0, D.H]) worldCorners.push(new THREE.Vector3(x, y, z));
-  let shadowDirty = true, lastShadowDir = null;
-  function updateShadowMap(dir) {
+  let shadowDirty = true, lastShadowKey = '';
+  function updateShadowMap(min, se) {
     const u = material.uniforms;
+    const stepMin = Math.floor(min / D.MIN_PER_TICK) * D.MIN_PER_TICK; // slnko z aktuálneho herného kroku
+    const key = se + ':' + stepMin;
+    if (!shadowDirty && key === lastShadowKey) return;
+    shadowDirty = false; lastShadowKey = key;
+    const dir = W.sunDir(stepMin, se);
     if (!dir) { u.shadowOn.value = 0; return; }
     u.shadowOn.value = 1;
-    u.sunDir.value.set(dir.x, dir.y, dir.z);
-    if (!shadowDirty && lastShadowDir && lastShadowDir.x * dir.x + lastShadowDir.y * dir.y + lastShadowDir.z * dir.z > 0.999994) return;
-    shadowDirty = false; lastShadowDir = dir;
+    u.sunDir.value.set(dir.x, dir.y, dir.z); // rovnaké slnko ako mapa – odvrátené steny sedia s tieňom
     const center = new THREE.Vector3(D.W / 2, 3, D.H / 2);
     lightCam.position.copy(center).addScaledVector(new THREE.Vector3(dir.x, dir.y, dir.z), 80);
     lightCam.up.set(0, 1, 0);
@@ -581,7 +584,7 @@ export function create(api) {
     if (builtSeason !== se) { buildMesh(se); refreshGround(se, t, true); drawnSeason = se; }
     if (now - lastGround > 600) { refreshGround(se, t, false); lastGround = now; }
     lighting(min, se);
-    updateShadowMap(curSunDir);
+    updateShadowMap(min, se);
     placeCamera(dt);
 
     // svetelné zdroje (okná, kotlík, hráči, svietiace kvety) – len keď je šero
