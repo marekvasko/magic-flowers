@@ -6,7 +6,7 @@
 
   const SHIRTS = ['#4a90d9', '#e05a5a', '#5cb85c', '#f0ad4e', '#9b59d0', '#20b2aa', '#ff7eb6', '#555555'];
   const HAIRS = ['#5b3a1a', '#2b1a10', '#e8c36a', '#c0532a', '#9e9e9e', '#d96fa8', '#3a6ea5'];
-  const EMOJI = { wave: '👋', heart: '❤️', laugh: '😂', flower: '🌸', dance: '🎵' };
+  const EMOJI = { wave: '👋', heart: '❤️', laugh: '😂', flower: '🌸', dance: '🎵', sleep: '💤' };
   const SECRETS = [
     'Mesiac šepká: „Keď sa dvaja roztancujú v kruhu z húb, víly to nevydržia a pridajú sa…“',
     'Mesiac šepká: „Kto pije jesenný odvar víl, môže tancovať aj sám.“',
@@ -133,6 +133,14 @@
         for (const id of [...S.others.keys()]) if (!seen.has(id)) S.others.delete(id);
         break;
       }
+      case 'sleep': {
+        const was = S.asleep;
+        S.asleep = m.ids.includes(S.id); S.ff = m.ff; S.sleepN = m.ids.length; S.sleepTotal = m.total;
+        if (S.asleep) { stopWalk(); S.stick.x = S.stick.y = 0; }
+        if (was && !S.asleep && m.ids.length === 0 && !m.ff) sfx('magic');
+        renderSleep();
+        break;
+      }
       case 'toast': toast(m.text, m.kind); if (m.kind === 'magic') sfx('magic'); else if (m.kind === 'gift') sfx('coin'); break;
       case 'chat': chatLine(m.name, m.text); S.bubbles[m.id] = { text: m.text, until: performance.now() + 5000 }; break;
       case 'fx': spawnFx(m); break;
@@ -204,7 +212,7 @@
       case 'stall': return { i: '🛒', l: 'Trh', ui: 'shop' };
       case 'cauldron': return { i: '⚗️', l: 'Kotlík', ui: 'cauldron' };
       case 'babka': case 'hut': return { i: '👵', l: 'Babka', ui: 'babka' };
-      case 'house': return { i: '📦', l: 'Sklad', ui: 'storage' };
+      case 'house': return { i: '🏠', l: 'Domček', ui: 'house' };
       case 'well': return sel === 'can' ? { i: '💧', l: 'Načrieť' } : { i: '🪙', l: 'Prianie' };
       case 'water': return sel === 'can' ? { i: '💧', l: 'Načrieť' } : null;
       case 'shroom': case 'ring': return { i: '🍄', l: 'Huby', info: true };
@@ -273,7 +281,7 @@
   // ---------- Vstupy ----------
   const KEYMAP = { ArrowUp: 'u', KeyW: 'u', ArrowDown: 'd', KeyS: 'd', ArrowLeft: 'l', KeyA: 'l', ArrowRight: 'r', KeyD: 'r' };
   addEventListener('keydown', e => {
-    if (!S.joined || document.activeElement.tagName === 'INPUT') return;
+    if (!S.joined || S.asleep || document.activeElement.tagName === 'INPUT') return;
     S.kbd = true;
     if (KEYMAP[e.code]) { S.keys[KEYMAP[e.code]] = true; stopWalk(); e.preventDefault(); }
     if (e.code === 'Space' || e.code === 'KeyE' || e.code === 'Enter') { const f = frontTile(); doAction(f.x, f.y); e.preventDefault(); }
@@ -393,6 +401,7 @@
   }
 
   function tapWorld(cx, cy) {
+    if (S.asleep) return;
     let tgt;
     if (MODE3D) { if (!R3) return; tgt = R3.pick(cx, cy); if (!tgt) return; } // lúč do 3D scény
     else {
@@ -527,6 +536,7 @@
     if (kind === 'menu') return openModal('☰ Menu', renderMenu);
     if (kind === 'help') return openModal('❓ Ako hrať', renderHelp);
     if (kind === 'storage') return openModal('📦 Spoločný sklad', renderStorage);
+    if (kind === 'house') return openModal('🏠 Domček', renderHouse);
     if (kind === 'wish') return openModal('✨ Papraďový kvet', renderWish);
   }
 
@@ -792,6 +802,29 @@
     body.appendChild(h('button', { class: 'btn gray', style: 'width:100%;padding:12px', onclick: () => { S.joined = false; S.ws && S.ws.close(); location.reload(); } }, 'Odísť zo záhrady'));
   }
 
+  // Domček: posteľ (spánok) a spoločný sklad
+  function renderHouse(body) {
+    const ok = D.canSleep(realMin());
+    const b = h('button', { class: 'btn', onclick: () => { send({ t: 'sleep', on: true }); closeModal(); } }, '🛏️ Ísť spať');
+    if (!ok) b.disabled = true;
+    const n = S.sleepTotal || 1;
+    const note = !ok ? 'Spať sa dá od 18:00 do 6:00.'
+      : n > 1 ? `Noc prebehne, keď pôjdu spať všetci v záhrade (${S.sleepN || 0}/${n} spí).` : 'Noc prebehne rýchlo až do rána.';
+    body.appendChild(h('div', { class: 'row' }, h('div', { class: 'info' }, h('b', null, '🛏️ Posteľ'), h('small', null, note)), h('div', { class: 'btns' }, b)));
+    renderStorage(body);
+  }
+
+  // Prekrytie počas spánku: čakanie na ostatných, potom zrýchlená noc
+  function renderSleep() {
+    const el = $('sleep');
+    el.classList.toggle('hidden', !S.asleep);
+    if (!S.asleep) return;
+    if (S.modal) closeModal();
+    $('slTxt').textContent = S.ff ? 'Spíš… noc ubieha 🌙' : `Čakáš, kým pôjdu spať aj ostatní (${S.sleepN}/${S.sleepTotal}).`;
+    $('slWake').classList.toggle('hidden', !!S.ff);
+  }
+  $('slWake').onclick = () => send({ t: 'sleep', on: false });
+
   function renderStorage(body) {
     body.appendChild(h('p', { style: 'margin:4px 0 10px;font-size:14px' }, 'Sklad je spoločný pre všetkých v záhrade. Peniaze má každý svoje. ❄️ V chlade skladu kvety vädnú 2× pomalšie.'));
     const wl = S.inv.wilted || 0;
@@ -825,6 +858,7 @@
       <p>🟡 <b>Práca so zemou:</b> ťukni na políčko vedľa seba – čo sa stane, závisí od vybranej veci v lište. Vzdialené políčko najprv dôjdeš, druhým ťuknutím ho napr. prekopeš.</p>
       <p>⛏️ <b>Motykou</b> prekopeš trávu, piesok, lesnú pôdu alebo skalku. 🌱 Potom zasaď <b>semienka</b> a 💧 <b>polievaj</b> krhlou (načrieš v jazierku alebo studni).</p>
       <p>☀️🌳 Každý kvet má svoje nároky: <b>ročné obdobie, svetlo, pôdu a vodu</b> – nájdeš ich v 📖 Herbári. Spokojná rastlina dá až 3 kvety, kompost pridá ešte jeden.</p>
+      <p>🛏️ <b>Spánok:</b> od 18:00 si môžeš ísť ľahnúť do domčeka. Keď spia všetci v záhrade, noc rýchlo prebehne až do 6:00 (ale prídeš o nočné čary).</p>
       <p>🌙 Nový deň začína o 6:00 – vtedy rastliny porastú. Každé obdobie trvá ${D.DAYS_PER_SEASON} dni. V zime prežijú len zimné kvety!</p>
       <p>🪙 <b>Začínaš chudobne:</b> pár semienok, malá krhla a povolenie na 8 políčok. Väčšiu krhlu, pole a kompostér kúpiš na trhu (Vylepšiť).</p>
       <p>🛒 <b>Trh žije:</b> semienok je obmedzene a v sezóne zdražejú – kupuj ich vopred, keď veľkoobchodník privezie tovar na ďalšie obdobie. Výkupná cena kvetov klesá, keď ich je na trhu veľa, a rastie počas sviatkov (ohlásené 2 dni vopred). Na trhu obchoduje aj záhradník Jano, špekulant Fero a kvetinárka Zuzka – sleduj Správy.</p>
@@ -895,6 +929,7 @@
   function update(dt) {
     const me = S.me;
     let vx = S.stick.x, vy = S.stick.y;
+    if (S.asleep) { vx = vy = 0; S.keys = {}; S.path = null; }
     if (S.keys.l) vx -= 1; if (S.keys.r) vx += 1; if (S.keys.u) vy -= 1; if (S.keys.d) vy += 1;
     if (R3 && (vx || vy)) [vx, vy] = R3.screenToWorld(vx, vy); // joystick je vzhľadom na obrazovku, kamera je otočená
     if (vx || vy) stopWalk();

@@ -275,8 +275,35 @@ function flushEconomy(room) {
   if (room.boardDirty) { room.boardDirty = false; broadcast(room, Econ.boardView(room)); }
 }
 
+// ---------- Spánok ----------
+// Keď spia všetci pripojení hráči, svet pretočí noc zrýchlene (FF_STEPS krokov za 100 ms) až do 6:00.
+const FF_STEPS = 5;
+const HOUSE = { x: 3.5, y: 28.5 };
+function nearHouse(pl) { return Math.hypot(pl.x - HOUSE.x, pl.y - HOUSE.y) <= 3.5; }
+function sleepMsg(room) {
+  const ps = [...room.players.values()];
+  return { t: 'sleep', ids: ps.filter(p => p.sleep).map(p => p.id), total: ps.length, ff: !!room.ff };
+}
+function checkSleep(room) {
+  if (room.ff || !room.players.size) return;
+  for (const p of room.players.values()) if (!p.sleep) return;
+  room.ff = { until: E.nextDailyTick(room.tick + 1, D.DAWN_TICK) };
+  broadcast(room, sleepMsg(room));
+}
+function fastForward(room, now) {
+  for (let k = 0; k < FF_STEPS && room.tick < room.ff.until; k++) E.step(room, HANDLERS);
+  room.wall = now; // pretočený čas sa nedobieha – po prebudení beží svet zase normálnym tempom
+  room.dirty = true;
+  if (room.tick >= room.ff.until) {
+    room.ff = null;
+    for (const p of room.players.values()) p.sleep = false;
+    broadcast(room, sleepMsg(room));
+  }
+  broadcast(room, timeMsg(room));
+}
+
 function timeMsg(room) {
-  return { t: 'time', tick: room.tick, tickMs: E.tickMs(room), weather: room.weather, mode: room.mode, daySeconds: room.daySeconds };
+  return { t: 'time', tick: room.tick, tickMs: room.ff ? 100 / FF_STEPS : E.tickMs(room), weather: room.weather, mode: room.mode, daySeconds: room.daySeconds };
 }
 
 // ---------- Akcie ----------
@@ -499,6 +526,7 @@ wss.on('connection', ws => {
       send(ws, Econ.boardView(room));
       sendMe(pl);
       broadcast(room, roomInfo(room));
+      broadcast(room, sleepMsg(room));
       toastAll(room, `${name} prišiel(a) do záhrady 🌼`);
       if (sv.lastTick != null && room.tick - sv.lastTick >= TPD) {
         const days = Math.floor((room.tick - sv.lastTick) / TPD);
@@ -511,6 +539,7 @@ wss.on('connection', ws => {
     const room = pl.room, sv = pl.save;
     switch (m.t) {
       case 'move':
+        if (pl.sleep) break; // spiaci hráč leží v posteli
         if (typeof m.x === 'number' && typeof m.y === 'number' && isFinite(m.x) && isFinite(m.y)) {
           pl.x = Math.max(0.2, Math.min(D.W - 0.2, m.x));
           pl.y = Math.max(0.2, Math.min(D.H - 0.2, m.y));
@@ -519,7 +548,23 @@ wss.on('connection', ws => {
           sv.x = pl.x; sv.y = pl.y;
         }
         break;
-      case 'act': act(pl, m); break;
+      case 'act': if (!pl.sleep) act(pl, m); break;
+      case 'sleep': {
+        if (m.on) {
+          if (pl.sleep || room.ff) return;
+          if (!D.canSleep(room.min)) return toast(pl, 'Ešte je skoro. Spať sa dá od 18:00. 🌇');
+          if (!nearHouse(pl)) return toast(pl, 'Posteľ je v domčeku – podíď bližšie. 🏠');
+          pl.sleep = true; pl.emote = null;
+          const s = sleepMsg(room);
+          if (s.ids.length < s.total) toastAll(room, `💤 ${pl.name} ide spať (${s.ids.length}/${s.total}). Keď pôjdu spať všetci, noc prebehne.`, 'day');
+          broadcast(room, s);
+          checkSleep(room);
+        } else if (pl.sleep && !room.ff) {
+          pl.sleep = false;
+          broadcast(room, sleepMsg(room));
+        }
+        break;
+      }
       case 'emote': {
         const e = ['dance', 'wave', 'heart', 'laugh', 'flower'].includes(m.e) ? m.e : 'wave';
         pl.emote = e; pl.emoteAt = Date.now();
@@ -642,6 +687,8 @@ wss.on('connection', ws => {
       pl.save.lastTick = room.tick;
       toastAll(room, `${pl.name} odišiel(a) zo záhrady.`);
       broadcast(room, roomInfo(room));
+      broadcast(room, sleepMsg(room));
+      checkSleep(room); // ak odišiel posledný bdejúci, ostatní môžu zaspať
       room.dirty = true;
       saveRoom(room);
     }
@@ -652,6 +699,7 @@ wss.on('connection', ws => {
 setInterval(() => {
   const now = Date.now();
   for (const room of rooms.values()) {
+    if (room.ff) { fastForward(room, now); flushEconomy(room); continue; }
     if (room.mode === 'paused' && !room.players.size) { room.wall = now; continue; }
     const n = E.advance(room, now, HANDLERS, 50000);
     if (n) { room.dirty = true; if (room.players.size) broadcast(room, timeMsg(room)); }
@@ -665,7 +713,7 @@ setInterval(() => {
     if (!room.players.size) continue;
     const list = [...room.players.values()].map(p => ({
       id: p.id, name: p.name, x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, a: p.a, look: p.look,
-      e: p.emote && now - p.emoteAt < 6000 ? p.emote : null
+      e: p.sleep ? 'sleep' : p.emote && now - p.emoteAt < 6000 ? p.emote : null
     }));
     broadcast(room, { t: 'pl', list });
   }

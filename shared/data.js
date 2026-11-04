@@ -292,6 +292,9 @@
   function minOfTick(tick) { return (tick % TICKS_PER_DAY) * MIN_PER_TICK; }
   function seasonOf(day) { return Math.floor((day - 1) / DAYS_PER_SEASON) % 4; }
   function isNight(min) { const h = min / 60; return h >= 21 || h < 4; }
+  // Spať sa dá večer a v noci (18:00 – 6:00); keď spia všetci hráči, noc prebehne až do rána.
+  const SLEEP_FROM_MIN = 18 * 60;
+  function canSleep(min) { return min >= SLEEP_FROM_MIN || min < DAWN_TICK * MIN_PER_TICK; }
   function stageOf(p) {
     const sp = SPECIES[p.sp];
     if (p.prog >= sp.days) return 3;
@@ -304,7 +307,7 @@
     W, H, DAYS_PER_SEASON, TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
     RING, SPAWN, BABKA, BLOCK, TILLABLE,
-    sellPrice, itemName, buildMap, isShade, seasonOf, isNight, stageOf, mulberry32
+    sellPrice, itemName, buildMap, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
   };
   root.GameData = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

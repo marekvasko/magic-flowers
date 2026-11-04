@@ -113,3 +113,9 @@ button { font: inherit; cursor: pointer; border: none; }
 .rotbtn { position: absolute; top: calc(env(safe-area-inset-top) + 74px); width: 46px; height: 46px; border-radius: 50%; background: #fff8e7e6; border: 3px solid #8b5a2b; font-size: 24px; font-weight: 800; color: #5b3a1a; box-shadow: 0 3px 0 #0003; z-index: 2; }
 #rotL { left: 8px; } #rotR { right: 8px; }
 .rotbtn:active { transform: translateY(2px); }
+/* Spánok: stmavenie obrazovky, svet za ním pretáča noc */
+#sleep { position: absolute; inset: 0; z-index: 9; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle, #0b1030aa, #050818e6); }
+#sleep .sl-card { text-align: center; color: #fff; padding: 20px; max-width: 80%; font-weight: 700; font-size: 17px; }
+#sleep .sl-z { font-size: 54px; animation: slz 2s ease-in-out infinite; }
+#sleep button { margin-top: 14px; }
+@keyframes slz { 50% { transform: translateY(-10px); opacity: .6; } }
