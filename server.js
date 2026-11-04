@@ -395,7 +395,10 @@ function act(pl, m) {
   }
 
   // Neprekopaná tráva a v ruke nič, čo by tu niečo robilo (semienka, kvety, krhla…) → hľadanie divých semienok
-  if (Scav.canSearch(t) && searchesWith(item)) return startScavenge(pl, i, item);
+  if (Scav.canSearch(t) && searchesWith(item)) {
+    if (Math.hypot(pl.x - (x + 0.5), pl.y - (y + 0.5)) > 0.45) return toast(pl, 'Postav sa priamo na to políčko trávy. 🔍');
+    return startScavenge(pl, i, item);
+  }
 
   if (item === 'hoe') {
     if (p && p.d) { t.s.p = null; tileMsg(room, i); return; }
@@ -786,7 +789,7 @@ setInterval(() => {
     if (!room.players.size) continue;
     const list = [...room.players.values()].map(p => ({
       id: p.id, name: p.name, x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, a: p.a, look: p.look, cr: p.cr ? 1 : 0, j: p.jn | 0, si: p.scav ? p.scav.i : -1,
-      e: p.sleep ? 'sleep' : p.emote && now - p.emoteAt < 6000 ? p.emote : null
+      e: p.sleep ? 'sleep' : p.scav ? 'search' : p.emote && now - p.emoteAt < 6000 ? p.emote : null
     }));
     broadcast(room, { t: 'pl', list });
   }

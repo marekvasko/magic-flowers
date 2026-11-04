@@ -6,7 +6,7 @@
 
   const SHIRTS = ['#4a90d9', '#e05a5a', '#5cb85c', '#f0ad4e', '#9b59d0', '#20b2aa', '#ff7eb6', '#555555'];
   const HAIRS = ['#5b3a1a', '#2b1a10', '#e8c36a', '#c0532a', '#9e9e9e', '#d96fa8', '#3a6ea5'];
-  const EMOJI = { wave: '👋', heart: '❤️', laugh: '😂', flower: '🌸', dance: '🎵', sleep: '💤' };
+  const EMOJI = { wave: '👋', heart: '❤️', laugh: '😂', flower: '🌸', dance: '🎵', sleep: '💤', search: '🔍' };
   const SECRETS = [
     'Mesiac šepká: „Keď sa dvaja roztancujú v kruhu z húb, víly to nevydržia a pridajú sa…“',
     'Mesiac šepká: „Kto pije jesenný odvar víl, môže tancovať aj sám.“',
@@ -308,15 +308,25 @@
     toast(`${sp.name}: ${st} (${Math.floor(p.prog)}/${sp.days} dní) · ${'⭐'.repeat(p.q)}${notes.length ? ' · ' + notes.join(', ') : ' · spokojná 😊'}`);
   }
 
+  // Hľadať sa dá len stojac priamo na políčku – kým tam hráč nie je, najprv tam dôjde
+  const onTile = (tx, ty) => Math.hypot(S.me.x - (tx + 0.5), S.me.y - (ty + 0.5)) <= 0.3;
+  function walkOnto(tx, ty) {
+    const path = findPath((x, y) => x === tx && y === ty);
+    if (!path) return;
+    S.path = path; S.pendingAct = { x: tx, y: ty, onTile: true }; S.stuckT = 0;
+  }
+
   function doAction(tx, ty) {
     const a = ctxAction(tx, ty);
     if (!a) return;
     if (a.ui) return openUI(a.ui);
+    if (a.l === 'Hľadať' && !onTile(tx, ty)) return walkOnto(tx, ty);
     if (a.info) {
       if (a.l === 'Huby') toast(D.isNight(curMin()) ? 'Huby slabo svietia… Skús tu zatancovať 💃' : 'Kruh z húb. Babka hovorí, že tu v noci tancujú víly. 🍄');
       else plantInfo(tx, ty);
       return;
     }
+    if (a.l === 'Hľadať') { const me = S.me; send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl }); } // server musí vedieť, že už stojím na políčku
     send({ t: 'act', x: tx, y: ty, item: S.sel });
     if (a.l === 'Kopať') sfx('dig'); else if (a.l === 'Poliať' || a.l === 'Načrieť') sfx('water'); else sfx('pop');
   }
@@ -1041,7 +1051,7 @@
     if (vx || vy) stopWalk();
     if (S.path) {
       const pa = S.pendingAct;
-      if (pa && inReach(pa.x, pa.y) && S.path.length <= 1) {
+      if (pa && !pa.onTile && inReach(pa.x, pa.y) && S.path.length <= 1) {
         stopWalk(); face(pa.x + 0.5 - me.x, pa.y + 0.5 - me.y); doAction(pa.x, pa.y);
       } else {
         const wp = S.path[0], dx = wp.x - me.x, dy = wp.y - me.y, d = Math.hypot(dx, dy);
