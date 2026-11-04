@@ -39,7 +39,8 @@ button { font: inherit; cursor: pointer; border: none; }
 .toast.out { opacity: 0; transition: opacity .5s; }
 @keyframes tin { from { transform: translateY(-10px); opacity: 0; } }
 /* Správa chatu: vlastný rám v štýle menoviek nad hráčmi */
-.chatline { background: rgba(0,0,0,0.45); color: #fff; padding: 2px 7px; font-size: 13px; overflow-wrap: anywhere; transform-origin: left bottom; }
+/* riadok správy = 22 px + medzera 3 px = 25 px (CHAT_ROW v game.js) */
+.chatline { position: relative; background: rgba(0,0,0,0.45); color: #fff; padding: 2px 7px; font-size: 13px; line-height: 18px; overflow-wrap: anywhere; transform-origin: left bottom; }
 #chatlog .chatline { transition: opacity 1s; }
 #chatlog .chatline.out { opacity: 0 !important; }
 .chatline b { color: #ffd76a; }
@@ -120,9 +121,10 @@ button { font: inherit; cursor: pointer; border: none; }
    riadok na písanie, ktorý drží miesto – správy tak ostanú na tom istom mieste aj po otvorení (história #chathist). */
 #chatbox { position: absolute; left: 8px; right: 8px; bottom: calc(var(--bar-h, 150px) + 8px); display: flex; flex-direction: column; gap: 6px; z-index: 5; pointer-events: none; }
 /* perspektíva pre efekt kolotoča: vyššie správy sú vzadu, posúvaním idú dopredu (chatWheel v game.js) */
-#chatlog, #chathist { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; perspective: 600px; perspective-origin: left bottom; }
+#chatlog, #chathist { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
 #chatlog .chatline { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-#chathist { max-height: min(40vh, 300px); overflow-y: auto; touch-action: pan-y; user-select: text; -webkit-user-select: text; }
+/* história: 15 riadkov, z toho 2 vrchné prichádzajú z pozadia (chatWheel v game.js) */
+#chathist { position: relative; max-height: min(50vh, calc(15 * 25px)); overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #fff6 transparent; touch-action: pan-y; user-select: text; -webkit-user-select: text; }
 #chathist:empty::before { content: 'Zatiaľ žiadne správy.'; background: rgba(0,0,0,0.45); color: #fff; font-size: 13px; padding: 2px 7px; }
 #chatbox:not(.open) #chathist, #chatbox.open #chatlog { display: none; }
 #chatbox:not(.open) .chatrow { visibility: hidden; }
