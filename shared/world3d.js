@@ -18,7 +18,7 @@
     // stromy z minikociek
     LEAF_SPRING: 64, LEAF_SPRING2: 65, LEAF_SUMMER: 66, LEAF_SUMMER2: 67, LEAF_AUT_OR: 68, LEAF_AUT_RED: 69, LEAF_AUT_YEL: 70,
     LEAF_BROWN: 71, LEAF_LIME: 72, BIRCH: 73, BIRCH_MARK: 74, BARK: 75, BARK_DARK: 76, PINE_BARK: 77, NEEDLE: 78, NEEDLE2: 79,
-    APPLE: 80, BLOSSOM_W: 81, BLOSSOM_P: 82,
+    APPLE: 80, BLOSSOM_W: 81, BLOSSOM_P: 82, MOSS: 83, LICHEN: 84, STONE_LIGHT: 85,
     INVIS: 63 // neviditeľná náhrada jemného modelu v hrubej mriežke (tieň, zatienenie, výber)
   };
   // Farby podľa ročného obdobia [jar, leto, jeseň, zima]; emis = svieti v noci
@@ -40,7 +40,8 @@
     [M.LEAF_SPRING]: ['#7cc456'], [M.LEAF_SPRING2]: ['#62b04a'], [M.LEAF_SUMMER]: ['#3f8f3a'], [M.LEAF_SUMMER2]: ['#2f7a30'],
     [M.LEAF_AUT_OR]: ['#e07b24'], [M.LEAF_AUT_RED]: ['#c0392b'], [M.LEAF_AUT_YEL]: ['#e6c229'], [M.LEAF_BROWN]: ['#a0612a'], [M.LEAF_LIME]: ['#a7d65a'],
     [M.BIRCH]: ['#eeeae0'], [M.BIRCH_MARK]: ['#3a3a3a'], [M.BARK]: ['#5d4029'], [M.BARK_DARK]: ['#43301f'], [M.PINE_BARK]: ['#a0522d'],
-    [M.NEEDLE]: ['#2e6b3a'], [M.NEEDLE2]: ['#24572f'], [M.APPLE]: ['#d62828'], [M.BLOSSOM_W]: ['#fbe7ef'], [M.BLOSSOM_P]: ['#f5a9c8']
+    [M.NEEDLE]: ['#2e6b3a'], [M.NEEDLE2]: ['#24572f'], [M.APPLE]: ['#d62828'], [M.BLOSSOM_W]: ['#fbe7ef'], [M.BLOSSOM_P]: ['#f5a9c8'],
+    [M.MOSS]: ['#6f9a3c', '#5f8a34', '#7d7a36', '#6f9a3c'], [M.LICHEN]: ['#c9c27a'], [M.STONE_LIGHT]: ['#b3aea6']
   };
   const EMISSIVE = { [M.WINDOW]: '#ffd27a', [M.BREW]: '#9dffb8', [M.LANTERN]: '#ffe9a8', [M.FIRE]: '#ff9a3a', [M.FLAME]: '#ffe07a', [M.BREW_LIGHT]: '#d8ffe4' };
   function colorOf(mat, season) { const p = PALETTE[mat] || ['#ff00ff']; return p[Math.min(season, p.length - 1)] || p[0]; }
@@ -65,11 +66,6 @@
   function box(g, x0, y0, z0, x1, y1, z1, v) { for (let z = z0; z <= z1; z++) for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set(g, x, y, z, v); }
 
   // ---- Generované modely ----
-  function boulder(g, tx, ty) {
-    const sx = tx * R, sz = ty * R, base = g.heights[ty * D.W + tx];
-    box(g, sx, base, sz, sx + 1, base, sz + 1, M.DARKSTONE);
-    set(g, sx + (hash(tx, ty, 1) < 0.5 ? 0 : 1), base + 1, sz + (hash(tx, ty, 2) < 0.5 ? 0 : 1), M.DARKSTONE);
-  }
   // Budova s valbovou strechou zo schodov. x0..x1, z0..z1 v podkockách (vrátane), výška stien wh
   function building(g, x0, z0, x1, z1, wh, wall, roof, frontZ, doorX, windowsX) {
     const base = 2;
@@ -85,7 +81,7 @@
     const done = {};
     for (let ty = 0; ty < D.H; ty++) for (let tx = 0; tx < D.W; tx++) {
       const t = tiles[ty * D.W + tx].g;
-      if (t === 'boulder') boulder(g, tx, ty); // stromy sú jemné modely (treeModel)
+      // stromy aj balvany sú jemné modely (treeModel, rockModel)
       // chalupa, domček, trh, studňa a kotlík sú jemné modely z minikociek (fineModels)
     }
   }
@@ -351,11 +347,12 @@
     jablon: [[L.BLOSSOM_W, L.BLOSSOM_P, L.BLOSSOM_W, L.LEAF_SPRING], [L.LEAF_SUMMER, L.LEAF_SUMMER2], [L.LEAF_AUT_YEL, L.LEAF_SUMMER, L.LEAF_LIME]]
   };
   // Elipsoid s nerovným okrajom (a voliteľnými dierami) – základ korún
-  function blob(C, cx, cy, cz, rx, ry, rz, mat, holes, seed) {
+  function blob(C, cx, cy, cz, rx, ry, rz, mat, holes, seed, rough) {
+    const rg = rough == null ? 0.45 : rough; // nerovnosť okraja (koruny hrubšie, kamene hladšie)
     for (let z = Math.floor(cz - rz - 1); z <= Math.ceil(cz + rz + 1); z++) for (let y = Math.floor(cy - ry - 1); y <= Math.ceil(cy + ry + 1); y++) for (let x = Math.floor(cx - rx - 1); x <= Math.ceil(cx + rx + 1); x++) {
       const n = hash(x, y, z + (seed || 0));
       const d = ((x + 0.5 - cx) / rx) ** 2 + ((y + 0.5 - cy) / ry) ** 2 + ((z + 0.5 - cz) / rz) ** 2;
-      if (d <= 1 + (n - 0.5) * 0.45 && !(holes && n < holes && d > 0.45)) { if (!C.getf(x, y, z)) C.put(x, y, z, mat(x, y, z, n)); }
+      if (d <= 1 + (n - 0.5) * rg && !(holes && n < holes && d > 0.45)) { if (!C.getf(x, y, z)) C.put(x, y, z, mat(x, y, z, n)); }
     }
   }
   const pickOf = list => (x, y, z, n) => list[Math.floor(hash(x, y, z + 3) * list.length)];
@@ -457,6 +454,44 @@
     treeCache.set(key, f);
     return f;
   }
+  // ---- Kamene z minikociek: 3 tvary, viac odtieňov kameňa, mach a lišajník, v zime sneh ----
+  const rockMat = (x, y, z) => { const h = hash(x, y, z + 61); return h < 0.25 ? M.DARKSTONE : h < 0.45 ? M.STONE_LIGHT : M.STONE; };
+  function mossTop(C, se) {
+    for (let z = -FM; z < C.D2 + FM; z++) for (let x = -FM; x < C.W2 + FM; x++) for (let y = C.sy - 1; y >= 0; y--) {
+      const m = C.getf(x, y, z);
+      if (!m) continue;
+      const h = hash(x, y, z + 71);
+      if (se === 3) { if (h < 0.5 && y >= 2) C.put(x, y + 1, z, M.SNOW); }
+      else if (h < 0.3) C.put(x, y, z, M.MOSS); else if (h < 0.38) C.put(x, y, z, M.LICHEN);
+      break;
+    }
+  }
+  const ROCK_BUILD = {
+    balvan(C) {
+      blob(C, 3.5, 2.6, 3.8, 3.9, 3.1, 3.4, rockMat, 0, 61, 0.18);
+      blob(C, 6, 1.6, 1.4, 2.3, 1.8, 2.1, rockMat, 0, 62, 0.18);
+    },
+    kopa(C) {
+      blob(C, 2.2, 1.8, 2.6, 2.6, 2.2, 2.3, rockMat, 0, 63, 0.18);
+      blob(C, 5.6, 1.5, 4.6, 2.4, 1.8, 2.1, rockMat, 0, 64, 0.18);
+      blob(C, 3.2, 1.1, 6.2, 1.8, 1.4, 1.6, rockMat, 0, 65, 0.18);
+    },
+    plocha(C) {
+      blob(C, 3.6, 1.2, 3.6, 4.4, 1.5, 3.6, rockMat, 0, 66, 0.12);
+      blob(C, 2.6, 3.1, 3.0, 1.9, 1.6, 1.8, rockMat, 0, 67, 0.15);
+    }
+  };
+  const rockCache = new Map();
+  function rockModel(kind, season, rot) {
+    const key = kind + '|' + season + '|' + rot;
+    if (rockCache.has(key)) return rockCache.get(key);
+    let f;
+    if (rot === 0) { const C = fineCanvas(1, 1, 12); ROCK_BUILD[kind](C); mossTop(C, season); f = C.done(); }
+    else f = rotate90(rockModel(kind, season, rot - 1));
+    rockCache.set(key, f);
+    return f;
+  }
+
   // Ktorý druh stromu rastie na políčku (deterministicky); pri babkinej chalúpke je ovocný sad.
   function treeKind(tx, ty) {
     if (tx >= 13 && ty <= 7) return 'jablon';
@@ -489,6 +524,14 @@
       const m = treeModel(kind, season, Math.floor(hash(tx, ty, 13) * 4));
       // dáta modelu sú zdieľané medzi rovnakými stromami – vlastný je len obal s pozíciou
       out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'tree', kind, ox: tx - FM / FINE, oy: groundHeight('tree') / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.25 });
+    }
+    const ROCK_KINDS = Object.keys(ROCK_BUILD);
+    let rockN = 0;
+    for (let i = 0; i < tiles.length; i++) {
+      if (tiles[i].g !== 'boulder') continue;
+      const tx = i % D.W, ty = (i / D.W) | 0, kind = ROCK_KINDS[rockN++ % ROCK_KINDS.length]; // striedame tvary, nech je vidno všetky
+      const m = rockModel(kind, season, Math.floor(hash(tx, ty, 15) * 4));
+      out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'rock', kind, ox: tx - FM / FINE, oy: groundHeight('boulder') / R, oz: ty - FM / FINE, tile: { x: tx, y: ty } });
     }
     return out;
   }

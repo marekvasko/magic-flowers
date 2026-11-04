@@ -172,6 +172,27 @@ export function create(api) {
     builtSeason = se;
   }
 
+  // Pôdorys jemného modelu: všetky stĺpce minikociek, ktoré model zaberá pri pohľade zhora, ako plochý tvar tesne nad zemou.
+  // Riadky stĺpcov sa spájajú do obdĺžnikov, aby tvar mal málo trojuholníkov.
+  function footprintMesh(f) {
+    const F = W.FINE, { sx, sy, sz, data } = f, P = [];
+    const col = (x, z) => { for (let y = 0; y < sy; y++) if (data[(z * sy + y) * sx + x]) return true; return false; };
+    const y = f.oy + 0.02;
+    for (let z = 0; z < sz; z++) {
+      let x = 0;
+      while (x < sx) {
+        if (!col(x, z)) { x++; continue; }
+        const x0 = x; while (x < sx && col(x, z)) x++;
+        const ax = f.ox + x0 / F, bx = f.ox + x / F, az = f.oz + z / F, bz = f.oz + (z + 1) / F;
+        P.push(ax, y, az, ax, y, bz, bx, y, bz, ax, y, az, bx, y, bz, bx, y, az);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
+    return m;
+  }
+
   // ---------- Jemné modely z minikociek (1 blok = 8×8×8) ----------
   let fineMeshes = [], parts = [];
   function buildFine(f, se) {
@@ -227,7 +248,7 @@ export function create(api) {
     const fmesh = new THREE.Mesh(geo, material);
     fmesh.userData.box = geo.boundingBox;
     fmesh.userData.fade = 1;
-    fmesh.userData.maskMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    fmesh.userData.foot = footprintMesh(f);
     fmesh.onBeforeRender = () => { if (fmesh.material === fadeMaterial) { material.uniforms.opacity.value = fmesh.userData.fade; fadeMaterial.uniformsNeedUpdate = true; } };
     fmesh.userData.tile = f.tile;
     // lúč tieňa začína až za vlastnou neviditeľnou náhradou modelu v hrubej mriežke
@@ -459,13 +480,12 @@ export function create(api) {
     renderer.setRenderTarget(maskRT);
     renderer.setClearColor(0x000000, 1); renderer.clear();
     renderer.autoClear = false;
+    // do masky kreslíme len pôdorys skrytého objektu na zemi (nie jeho tvar nad zemou)
     for (const m of fineMeshes) {
       if (m.userData.fade > 0.98) continue;
-      const k = 1 - m.userData.fade, old = m.material, oldV = m.visible;
-      m.userData.maskMat.color.setRGB(k, k, k);
-      m.material = m.userData.maskMat; m.visible = true;
-      renderer.render(m, camera);
-      m.material = old; m.visible = oldV;
+      const k = 1 - m.userData.fade, foot = m.userData.foot;
+      foot.material.color.setRGB(k, k, k);
+      renderer.render(foot, camera);
     }
     renderer.setRenderTarget(null);
     renderer.setClearColor(clear, clearA);

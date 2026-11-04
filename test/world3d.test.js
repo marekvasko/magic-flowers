@@ -13,7 +13,7 @@ test('svet z kociek je deterministický a má správne výšky', () => {
   assert.strictEqual(W.surfaceY(a, rock % D.W, Math.floor(rock / D.W)), 1.5);
   assert.strictEqual(W.surfaceY(a, grass % D.W, Math.floor(grass / D.W)), 1);
   // budovy sú jemné modely; v hrubej mriežke majú neviditeľnú náhradu (chalupa babky stojí na (14,2))
-  assert.deepStrictEqual(a.fine.filter(f => f.type !== 'tree').map(f => f.type).sort(), ['cauldron', 'house', 'hut', 'stall', 'well']);
+  assert.deepStrictEqual(a.fine.filter(f => f.type !== 'tree' && f.type !== 'rock').map(f => f.type).sort(), ['cauldron', 'house', 'hut', 'stall', 'well']);
   assert.strictEqual(W.get(a, 30, 3, 5), W.M.INVIS);
 });
 
@@ -71,7 +71,7 @@ test('chalupa, kotlík, trh a studňa z minikociek majú svoje detaily', () => {
   for (const m of [W.M.AWN_RED, W.M.AWN_WHITE, W.M.SIGN, W.M.ORN, W.M.SACK, W.M.LANTERN]) assert.ok(has('stall', m), 'trh: ' + m);
   for (const m of [W.M.WATER_DEEP, W.M.ROPE, W.M.HANDLE, W.M.SHINGLE]) assert.ok(has('well', m), 'studňa: ' + m);
   // ťuknutie na model vyberie rovnaké políčko ako v 2D
-  for (const f of g.fine) assert.strictEqual(tiles[f.tile.y * D.W + f.tile.x].g, f.type);
+  for (const f of g.fine) assert.strictEqual(tiles[f.tile.y * D.W + f.tile.x].g, f.type === 'rock' ? 'boulder' : f.type);
   // babkina chalupa vrhá tieň na sever (na les)
   assert.ok(W.sunHours(g, 15, 1, 1) < W.sunHours(g, 12, 15, 1) - 4);
   // v zime sneh na slamenej streche
@@ -96,4 +96,14 @@ test('stromy z minikociek: 6 druhov, ročné obdobia a otáčanie', () => {
   const rots = new Map();
   for (const t of trees) { const key = t.kind; if (!rots.has(key)) rots.set(key, new Set()); rots.get(key).add(t.data); }
   assert.ok([...rots.values()].some(s => s.size > 1), 'rovnaký druh sa vyskytuje v rôznych otočeniach');
+});
+
+test('kamene z minikociek: všetky tvary, mach mimo zimy, sneh v zime, tieň v hrubej mriežke', () => {
+  const sum = W.buildGrid(tiles, 1), win = W.buildGrid(tiles, 3);
+  const rocks = sum.fine.filter(f => f.type === 'rock');
+  assert.strictEqual(rocks.length, tiles.filter(t => t.g === 'boulder').length);
+  assert.deepStrictEqual([...new Set(rocks.map(r => r.kind))].sort(), ['balvan', 'kopa', 'plocha']);
+  assert.ok(rocks.every(r => r.data.includes(W.M.MOSS) && !r.data.includes(W.M.SNOW)));
+  assert.ok(win.fine.filter(f => f.type === 'rock').every(r => r.data.includes(W.M.SNOW)));
+  assert.ok(!sum.m.includes(W.M.DARKSTONE), 'hrubé balvany sa už nestavajú');
 });
