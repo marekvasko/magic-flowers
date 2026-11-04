@@ -123,7 +123,7 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
   const tileAt = (x, z) => { const tx = Math.floor(x), tz = Math.floor(z); return tx >= 0 && tz >= 0 && tx < D.W && tz < D.H ? tz * D.W + tx : -1; };
   const groundAt = (grid, x, z) => { const i = tileAt(x, z); return i < 0 || !grid ? 0 : W.surfaceY(grid, i % D.W, (i / D.W) | 0); };
 
-  // poloha víly (rovnaký pohyb ako v 2D: obieha okolo stredu, len v teréne a s výškou)
+  // poloha víly (obieha okolo stredu z S.fx, len v teréne a s výškou)
   function fairyPos(grid, p, t) {
     const ang = p.a + p.life * 1.6;
     const x = p.cx + Math.cos(ang) * p.rad, z = p.cy + Math.sin(ang * 1.3) * p.rad * 0.8;

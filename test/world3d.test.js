@@ -70,7 +70,7 @@ test('chalupa, kotlík, trh a studňa z minikociek majú svoje detaily', () => {
   for (const m of [W.M.POT, W.M.BREW, W.M.FIRE, W.M.LOG_DARK]) assert.ok(has('cauldron', m), 'kotlík: ' + m);
   for (const m of [W.M.AWN_RED, W.M.AWN_WHITE, W.M.SIGN, W.M.ORN, W.M.SACK, W.M.LANTERN]) assert.ok(has('stall', m), 'trh: ' + m);
   for (const m of [W.M.WATER_DEEP, W.M.ROPE, W.M.HANDLE, W.M.SHINGLE]) assert.ok(has('well', m), 'studňa: ' + m);
-  // ťuknutie na model vyberie rovnaké políčko ako v 2D
+  // ťuknutie na model vyberie políčko, ku ktorému objekt patrí
   for (const f of g.fine) assert.strictEqual(tiles[f.tile.y * D.W + f.tile.x].g, f.type === 'rock' ? 'boulder' : f.type);
   // babkina chalupa vrhá tieň na sever (na les)
   assert.ok(W.sunHours(g, 15, 1, 1) < W.sunHours(g, 12, 15, 1) - 4);

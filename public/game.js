@@ -167,16 +167,8 @@
 
   // ---------- Pomocné ----------
   // ladenie: window.MF_TIME = { season: 0–3, min: 0–1439 } prepíše zobrazený čas (len lokálne vykresľovanie, nie server)
-  // Hráč hrabe v tráve (si = index hľadaného políčka, inak -1) – zo stredu políčka jemne odletuje hlinka a tráva sprava doľava.
-  // V 3D sú to častice vo svete (particles3d.mjs), tu len v 2D.
+  // Hráč hrabe v tráve (si = index hľadaného políčka, inak -1) – hlinku a trávu kreslia častice vo svete (particles3d.mjs).
   const searching = o => o && o.si != null && o.si >= 0;
-  function scavDirt(si, dt) {
-    if (Math.random() > dt * 12) return;
-    S.fx.push({
-      x: si % W + 0.5, y: Math.floor(si / W) + 0.5, vx: -(0.4 + Math.random() * 0.6), vy: -(0.3 + Math.random() * 0.5), g: 4,
-      color: ['#7a4a20', '#5b3a1a', '#74b84a', '#9b7b45'][Math.random() * 4 | 0], size: 0.022, life: 0, max: 0.3 + Math.random() * 0.15
-    });
-  }
   function curMin() { if (window.MF_TIME && window.MF_TIME.min != null) return window.MF_TIME.min; return realMin(); }
   function realMin() { return (S.min + Math.min(D.MIN_PER_TICK, (performance.now() - S.timeAt) / S.tickMs * D.MIN_PER_TICK)) % 1440; }
   function season() { return window.MF_TIME && window.MF_TIME.season != null ? window.MF_TIME.season : D.seasonOf(S.day); }
@@ -188,7 +180,7 @@
     return null;
   }
   function frontTile() {
-    if (MODE3D && S.me.a != null) return { x: Math.floor(S.me.x) + Math.round(Math.cos(S.me.a)), y: Math.floor(S.me.y) + Math.round(Math.sin(S.me.a)) };
+    if (S.me.a != null) return { x: Math.floor(S.me.x) + Math.round(Math.cos(S.me.a)), y: Math.floor(S.me.y) + Math.round(Math.sin(S.me.a)) };
     const d = [[0, 1], [-1, 0], [1, 0], [0, -1]][S.me.dir];
     return { x: Math.floor(S.me.x) + d[0], y: Math.floor(S.me.y) + d[1] };
   }
@@ -391,23 +383,17 @@
 
   // Joystick – objaví sa tam, kde hráč začne ťahať prstom (kdekoľvek na obrazovke); kotva sa nehýbe
   const cv = $('cv'), ctx = cv.getContext('2d');
-  // 3D režim (/3d): Three.js kreslí do #gl, #cv zostáva navrchu ako 2D prekrytie (mená, efekty) a prijíma dotyky
-  const MODE3D = /^\/3d\/?$/.test(location.pathname);
+  // Three.js kreslí do #gl, #cv zostáva navrchu ako prekrytie (mená, efekty) a prijíma dotyky
   let R3 = null;
-  if (MODE3D) {
-    const gl = document.createElement('canvas'); gl.id = 'gl';
-    cv.parentNode.insertBefore(gl, cv); cv.classList.add('overlay');
-    $('rotL').classList.remove('hidden'); $('rotR').classList.remove('hidden');
-    $('rotL').onclick = () => R3 && R3.rotate(-1);
-    $('rotR').onclick = () => R3 && R3.rotate(1);
-    import('/render3d.mjs').then(() => {
-      R3 = window.Render3D.create({
-        S, searching, glCanvas: gl, ov: cv, ovCtx: ctx, EMOJI, curMin, season, ctxAction, frontTile
-      });
-      window._r3pick = (x, y) => R3.pick(x, y); // pre ladenie / testy
-      window._r3 = R3;
-    }).catch(e => { console.error(e); toast('3D sa nepodarilo načítať – skús 2D verziu.'); });
-  }
+  $('rotL').onclick = () => R3 && R3.rotate(-1);
+  $('rotR').onclick = () => R3 && R3.rotate(1);
+  import('/render3d.mjs').then(() => {
+    R3 = window.Render3D.create({
+      S, searching, glCanvas: $('gl'), ov: cv, ovCtx: ctx, EMOJI, curMin, season, ctxAction, frontTile
+    });
+    window._r3pick = (x, y) => R3.pick(x, y); // pre ladenie / testy
+    window._r3 = R3;
+  }).catch(e => { console.error(e); toast('3D sa nepodarilo načítať – skús obnoviť stránku.'); });
   const gameEl = $('game'), joy = $('joy'), joyKnob = $('joyKnob');
   const JOY_R = 50, DRAG_START = 10;
   const ptrs = new Map();
@@ -459,21 +445,6 @@
   function inReach(tx, ty) { return Math.hypot(S.me.x - (tx + 0.5), S.me.y - (ty + 0.5)) <= REACH; }
   function stopWalk() { S.path = null; S.pendingAct = null; }
 
-  function pickObject(wx, wy) {
-    const box = (x0, x1, y0, y1) => wx >= x0 && wx <= x1 && wy >= y0 && wy <= y1;
-    for (const o of S.others.values()) if (box(o.x - 0.4, o.x + 0.4, o.y - 1.05, o.y + 0.15)) return { x: Math.floor(o.x), y: Math.floor(o.y) };
-    const B = D.BABKA, A = S.anchors;
-    if (S.area === 'garden' && box(B.x + 0.1, B.x + 0.9, B.y - 0.15, B.y + 1)) return { x: B.x, y: B.y };
-    if (A.hut && box(A.hut.x - 0.2, A.hut.x + 3.2, A.hut.y - 0.7, A.hut.y + 2)) return { x: A.hut.x + 1, y: A.hut.y + 1 };
-    if (A.house && box(A.house.x - 0.2, A.house.x + 3.2, A.house.y - 0.6, A.house.y + 2)) return { x: A.house.x + 1, y: A.house.y + 1 };
-    if (A.stall && box(A.stall.x - 0.1, A.stall.x + 3.1, A.stall.y - 1.1, A.stall.y + 1)) return { x: A.stall.x + 1, y: A.stall.y };
-    if (A.well && box(A.well.x, A.well.x + 1, A.well.y - 0.4, A.well.y + 1)) return A.well;
-    if (A.cauldron && box(A.cauldron.x, A.cauldron.x + 1, A.cauldron.y - 0.3, A.cauldron.y + 1)) return A.cauldron;
-    if (A.icehouse && box(A.icehouse.x - 0.1, A.icehouse.x + 2.1, A.icehouse.y - 0.8, A.icehouse.y + 2)) return { x: A.icehouse.x, y: A.icehouse.y + 1 };
-    // kvety sa vyberajú len políčkom, na ktorom rastú (nie podľa výšky obrázka)
-    return { x: Math.floor(wx), y: Math.floor(wy) };
-  }
-
   // BFS po políčkach – nájde cestu k prvému políčku, ktoré spĺňa podmienku
   function findPath(goal) {
     const sx = Math.floor(S.me.x), sy = Math.floor(S.me.y);
@@ -499,13 +470,9 @@
 
   function tapWorld(cx, cy) {
     if (S.asleep) return;
-    let tgt;
-    if (MODE3D) { if (!R3) return; tgt = R3.pick(cx, cy); if (!tgt) return; } // lúč do 3D scény
-    else {
-      const r = cv.getBoundingClientRect(), k = cv.width / r.width;
-      const wx = ((cx - r.left) * k + cam.x) / cam.ts, wy = ((cy - r.top) * k + cam.y) / cam.ts;
-      tgt = pickObject(wx, wy);
-    }
+    if (!R3) return;
+    const tgt = R3.pick(cx, cy); // lúč do 3D scény
+    if (!tgt) return;
     if (!tileAt(tgt.x, tgt.y)) return;
     const a = ctxAction(tgt.x, tgt.y);
     S.tapMark = { x: tgt.x, y: tgt.y, t: performance.now(), act: !!a };
@@ -941,7 +908,6 @@
         h('b', null, '✨ Častice (dážď, oheň, lístie, víly)'), h('div', { style: 'display:flex;gap:6px' }, ...pbtns),
         h('small', null, 'Platí len na tomto zariadení. Na slabšom telefóne zvoľ menej.')));
     }
-    body.appendChild(h('button', { class: 'btn alt', style: 'width:100%;padding:12px;margin-top:6px', onclick: () => { location.href = (MODE3D ? '/' : '/3d') + '?room=' + S.room; } }, MODE3D ? '🗺️ Prepnúť na 2D' : '🧊 Prepnúť na 3D (beta)'));
     body.appendChild(h('button', { class: 'big', style: 'margin:6px 0', onclick: () => openUI('help') }, '❓ Ako hrať'));
     body.appendChild(h('button', { class: 'btn gray', style: 'width:100%;padding:12px', onclick: () => { S.joined = false; S.ws && S.ws.close(); location.reload(); } }, 'Odísť zo záhrady'));
   }
@@ -1089,15 +1055,11 @@
   }
 
   // ---------- Herná slučka ----------
-  const cam = { x: 0, y: 0, ts: 40 };
-  let dpr = 1, lc = document.createElement('canvas'), lctx = lc.getContext('2d');
-  // Hra zaberá celú obrazovku; políčko je také veľké, aby uhlopriečka mala D.VIEW_DIAG políčok.
+  // Hra zaberá celú obrazovku; prekrytie #cv má rozlíšenie displeja, výrez sveta (D.VIEW_DIAG) nastaví 3D kamera.
   function resize() {
-    dpr = Math.min(2.5, window.devicePixelRatio || 1);
+    const dpr = Math.min(2.5, window.devicePixelRatio || 1);
     const r = cv.getBoundingClientRect();
     cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
-    lc.width = cv.width; lc.height = cv.height;
-    cam.ts = Math.hypot(cv.width, cv.height) / D.VIEW_DIAG;
     if (R3) R3.resize();
   }
   addEventListener('resize', resize);
@@ -1170,204 +1132,15 @@
       p.vy += p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt;
     }
     S.fx = S.fx.filter(p => p.life < p.max);
-    if (!MODE3D) {
-      if (searching({ si: S.mySi })) scavDirt(S.mySi, dt);
-      for (const o of S.others.values()) if (searching(o)) scavDirt(o.si, dt);
-    }
     for (const f of S.screenFx) f.life += dt;
     S.screenFx = S.screenFx.filter(f => f.life < f.max);
     if (S.vily && Math.random() < dt * 0.8) S.fx.push({ fairy: true, cx: me.x + (Math.random() - 0.5) * 6, cy: me.y + (Math.random() - 0.5) * 6, a: Math.random() * 6, rad: 0.5 + Math.random(), life: 0, max: 4, color: '#ff9cf0' });
   }
 
-  function darkness(hr) {
-    if (hr >= 19 && hr < 21) return (hr - 19) / 2 * 0.68;
-    if (hr >= 21 || hr < 4) return 0.68;
-    if (hr >= 4 && hr < 6) return 0.68 * (1 - (hr - 4) / 2);
-    return 0;
-  }
-
-  function render(t) {
-    const c = ctx, ts = cam.ts, cw = cv.width, ch = cv.height;
-    const se = season(), m = curMin(), hr = m / 60, night = D.isNight(m);
-    // hráč v strede obrazovky; pri okraji sveta sa výrez zastaví – horný a dolný okraj môže zájsť
-    // pod panel a lištu nástrojov na celú šírku (mobil), aby hráča nikdy nezakryli; malý panel na počítači nie
-    const bar = $('bar'), hudH = $('hud').offsetHeight * dpr;
-    const barH = bar.offsetWidth * dpr >= cw * 0.9 ? bar.offsetHeight * dpr : 0;
-    cam.x = Math.max(0, Math.min(W * ts - cw, S.me.x * ts - cw / 2));
-    cam.y = Math.max(-hudH, Math.min(H * ts - ch + barH, S.me.y * ts - ch / 2));
-    c.fillStyle = '#1b2e1d'; c.fillRect(0, 0, cw, ch);
-    const x0 = Math.max(0, Math.floor(cam.x / ts)), x1 = Math.min(W - 1, Math.ceil((cam.x + cw) / ts));
-    const y0 = Math.max(0, Math.floor(cam.y / ts)), y1 = Math.min(H - 1, Math.ceil((cam.y + ch) / ts));
-    const SX = x => x * ts - cam.x, SY = y => y * ts - cam.y;
-
-    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
-      const tl = S.tiles[y * W + x];
-      Art.ground(c, tl.g, SX(x), SY(y), ts, se, t, x, y);
-      if (tl.s) Art.soil(c, tl.s, SX(x), SY(y), ts, se);
-      if (tl.ice != null || tl.cut) Art.iceTile(c, tl, SX(x), SY(y), ts, se, x, y);
-    }
-    // cieľové políčko
-    const f = frontTile();
-    const fa = ctxAction(f.x, f.y);
-    if (S.kbd && tileAt(f.x, f.y)) {
-      c.strokeStyle = fa ? 'rgba(255,230,90,' + (0.6 + 0.3 * Math.sin(t * 6)) + ')' : 'rgba(255,255,255,0.25)';
-      c.lineWidth = Math.max(2, ts * 0.05); c.setLineDash([ts * 0.15, ts * 0.1]);
-      c.strokeRect(SX(f.x) + ts * 0.06, SY(f.y) + ts * 0.06, ts * 0.88, ts * 0.88); c.setLineDash([]);
-    }
-    // značka ťuknutia
-    if (S.tapMark) {
-      const age = (performance.now() - S.tapMark.t) / 600;
-      if (age < 1) {
-        c.strokeStyle = S.tapMark.act ? `rgba(255,230,90,${1 - age})` : `rgba(255,255,255,${0.8 - age * 0.8})`;
-        c.lineWidth = Math.max(2, ts * 0.06);
-        c.beginPath(); c.arc(SX(S.tapMark.x + 0.5), SY(S.tapMark.y + 0.5), ts * (0.25 + age * 0.25), 0, 6.29); c.stroke();
-      } else S.tapMark = null;
-    }
-
-    // objekty zoradené podľa hĺbky
-    const objs = [];
-    const yEnd = Math.min(H - 1, y1 + 2);
-    for (let y = y0; y <= yEnd; y++) for (let x = x0; x <= x1; x++) {
-      const tl = S.tiles[y * W + x], sx = SX(x + 0.5), sy = SY(y + 0.95);
-      switch (tl.g) {
-        case 'tree': objs.push([y + 0.9, () => Art.tree(c, sx, sy, ts, se, t, Art.hash(x, y, 3))]); break;
-        case 'boulder': objs.push([y + 0.9, () => Art.boulder(c, sx, sy, ts, se)]); break;
-        case 'shroom': objs.push([y + 0.5, () => Art.shroom(c, sx, SY(y + 0.75), ts, night, t)]); break;
-        case 'well': objs.push([y + 0.9, () => Art.well(c, sx, sy, ts, se)]); break;
-        case 'cauldron': objs.push([y + 0.9, () => Art.cauldron(c, sx, sy, ts, t)]); break;
-        case 'spruce': objs.push([y + 0.9, () => Art.tree(c, sx, sy, ts, se, t, 0.9)]); break;
-        case 'cliff': objs.push([y + 0.95, () => Art.cliff(c, SX(x), SY(y), ts, se, x, y)]); break;
-      }
-      const p = tl.s && tl.s.p;
-      if (p) {
-        const st = D.stageOf(p);
-        objs.push([y + 0.8, () => Art.plant(c, p.sp, st, sx, SY(y + 1), ts, t, { dead: p.d, night, ready: st === 3 && !p.d, wilting: st === 3 && !p.d && p.bt != null && (S.tick - p.bt) > 0.6 * D.SPECIES[p.sp].life * TPD })]);
-        if (p.b && !p.d) objs.push([y + 0.81, () => { c.globalAlpha = 0.6 + 0.3 * Math.sin(t * 3 + x); Art.circ(c, SX(x + 0.85), SY(y + 0.2), ts * 0.04, '#ff9cd8'); c.globalAlpha = 1; }]);
-      }
-    }
-    const A = S.anchors;
-    if (A.hut) objs.push([A.hut.y + 2, () => Art.hut(c, SX(A.hut.x), SY(A.hut.y), ts, se, night)]);
-    if (A.house) objs.push([A.house.y + 2, () => Art.house(c, SX(A.house.x), SY(A.house.y), ts, se, night)]);
-    if (A.stall) objs.push([A.stall.y + 0.9, () => Art.stall(c, SX(A.stall.x), SY(A.stall.y), ts, t)]);
-    if (A.icehouse) objs.push([A.icehouse.y + 2, () => Art.icehouse(c, SX(A.icehouse.x), SY(A.icehouse.y), ts, se, S.icehouse.ice / D.ICEHOUSE.cap)]);
-    if (S.area === 'garden') objs.push([D.BABKA.y + 0.9, () => Art.char(c, SX(D.BABKA.x + 0.5), SY(D.BABKA.y + 0.9), ts, { shirt: '#7b4a9e', hair: '#eee' }, 0, Math.sin(t) * 0.3, { babka: true })]);
-    for (const o of S.others.values()) objs.push([o.y, () => Art.char(c, SX(o.x), SY(o.y), ts, o.look, o.dir, o.phase || (o.e === 'dance' ? t * 4 : 0), { dance: o.e === 'dance', lift: (o.jz || 0) * ts, crawl: o.cr, dig: searching(o) && t })]);
-    objs.push([S.me.y, () => Art.char(c, SX(S.me.x), SY(S.me.y), ts, S.look || {}, S.me.dir, S.myEmote === 'dance' ? t * 4 : S.me.phase, { dance: S.myEmote === 'dance', lift: S.me.jz * ts, crawl: S.me.crawl, dig: searching({ si: S.mySi }) && t })]);
-    objs.sort((a, b) => a[0] - b[0]);
-    for (const o of objs) o[1]();
-
-    // svetové efekty
-    for (const p of S.fx) {
-      const a = 1 - p.life / p.max;
-      if (p.fairy) {
-        const ang = p.a + p.life * 1.6, fx = p.cx + Math.cos(ang) * p.rad, fy = p.cy + Math.sin(ang * 1.3) * p.rad * 0.7 - 0.5;
-        const X = SX(fx), Y = SY(fy);
-        c.globalAlpha = Math.min(1, a * 3);
-        const g = c.createRadialGradient(X, Y, 0, X, Y, ts * 0.35); g.addColorStop(0, p.color); g.addColorStop(1, 'rgba(255,255,255,0)');
-        c.fillStyle = g; c.beginPath(); c.arc(X, Y, ts * 0.35, 0, 6.29); c.fill();
-        const flap = Math.abs(Math.sin(t * 25 + p.a)) * ts * 0.1;
-        Art.ell(c, X - ts * 0.06, Y - ts * 0.04, flap + 1, ts * 0.06, -0.5, 'rgba(255,255,255,0.8)');
-        Art.ell(c, X + ts * 0.06, Y - ts * 0.04, flap + 1, ts * 0.06, 0.5, 'rgba(255,255,255,0.8)');
-        Art.circ(c, X, Y, ts * 0.04, '#fff');
-        c.globalAlpha = 1;
-        continue;
-      }
-      c.globalAlpha = Math.max(0, a);
-      if (p.text) { c.font = (ts * 0.4 | 0) + 'px serif'; c.textAlign = 'center'; c.fillText(p.text, SX(p.x), SY(p.y)); }
-      else if (p.star) { const s = ts * p.size * (0.6 + 0.4 * Math.sin(p.life * 12)); c.fillStyle = p.color; c.fillRect(SX(p.x) - s / 2, SY(p.y) - s * 1.5, s, s * 3); c.fillRect(SX(p.x) - s * 1.5, SY(p.y) - s / 2, s * 3, s); }
-      else Art.circ(c, SX(p.x), SY(p.y), ts * p.size, p.color);
-      c.globalAlpha = 1;
-    }
-
-    // noc a svetlá
-    const dk = darkness(hr) + (S.weather === 'rain' ? 0.12 : 0);
-    if (dk > 0.01) {
-      lctx.globalCompositeOperation = 'source-over';
-      lctx.clearRect(0, 0, cw, ch);
-      lctx.fillStyle = `rgba(12,18,58,${dk})`; lctx.fillRect(0, 0, cw, ch);
-      lctx.globalCompositeOperation = 'destination-out';
-      const light = (x, y, r, a) => {
-        const X = SX(x), Y = SY(y), R = r * ts;
-        if (X < -R || Y < -R || X > cw + R || Y > ch + R) return;
-        const g = lctx.createRadialGradient(X, Y, 0, X, Y, R);
-        g.addColorStop(0, `rgba(0,0,0,${a})`); g.addColorStop(1, 'rgba(0,0,0,0)');
-        lctx.fillStyle = g; lctx.fillRect(X - R, Y - R, R * 2, R * 2);
-      };
-      light(S.me.x, S.me.y - 0.4, 2.6, 0.85);
-      for (const o of S.others.values()) light(o.x, o.y - 0.4, 2.2, 0.75);
-      if (A.hut) { light(A.hut.x + 0.6, A.hut.y + 1.1, 1.3, 0.7); light(A.hut.x + 2.4, A.hut.y + 1.1, 1.3, 0.7); }
-      if (A.house) { light(A.house.x + 0.6, A.house.y + 1.1, 1.3, 0.7); light(A.house.x + 2.4, A.house.y + 1.1, 1.3, 0.7); }
-      if (A.cauldron) light(A.cauldron.x + 0.5, A.cauldron.y + 0.4, 1.6, 0.8);
-      if (A.stall) light(A.stall.x + 1.5, A.stall.y, 1.6, 0.6);
-      if (night) for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
-        const tl = S.tiles[y * W + x];
-        if (tl.g === 'shroom') light(x + 0.5, y + 0.6, 0.9, 0.5);
-        const p = tl.s && tl.s.p;
-        if (p && !p.d && (p.sp === 'papradie' || p.sp === 'duhova') && D.stageOf(p) === 3) light(x + 0.5, y + 0.4, 1.4, 0.9);
-      }
-      for (const p of S.fx) if (p.fairy) { const ang = p.a + p.life * 1.6; light(p.cx + Math.cos(ang) * p.rad, p.cy + Math.sin(ang * 1.3) * p.rad * 0.7 - 0.5, 1.2, 0.8); }
-      c.drawImage(lc, 0, 0);
-      // svetlušky
-      if (night && se !== 3) {
-        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
-          const g = S.tiles[y * W + x].g;
-          if ((g === 'forest' || g === 'ring' || g === 'tree') && Art.hash(x, y, 11) > 0.75) {
-            const blink = Math.sin(t * 2 + x * 3 + y) * 0.5 + 0.5;
-            Art.circ(c, SX(x + 0.5 + Math.sin(t * 0.7 + y) * 0.4), SY(y + 0.5 + Math.cos(t * 0.6 + x) * 0.4), ts * 0.035, `rgba(230,255,120,${blink})`);
-          }
-        }
-      }
-    }
-    // počasie
-    if (S.weather === 'rain') {
-      c.strokeStyle = 'rgba(180,210,255,0.55)'; c.lineWidth = Math.max(1, dpr);
-      c.beginPath();
-      for (let i = 0; i < 90; i++) {
-        const rx = (Art.hash(i, 1) * cw + t * 60) % cw, ry = (Art.hash(i, 2) * ch + t * ch * 1.4) % ch;
-        c.moveTo(rx, ry); c.lineTo(rx - ts * 0.08, ry + ts * 0.35);
-      }
-      c.stroke();
-    } else if (S.weather === 'snow' || (se === 3 && Math.sin(t * 0.1) > 0.5)) {
-      for (let i = 0; i < 70; i++) {
-        const sx = (Art.hash(i, 1) * cw + Math.sin(t + i) * ts * 0.4) % cw, sy = (Art.hash(i, 2) * ch + t * ts * 0.9 * (0.6 + Art.hash(i, 3))) % ch;
-        Art.circ(c, sx, sy, ts * 0.035, 'rgba(255,255,255,0.85)');
-      }
-    }
-
-    // mená a emócie
-    const label = (x, y, name, e, bubble) => {
-      c.font = 'bold ' + (ts * 0.24 | 0) + 'px system-ui, sans-serif'; c.textAlign = 'center';
-      const X = SX(x), Y = SY(y - 1.2);
-      const w = c.measureText(name).width + ts * 0.2;
-      c.fillStyle = 'rgba(0,0,0,0.45)'; c.fillRect(X - w / 2, Y - ts * 0.22, w, ts * 0.3);
-      c.fillStyle = '#fff'; c.fillText(name, X, Y);
-      if (e) { c.font = (ts * 0.42 | 0) + 'px serif'; c.fillText(e === 'dance' ? (Math.floor(t * 3) % 2 ? '🎵' : '🎶') : EMOJI[e], X + ts * 0.45, Y - ts * 0.25 + Math.sin(t * 6) * ts * 0.05); }
-      if (bubble && bubble.until > performance.now()) Art.bubble(c, bubble.text, X, Y, ts);
-    };
-    for (const o of S.others.values()) label(o.x, o.y, o.name, o.e, S.bubbles[o.id]);
-    label(S.me.x, S.me.y, S.name, S.myEmote, S.bubbles[S.id]);
-    if (S.area === 'garden') label(D.BABKA.x + 0.5, D.BABKA.y + 0.9, 'Babka', null, null);
-
-    // efekty na obrazovke
-    for (const fx of S.screenFx) {
-      const a = Math.min(1, fx.life, fx.max - fx.life);
-      if (fx.k === 'rainbow') {
-        const cols = ['#ff5252', '#ffb74d', '#fff176', '#81c784', '#64b5f6', '#7986cb', '#ba68c8'];
-        c.globalAlpha = a * 0.45; c.lineWidth = cw * 0.035;
-        cols.forEach((col, i) => { c.strokeStyle = col; c.beginPath(); c.arc(cw / 2, ch * 0.75, cw * (0.75 - i * 0.035), Math.PI, 0); c.stroke(); });
-        c.globalAlpha = 1;
-      } else if (fx.k === 'gold') {
-        c.font = (ts * 0.45 | 0) + 'px serif'; c.textAlign = 'center';
-        for (const k of fx.coins) c.fillText('🪙', k.x * cw, (k.y + fx.life * k.v) * ch);
-      }
-    }
-    if (Math.floor(t * 2) !== Math.floor((t - 0.016) * 2)) updateHud();
-  }
-
   let last = performance.now();
   function loop(now) {
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
-    if (S.joined) { update(dt); if (R3) R3.frame(now / 1000); else if (!MODE3D) render(now / 1000); }
+    if (S.joined) { update(dt); if (R3) R3.frame(now / 1000); }
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);

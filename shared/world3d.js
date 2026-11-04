@@ -539,7 +539,7 @@
   }
 
   // Zoznam jemných modelov na mape (pozícia v blokoch, rozmery a minikocky)
-  // tile = políčko, ktoré sa vyberie po ťuknutí na model (rovnaké ako v 2D)
+  // tile = políčko, ktoré sa vyberie po ťuknutí na model (napr. pri budove jej dvere)
   const FINE_TYPES = [
     { g: 'house', build: cicmanyHouse, tile: [1, 1] },
     { g: 'hut', build: babkaHut, tile: [1, 1] },
@@ -693,7 +693,7 @@
     for (let y = 0; y < D.H; y++) for (let x = 0; x < D.W; x++) if (isWater(tiles, x, y)) out.push({ x, y });
     return out;
   }
-  // Lekná – rovnaké políčka ako v 2D kresbe zeme (hash < 0,12), v zime nie sú
+  // Lekná – rovnaké políčka ako lekná v textúre zeme z art.js (hash < 0,12), v zime nie sú
   function lilyPads(tiles, season) {
     if (season === 3) return [];
     const out = [];

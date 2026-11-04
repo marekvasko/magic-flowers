@@ -3,7 +3,7 @@
   const W = 20, H = 34;
   // Koľko sveta vidí hráč: hra zaberá celú obrazovku a mierka je taká, že uhlopriečka obrazovky
   // má vždy presne VIEW_DIAG blokov – na mobile na výšku aj na počítači na šírku, hráč je v strede.
-  // Rozmery výrezu v blokoch pre obrazovku pxW × pxH vráti viewSize (platí pre 2D aj 3D).
+  // Rozmery výrezu v blokoch pre obrazovku pxW × pxH vráti viewSize (3D kamera).
   const VIEW_DIAG = 22;
   function viewSize(pxW, pxH) {
     const d = Math.hypot(pxW, pxH) || 1;

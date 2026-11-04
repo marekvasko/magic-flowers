@@ -1,6 +1,6 @@
 # AGENTS.md – rules for coding agents (and humans)
 
-Čarovná záhrada is a multiplayer flower-growing web game (Node.js + `ws`, 2D canvas at `/`, Three.js at `/3d`).
+Čarovná záhrada is a multiplayer flower-growing web game (Node.js + `ws`, 3D only with Three.js at `/`).
 See `README.md` for gameplay and architecture.
 
 ## Language
@@ -90,7 +90,7 @@ PORT=8099 DATA_DIR=/tmp/mf npm start   # isolated local server with its own data
 ```
 
 - Server-authoritative game state with discrete time (`engine.js`: ticks, event scheduler, seeded RNG). Economy is in `economy.js`, inventories in `items.js`, data shared with the client in `shared/data.js`.
-- A feature usually touches both clients: `public/game.js` (2D plus shared UI) and `public/render3d.mjs` / `shared/world3d.js` (3D). Check both `/` and `/3d`.
+- A feature usually touches `public/game.js` (controls, UI, overlay) and `public/render3d.mjs` / `shared/world3d.js` (3D).
 - Add or extend tests in `test/` for game logic. For UI, take a quick Playwright screenshot at a mobile portrait viewport (390×780).
 - When running local servers or containers, stop them by PID or exact name. Never `pkill node` or similar, because this host runs production and other projects.
 - Keep `README.md` up to date when gameplay or operations change.

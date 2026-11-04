@@ -273,7 +273,7 @@ void main() {
 const lerp = (a, b, t) => a + (b - a) * t;
 const mix3 = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
 const hex = h => { const n = parseInt(h.slice(1), 16); return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; };
-const toLin = c => c; // pracujeme priamo v sRGB ako 2D hra (bez prevodu farieb)
+const toLin = c => c; // pracujeme priamo v sRGB ako kresby z art.js (bez prevodu farieb)
 THREE.ColorManagement.enabled = false;
 
 export function create(api) {
@@ -287,7 +287,7 @@ export function create(api) {
   camera.layers.enable(3); // … aj hladinu a lekná (3) – tie nevrhajú tieň a v zrkadle nie sú; sprity v zrkadle sú na vrstve 2
   let yaw = Math.PI / 4, yawTarget = yaw;
 
-  // ---------- Textúra zeme (rovnaká kresba ako 2D hra) ----------
+  // ---------- Textúra zeme (kresba z art.js) ----------
   const gcv = document.createElement('canvas');
   gcv.width = D.W * GT; gcv.height = D.H * GT;
   const gctx = gcv.getContext('2d');
@@ -1002,7 +1002,7 @@ export function create(api) {
   function resize() {
     const r = api.glCanvas.getBoundingClientRect();
     renderer.setSize(r.width, r.height, false);
-    // uhlopriečka zobrazovacej plochy má vždy D.VIEW_DIAG blokov (ako v 2D), hráč v strede
+    // uhlopriečka zobrazovacej plochy má vždy D.VIEW_DIAG blokov, hráč v strede
     viewW = D.viewSize(r.width, r.height).w;
     const vh = D.viewSize(r.width, r.height).h;
     viewTop = vh / 2;
@@ -1137,7 +1137,7 @@ export function create(api) {
     }
     if (S.kbd) { const f = api.frontTile(); if (f.x >= 0 && f.y >= 0 && f.x < D.W && f.y < D.H) ring(f.x, f.y, api.ctxAction(f.x, f.y) ? 'rgba(255,230,90,0.8)' : 'rgba(255,255,255,0.3)', 0.9); }
 
-    // efekty (pohyb častíc je v 2D – ukotvíme ich do bodu vo svete)
+    // efekty (častice z S.fx sa hýbu po rovine sveta – ukotvíme ich do bodu vo svete)
     for (const p of S.fx) {
       if (p.fairy) continue; // víly sú 3D častice (particles3d.mjs)
       const a = 1 - p.life / p.max;
