@@ -350,7 +350,7 @@ function act(pl, m) {
   if (item && !sv.inv[item]) return;
   const i = y * D.W + x, t = room.tiles[i];
   if (pl.scav) {
-    if (!item && pl.scav.i === i) return toast(pl, 'Ešte stále hľadáš… 🔍');
+    if (searchesWith(item) && pl.scav.i === i) return toast(pl, 'Ešte stále hľadáš… 🔍');
     stopScavenge(pl, 'Prestal(a) si hľadať.');
   }
 
@@ -394,6 +394,9 @@ function act(pl, m) {
     tileMsg(room, i); sendMe(pl); return;
   }
 
+  // Neprekopaná tráva a v ruke nič, čo by tu niečo robilo (semienka, kvety, krhla…) → hľadanie divých semienok
+  if (Scav.canSearch(t) && searchesWith(item)) return startScavenge(pl, i, item);
+
   if (item === 'hoe') {
     if (p && p.d) { t.s.p = null; tileMsg(room, i); return; }
     if (!t.s && D.TILLABLE[t.g]) {
@@ -407,10 +410,6 @@ function act(pl, m) {
       t.s = null; Scav.empty(room, i); tileMsg(room, i); sendMe(pl); return; // čerstvo zarovnaná zem semienka nemá
     }
     if (t.g === 'ring' || t.g === 'shroom') return toast(pl, 'Kruh z húb radšej nechaj tak… niekto tu v noci tancuje. 🍄');
-    return;
-  }
-  if (!item) {
-    if (Scav.canSearch(t)) return startScavenge(pl, i);
     return;
   }
   if (item === 'can') {
@@ -449,15 +448,17 @@ function act(pl, m) {
 }
 
 // ---------- Hľadanie divých semienok ----------
+// Motyka v tráve kope a elixíry sa dajú použiť kdekoľvek; s čímkoľvek iným (alebo s prázdnou rukou) sa hľadá.
+function searchesWith(item) { return item !== 'hoe' && !item.startsWith('po_'); }
 // Hráč sa prikrčí a hľadá hernú hodinu; pohnúť sa alebo urobiť niečo iné hľadanie preruší.
-function startScavenge(pl, i) {
+function startScavenge(pl, i, item) {
   const room = pl.room;
   pl.scavN = (pl.scavN | 0) + 1;
   pl.scav = { i, n: pl.scavN, px: pl.x, py: pl.y, from: room.tick, to: room.tick + D.SCAVENGE.ticks };
   E.schedule(room, pl.scav.to, 'scavDone', { key: pl.key, n: pl.scav.n });
   send(pl.ws, { t: 'scav', from: pl.scav.from, to: pl.scav.to, i });
   if (Scav.fill(room, i) < 0.5) toast(pl, 'Hľadáš v tráve… vyzerá to, že tu už niekto nedávno hľadal. 🔍');
-  else toast(pl, 'Hľadáš v tráve divé semienka… 🔍');
+  else toast(pl, 'Hľadáš v tráve divé semienka… 🔍' + (pl.save.inv[item] && (item.startsWith('seed_') || D.isWild(item)) ? ' (Na sadenie najprv prekopaj zem motykou.)' : ''));
   fx(room, 'dirt', i % D.W + 0.5, Math.floor(i / D.W) + 0.5);
 }
 function stopScavenge(pl, msg) {

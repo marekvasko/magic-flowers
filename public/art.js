@@ -485,8 +485,6 @@ const Art = (() => {
       c.beginPath(); c.moveTo(36, 60); c.quadraticCurveTo(38, 36, 50, 42); c.stroke();
       ell(c, 46, 34, 9, 6, 0.6, '#8d6a44'); ell(c, 51, 46, 7, 5, 0.9, '#a07a4a');
       leaf(c, 27, 48, 12, Math.PI + 0.9, '#8a7a45');
-    } else if (id === 'hand') {
-      c.font = '40px serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('✋', 32, 34);
     } else if (/^wild_[0-3]$/.test(id)) { // divé semienko: hrsť semien v tráve s otáznikom
       for (let i = 0; i < 7; i++) leaf(c, 10 + i * 7, 58, 14 + (i % 3) * 4, -Math.PI / 2 + (i - 3) * 0.12, i % 2 ? '#7cb342' : '#558b2f');
       ell(c, 30, 40, 7, 4, 0.5, '#8d6e3f'); ell(c, 38, 44, 6, 3.5, -0.4, '#a1824a'); ell(c, 26, 47, 5, 3, 0.2, '#7a5a30');

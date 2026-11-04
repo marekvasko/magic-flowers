@@ -152,7 +152,7 @@
     'Snežienky a čemerice zvládnu aj zimu. Ostatné kvety mráz spáli.',
     'Levanduľa a mak majú radi piesok – nájdeš ho pri jazierku.',
     'Plesnivec rastie len na skalke, presne ako v Belianskych Tatrách.',
-    'Keď nemáš ani groš, prehľadaj prázdnou rukou trávu. Ráno v rose a na okraji lesa sa divé semienka nájdu najľahšie.',
+    'Keď nemáš ani groš, prehľadaj trávu – stačí ťuknúť na neprekopanú zem, keď nedržíš motyku. Ráno v rose a na okraji lesa sa divé semienka nájdu najľahšie.',
     'Divé semienka vraj vedia, čo sa na trhu práve dobre predáva. Ktovie, čo z nich vyrastie…',
     'Konvalinky, snežienky a čemerice chcú tieň – skús okraj lesa.',
     'Ruže, čemerice a chryzantémy potrebujú výživnú pôdu. Kompost kúpiš na trhu.',
@@ -200,7 +200,7 @@
     return 0;
   }
 
-  // Hľadanie divých semienok v tráve (prázdnou rukou). Má to byť pomalé a neisté – záchrana, keď nemáš nič.
+  // Hľadanie divých semienok v neprekopanej tráve (s prázdnou rukou alebo s predmetom, ktorý tam nič nerobí). Má to byť pomalé a neisté – záchrana, keď nemáš nič.
   // Šanca = chance × zásoba políčka (po prehľadaní sa plní refillDays dní) × okolie × denná hodina × obdobie.
   const SCAVENGE = {
     ticks: 12,          // jedno hľadanie trvá hernú hodinu
@@ -216,7 +216,6 @@
   const isWild = id => /^wild_[0-3]$/.test(id);
 
   function itemName(id) {
-    if (id === 'hand') return 'Ruka';
     if (isWild(id)) return 'Divé semienko (' + SEASONS[+id.slice(5)].toLowerCase() + ')';
     if (id === 'hoe') return 'Motyka';
     if (id === 'can') return 'Krhla';

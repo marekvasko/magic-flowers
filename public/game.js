@@ -104,7 +104,7 @@
         S.coins = m.coins; S.water = m.water; S.inv = m.inv; S.recipes = m.recipes; S.seen = m.seen; S.vily = m.vily;
         S.fb = m.fb || {}; S.fbTick = m.tick;
         Object.assign(S, { rep: m.rep || 0, up: m.up || {}, canCap: m.canCap, plotLimit: m.plotLimit, plotsUsed: m.plotsUsed, maxActive: m.maxActive });
-        if (S.sel !== 'hand' && !S.inv[S.sel]) S.sel = 'hoe';
+        if (!S.inv[S.sel]) S.sel = 'hoe';
         renderHotbar(); updateHud();
         if (S.modal && S.modal.refresh) S.modal.refresh();
         break;
@@ -251,7 +251,7 @@
     const other = playerOn(tx, ty);
     if (other) {
       if (sel === 'po_laska') return { i: '💕', l: 'Darovať' };
-      if (sel === 'hoe' || sel === 'can' || sel === 'hand') return { i: '👋', l: 'Zamávať' };
+      if (sel === 'hoe' || sel === 'can') return { i: '👋', l: 'Zamávať' };
       return { i: '🎁', l: 'Darovať' };
     }
     switch (t.g) {
@@ -270,9 +270,10 @@
       if (!s && D.TILLABLE[t.g]) return { i: '⛏️', l: 'Kopať' };
       if (s && !p && (!s.o || s.o === S.name.toLowerCase())) return { i: '🔄', l: 'Zarovnať' };
     }
+    // neprekopaná tráva a v ruke nič, čo by tu niečo robilo → hľadať divé semienka (ako na serveri)
+    if (t.g === 'grass' && !s && sel !== 'hoe' && !sel.startsWith('po_')) return { i: '🔍', l: 'Hľadať' };
     if (sel === 'can' && s) return { i: '💧', l: 'Poliať' };
     if ((sel.startsWith('seed_') || D.isWild(sel)) && s && !p) return { i: '🌱', l: 'Sadiť' };
-    if (sel === 'hand' && t.g === 'grass' && !s) return { i: '🔍', l: 'Hľadať' };
     if (sel === 'compost' && s && !s.r) return { i: '🟤', l: 'Pohnojiť' };
     if (sel.startsWith('po_')) return { i: '🧪', l: 'Použiť' };
     if (p && !p.d) return { i: '🔍', l: 'Pozrieť', info: true };
@@ -322,7 +323,7 @@
       else plantInfo(tx, ty);
       return;
     }
-    send({ t: 'act', x: tx, y: ty, item: S.sel === 'hand' ? '' : S.sel });
+    send({ t: 'act', x: tx, y: ty, item: S.sel });
     if (a.l === 'Kopať') sfx('dig'); else if (a.l === 'Poliať' || a.l === 'Načrieť') sfx('water'); else sfx('pop');
   }
 
@@ -509,11 +510,10 @@
 
   // ---------- Hotbar ----------
   function hotbarIds() {
-    const order = id => id === 'hoe' ? 0 : id === 'can' ? 1 : id === 'hand' ? 1.5 : id === 'compost' ? 2 : id.startsWith('seed_') || D.isWild(id) ? 3 : id.startsWith('fl_') ? 4 : id === 'wilted' ? 4.5 : 5;
+    const order = id => id === 'hoe' ? 0 : id === 'can' ? 1 : id === 'compost' ? 2 : id.startsWith('seed_') || D.isWild(id) ? 3 : id.startsWith('fl_') ? 4 : id === 'wilted' ? 4.5 : 5;
     const spOrder = Object.keys(D.SPECIES);
     const rank = id => { const k = id.replace(/^(seed_|fl_|po_)/, ''); const i = spOrder.indexOf(k); return i < 0 ? 99 : i; };
-    // ruka nie je predmet – je v lište vždy (prázdnou rukou sa hľadajú divé semienka)
-    return Object.keys(S.inv).filter(id => S.inv[id] > 0).concat('hand').sort((a, b) => order(a) - order(b) || rank(a) - rank(b));
+    return Object.keys(S.inv).filter(id => S.inv[id] > 0).sort((a, b) => order(a) - order(b) || rank(a) - rank(b));
   }
   function selectItem(id) { if (!id) return; S.sel = id; renderHotbar(); }
   function renderHotbar() {
@@ -530,7 +530,7 @@
         if (o) d.innerHTML += `<span class="n">${S.inv[id]}</span><div class="wbar fresh"><i style="width:${o.rem * 100}%;background:${freshColor(o.rem)}"></i></div>`;
         else d.innerHTML += `<span class="n">${S.inv[id]}</span>`;
       }
-      else if (id !== 'hoe' && id !== 'hand') d.innerHTML += `<span class="n">${S.inv[id]}</span>`;
+      else if (id !== 'hoe') d.innerHTML += `<span class="n">${S.inv[id]}</span>`;
       d.onclick = () => selectItem(id);
       bar.appendChild(d);
     }
@@ -545,7 +545,6 @@
       txt += ' · ' + sp.seasons.map(s => D.SEASON_ICONS[s]).join('') + ' · ' + ({ sun: '☀️', shade: '🌳', any: '⛅' })[sp.light] + (sp.soil ? ' · ' + ({ sand: 'piesok', rich: 'kompost', rock: 'skalka' })[sp.soil] : '');
     }
     if (S.sel.startsWith('fl_')) txt += ' · ' + freshText(S.sel);
-    if (S.sel === 'hand') txt += ' · ťukni na trávu a hľadaj divé semienka 🔍';
     if (D.isWild(S.sel)) txt += ' · ' + D.SEASON_ICONS[+S.sel.slice(5)] + ' · nevedno, čo z neho vyrastie';
     if (S.sel === 'wilted') txt += ` · ${D.WILTED_PER_COMPOST} ks = 1 kompost (v sklade)`;
     if (S.sel.startsWith('po_')) txt += ' · ' + D.POTIONS[S.sel.slice(3)].desc;
