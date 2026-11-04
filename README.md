@@ -27,6 +27,14 @@ docker compose up -d --build
 
 The container joins the external `web` network and Traefik exposes it on the `websecure` entrypoint with a certificate from the `tlschallenge` resolver. WebSockets work through Traefik without extra configuration. Saved gardens live in the `magicflowers-data` Docker volume (kept on `docker compose down`, removed only by `down -v`).
 
+**Environments (CI/CD):** deployments are automatic, done by a self-hosted GitHub Actions runner on the host via `scripts/deploy.sh`:
+
+- every PR gets a preview at `https://pr-<n>.zahrada.spis-ai.com/`, removed when the PR closes;
+- `dev` is staging at `https://dev.zahrada.spis-ai.com/`;
+- releases (`v*` tags on `main`) go to production at `https://zahrada.spis-ai.com/`.
+
+The branching model, worktrees and the release procedure are described in [AGENTS.md](AGENTS.md).
+
 ## Time and world settings
 
 - Game time is **discrete**: every day has exactly 288 steps (1 step = 5 game minutes). Day, hour and season are always derived from a single integer counter, so there is no drift, and a delayed timer catches up the missed steps.

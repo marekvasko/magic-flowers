@@ -1,8 +1,15 @@
+# Jeden súbor pre všetky prostredia (produkcia, dev, PR náhľady) – líšia sa len premennými:
+#   NAME   meno kontajnera a Traefik routera (produkcia: magicflowers)
+#   DOMAIN verejná doména
+#   IMAGE  obraz (CI: ghcr.io/...; ručne: lokálny build)
+# Údaje sú v pomenovanom zväzku <projekt>_magicflowers-data, projekt určuje `docker compose -p`.
+# Produkcia = projekt "magicflowers" → zväzok magicflowers_magicflowers-data (existujúce záhrady, NEMAZAŤ).
+# Nasadzuje scripts/deploy.sh, ručne len v núdzi.
 services:
   magicflowers:
     build: .
-    image: magicflowers:latest
-    container_name: magicflowers
+    image: ${IMAGE:-magicflowers:latest}
+    container_name: ${NAME:-magicflowers}
     restart: unless-stopped
     volumes:
       - magicflowers-data:/app/data
@@ -11,10 +18,10 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=web
-      - traefik.http.routers.magicflowers.rule=Host(`${DOMAIN:?Nastav DOMAIN v .env}`)
-      - traefik.http.routers.magicflowers.entrypoints=websecure
-      - traefik.http.routers.magicflowers.tls.certresolver=tlschallenge
-      - traefik.http.services.magicflowers.loadbalancer.server.port=3000
+      - traefik.http.routers.${NAME:-magicflowers}.rule=Host(`${DOMAIN:?Nastav DOMAIN v .env}`)
+      - traefik.http.routers.${NAME:-magicflowers}.entrypoints=websecure
+      - traefik.http.routers.${NAME:-magicflowers}.tls.certresolver=tlschallenge
+      - traefik.http.services.${NAME:-magicflowers}.loadbalancer.server.port=3000
 
 volumes:
   magicflowers-data:
