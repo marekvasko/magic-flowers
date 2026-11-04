@@ -123,8 +123,9 @@ button { font: inherit; cursor: pointer; border: none; }
 /* perspektíva pre efekt kolotoča: vyššie správy sú vzadu, posúvaním idú dopredu (chatWheel v game.js) */
 #chatlog, #chathist { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
 #chatlog .chatline { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-/* história: 15 riadkov, z toho 2 vrchné prichádzajú z pozadia (chatWheel v game.js) */
-#chathist { position: relative; max-height: min(50vh, calc(15 * 25px)); overflow-y: auto; overflow-x: hidden; scrollbar-width: none; touch-action: pan-y; user-select: text; -webkit-user-select: text; }
+/* história: 15 riadkov, z toho 2 vrchné prichádzajú z pozadia (chatWheel v game.js); prázdne 2 riadky navrchu
+   (padding) dovolia posunúť aj najstaršiu správu dopredu */
+#chathist { position: relative; max-height: min(50vh, calc(15 * 25px)); padding-top: calc(2 * 25px); overflow-y: auto; overflow-x: hidden; scrollbar-width: none; touch-action: pan-y; user-select: text; -webkit-user-select: text; }
 #chathist::-webkit-scrollbar { display: none; }
 #chathist:empty::before { content: 'Zatiaľ žiadne správy.'; background: rgba(0,0,0,0.45); color: #fff; font-size: 13px; padding: 2px 7px; }
 #chatbox:not(.open) #chathist, #chatbox.open #chatlog { display: none; }
