@@ -1,5 +1,5 @@
 // 3D vykresľovanie (Three.js): ortogonálna kamera pod 45°, svet z podkociek, flat shading
-// s tieňom stien podľa strany, ambientným zatienením rohov a mäkkým tieňom od slnka.
+// s tieňom stien podľa strany, ambientným zatienením rohov a tieňom od slnka z mapy tieňov (GPU).
 // Herná logika, sieť aj ovládanie zostávajú v game.js – toto je len iný pohľad na ten istý svet.
 import * as THREE from '/vendor/three/three.module.js';
 
@@ -13,28 +13,55 @@ const GT = 32;                                   // px na políčko v textúre z
 const MAX_LIGHTS = 16;
 
 // ---------- Shader: plochý, bez rozptylu a odrazov ----------
+// Svetlo = okolie + slnko × (viditeľnosť slnka z mapy tieňov) + lampy. Zatienenie rohov (AO) je vo vrcholoch.
+const SHADOW_SIZE = 2048;
 const VERT = `
 attribute vec3 color;
 attribute float ao;
-attribute float sun;
 attribute float emis;
 attribute float tex;
-varying vec3 vColor; varying float vAo; varying float vSun; varying float vEmis; varying float vTex;
-varying vec2 vUv; varying vec3 vPos;
+uniform mat4 shadowMatrix; uniform vec3 sunDir; uniform float shadowNormalBias;
+varying vec3 vColor; varying float vAo; varying float vEmis; varying float vTex; varying float vFacing;
+varying vec2 vUv; varying vec3 vPos; varying vec4 vShadow;
 void main() {
-  vColor = color; vAo = ao; vSun = sun; vEmis = emis; vTex = tex; vUv = uv; vPos = position;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vColor = color; vAo = ao; vEmis = emis; vTex = tex; vUv = uv; vPos = wp.xyz;
+  vFacing = dot(normal, sunDir);
+  // bod do mapy tieňov mierne posunutý po normále (proti „tieňovým pruhom“ na povrchu)
+  vShadow = shadowMatrix * vec4(wp.xyz + normal * shadowNormalBias, 1.0);
+  gl_Position = projectionMatrix * viewMatrix * wp;
 }`;
 const FRAG = `
 precision highp float;
-uniform sampler2D map;
+uniform sampler2D map; uniform sampler2D shadowMap;
 uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec3 emisColor;
 uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount; uniform float opacity;
-varying vec3 vColor; varying float vAo; varying float vSun; varying float vEmis; varying float vTex;
-varying vec2 vUv; varying vec3 vPos;
+uniform float shadowOn; uniform vec2 shadowTexel; uniform float shadowRadius;
+varying vec3 vColor; varying float vAo; varying float vEmis; varying float vTex; varying float vFacing;
+varying vec2 vUv; varying vec3 vPos; varying vec4 vShadow;
+// 16 vzoriek v disku (Poissonovo rozloženie) – vyhladzovacie jadro mapy tieňov
+const vec2 PD[16] = vec2[16](
+  vec2(-0.942, -0.399), vec2(0.946, -0.769), vec2(-0.094, -0.929), vec2(0.345, 0.294),
+  vec2(-0.916, 0.458), vec2(-0.815, -0.879), vec2(-0.383, 0.277), vec2(0.975, 0.756),
+  vec2(0.443, -0.975), vec2(0.537, -0.474), vec2(-0.265, -0.419), vec2(0.792, 0.191),
+  vec2(-0.242, 0.997), vec2(-0.814, 0.914), vec2(0.200, 0.786), vec2(0.144, -0.141));
+float sunVisibility() {
+  if (shadowOn < 0.5 || vFacing <= 0.02) return 0.0;           // noc alebo stena odvrátená od slnka
+  vec3 sc = vShadow.xyz / vShadow.w * 0.5 + 0.5;
+  if (sc.x < 0.0 || sc.x > 1.0 || sc.y < 0.0 || sc.y > 1.0 || sc.z > 1.0) return 1.0;
+  // disk natočený podľa miesta vo svete – namiesto pásov jemný, stabilný prechod
+  float a = fract(sin(dot(floor(vPos.xz * 64.0), vec2(12.9898, 78.233))) * 43758.5453) * 6.2832;
+  mat2 rot = mat2(cos(a), sin(a), -sin(a), cos(a));
+  float lit = 0.0;
+  for (int i = 0; i < 16; i++) {
+    float d = texture2D(shadowMap, sc.xy + rot * PD[i] * shadowRadius * shadowTexel).r;
+    lit += sc.z - 0.0008 <= d ? 1.0 : 0.0;
+  }
+  return lit / 16.0;
+}
 void main() {
   vec3 base = vTex > 0.5 ? texture2D(map, vUv).rgb * vColor : vColor;
-  vec3 light = ambient + sunColor * vSun;
+  vec3 light = ambient + sunColor * sunVisibility();
   for (int i = 0; i < ${MAX_LIGHTS}; i++) {
     if (i >= lightCount) break;
     float d = distance(vPos, lights[i].xyz);
@@ -58,6 +85,7 @@ export function create(api) {
   renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
   const scene = new THREE.Scene();
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
+  camera.layers.enable(1); // hlavná kamera vidí svet (0) aj sprity a pomocné objekty (1)
   let yaw = Math.PI / 4, yawTarget = yaw;
 
   // ---------- Textúra zeme (rovnaká kresba ako 2D hra) ----------
@@ -92,7 +120,10 @@ export function create(api) {
     uniforms: {
       map: { value: groundTex }, ambient: { value: new THREE.Vector3() }, sunColor: { value: new THREE.Vector3() },
       lampColor: { value: new THREE.Vector3(...toLin([1, 0.78, 0.45])) }, emisColor: { value: new THREE.Vector3(1, 1, 1) },
-      lights: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4()) }, lightCount: { value: 0 }, opacity: { value: 1 }
+      lights: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4()) }, lightCount: { value: 0 }, opacity: { value: 1 },
+      shadowMap: { value: null }, shadowMatrix: { value: new THREE.Matrix4() }, sunDir: { value: new THREE.Vector3(0, 1, 0) },
+      shadowOn: { value: 0 }, shadowTexel: { value: new THREE.Vector2(1 / SHADOW_SIZE, 1 / SHADOW_SIZE) }, shadowRadius: { value: 3.5 },
+      shadowNormalBias: { value: 0.03 }
     }
   });
   // Rovnaký shader pre objekty, ktoré práve miznú (hráč zašiel za ne): priehľadný, bez zápisu do hĺbky.
@@ -104,7 +135,6 @@ export function create(api) {
   const depthOnlyMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms: { ...material.uniforms, opacity: { value: 1 } }, transparent: true, depthWrite: true, colorWrite: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 });
   const FADE_MIN = 0.3; // ako veľmi ostane vidieť budovu/strom, za ktorým stojí hráč
   let mesh = null, grid = null, builtSeason = -1;
-  let vtx = null; // { pos: Float32Array, nrm: Int8Array, sun: Float32Array, target: Float32Array, n }
   const AXES = [[0, 1, 2], [1, 2, 0], [2, 0, 1]]; // [normálová os, u, v] – u × v = normála
 
   function buildMesh(se) {
@@ -162,23 +192,20 @@ export function create(api) {
     geo.setAttribute('emis', new THREE.Float32BufferAttribute(E, 1));
     geo.setAttribute('tex', new THREE.Float32BufferAttribute(T, 1));
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2));
-    const sunA = new Float32Array(vi).fill(1);
-    geo.setAttribute('sun', new THREE.BufferAttribute(sunA, 1));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
     geo.setIndex(I);
     geo.computeBoundingSphere();
     if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); }
     mesh = new THREE.Mesh(geo, material);
     scene.add(mesh);
-    vtx = { pos: new Float32Array(P), nrm: new Int8Array(N), sun: sunA, target: new Float32Array(vi).fill(1), from: new Float32Array(vi).fill(1), n: vi, mesh, start: 0.05 };
     for (const fm of fineMeshes) { scene.remove(fm); scene.remove(fm.userData.depthTwin); fm.geometry.dispose(); }
     fineMeshes = grid.fine.map(f => buildFine(f, se));
-    parts = [vtx].concat(fineMeshes.map(m => m.userData.vtx));
-    sunJob = null; lastSunKey = '';
+    shadowDirty = true;
     builtSeason = se;
   }
 
   // ---------- Jemné modely z minikociek (1 blok = 8×8×8) ----------
-  let fineMeshes = [], parts = [];
+  let fineMeshes = [];
   function buildFine(f, se) {
     const F = W.FINE, { sx, sy, sz, data } = f;
     const get = (x, y, z) => (y < 0 ? 1 : (x < 0 || z < 0 || x >= sx || y >= sy || z >= sz) ? 0 : data[(z * sy + y) * sx + x]); // pod modelom je zem
@@ -224,8 +251,7 @@ export function create(api) {
     geo.setAttribute('emis', new THREE.Float32BufferAttribute(E, 1));
     geo.setAttribute('tex', new THREE.Float32BufferAttribute(T, 1));
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2));
-    const sunA = new Float32Array(vi).fill(1);
-    geo.setAttribute('sun', new THREE.BufferAttribute(sunA, 1));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
     geo.setIndex(I);
     geo.computeBoundingSphere();
     geo.computeBoundingBox();
@@ -235,55 +261,58 @@ export function create(api) {
     // pri zoslabení: najprv len hĺbka (aby bolo vidno iba prednú plochu modelu), potom model priehľadne
     fmesh.renderOrder = 2;
     const depthTwin = new THREE.Mesh(geo, depthOnlyMaterial);
-    depthTwin.renderOrder = 1; depthTwin.visible = false;
+    depthTwin.renderOrder = 1; depthTwin.visible = false; depthTwin.layers.set(1); // do mapy tieňov nepatrí
     scene.add(depthTwin);
     fmesh.userData.depthTwin = depthTwin;
     fmesh.onBeforeRender = () => { if (fmesh.material === fadeMaterial) { fadeMaterial.uniforms.opacity.value = fmesh.userData.fade; fadeMaterial.uniformsNeedUpdate = true; } };
     fmesh.userData.tile = f.tile;
-    // lúč tieňa začína až za vlastnou neviditeľnou náhradou modelu v hrubej mriežke
-    fmesh.userData.vtx = { pos: new Float32Array(P), nrm: new Int8Array(N), sun: sunA, target: new Float32Array(vi).fill(1), from: new Float32Array(vi).fill(1), n: vi, mesh: fmesh, start: 0.45 };
     scene.add(fmesh);
     return fmesh;
   }
 
-  // ---------- Mäkký slnečný tieň: počíta sa postupne (pár tisíc vrcholov na snímku) ----------
-  let sunJob = null, lastSunKey = '', blendT = 1;
-  function scheduleSun(min, se) {
-    const key = se + ':' + Math.floor(min / 15);  // prepočet každých 15 herných minút
-    if (key === lastSunKey || !vtx) return;
-    lastSunKey = key;
-    sunJob = { dir: W.sunDir(min + 7, se), i: 0, part: 0, cache: new Map() };
-  }
-  function stepSun(budget) {
-    if (!sunJob) return;
-    const { dir } = sunJob;
-    while (budget > 0 && sunJob.part < parts.length) {
-      const v = parts[sunJob.part];
-      const end = Math.min(v.n, sunJob.i + budget);
-      for (let i = sunJob.i; i < end; i++) {
-        const nx = v.nrm[i * 3], ny = v.nrm[i * 3 + 1], nz = v.nrm[i * 3 + 2];
-        let s = 0;
-        if (dir && nx * dir.x + ny * dir.y + nz * dir.z > 0.02) {
-          const px = v.pos[i * 3] + nx * 0.02, py = v.pos[i * 3 + 1] + ny * 0.02, pz = v.pos[i * 3 + 2] + nz * 0.02;
-          const k = px.toFixed(2) + ',' + py.toFixed(2) + ',' + pz.toFixed(2);
-          s = sunJob.cache.get(k);
-          if (s === undefined) { s = W.sunVisibility(grid, px, py, pz, dir, 5, v.start); sunJob.cache.set(k, s); }
-        }
-        v.target[i] = s;
-      }
-      budget -= end - sunJob.i;
-      sunJob.i = end;
-      if (end >= v.n) { sunJob.part++; sunJob.i = 0; }
-    }
-    if (sunJob.part >= parts.length) { for (const v of parts) v.from.set(v.sun); blendT = 0; sunJob = null; }
-  }
-  function blendSun(dt) {
-    if (blendT >= 1 || !vtx) return;
-    blendT = Math.min(1, blendT + dt / 1.5);
-    for (const v of parts) {
-      for (let i = 0; i < v.n; i++) v.sun[i] = lerp(v.from[i], v.target[i], blendT);
-      v.mesh.geometry.attributes.sun.needsUpdate = true;
-    }
+  // ---------- Mapa tieňov od slnka (GPU) ----------
+  // Svet sa z pohľadu slnka nakreslí len do hĺbky. Ortogonálna kamera slnka presne obopína celú mapu.
+  // Prekresľuje sa len pri posune slnka o ~0,2° alebo po prestavbe sveta – vždy na začiatku snímky.
+  const shadowRT = new THREE.WebGLRenderTarget(SHADOW_SIZE, SHADOW_SIZE, { depthBuffer: true });
+  shadowRT.depthTexture = new THREE.DepthTexture(SHADOW_SIZE, SHADOW_SIZE);
+  material.uniforms.shadowMap.value = shadowRT.depthTexture;
+  const lightCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
+  lightCam.layers.set(0); // len svet a modely – nie sprity, tiene pod postavičkami ani hĺbkové dvojčatá
+  // do mapy kreslíme zadné strany (svet je z uzavretých kociek) – povrchy samy seba nezatieňujú
+  const shadowDepthMat = new THREE.MeshBasicMaterial({ side: THREE.BackSide, colorWrite: false });
+  const worldCorners = [];
+  for (const x of [0, D.W]) for (const y of [0, 7]) for (const z of [0, D.H]) worldCorners.push(new THREE.Vector3(x, y, z));
+  let shadowDirty = true, lastShadowDir = null;
+  function updateShadowMap(dir) {
+    const u = material.uniforms;
+    if (!dir) { u.shadowOn.value = 0; return; }
+    u.shadowOn.value = 1;
+    u.sunDir.value.set(dir.x, dir.y, dir.z);
+    if (!shadowDirty && lastShadowDir && lastShadowDir.x * dir.x + lastShadowDir.y * dir.y + lastShadowDir.z * dir.z > 0.999994) return;
+    shadowDirty = false; lastShadowDir = dir;
+    const center = new THREE.Vector3(D.W / 2, 3, D.H / 2);
+    lightCam.position.copy(center).addScaledVector(new THREE.Vector3(dir.x, dir.y, dir.z), 80);
+    lightCam.up.set(0, 1, 0);
+    lightCam.lookAt(center);
+    lightCam.updateMatrixWorld();
+    // obopni rohy sveta v priestore svetla
+    const inv = lightCam.matrixWorldInverse, b = new THREE.Box3();
+    for (const c of worldCorners) b.expandByPoint(c.clone().applyMatrix4(inv));
+    lightCam.left = b.min.x - 0.5; lightCam.right = b.max.x + 0.5; lightCam.bottom = b.min.y - 0.5; lightCam.top = b.max.y + 0.5;
+    lightCam.near = Math.max(0.1, -b.max.z - 1); lightCam.far = -b.min.z + 1;
+    lightCam.updateProjectionMatrix();
+    u.shadowMatrix.value.multiplyMatrices(lightCam.projectionMatrix, lightCam.matrixWorldInverse);
+    // posun po normále ~1 pixel mapy
+    u.shadowNormalBias.value = Math.max(lightCam.right - lightCam.left, lightCam.top - lightCam.bottom) / SHADOW_SIZE * 1.5;
+    const oldOverride = scene.overrideMaterial, oldClear = renderer.getClearColor(new THREE.Color()), oldAlpha = renderer.getClearAlpha();
+    scene.overrideMaterial = shadowDepthMat;
+    renderer.setRenderTarget(shadowRT);
+    renderer.setClearColor(0xffffff, 1);
+    renderer.clear();
+    renderer.render(scene, lightCam);
+    renderer.setRenderTarget(null);
+    renderer.setClearColor(oldClear, oldAlpha);
+    scene.overrideMaterial = oldOverride;
   }
 
   // ---------- Sprity: kvety, huby, babka, hráči ----------
@@ -300,6 +329,7 @@ export function create(api) {
   function makeSprite(w, h) {
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({ alphaTest: 0.4, transparent: false }));
     sp.center.set(0.5, 0.03); sp.scale.set(w, h, 1);
+    sp.layers.set(1); // sprity nevrhajú tieň do mapy tieňov
     scene.add(sp);
     return sp;
   }
@@ -310,7 +340,7 @@ export function create(api) {
   }
   const shadowGeo = new THREE.CircleGeometry(0.3, 20);
   const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false });
-  function blobShadow() { const m = new THREE.Mesh(shadowGeo, shadowMat); m.rotation.x = -Math.PI / 2; m.scale.set(1, 0.75, 1); scene.add(m); return m; }
+  function blobShadow() { const m = new THREE.Mesh(shadowGeo, shadowMat); m.rotation.x = -Math.PI / 2; m.scale.set(1, 0.75, 1); m.layers.set(1); scene.add(m); return m; }
 
   function syncPlants(night) {
     const seen = new Set();
@@ -349,7 +379,7 @@ export function create(api) {
     const sp = makeSprite(0.96, 1.28); sp.material.map = tex;
     // „röntgen“: polopriehľadná silueta postavičky viditeľná aj cez budovy a stromy
     const ghost = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.35, depthTest: false, depthWrite: false }));
-    ghost.center.copy(sp.center); ghost.scale.copy(sp.scale); ghost.renderOrder = 10;
+    ghost.center.copy(sp.center); ghost.scale.copy(sp.scale); ghost.renderOrder = 10; ghost.layers.set(1);
     scene.add(ghost);
     o = { c, ctx: c.getContext('2d'), tex, sp, ghost, shadow: blobShadow(), h: 1 };
     chars.set(id, o);
@@ -518,6 +548,7 @@ export function create(api) {
 
   // ---------- Výber objektu ťuknutím (lúč do scény) ----------
   const ray = new THREE.Raycaster();
+  ray.layers.enableAll();
   function pick(clientX, clientY) {
     const r = api.glCanvas.getBoundingClientRect();
     const ndc = new THREE.Vector2((clientX - r.left) / r.width * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
@@ -549,12 +580,8 @@ export function create(api) {
     const min = api.curMin(), se = api.season(), night = D.isNight(min);
     if (builtSeason !== se) { buildMesh(se); refreshGround(se, t, true); drawnSeason = se; }
     if (now - lastGround > 600) { refreshGround(se, t, false); lastGround = now; }
-    scheduleSun(min, se);
-    // tieň počítame len ~4 ms na snímku, aby výpočet nespomalil hru ani na slabšom mobile
-    const sunT0 = performance.now();
-    while (sunJob && performance.now() - sunT0 < 4) stepSun(400);
-    blendSun(dt);
     lighting(min, se);
+    updateShadowMap(curSunDir);
     placeCamera(dt);
 
     // svetelné zdroje (okná, kotlík, hráči, svietiace kvety) – len keď je šero
