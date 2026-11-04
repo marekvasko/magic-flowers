@@ -18,7 +18,7 @@
   const S = {
     ws: null, id: 0, room: '', name: '', look: null,
     tiles: [], tick: 0, market: null, board: [], rep: 0, up: {}, canCap: 5, plotLimit: 8, plotsUsed: 0, maxActive: 1, day: 1, min: 390, weather: 'sun', timeAt: 0, tickMs: 1000, daySeconds: 300, mode: 'running', storage: {},
-    me: { x: D.SPAWN.x, y: D.SPAWN.y, dir: 0, phase: 0, moving: false }, myEmote: null,
+    me: { x: D.SPAWN.x, y: D.SPAWN.y, dir: 0, phase: 0, moving: false, jz: 0, jv: 0, crawl: false }, crawlKey: false, crawlTgl: false, myEmote: null,
     others: new Map(), inv: {}, coins: 0, water: 20, recipes: [], seen: [], vily: false,
     sel: 'hoe', quest: null, eternal: false, names: [],
     keys: {}, stick: { x: 0, y: 0 }, path: null, pendingAct: null, tapMark: null, lastSent: '', sentAt: 0,
@@ -33,7 +33,7 @@
   function sfx(kind) {
     try {
       actx = actx || new (window.AudioContext || window.webkitAudioContext)();
-      const notes = { pop: [660, 880], water: [420, 300], magic: [523, 659, 784, 1047], coin: [988, 1319], dig: [140, 110], bad: [220, 180] }[kind] || [440];
+      const notes = { pop: [660, 880], hop: [392, 784], water: [420, 300], magic: [523, 659, 784, 1047], coin: [988, 1319], dig: [140, 110], bad: [220, 180] }[kind] || [440];
       notes.forEach((f, i) => {
         const o = actx.createOscillator(), g = actx.createGain();
         o.type = kind === 'dig' ? 'triangle' : 'sine'; o.frequency.value = f;
@@ -127,8 +127,9 @@
           seen.add(p.id);
           if (p.id === S.id) { S.myEmote = p.e; continue; }
           let o = S.others.get(p.id);
-          if (!o) { o = { x: p.x, y: p.y, phase: 0 }; S.others.set(p.id, o); }
-          Object.assign(o, { id: p.id, tx: p.x, ty: p.y, dir: p.dir, a: p.a, look: p.look || {}, name: p.name, e: p.e });
+          if (!o) { o = { x: p.x, y: p.y, phase: 0, jz: 0, jv: 0, j: p.j }; S.others.set(p.id, o); }
+          if (p.j !== o.j && !o.jz) o.jv = JUMP_V; // iný hráč skočil
+          Object.assign(o, { id: p.id, tx: p.x, ty: p.y, dir: p.dir, a: p.a, look: p.look || {}, name: p.name, e: p.e, cr: !!p.cr, j: p.j });
         }
         for (const id of [...S.others.keys()]) if (!seen.has(id)) S.others.delete(id);
         break;
@@ -279,12 +280,23 @@
   }
 
   // ---------- Vstupy ----------
+  // Skok (medzerník) a plazenie (Shift) sú len pre parádu – nič nemenia, ostatní hráči ich však vidia
+  const JUMP_V = 5.6, JUMP_G = 23, CRAWL_SPEED = 0.45; // výskok ≈ 0,7 políčka, ≈ 0,5 s
+  function jump() {
+    const me = S.me;
+    if (S.asleep || me.jz > 0 || me.crawl) return;
+    me.jv = JUMP_V; me.jz = 0.001;
+    send({ t: 'jump' }); sfx('hop');
+  }
+  function setCrawlToggle(on) { S.crawlTgl = on; $('bCrawl').classList.toggle('on', on); }
   const KEYMAP = { ArrowUp: 'u', KeyW: 'u', ArrowDown: 'd', KeyS: 'd', ArrowLeft: 'l', KeyA: 'l', ArrowRight: 'r', KeyD: 'r' };
   addEventListener('keydown', e => {
     if (!S.joined || S.asleep || document.activeElement.tagName === 'INPUT') return;
     S.kbd = true;
     if (KEYMAP[e.code]) { S.keys[KEYMAP[e.code]] = true; stopWalk(); e.preventDefault(); }
-    if (e.code === 'Space' || e.code === 'KeyE' || e.code === 'Enter') { const f = frontTile(); doAction(f.x, f.y); e.preventDefault(); }
+    if (e.code === 'Space') { if (!e.repeat) jump(); e.preventDefault(); }
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') S.crawlKey = true;
+    if (e.code === 'KeyE' || e.code === 'Enter') { const f = frontTile(); doAction(f.x, f.y); e.preventDefault(); }
     if (e.code === 'Escape') closeModal();
     if (/^Digit[1-9]$/.test(e.code)) { const ids = hotbarIds(); const id = ids[+e.code.slice(5) - 1]; if (id) selectItem(id); }
     if (e.code === 'KeyQ') { const ids = hotbarIds(); selectItem(ids[(ids.indexOf(S.sel) + 1) % ids.length]); }
@@ -292,7 +304,14 @@
     if (R3 && e.code === 'BracketLeft') R3.rotate(-1);
     if (R3 && e.code === 'BracketRight') R3.rotate(1);
   });
-  addEventListener('keyup', e => { if (KEYMAP[e.code]) S.keys[KEYMAP[e.code]] = false; });
+  addEventListener('keyup', e => {
+    if (KEYMAP[e.code]) S.keys[KEYMAP[e.code]] = false;
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') S.crawlKey = false;
+  });
+  addEventListener('blur', () => { S.keys = {}; S.crawlKey = false; });
+  // Mobil: tlačidlá pre palec vpravo dole (skok, plazenie zap/vyp)
+  $('bJump').addEventListener('pointerdown', e => { e.preventDefault(); jump(); });
+  $('bCrawl').addEventListener('pointerdown', e => { e.preventDefault(); setCrawlToggle(!S.crawlTgl); sfx('pop'); });
 
   document.querySelectorAll('#emotes button[data-e]').forEach(b => b.addEventListener('click', () => { send({ t: 'emote', e: b.dataset.e }); sfx('pop'); }));
 
@@ -328,6 +347,7 @@
   function endJoy() { joyId = null; S.stick = { x: 0, y: 0 }; joyKnob.style.transform = ''; joy.classList.add('hidden'); }
   cv.addEventListener('pointerdown', e => {
     if (!S.joined) return;
+    if (e.pointerType === 'touch') gameEl.classList.add('touch');
     e.preventDefault();
     try { cv.setPointerCapture(e.pointerId); } catch (err) { }
     ptrs.set(e.pointerId, { x0: e.clientX, y0: e.clientY, joy: false });
@@ -351,7 +371,10 @@
     if (!p) return;
     ptrs.delete(e.pointerId);
     if (e.pointerId === joyId) return endJoy();
-    if (e.type === 'pointerup' && !p.joy && Math.hypot(e.clientX - p.x0, e.clientY - p.y0) <= DRAG_START) tapWorld(e.clientX, e.clientY);
+    if (e.type === 'pointerup' && !p.joy && Math.hypot(e.clientX - p.x0, e.clientY - p.y0) <= DRAG_START) {
+      if (joyId !== null) jump(); // ťuknutie druhým prstom počas riadenia joystickom = skok
+      else tapWorld(e.clientX, e.clientY);
+    }
   };
   cv.addEventListener('pointerup', ptrEnd);
   cv.addEventListener('pointercancel', ptrEnd);
@@ -864,7 +887,8 @@
 
   function renderHelp(body) {
     body.appendChild(h('div', { class: 'help', html: `
-      <p>🕹️ <b>Pohyb:</b> polož prst kdekoľvek na obrazovku a potiahni – v mieste dotyku sa objaví joystick. Alebo ťukni na miesto, kam chceš ísť. Na počítači šípky/WASD (medzerník = akcia na políčku pred tebou) alebo ťahanie myšou.</p>
+      <p>🕹️ <b>Pohyb:</b> polož prst kdekoľvek na obrazovku a potiahni – v mieste dotyku sa objaví joystick. Alebo ťukni na miesto, kam chceš ísť. Na počítači šípky/WASD (E alebo Enter = akcia na políčku pred tebou) alebo ťahanie myšou.</p>
+      <p>🦘 <b>Skok a plazenie:</b> medzerník = skok, držaný Shift = plazenie. Na mobile tlačidlá ⤴ a 🐛 vpravo dole; počas riadenia joystickom stačí ťuknúť druhým prstom kamkoľvek a skočíš.</p>
       <p>👆 <b>Ťuknutím na objekt</b> (trh, babka, kotlík, studňa, kvet, kamarát) s ním hneď niečo urobíš – ak je ďaleko, postavička k nemu dôjde sama.</p>
       <p>🟡 <b>Práca so zemou:</b> ťukni na políčko vedľa seba – čo sa stane, závisí od vybranej veci v lište. Vzdialené políčko najprv dôjdeš, druhým ťuknutím ho napr. prekopeš.</p>
       <p>⛏️ <b>Motykou</b> prekopeš trávu, piesok, lesnú pôdu alebo skalku. 🌱 Potom zasaď <b>semienka</b> a 💧 <b>polievaj</b> krhlou (načrieš v jazierku alebo studni).</p>
@@ -937,6 +961,8 @@
     if (R3) R3.resize();
   }
   addEventListener('resize', resize);
+  // tlačidlá skoku a plazenia sedia tesne nad lištou nástrojov, nech je akokoľvek vysoká
+  new ResizeObserver(() => gameEl.style.setProperty('--bar-h', $('bottom').offsetHeight + 'px')).observe($('bottom'));
 
   function update(dt) {
     const me = S.me;
@@ -963,8 +989,10 @@
     const len = Math.hypot(vx, vy);
     if (len > 1) { vx /= len; vy /= len; }
     me.moving = len > 0.05;
+    me.crawl = !S.asleep && (S.crawlKey || S.crawlTgl) && !me.jz;
+    if (me.jz > 0 || me.jv > 0) { me.jz += me.jv * dt; me.jv -= JUMP_G * dt; if (me.jz <= 0) me.jz = me.jv = 0; }
     if (me.moving) {
-      const sp = 3.8 * dt;
+      const sp = 3.8 * dt * (me.crawl ? CRAWL_SPEED : 1);
       const ox = me.x, oy = me.y;
       const rx = 0.26, ry = 0.16;
       const nx = me.x + vx * sp;
@@ -973,7 +1001,7 @@
       if (!solid(me.x - rx, ny - ry) && !solid(me.x + rx, ny - ry) && !solid(me.x - rx, ny + ry) && !solid(me.x + rx, ny + ry)) me.y = ny;
       face(vx, vy);
       me.a = Math.atan2(vy, vx); // presný smer pre 8-smerový sprite
-      me.phase += dt * 11;
+      me.phase += dt * (me.crawl ? 7 : 11);
       if (S.path) {
         if (Math.hypot(me.x - ox, me.y - oy) < sp * 0.1) { S.stuckT += dt; if (S.stuckT > 0.6) stopWalk(); }
         else S.stuckT = 0;
@@ -981,14 +1009,15 @@
     } else me.phase = 0;
     // odoslanie pozície
     const now = performance.now();
-    const key = me.x.toFixed(2) + ',' + me.y.toFixed(2) + ',' + me.dir + ',' + (me.a != null ? me.a.toFixed(1) : '');
-    if (key !== S.lastSent && now - S.sentAt > 90) { send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a }); S.lastSent = key; S.sentAt = now; }
+    const key = me.x.toFixed(2) + ',' + me.y.toFixed(2) + ',' + me.dir + ',' + (me.a != null ? me.a.toFixed(1) : '') + ',' + me.crawl;
+    if (key !== S.lastSent && now - S.sentAt > 90) { send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl }); S.lastSent = key; S.sentAt = now; }
     // ostatní hráči
     for (const o of S.others.values()) {
       const dx = o.tx - o.x, dy = o.ty - o.y;
       const k = Math.min(1, dt * 12);
       o.x += dx * k; o.y += dy * k;
-      o.phase = Math.hypot(dx, dy) > 0.02 ? o.phase + dt * 11 : 0;
+      o.phase = Math.hypot(dx, dy) > 0.02 ? o.phase + dt * (o.cr ? 7 : 11) : 0;
+      if (o.jz > 0 || o.jv > 0) { o.jz += o.jv * dt; o.jv -= JUMP_G * dt; if (o.jz <= 0) o.jz = o.jv = 0; }
     }
     // efekty
     for (const p of S.fx) {
@@ -1070,8 +1099,8 @@
     if (A.house) objs.push([A.house.y + 2, () => Art.house(c, SX(A.house.x), SY(A.house.y), ts, se, night)]);
     if (A.stall) objs.push([A.stall.y + 0.9, () => Art.stall(c, SX(A.stall.x), SY(A.stall.y), ts, t)]);
     objs.push([D.BABKA.y + 0.9, () => Art.char(c, SX(D.BABKA.x + 0.5), SY(D.BABKA.y + 0.9), ts, { shirt: '#7b4a9e', hair: '#eee' }, 0, Math.sin(t) * 0.3, { babka: true })]);
-    for (const o of S.others.values()) objs.push([o.y, () => Art.char(c, SX(o.x), SY(o.y), ts, o.look, o.dir, o.phase || (o.e === 'dance' ? t * 4 : 0), { dance: o.e === 'dance' })]);
-    objs.push([S.me.y, () => Art.char(c, SX(S.me.x), SY(S.me.y), ts, S.look || {}, S.me.dir, S.myEmote === 'dance' ? t * 4 : S.me.phase, { dance: S.myEmote === 'dance' })]);
+    for (const o of S.others.values()) objs.push([o.y, () => Art.char(c, SX(o.x), SY(o.y), ts, o.look, o.dir, o.phase || (o.e === 'dance' ? t * 4 : 0), { dance: o.e === 'dance', lift: (o.jz || 0) * ts, crawl: o.cr })]);
+    objs.push([S.me.y, () => Art.char(c, SX(S.me.x), SY(S.me.y), ts, S.look || {}, S.me.dir, S.myEmote === 'dance' ? t * 4 : S.me.phase, { dance: S.myEmote === 'dance', lift: S.me.jz * ts, crawl: S.me.crawl })]);
     objs.sort((a, b) => a[0] - b[0]);
     for (const o of objs) o[1]();
 

@@ -192,8 +192,19 @@ const Art = (() => {
 
   // Postavička – x stred, y chodidlá.
   // dir: 0 dole, 1 vľavo, 2 vpravo, 3 hore, 4 vľavo dole, 5 vpravo dole, 6 vľavo hore, 7 vpravo hore
+  // o.lift: výška skoku v px (tieň ostáva na zemi), o.crawl: plazí sa (nízko pri zemi)
   function char(c, x, y, s, look, dir, phase, o) {
     o = o || {};
+    const lift = o.lift || 0;
+    if (lift > 0 || o.crawl) {
+      if (!o.noShadow) { const k = Math.max(0.45, 1 - lift / s); ell(c, x, y, s * 0.24 * k, s * 0.08 * k, 0, 'rgba(0,0,0,' + 0.25 * k + ')'); }
+      c.save(); c.translate(x, y - lift);
+      if (o.crawl) c.scale(1.18, 0.58);
+      c.translate(-x, -y);
+      char(c, x, y, s, look, dir, phase, Object.assign({}, o, { lift: 0, crawl: false, noShadow: true }));
+      c.restore();
+      return;
+    }
     const skin = '#f2c9a0';
     let d = dir;
     let bob = Math.abs(Math.sin(phase)) * s * 0.04;

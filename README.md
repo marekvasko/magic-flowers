@@ -69,7 +69,8 @@ The game always fills the whole screen, on a phone and on a computer, in portrai
 
 ## Gameplay
 
-- **Movement:** put a finger anywhere on the screen and drag – a joystick appears right there and stays anchored at that spot until you lift your finger. Or tap the spot you want to walk to (the character finds a path around obstacles). On a computer use WASD / arrow keys or drag with the mouse, Space for the action and 1–9 for the toolbar.
+- **Movement:** put a finger anywhere on the screen and drag – a joystick appears right there and stays anchored at that spot until you lift your finger. Or tap the spot you want to walk to (the character finds a path around obstacles). On a computer use WASD / arrow keys or drag with the mouse, E / Enter for the action and 1–9 for the toolbar.
+- **Jump and crawl** (just for fun, other players see it): Space = jump, hold Shift = crawl (slower, low to the ground). On touch devices there are two thumb buttons at the bottom right above the toolbar (⤴ jump, 🐛 crawl on/off); while steering with the joystick, a tap with a second finger anywhere also jumps.
 - **Tap an object** (market, Babka, cauldron, well, blooming flower, another player) to use it right away – if it's far away, the character walks there first. Ground actions (digging, watering, planting) need you to be close: the first tap walks there, the second one acts.
 - **Ground actions** (dig, water, plant, pick): tap a tile next to you; what happens depends on the item selected in the toolbar.
 - **Time and seasons:** a new day starts at 6:00, and plants grow at that moment. Each season lasts 4 days. In winter, frost kills everything except winter flowers. When the season changes, out-of-season plants get 2 days of grace (growing at half speed), and flowers that are already blooming survive.
