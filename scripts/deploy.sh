@@ -2,11 +2,27 @@
 # Nasadenie prostredia na tomto hostiteľovi (spúšťa ho self-hosted runner z CI).
 #   scripts/deploy.sh up   prod|dev|pr-<n> <image>
 #   scripts/deploy.sh down pr-<n>              # zmaže PR náhľad aj s jeho údajmi
+#   scripts/deploy.sh prune [<n> ...]          # zmaže PR náhľady okrem otvorených PR <n> (zmeškané udalosti „closed“)
 # Produkcia používa projekt "magicflowers" a jeho zväzok s existujúcimi záhradami – ten sa nikdy nemaže.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-action=${1:?up|down}
+action=${1:?up|down|prune}
+
+if [[ "$action" == prune ]]; then
+  shift
+  for n in "$@"; do [[ "$n" =~ ^[0-9]+$ ]] || { echo "Zlé číslo PR: $n" >&2; exit 2; }; done
+  open=" $* "
+  # Len kontajnery mf-pr-<číslo> – dev a produkcia sa sem nikdy nedostanú.
+  for c in $(docker ps -a --format '{{.Names}}' | grep -E '^mf-pr-[0-9]+$' || true); do
+    n=${c#mf-pr-}
+    [[ "$open" == *" $n "* ]] && continue
+    echo "PR #$n už nie je otvorený – mažem náhľad $c"
+    scripts/deploy.sh down "pr-$n"
+  done
+  exit 0
+fi
+
 env=${2:?prod|dev|pr-<n>}
 image=${3:-}
 base=${BASE_DOMAIN:-zahrada.spis-ai.com}

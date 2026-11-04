@@ -29,7 +29,7 @@ The container joins the external `web` network and Traefik exposes it on the `we
 
 **Environments (CI/CD):** deployments are automatic, done by a self-hosted GitHub Actions runner on the host via `scripts/deploy.sh`:
 
-- every PR gets a preview at `https://pr-<n>.zahrada.spis-ai.com/`, removed when the PR closes;
+- every PR gets a preview at `https://pr-<n>.zahrada.spis-ai.com/`, removed when the PR closes (plus a daily/after-dev-deploy cleanup of previews whose PR is no longer open);
 - `dev` is staging at `https://dev.zahrada.spis-ai.com/`;
 - releases (`v*` tags on `main`) go to production at `https://zahrada.spis-ai.com/`.
 
