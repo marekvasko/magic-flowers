@@ -732,16 +732,19 @@ export function create(api) {
     return [2, 5, 0, 4, 1, 6, 3, 7][oct];
   }
   const DIR_ANGLE = [Math.PI / 2, Math.PI, 0, -Math.PI / 2];
+  // opts.jz: výška skoku (políčka), opts.crawl: plazenie
   function drawChar(id, x, z, look, a, phase, opts, dt) {
     const o = charObj(id);
     const target = grid ? W.surfaceY(grid, Math.max(0, Math.min(D.W - 1, Math.floor(x))), Math.max(0, Math.min(D.H - 1, Math.floor(z)))) : 1;
     o.h = lerp(o.h, target, Math.min(1, dt * 10));
+    const jz = opts.jz || 0;
     o.ctx.clearRect(0, 0, 96, 128);
-    Art.char(o.ctx, 48, 124, 100, look || {}, opts.dance ? 0 : dir8(a), phase, Object.assign({ noShadow: true }, opts));
+    Art.char(o.ctx, 48, 124, 100, look || {}, opts.dance ? 0 : dir8(a), phase, Object.assign({ noShadow: true }, opts, { jz: 0 }));
     o.tex.needsUpdate = true;
-    o.sp.position.set(x, o.h, z);
+    o.sp.position.set(x, o.h + jz, z);
     o.ghost.position.copy(o.sp.position);
     o.shadow.position.set(x, o.h + 0.01, z);
+    const sk = Math.max(0.45, 1 - jz); o.shadow.scale.set(sk, 0.75 * sk, 1); // vo výskoku je tieň menší
     o.sp.userData.tile = { x: Math.floor(x), y: Math.floor(z) };
     o.alive = true;
     return o;
@@ -955,8 +958,8 @@ export function create(api) {
     }
     for (const o of chars.values()) o.alive = false;
     const me = S.me;
-    const meO = drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : DIR_ANGLE[me.dir], S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance' }, dt);
-    for (const o of S.others.values()) drawChar(o.id, o.x, o.y, o.look, o.a != null ? o.a : DIR_ANGLE[o.dir || 0], o.e === 'dance' ? t * 4 : o.phase, { dance: o.e === 'dance' }, dt);
+    const meO = drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : DIR_ANGLE[me.dir], S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz, crawl: me.crawl }, dt);
+    for (const o of S.others.values()) drawChar(o.id, o.x, o.y, o.look, o.a != null ? o.a : DIR_ANGLE[o.dir || 0], o.e === 'dance' ? t * 4 : o.phase, { dance: o.e === 'dance', jz: o.jz, crawl: o.cr }, dt);
     if (!babka) babka = drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, 0, { babka: true }, 1);
     else { babka.alive = true; if (Math.floor(t) !== babka.lastT) { babka.lastT = Math.floor(t); drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, Math.sin(t) * 0.3, { babka: true }, 1); } }
     for (const [id, o] of chars) {

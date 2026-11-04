@@ -545,10 +545,12 @@ wss.on('connection', ws => {
           pl.y = Math.max(0.2, Math.min(D.H - 0.2, m.y));
           pl.dir = m.dir | 0;
           if (typeof m.a === 'number' && isFinite(m.a)) pl.a = +m.a.toFixed(3); // presný smer pohľadu (3D: 8 smerov)
+          pl.cr = !!m.cr; // plazí sa
           sv.x = pl.x; sv.y = pl.y;
         }
         break;
       case 'act': if (!pl.sleep) act(pl, m); break;
+      case 'jump': if (!pl.sleep) pl.jn = ((pl.jn | 0) + 1) % 1000; break; // skok je len pre parádu – ostatní ho uvidia podľa zmeny počítadla
       case 'sleep': {
         if (m.on) {
           if (pl.sleep || room.ff) return;
@@ -712,7 +714,7 @@ setInterval(() => {
   for (const room of rooms.values()) {
     if (!room.players.size) continue;
     const list = [...room.players.values()].map(p => ({
-      id: p.id, name: p.name, x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, a: p.a, look: p.look,
+      id: p.id, name: p.name, x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, a: p.a, look: p.look, cr: p.cr ? 1 : 0, j: p.jn | 0,
       e: p.sleep ? 'sleep' : p.emote && now - p.emoteAt < 6000 ? p.emote : null
     }));
     broadcast(room, { t: 'pl', list });
