@@ -165,6 +165,18 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
         smoke.push({ x: fc.x + Math.cos(a) * 0.4, y: fc.y + 0.35, z: fc.z + Math.sin(a) * 0.4, vy: rnd(0.3, 0.45), life: 0, max: rnd(2.2, 3.2) });
       }
     }
+    // ---- plamienok v lampáši na trhu: blčí vo vnútri, občas z neho vyletí iskra ----
+    const lt = ctx.lantern;
+    if (lt && near(lt.x, lt.z, 2)) {
+      const fl = 0.75 + 0.25 * Math.sin(t * 11.3) * Math.sin(t * 6.7 + 2) + 0.1 * Math.sin(t * 29);
+      glow.put(lt.x, lt.y, lt.z, [1, 0.6, 0.2], 0.8, 0.45 * fl, GLOW, 0.4);
+      glow.put(lt.x, lt.y + 0.01, lt.z, [1, 0.85, 0.45], 0.24, 0.9 * fl, GLOW, 0.4);
+      // jazýček plameňa z dvoch minikociek: spodná oranžová, vrchná žltá (kmitá do strán a do výšky)
+      const sway = Math.sin(t * 9.7) * 0.012;
+      soft.put(lt.x, lt.y - 0.02, lt.z, FLAME_MID, 0.09, 1, PIXEL, 0.4);
+      soft.put(lt.x + sway, lt.y + 0.045 + 0.015 * fl, lt.z, FLAME_HOT, 0.06 * fl + 0.015, 1, PIXEL, 0.42);
+      if (Math.random() < dt * 1.2 * q) embers.push({ x: lt.x, y: lt.y + 0.12, z: lt.z, vx: rnd(-0.08, 0.08), vz: rnd(-0.08, 0.08), vy: rnd(0.35, 0.6), life: 0, max: rnd(0.7, 1.2), ph: Math.random() * 9 });
+    }
     flames = flames.filter(p => {
       p.life += dt; if (p.life >= p.max) return false;
       const u = p.life / p.max;
