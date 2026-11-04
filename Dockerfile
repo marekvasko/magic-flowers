@@ -3,7 +3,7 @@ ENV NODE_ENV=production PORT=3000
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
-COPY server.js engine.js economy.js items.js ./
+COPY server.js engine.js economy.js items.js scavenge.js ./
 COPY shared ./shared
 COPY public ./public
 RUN mkdir -p data && chown node:node data

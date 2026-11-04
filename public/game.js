@@ -6,7 +6,7 @@
 
   const SHIRTS = ['#4a90d9', '#e05a5a', '#5cb85c', '#f0ad4e', '#9b59d0', '#20b2aa', '#ff7eb6', '#555555'];
   const HAIRS = ['#5b3a1a', '#2b1a10', '#e8c36a', '#c0532a', '#9e9e9e', '#d96fa8', '#3a6ea5'];
-  const EMOJI = { wave: '👋', heart: '❤️', laugh: '😂', flower: '🌸', dance: '🎵', sleep: '💤' };
+  const EMOJI = { wave: '👋', heart: '❤️', laugh: '😂', flower: '🌸', dance: '🎵', sleep: '💤', search: '🔍' };
   const SECRETS = [
     'Mesiac šepká: „Keď sa dvaja roztancujú v kruhu z húb, víly to nevydržia a pridajú sa…“',
     'Mesiac šepká: „Kto pije jesenný odvar víl, môže tancovať aj sám.“',
@@ -104,7 +104,7 @@
         S.coins = m.coins; S.water = m.water; S.inv = m.inv; S.recipes = m.recipes; S.seen = m.seen; S.vily = m.vily;
         S.fb = m.fb || {}; S.fbTick = m.tick;
         Object.assign(S, { rep: m.rep || 0, up: m.up || {}, canCap: m.canCap, plotLimit: m.plotLimit, plotsUsed: m.plotsUsed, maxActive: m.maxActive });
-        if (!S.inv[S.sel]) S.sel = 'hoe';
+        if (S.sel && !S.inv[S.sel]) S.sel = 'hoe'; // '' = prázdna ruka (vybraté prázdne miesto v lište)
         renderHotbar(); updateHud();
         if (S.modal && S.modal.refresh) S.modal.refresh();
         break;
@@ -125,11 +125,11 @@
         const seen = new Set();
         for (const p of m.list) {
           seen.add(p.id);
-          if (p.id === S.id) { S.myEmote = p.e; continue; }
+          if (p.id === S.id) { S.myEmote = p.e; S.mySi = p.si; continue; }
           let o = S.others.get(p.id);
           if (!o) { o = { x: p.x, y: p.y, phase: 0, jz: 0, jv: 0, j: p.j }; S.others.set(p.id, o); }
           if (p.j !== o.j && !o.jz) o.jv = JUMP_V; // iný hráč skočil
-          Object.assign(o, { id: p.id, tx: p.x, ty: p.y, dir: p.dir, a: p.a, look: p.look || {}, name: p.name, e: p.e, cr: !!p.cr, j: p.j });
+          Object.assign(o, { id: p.id, tx: p.x, ty: p.y, dir: p.dir, a: p.a, look: p.look || {}, name: p.name, e: p.e, cr: !!p.cr, j: p.j, si: p.si });
         }
         for (const id of [...S.others.keys()]) if (!seen.has(id)) S.others.delete(id);
         break;
@@ -160,6 +160,16 @@
 
   // ---------- Pomocné ----------
   // ladenie: window.MF_TIME = { season: 0–3, min: 0–1439 } prepíše zobrazený čas (len lokálne vykresľovanie, nie server)
+  // Hráč hrabe v tráve (si = index hľadaného políčka, inak -1) – zo stredu políčka jemne odletuje hlinka a tráva sprava doľava.
+  // V 3D sú to častice vo svete (particles3d.mjs), tu len v 2D.
+  const searching = o => o && o.si != null && o.si >= 0;
+  function scavDirt(si, dt) {
+    if (Math.random() > dt * 12) return;
+    S.fx.push({
+      x: si % W + 0.5, y: Math.floor(si / W) + 0.5, vx: -(0.4 + Math.random() * 0.6), vy: -(0.3 + Math.random() * 0.5), g: 4,
+      color: ['#7a4a20', '#5b3a1a', '#74b84a', '#9b7b45'][Math.random() * 4 | 0], size: 0.022, life: 0, max: 0.3 + Math.random() * 0.15
+    });
+  }
   function curMin() { if (window.MF_TIME && window.MF_TIME.min != null) return window.MF_TIME.min; return realMin(); }
   function realMin() { return (S.min + Math.min(D.MIN_PER_TICK, (performance.now() - S.timeAt) / S.tickMs * D.MIN_PER_TICK)) % 1440; }
   function season() { return window.MF_TIME && window.MF_TIME.season != null ? window.MF_TIME.season : D.seasonOf(S.day); }
@@ -236,7 +246,7 @@
     const other = playerOn(tx, ty);
     if (other) {
       if (sel === 'po_laska') return { i: '💕', l: 'Darovať' };
-      if (sel === 'hoe' || sel === 'can') return { i: '👋', l: 'Zamávať' };
+      if (!sel || sel === 'hoe' || sel === 'can') return { i: '👋', l: 'Zamávať' };
       return { i: '🎁', l: 'Darovať' };
     }
     switch (t.g) {
@@ -255,8 +265,10 @@
       if (!s && D.TILLABLE[t.g]) return { i: '⛏️', l: 'Kopať' };
       if (s && !p && (!s.o || s.o === S.name.toLowerCase())) return { i: '🔄', l: 'Zarovnať' };
     }
+    // neprekopaná tráva a v ruke nič, čo by tu niečo robilo → hľadať divé semienka (ako na serveri)
+    if (t.g === 'grass' && !s && sel !== 'hoe' && !sel.startsWith('po_')) return { i: '🔍', l: 'Hľadať' };
     if (sel === 'can' && s) return { i: '💧', l: 'Poliať' };
-    if (sel.startsWith('seed_') && s && !p) return { i: '🌱', l: 'Sadiť' };
+    if ((sel.startsWith('seed_') || D.isWild(sel)) && s && !p) return { i: '🌱', l: 'Sadiť' };
     if (sel === 'compost' && s && !s.r) return { i: '🟤', l: 'Pohnojiť' };
     if (sel.startsWith('po_')) return { i: '🧪', l: 'Použiť' };
     if (p && !p.d) return { i: '🔍', l: 'Pozrieť', info: true };
@@ -285,6 +297,7 @@
     const t = tileAt(tx, ty), p = t.s && t.s.p;
     if (!p) return;
     const sp = D.SPECIES[p.sp];
+    if (!sp) return toast('Divé semienko – uvidíme, čo z neho vyrastie, keď vyklíči.' + (p.d ? ' Žiaľ, zahynulo.' : t.s.w ? '' : ' · smäd'));
     const st = ['semienko', 'klíčok', 'púčik', 'kvitne'][D.stageOf(p)];
     const shade = D.isShade(S.tiles, tx, ty);
     const notes = [];
@@ -296,15 +309,25 @@
     toast(`${sp.name}: ${st} (${Math.floor(p.prog)}/${sp.days} dní) · ${'⭐'.repeat(p.q)}${notes.length ? ' · ' + notes.join(', ') : ' · spokojná 😊'}`);
   }
 
+  // Hľadať sa dá len stojac priamo na políčku – kým tam hráč nie je, najprv tam dôjde
+  const onTile = (tx, ty) => Math.hypot(S.me.x - (tx + 0.5), S.me.y - (ty + 0.5)) <= 0.3;
+  function walkOnto(tx, ty) {
+    const path = findPath((x, y) => x === tx && y === ty);
+    if (!path) return;
+    S.path = path; S.pendingAct = { x: tx, y: ty, onTile: true }; S.stuckT = 0;
+  }
+
   function doAction(tx, ty) {
     const a = ctxAction(tx, ty);
     if (!a) return;
     if (a.ui) return openUI(a.ui);
+    if (a.l === 'Hľadať' && !onTile(tx, ty)) return walkOnto(tx, ty);
     if (a.info) {
       if (a.l === 'Huby') toast(D.isNight(curMin()) ? 'Huby slabo svietia… Skús tu zatancovať 💃' : 'Kruh z húb. Babka hovorí, že tu v noci tancujú víly. 🍄');
       else plantInfo(tx, ty);
       return;
     }
+    if (a.l === 'Hľadať') { const me = S.me; send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl }); } // server musí vedieť, že už stojím na políčku
     send({ t: 'act', x: tx, y: ty, item: S.sel });
     if (a.l === 'Kopať') sfx('dig'); else if (a.l === 'Poliať' || a.l === 'Načrieť') sfx('water'); else sfx('pop');
   }
@@ -328,8 +351,8 @@
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') S.crawlKey = true;
     if (e.code === 'KeyE' || e.code === 'Enter') { const f = frontTile(); doAction(f.x, f.y); e.preventDefault(); }
     if (e.code === 'Escape') closeModal();
-    if (/^Digit[1-9]$/.test(e.code)) { const ids = hotbarIds(); const id = ids[+e.code.slice(5) - 1]; if (id) selectItem(id); }
-    if (e.code === 'KeyQ') { const ids = hotbarIds(); selectItem(ids[(ids.indexOf(S.sel) + 1) % ids.length]); }
+    if (/^Digit[1-9]$/.test(e.code)) { const ids = hotbarIds(); selectItem(ids[+e.code.slice(5) - 1] || ''); }
+    if (e.code === 'KeyQ') { const ids = hotbarIds().concat(''); selectItem(ids[(ids.indexOf(S.sel) + 1) % ids.length]); }
     if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
     if (R3 && e.code === 'BracketLeft') R3.rotate(-1);
     if (R3 && e.code === 'BracketRight') R3.rotate(1);
@@ -358,7 +381,7 @@
     $('rotR').onclick = () => R3 && R3.rotate(1);
     import('/render3d.mjs').then(() => {
       R3 = window.Render3D.create({
-        S, glCanvas: gl, ov: cv, ovCtx: ctx, EMOJI, curMin, season, ctxAction, frontTile
+        S, searching, glCanvas: gl, ov: cv, ovCtx: ctx, EMOJI, curMin, season, ctxAction, frontTile
       });
       window._r3pick = (x, y) => R3.pick(x, y); // pre ladenie / testy
       window._r3 = R3;
@@ -492,12 +515,12 @@
 
   // ---------- Hotbar ----------
   function hotbarIds() {
-    const order = id => id === 'hoe' ? 0 : id === 'can' ? 1 : id === 'compost' ? 2 : id.startsWith('seed_') ? 3 : id.startsWith('fl_') ? 4 : id === 'wilted' ? 4.5 : 5;
+    const order = id => id === 'hoe' ? 0 : id === 'can' ? 1 : id === 'compost' ? 2 : id.startsWith('seed_') || D.isWild(id) ? 3 : id.startsWith('fl_') ? 4 : id === 'wilted' ? 4.5 : 5;
     const spOrder = Object.keys(D.SPECIES);
     const rank = id => { const k = id.replace(/^(seed_|fl_|po_)/, ''); const i = spOrder.indexOf(k); return i < 0 ? 99 : i; };
     return Object.keys(S.inv).filter(id => S.inv[id] > 0).sort((a, b) => order(a) - order(b) || rank(a) - rank(b));
   }
-  function selectItem(id) { if (!id) return; S.sel = id; renderHotbar(); }
+  function selectItem(id) { if (id == null) return; S.sel = id; renderHotbar(); }
   function renderHotbar() {
     const bar = $('hotbar');
     const ids = hotbarIds();
@@ -516,10 +539,16 @@
       d.onclick = () => selectItem(id);
       bar.appendChild(d);
     }
-    for (let i = ids.length; i < 9; i++) bar.appendChild(Object.assign(document.createElement('div'), { className: 'slot empty' })); // doplní rad (mobil 6, počítač 9 miest)
+    // doplní rad (mobil 6, počítač 9 miest); prvé prázdne miesto je vždy vidieť – jeho výberom máš prázdnu ruku
+    for (let i = ids.length; i < Math.max(9, ids.length + 1); i++) {
+      const d = Object.assign(document.createElement('div'), { className: 'slot empty' + (i === ids.length ? ' keep' + (S.sel === '' ? ' on' : '') : '') });
+      d.onclick = () => selectItem('');
+      bar.appendChild(d);
+    }
     const sel = bar.querySelector('.on');
     if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     let txt = D.itemName(S.sel);
+    if (!S.sel) txt = 'Prázdna ruka · hľadaj v tráve divé semienka 🔍';
     if (S.sel === 'can') txt += ` · ${S.water}/${S.canCap} 💧`;
     if (S.sel === 'hoe') txt += ` · pole ${S.plotsUsed}/${S.plotLimit >= 999 ? '∞' : S.plotLimit}`;
     if (S.sel.startsWith('seed_')) {
@@ -527,6 +556,7 @@
       txt += ' · ' + sp.seasons.map(s => D.SEASON_ICONS[s]).join('') + ' · ' + ({ sun: '☀️', shade: '🌳', any: '⛅' })[sp.light] + (sp.soil ? ' · ' + ({ sand: 'piesok', rich: 'kompost', rock: 'skalka' })[sp.soil] : '');
     }
     if (S.sel.startsWith('fl_')) txt += ' · ' + freshText(S.sel);
+    if (D.isWild(S.sel)) txt += ' · ' + D.SEASON_ICONS[+S.sel.slice(5)] + ' · nevedno, čo z neho vyrastie';
     if (S.sel === 'wilted') txt += ` · ${D.WILTED_PER_COMPOST} ks = 1 kompost (v sklade)`;
     if (S.sel.startsWith('po_')) txt += ' · ' + D.POTIONS[S.sel.slice(3)].desc;
     $('selName').textContent = txt;
@@ -1022,7 +1052,7 @@
     if (vx || vy) stopWalk();
     if (S.path) {
       const pa = S.pendingAct;
-      if (pa && inReach(pa.x, pa.y) && S.path.length <= 1) {
+      if (pa && !pa.onTile && inReach(pa.x, pa.y) && S.path.length <= 1) {
         stopWalk(); face(pa.x + 0.5 - me.x, pa.y + 0.5 - me.y); doAction(pa.x, pa.y);
       } else {
         const wp = S.path[0], dx = wp.x - me.x, dy = wp.y - me.y, d = Math.hypot(dx, dy);
@@ -1075,6 +1105,10 @@
       p.vy += p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt;
     }
     S.fx = S.fx.filter(p => p.life < p.max);
+    if (!MODE3D) {
+      if (searching({ si: S.mySi })) scavDirt(S.mySi, dt);
+      for (const o of S.others.values()) if (searching(o)) scavDirt(o.si, dt);
+    }
     for (const f of S.screenFx) f.life += dt;
     S.screenFx = S.screenFx.filter(f => f.life < f.max);
     if (S.vily && Math.random() < dt * 0.8) S.fx.push({ fairy: true, cx: me.x + (Math.random() - 0.5) * 6, cy: me.y + (Math.random() - 0.5) * 6, a: Math.random() * 6, rad: 0.5 + Math.random(), life: 0, max: 4, color: '#ff9cf0' });
@@ -1148,8 +1182,8 @@
     if (A.house) objs.push([A.house.y + 2, () => Art.house(c, SX(A.house.x), SY(A.house.y), ts, se, night)]);
     if (A.stall) objs.push([A.stall.y + 0.9, () => Art.stall(c, SX(A.stall.x), SY(A.stall.y), ts, t)]);
     objs.push([D.BABKA.y + 0.9, () => Art.char(c, SX(D.BABKA.x + 0.5), SY(D.BABKA.y + 0.9), ts, { shirt: '#7b4a9e', hair: '#eee' }, 0, Math.sin(t) * 0.3, { babka: true })]);
-    for (const o of S.others.values()) objs.push([o.y, () => Art.char(c, SX(o.x), SY(o.y), ts, o.look, o.dir, o.phase || (o.e === 'dance' ? t * 4 : 0), { dance: o.e === 'dance', lift: (o.jz || 0) * ts, crawl: o.cr })]);
-    objs.push([S.me.y, () => Art.char(c, SX(S.me.x), SY(S.me.y), ts, S.look || {}, S.me.dir, S.myEmote === 'dance' ? t * 4 : S.me.phase, { dance: S.myEmote === 'dance', lift: S.me.jz * ts, crawl: S.me.crawl })]);
+    for (const o of S.others.values()) objs.push([o.y, () => Art.char(c, SX(o.x), SY(o.y), ts, o.look, o.dir, o.phase || (o.e === 'dance' ? t * 4 : 0), { dance: o.e === 'dance', lift: (o.jz || 0) * ts, crawl: o.cr, dig: searching(o) && t })]);
+    objs.push([S.me.y, () => Art.char(c, SX(S.me.x), SY(S.me.y), ts, S.look || {}, S.me.dir, S.myEmote === 'dance' ? t * 4 : S.me.phase, { dance: S.myEmote === 'dance', lift: S.me.jz * ts, crawl: S.me.crawl, dig: searching({ si: S.mySi }) && t })]);
     objs.sort((a, b) => a[0] - b[0]);
     for (const o of objs) o[1]();
 

@@ -968,8 +968,8 @@ export function create(api) {
     }
     for (const o of chars.values()) o.alive = false;
     const me = S.me;
-    const meO = drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : DIR_ANGLE[me.dir], S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz, crawl: me.crawl }, dt);
-    for (const o of S.others.values()) drawChar(o.id, o.x, o.y, o.look, o.a != null ? o.a : DIR_ANGLE[o.dir || 0], o.e === 'dance' ? t * 4 : o.phase, { dance: o.e === 'dance', jz: o.jz, crawl: o.cr }, dt);
+    const meO = drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : DIR_ANGLE[me.dir], S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz, crawl: me.crawl, dig: api.searching({ si: S.mySi }) && t }, dt);
+    for (const o of S.others.values()) drawChar(o.id, o.x, o.y, o.look, o.a != null ? o.a : DIR_ANGLE[o.dir || 0], o.e === 'dance' ? t * 4 : o.phase, { dance: o.e === 'dance', jz: o.jz, crawl: o.cr, dig: api.searching(o) && t }, dt);
     if (!babka) babka = drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, 0, { babka: true }, 1);
     else { babka.alive = true; if (Math.floor(t) !== babka.lastT) { babka.lastT = Math.floor(t); drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, Math.sin(t) * 0.3, { babka: true }, 1); } }
     for (const [id, o] of chars) {

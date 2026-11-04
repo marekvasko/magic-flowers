@@ -152,6 +152,8 @@
     'Snežienky a čemerice zvládnu aj zimu. Ostatné kvety mráz spáli.',
     'Levanduľa a mak majú radi piesok – nájdeš ho pri jazierku.',
     'Plesnivec rastie len na skalke, presne ako v Belianskych Tatrách.',
+    'Keď nemáš ani groš, prehľadaj trávu – stačí ťuknúť na neprekopanú zem, keď nedržíš motyku. Ráno v rose a na okraji lesa sa divé semienka nájdu najľahšie.',
+    'Divé semienka vraj vedia, čo sa na trhu práve dobre predáva. Ktovie, čo z nich vyrastie…',
     'Konvalinky, snežienky a čemerice chcú tieň – skús okraj lesa.',
     'Ruže, čemerice a chryzantémy potrebujú výživnú pôdu. Kompost kúpiš na trhu.',
     'Slnečnica je smädná – polievaj ju každý deň!',
@@ -198,7 +200,25 @@
     return 0;
   }
 
+  // Hľadanie divých semienok v neprekopanej tráve (s prázdnou rukou alebo s predmetom, ktorý tam nič nerobí). Má to byť pomalé a neisté – záchrana, keď nemáš nič.
+  // Hľadá sa priestorom: server si každú hernú hodinu tajne vylosuje, v ktorých políčkach trávy semienka sú
+  // (hustota = density × okolie × denná hodina × obdobie). Hráč chodí z políčka na políčko; klient nevie nič.
+  const SCAVENGE = {
+    ticks: 1,           // výsledok príde v najbližšom kroku (do 5 herných minút), len ak hráč v tom kroku stále hľadá
+    window: 12,         // po koľkých krokoch sa semienka v tráve premiestnia (herná hodina)
+    density: 0.07,      // podiel políčok so semienkom cez deň na jar, ďaleko od lesa a ciest
+    find: 0.75,         // šanca, že ho na správnom políčku aj nájdeš
+    edge: 0.15,         // + za každého lesného suseda (najviac 4) – na okraji lesa sa semienka sypú viac
+    trampled: 0.6,      // × pri ceste a pri budovách – udupaná tráva
+    // [od hodiny, do hodiny, násobok] – ráno v rose sa hľadá najlepšie, v noci takmer nič nevidno
+    hours: [[0, 4, 0.15], [4, 6, 0.6], [6, 10, 1.4], [10, 18, 1], [18, 21, 0.6], [21, 24, 0.15]],
+    seasons: [1, 1.2, 1.2, 0.4], // jar, leto, jeseň, zima
+    priceExp: 2         // divé semienko „pozná trh“: váha druhu = výkupná cena kvetu v čase sadenia ^ priceExp
+  };
+  const isWild = id => /^wild_[0-3]$/.test(id);
+
   function itemName(id) {
+    if (isWild(id)) return 'Divé semienko (' + SEASONS[+id.slice(5)].toLowerCase() + ')';
     if (id === 'hoe') return 'Motyka';
     if (id === 'can') return 'Krhla';
     if (id === 'compost') return 'Kompost';
@@ -305,6 +325,7 @@
   function canSleep(min) { return min >= SLEEP_FROM_MIN || min < DAWN_TICK * MIN_PER_TICK; }
   function stageOf(p) {
     const sp = SPECIES[p.sp];
+    if (!sp) return p.prog > 0 ? 1 : 0; // divá rastlina, ktorej druh klient ešte nepozná
     if (p.prog >= sp.days) return 3;
     if (p.prog >= sp.days * 0.5) return 2;
     if (p.prog > 0) return 1;
@@ -319,7 +340,7 @@
     CHAT_MAX, chatText,
     W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
-    RING, SPAWN, BABKA, BLOCK, TILLABLE,
+    RING, SPAWN, BABKA, BLOCK, TILLABLE, SCAVENGE, isWild,
     sellPrice, itemName, buildMap, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
   };
   root.GameData = api;
