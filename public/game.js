@@ -463,7 +463,7 @@
       d.onclick = () => selectItem(id);
       bar.appendChild(d);
     }
-    for (let i = ids.length; i < 6; i++) bar.appendChild(Object.assign(document.createElement('div'), { className: 'slot empty' })); // doplní rad na mobile
+    for (let i = ids.length; i < 9; i++) bar.appendChild(Object.assign(document.createElement('div'), { className: 'slot empty' })); // doplní rad (mobil 6, počítač 9 miest)
     const sel = bar.querySelector('.on');
     if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     let txt = D.itemName(S.sel);
