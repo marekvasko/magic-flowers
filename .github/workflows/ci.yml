@@ -3,6 +3,8 @@
 #   push do dev                    → https://dev.zahrada.spis-ai.com (staging)
 #   tag v* na main (release)       → https://zahrada.spis-ai.com (produkcia)
 # PR z forkov sa len otestujú – na hostiteľovi sa z nich nič nespúšťa.
+# Ak GitHub udalosť nedoručí (výpadok), dev sa dá znova nasadiť cez „Run workflow“ na vetve dev
+# a staré PR náhľady upratuje job „Upratanie PR náhľadov“ (po každom nasadení dev, denne, ručne).
 name: CI
 
 on:
@@ -12,6 +14,8 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'   # denné upratanie PR náhľadov (beží s workflow z main)
 
 permissions:
   contents: read
@@ -28,7 +32,7 @@ env:
 jobs:
   test:
     name: Testy
-    if: github.event.action != 'closed'
+    if: github.event.action != 'closed' && github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -140,7 +144,7 @@ jobs:
   deploy-dev:
     name: Nasadenie dev (staging)
     needs: image
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/dev'
     runs-on: [self-hosted, magicflowers]
     permissions:
       contents: read
@@ -158,6 +162,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - run: scripts/deploy.sh up dev ${{ env.IMAGE }}:sha-${{ github.sha }}
+
+  prune-previews:
+    name: Upratanie PR náhľadov
+    needs: deploy-dev
+    # Po nasadení dev (zlúčenie PR), denne a ručne – zmaže náhľady PR, ktoré už nie sú otvorené.
+    if: >-
+      always() && !cancelled() && github.repository == 'marekvasko/magic-flowers' &&
+      (needs.deploy-dev.result == 'success' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: [self-hosted, magicflowers]
+    permissions:
+      contents: read
+      pull-requests: read
+    concurrency:
+      group: prune-previews
+    steps:
+      - uses: actions/checkout@v7
+      - name: Zmazať náhľady zatvorených PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          open=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 500 --json number --jq '.[].number')
+          scripts/deploy.sh prune $open
 
   deploy-prod:
     name: Nasadenie produkcie (release)

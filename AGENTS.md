@@ -54,6 +54,9 @@ See `README.md` for gameplay and architecture.
 - The deploy jobs run on a **self-hosted runner on the host** (label `magicflowers`) and call `scripts/deploy.sh`. One `docker-compose.yml` serves all environments via `NAME`, `DOMAIN` and `IMAGE`.
 - PRs from forks are tested but **never deployed**. Fork workflow runs need maintainer approval. Never approve one without reading its workflow changes, because the runner has Docker access on the host.
 - The `Testy` and `Docker image` checks must pass before merging into `dev` or `main`.
+- **Missed GitHub events** (outages) can leave staging stale or a merged PR's preview running. To recover:
+  - **dev**: Actions → CI → *Run workflow* on `dev` rebuilds and redeploys staging (`gh workflow run CI --ref dev`).
+  - **previews**: the `Upratanie PR náhľadov` job (`scripts/deploy.sh prune <open PR numbers…>`) removes every `mf-pr-<n>` whose PR is no longer open. It runs after each dev deploy, daily, and on *Run workflow*.
 
 ### Releases (maintainer, or an agent when explicitly asked)
 
