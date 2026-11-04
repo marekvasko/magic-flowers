@@ -100,7 +100,8 @@ export function create(api) {
   // Svetlo zdieľajú (rovnaké objekty uniform), ale priehľadnosť má každý materiál vlastnú – hlavný materiál ostáva úplne nepriehľadný.
   const fadeMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms: { ...material.uniforms, opacity: { value: 1 } }, transparent: true, depthWrite: false });
   // hĺbkový prechod tým istým shaderom (rovnaký výpočet hĺbky → žiadne bodkovanie)
-  const depthOnlyMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms: { ...material.uniforms, opacity: { value: 1 } }, transparent: true, depthWrite: true, colorWrite: false });
+  // malý posun dozadu, aby predná plocha zoslabeného objektu vždy spoľahlivo prešla testom hĺbky (žiadne kmitanie na mobiloch)
+  const depthOnlyMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms: { ...material.uniforms, opacity: { value: 1 } }, transparent: true, depthWrite: true, colorWrite: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 });
   const FADE_MIN = 0.3; // ako veľmi ostane vidieť budovu/strom, za ktorým stojí hráč
   let mesh = null, grid = null, builtSeason = -1;
   let vtx = null; // { pos: Float32Array, nrm: Int8Array, sun: Float32Array, target: Float32Array, n }
@@ -431,6 +432,7 @@ export function create(api) {
     const now = performance.now();
     if (now - occAt > 100) { occluders = computeOccluders(meH); occAt = now; for (const m of occluders) m.userData.occUntil = now + 400; }
     let any = false;
+    const fadingList = [];
     for (const m of fineMeshes) {
       // zoslabený ostane ešte chvíľu po poslednom zásahu – na hrane objektu tak nebliká
       const target = now < (m.userData.occUntil || 0) ? FADE_MIN : 1;
@@ -440,7 +442,15 @@ export function create(api) {
       const fading = f < 0.98;
       m.material = fading ? fadeMaterial : material;
       m.userData.depthTwin.visible = fading;
-      if (fading) any = true;
+      if (fading) { any = true; fadingList.push(m); }
+    }
+    // Zoslabené objekty kreslíme odzadu dopredu a každý celý naraz (najprv jeho hĺbka, potom priesvitná plocha).
+    // Pri prekrytí dvoch zoslabených objektov tak vidno oba a poradie sa medzi snímkami nemení.
+    if (fadingList.length) {
+      const toCam = camera.position.clone().sub(camTarget).normalize(), c = new THREE.Vector3();
+      const depthOf = m => m.userData.box.getCenter(c).dot(toCam);
+      fadingList.sort((a, b) => depthOf(a) - depthOf(b) || a.id - b.id);
+      fadingList.forEach((m, i) => { m.userData.depthTwin.renderOrder = 2 + i * 2; m.renderOrder = 3 + i * 2; });
     }
     return any;
   }
