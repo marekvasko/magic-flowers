@@ -143,7 +143,7 @@
         break;
       }
       case 'toast': toast(m.text, m.kind); if (m.kind === 'magic') sfx('magic'); else if (m.kind === 'gift') sfx('coin'); break;
-      case 'chat': chatLine(m.name, m.text); S.bubbles[m.id] = { text: m.text, until: performance.now() + 5000 }; break;
+      case 'chat': chatLine(m.name, m.text); S.bubbles[m.id] = { text: m.text, until: performance.now() + Math.min(10000, 4000 + m.text.length * 60) }; break;
       case 'fx': spawnFx(m); break;
       case 'brewed': S.brewed = m.k; S.cauldron = []; sfx(m.k === 'sliz' ? 'bad' : 'magic'); if (S.modal && S.modal.refresh) S.modal.refresh(); break;
       case 'error': alert(m.text); S.joined = false; $('conn').classList.add('hidden'); break;
@@ -185,12 +185,21 @@
     setTimeout(() => el.classList.add('out'), kind === 'magic' ? 7000 : 4000);
     setTimeout(() => el.remove(), kind === 'magic' ? 7600 : 4600);
   }
-  function chatLine(name, text) {
+  function chatEl(name, text) {
     const el = document.createElement('div');
     el.className = 'chatline';
     el.innerHTML = '<b></b> ';
     el.firstChild.textContent = name + ':';
     el.appendChild(document.createTextNode(text));
+    return el;
+  }
+  // História chatu (posledných 50 správ) – ukáže sa po otvorení chatu (T alebo 💬)
+  function chatLine(name, text) {
+    const hist = $('chathist'), atEnd = hist.scrollTop + hist.clientHeight >= hist.scrollHeight - 4;
+    hist.appendChild(chatEl(name, text));
+    while (hist.children.length > 50) hist.removeChild(hist.firstChild);
+    if (atEnd) hist.scrollTop = hist.scrollHeight;
+    const el = chatEl(name, text);
     $('chatlog').appendChild(el);
     while ($('chatlog').children.length > 5) $('chatlog').removeChild($('chatlog').firstChild);
     setTimeout(() => { el.style.opacity = 0; }, 9000);
@@ -916,7 +925,7 @@
   }
 
   // Chat
-  function openChat() { $('chatbox').classList.remove('hidden'); $('chatIn').focus(); }
+  function openChat() { $('chatbox').classList.remove('hidden'); $('chathist').scrollTop = $('chathist').scrollHeight; $('chatIn').focus(); }
   $('bChat').onclick = () => { if ($('chatbox').classList.contains('hidden')) openChat(); else $('chatbox').classList.add('hidden'); };
   const sendChat = () => { const v = $('chatIn').value.trim(); if (v) send({ t: 'chat', text: v }); $('chatIn').value = ''; $('chatbox').classList.add('hidden'); $('chatIn').blur(); };
   $('chatSend').onclick = sendChat;
@@ -961,8 +970,10 @@
     if (R3) R3.resize();
   }
   addEventListener('resize', resize);
-  // tlačidlá skoku a plazenia sedia tesne nad lištou nástrojov, nech je akokoľvek vysoká
-  new ResizeObserver(() => gameEl.style.setProperty('--bar-h', $('bottom').offsetHeight + 'px')).observe($('bottom'));
+  // Chat aj tlačidlá skoku a plazenia sa držia nad lištou nástrojov, nech je akokoľvek vysoká (mobil / počítač)
+  function barH() { const app = $('app'), r = $('bottom').getBoundingClientRect(); app.style.setProperty('--bar-h', Math.max(0, Math.round(app.getBoundingClientRect().bottom - r.top)) + 'px'); }
+  new ResizeObserver(barH).observe($('bottom'));
+  addEventListener('resize', barH);
 
   function update(dt) {
     const me = S.me;
@@ -1190,13 +1201,7 @@
       c.fillStyle = 'rgba(0,0,0,0.45)'; c.fillRect(X - w / 2, Y - ts * 0.22, w, ts * 0.3);
       c.fillStyle = '#fff'; c.fillText(name, X, Y);
       if (e) { c.font = (ts * 0.42 | 0) + 'px serif'; c.fillText(e === 'dance' ? (Math.floor(t * 3) % 2 ? '🎵' : '🎶') : EMOJI[e], X + ts * 0.45, Y - ts * 0.25 + Math.sin(t * 6) * ts * 0.05); }
-      if (bubble && bubble.until > performance.now()) {
-        c.font = (ts * 0.26 | 0) + 'px system-ui, sans-serif';
-        const txt = bubble.text.length > 28 ? bubble.text.slice(0, 27) + '…' : bubble.text;
-        const bw = c.measureText(txt).width + ts * 0.3;
-        c.fillStyle = '#fff'; c.fillRect(X - bw / 2, Y - ts * 0.75, bw, ts * 0.4);
-        c.fillStyle = '#222'; c.fillText(txt, X, Y - ts * 0.47);
-      }
+      if (bubble && bubble.until > performance.now()) Art.bubble(c, bubble.text, X, Y, ts);
     };
     for (const o of S.others.values()) label(o.x, o.y, o.name, o.e, S.bubbles[o.id]);
     label(S.me.x, S.me.y, S.name, S.myEmote, S.bubbles[S.id]);
