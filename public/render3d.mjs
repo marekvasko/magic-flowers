@@ -434,7 +434,9 @@ export function create(api) {
     for (const m of fineMeshes) {
       // zoslabený ostane ešte chvíľu po poslednom zásahu – na hrane objektu tak nebliká
       const target = now < (m.userData.occUntil || 0) ? FADE_MIN : 1;
-      const f = m.userData.fade = target > m.userData.fade ? Math.min(1, m.userData.fade + dt * 4) : Math.max(FADE_MIN, m.userData.fade - dt * 4);
+      // priblíž sa k cieľu najviac o dt*4 – keď je cieľ dosiahnutý, hodnota ostane stáť (žiadne kmitanie)
+      const step = dt * 4, cur = m.userData.fade;
+      const f = m.userData.fade = Math.abs(target - cur) <= step ? target : cur + Math.sign(target - cur) * step;
       const fading = f < 0.98;
       m.material = fading ? fadeMaterial : material;
       m.userData.depthTwin.visible = fading;
@@ -681,7 +683,9 @@ export function create(api) {
   function sunHoursAt(x, y) { return grid ? W.sunHours(grid, x, y, api.season()) : null; }
 
   resize();
-  return { frame, resize, pick, screenToWorld, rotate, sunHoursAt, dir8, get yaw() { return yaw; } };
+  // ladenie: priehľadnosť jemných modelov (1 = plne viditeľný)
+  const debugFades = () => fineMeshes.map(m => ({ type: grid.fine[fineMeshes.indexOf(m)].type, fade: +m.userData.fade.toFixed(2), occ: occluders.has(m) }));
+  return { frame, resize, pick, screenToWorld, rotate, sunHoursAt, dir8, debugFades, get yaw() { return yaw; } };
 }
 
 window.Render3D = { create };

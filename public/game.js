@@ -305,6 +305,7 @@
         bottomH: () => $('bottom').offsetHeight
       });
       window._r3pick = (x, y) => R3.pick(x, y); // pre ladenie / testy
+      window._r3 = R3;
     }).catch(e => { console.error(e); toast('3D sa nepodarilo načítať – skús 2D verziu.'); });
   }
   const gameEl = $('game'), joy = $('joy'), joyKnob = $('joyKnob');
