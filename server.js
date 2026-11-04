@@ -675,7 +675,7 @@ wss.on('connection', ws => {
         break;
       }
       case 'chat': {
-        const text = String(m.text || '').replace(/[<>]/g, '').trim().slice(0, 120);
+        const text = D.chatText(m.text); // limit D.CHAT_MAX platí aj pre upravených klientov
         if (text) broadcast(room, { t: 'chat', name: pl.name, text, id: pl.id });
         break;
       }

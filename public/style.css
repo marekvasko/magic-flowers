@@ -133,9 +133,12 @@ button { font: inherit; cursor: pointer; border: none; }
 /* dotykové ovládanie: vpravo nad lištou sú tlačidlá skoku a plazenia – chat im nechá miesto */
 #app:has(#game.touch) #chatbox { right: 88px; }
 @media (pointer: coarse) { #chatbox { right: 88px; } }
-.chatrow { display: flex; gap: 6px; }
+.chatrow { position: relative; display: flex; gap: 6px; }
+/* počítadlo znakov – ukáže sa až blízko limitu */
+#chatCount { position: absolute; right: 54px; top: 50%; transform: translateY(-50%); font-size: 12px; font-weight: 700; color: #fffb; pointer-events: none; }
+#chatCount.full { color: #ffd76a; }
 /* riadok na písanie v rovnakom štýle ako správy (menovky) */
-#chatbox input { flex: 1; min-width: 0; padding: 8px 10px; border: 0; border-radius: 0; background: rgba(0,0,0,0.55); color: #fff; font-size: 16px; outline: 2px solid transparent; touch-action: auto; user-select: text; -webkit-user-select: text; }
+#chatbox input { flex: 1; min-width: 0; padding: 8px 62px 8px 10px; border: 0; border-radius: 0; background: rgba(0,0,0,0.55); color: #fff; font-size: 16px; outline: 2px solid transparent; touch-action: auto; user-select: text; -webkit-user-select: text; }
 #chatbox input:focus { outline-color: #ffd76a88; }
 #chatbox input::placeholder { color: #fffb; }
 #chatbox button { width: 44px; border-radius: 0; background: rgba(0,0,0,0.55); color: #ffd76a; font-size: 18px; }
