@@ -15,6 +15,28 @@ const MAX_LIGHTS = 16;
 // ---------- Shader: plochý, bez rozptylu a odrazov ----------
 // Svetlo = okolie + slnko × (viditeľnosť slnka z mapy tieňov) + lampy. Zatienenie rohov (AO) je vo vrcholoch.
 const SHADOW_SIZE = 2048;
+// mäkký tieň z mapy tieňov – spoločný pre svet aj vodu (potrebuje varyings vShadow a vPos)
+const SHADOW_GLSL = `
+// 16 vzoriek v disku (Poissonovo rozloženie) – vyhladzovacie jadro mapy tieňov
+const vec2 PD[16] = vec2[16](
+  vec2(-0.942, -0.399), vec2(0.946, -0.769), vec2(-0.094, -0.929), vec2(0.345, 0.294),
+  vec2(-0.916, 0.458), vec2(-0.815, -0.879), vec2(-0.383, 0.277), vec2(0.975, 0.756),
+  vec2(0.443, -0.975), vec2(0.537, -0.474), vec2(-0.265, -0.419), vec2(0.792, 0.191),
+  vec2(-0.242, 0.997), vec2(-0.814, 0.914), vec2(0.200, 0.786), vec2(0.144, -0.141));
+float sunVisibility(float facing) {
+  if (shadowOn < 0.5 || facing <= 0.02) return 0.0;           // noc alebo stena odvrátená od slnka
+  vec3 sc = vShadow.xyz / vShadow.w * 0.5 + 0.5;
+  if (sc.x < 0.0 || sc.x > 1.0 || sc.y < 0.0 || sc.y > 1.0 || sc.z > 1.0) return 1.0;
+  // disk natočený podľa miesta vo svete – namiesto pásov jemný, stabilný prechod
+  float a = fract(sin(dot(floor(vPos.xz * 64.0), vec2(12.9898, 78.233))) * 43758.5453) * 6.2832;
+  mat2 rot = mat2(cos(a), sin(a), -sin(a), cos(a));
+  float lit = 0.0;
+  for (int i = 0; i < SHADOW_TAPS; i++) {
+    float d = texture2D(shadowMap, sc.xy + rot * PD[i] * shadowRadius * shadowTexel).r;
+    lit += sc.z - 0.0008 <= d ? 1.0 : 0.0;
+  }
+  return lit / float(SHADOW_TAPS);
+}`;
 const VERT = `
 attribute vec3 color;
 attribute float ao;
@@ -42,29 +64,10 @@ uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount; uniform float opacit
 uniform float shadowOn; uniform vec2 shadowTexel; uniform float shadowRadius;
 varying vec3 vColor; varying float vAo; varying float vEmis; varying float vTex; varying float vFacing;
 varying vec2 vUv; varying vec3 vPos; varying vec4 vShadow;
-// 16 vzoriek v disku (Poissonovo rozloženie) – vyhladzovacie jadro mapy tieňov
-const vec2 PD[16] = vec2[16](
-  vec2(-0.942, -0.399), vec2(0.946, -0.769), vec2(-0.094, -0.929), vec2(0.345, 0.294),
-  vec2(-0.916, 0.458), vec2(-0.815, -0.879), vec2(-0.383, 0.277), vec2(0.975, 0.756),
-  vec2(0.443, -0.975), vec2(0.537, -0.474), vec2(-0.265, -0.419), vec2(0.792, 0.191),
-  vec2(-0.242, 0.997), vec2(-0.814, 0.914), vec2(0.200, 0.786), vec2(0.144, -0.141));
-float sunVisibility() {
-  if (shadowOn < 0.5 || vFacing <= 0.02) return 0.0;           // noc alebo stena odvrátená od slnka
-  vec3 sc = vShadow.xyz / vShadow.w * 0.5 + 0.5;
-  if (sc.x < 0.0 || sc.x > 1.0 || sc.y < 0.0 || sc.y > 1.0 || sc.z > 1.0) return 1.0;
-  // disk natočený podľa miesta vo svete – namiesto pásov jemný, stabilný prechod
-  float a = fract(sin(dot(floor(vPos.xz * 64.0), vec2(12.9898, 78.233))) * 43758.5453) * 6.2832;
-  mat2 rot = mat2(cos(a), sin(a), -sin(a), cos(a));
-  float lit = 0.0;
-  for (int i = 0; i < SHADOW_TAPS; i++) {
-    float d = texture2D(shadowMap, sc.xy + rot * PD[i] * shadowRadius * shadowTexel).r;
-    lit += sc.z - 0.0008 <= d ? 1.0 : 0.0;
-  }
-  return lit / float(SHADOW_TAPS);
-}
+${SHADOW_GLSL}
 void main() {
   vec3 base = vTex > 0.5 ? texture2D(map, vUv).rgb * vColor : vColor;
-  vec3 light = ambient + sunColor * sunVisibility();
+  vec3 light = ambient + sunColor * sunVisibility(vFacing);
   for (int i = 0; i < ${MAX_LIGHTS}; i++) {
     if (i >= lightCount) break;
     float d = distance(vPos, lights[i].xyz);
@@ -73,6 +76,133 @@ void main() {
   vec3 col = base * vAo * light;
   col = max(col, base * emisColor * vEmis);
   gl_FragColor = vec4(col, opacity);
+}`;
+
+// ---------- Shader vody: odraz zo zrkadlovej kamery, Fresnel, odlesk slnka, hĺbka k brehu ----------
+// Vlny sú procedurálne, ale po krokoch: poloha zaokrúhlená na pixely (WATER_PIX na blok) a čas na WATER_FPS krokov
+// za sekundu – hladina sa hýbe ako v pixelovej hre. Ľad (zima) je bez vĺn, s rozmazaným „brúseným“ odrazom.
+const WATER_PIX = 16, WATER_FPS = 8, RIPPLES = 10;
+const WATER_VERT = `
+uniform mat4 shadowMatrix; uniform float shadowNormalBias;
+varying vec3 vPos; varying vec4 vShadow;
+void main() {
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vPos = wp.xyz;
+  vShadow = shadowMatrix * vec4(wp.xyz + vec3(0.0, shadowNormalBias, 0.0), 1.0);
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}`;
+const WATER_FRAG = `
+precision highp float;
+#define SHADOW_TAPS 8
+uniform sampler2D shadowMap; uniform float shadowOn; uniform vec2 shadowTexel; uniform float shadowRadius;
+uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec3 sunDir;
+uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount;
+uniform sampler2D reflMap; uniform mat4 reflMatrix; uniform float reflOn;
+uniform vec3 skyColor; uniform vec3 viewDir; uniform float time; uniform float ice; uniform float reflStrength;
+uniform vec4 ripples[${RIPPLES}];   // x, z, vek (s, po krokoch), sila
+uniform sampler2D waterMask; uniform vec2 mapSize;
+varying vec3 vPos; varying vec4 vShadow;
+${SHADOW_GLSL}
+const float PIX = ${WATER_PIX}.0;
+float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), f.x), mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+// výška hladiny: tri smerové vlny + pomalý šum + kruhy po ťuknutí/krokoch
+float height(vec2 p, float t) {
+  float h = sin(dot(p, vec2(0.8, 0.6)) * 3.1 + t * 1.7) * 0.45
+          + sin(dot(p, vec2(-0.55, 0.83)) * 4.7 + t * 2.3) * 0.3
+          + sin(dot(p, vec2(0.96, -0.28)) * 6.9 - t * 2.9) * 0.18
+          + (vnoise(p * 2.3 + vec2(t * 0.35, -t * 0.25)) - 0.5) * 0.7;
+  for (int i = 0; i < ${RIPPLES}; i++) {
+    vec4 r = ripples[i];
+    if (r.w <= 0.0) continue;
+    float x = distance(p, r.xy) - r.z * 1.3;
+    h += r.w * exp(-r.z * 1.4) * cos(x * 14.0) * exp(-x * x * 18.0);
+  }
+  return h;
+}
+// vzdialenosť k brehu (najbližšie políčko bez vody v okolí 5×5) – okrúhle pásy hĺbky aj pena
+float shoreDist(vec2 p) {
+  vec2 c = floor(p);
+  float d = 2.5;
+  for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) {
+    vec2 t = c + vec2(float(i), float(j));
+    if (texture2D(waterMask, (t + 0.5) / mapSize).r < 0.5) d = min(d, distance(p, clamp(p, t, t + 1.0)));
+  }
+  return d;
+}
+vec2 reflUv(vec3 p) { vec4 c = reflMatrix * vec4(p, 1.0); return c.xy / c.w; }
+void main() {
+  vec2 p = (floor(vPos.xz * PIX) + 0.5) / PIX;   // stred pixelu hladiny
+  float e = 1.0 / PIX, t = floor(time * ${WATER_FPS}.0) / ${WATER_FPS}.0;
+  float h = 0.0, stripe = 0.0;
+  vec3 N;
+  if (ice < 0.5) {
+    h = height(p, t);
+    vec2 g = vec2(height(p + vec2(e, 0.0), t) - h, height(p + vec2(0.0, e), t) - h) / e;
+    g = floor(g * 0.06 / 0.05 + 0.5) * 0.05;     // sklon po krokoch – pixelové vlny
+    N = normalize(vec3(-g.x, 1.0, -g.y));
+  } else {
+    // ľad: pásy brúsenia pozdĺž osi x
+    stripe = floor(vnoise(vec2(p.x * 1.2, p.y * 13.0)) * 4.0) / 3.0;
+    N = normalize(vec3(0.0, 1.0, (stripe - 0.5) * 0.1));
+  }
+  vec3 V = normalize(viewDir);
+  float vis = sunVisibility(sunDir.y);
+
+  // svetlo na hladine (rovnaké ako na svete) + odlesky lámp
+  vec3 light = ambient + sunColor * vis, lampSpec = vec3(0.0);
+  for (int i = 0; i < ${MAX_LIGHTS}; i++) {
+    if (i >= lightCount) break;
+    float f = 1.0 - smoothstep(0.0, lights[i].w, distance(vPos, lights[i].xyz));
+    light += lampColor * f;
+    vec3 Hl = normalize(normalize(lights[i].xyz - vPos) + V);
+    lampSpec += lampColor * f * floor(pow(max(dot(N, Hl), 0.0), 40.0) * 3.0) / 3.0 * 0.6;
+  }
+
+  // prechod svetla vodou: plytčina pri brehu → hĺbka, po pásoch
+  float sd = shoreDist(p), depth = clamp(sd / 1.8, 0.0, 1.0);
+  float dq = floor(depth * 3.0 + 0.5) / 3.0;
+  vec3 body;
+  if (ice < 0.5) {
+    body = mix(vec3(0.33, 0.66, 0.80), vec3(0.12, 0.34, 0.54), dq);
+    body *= 0.93 + 0.05 * floor(clamp(h, -1.0, 1.0) * 2.0 + 0.5); // svetlejšie a tmavšie pásy vĺn
+    if (h > 0.8) body = mix(body, vec3(0.85, 0.94, 1.0), 0.35);   // hrebene vĺn
+    float foam = step(sd, 0.09 + 0.05 * h);                   // pena pri brehu
+    body = mix(body, vec3(0.9, 0.95, 1.0), foam * 0.6);
+  } else {
+    body = mix(vec3(0.74, 0.87, 0.94), vec3(0.6, 0.77, 0.88), dq * 0.6) * (0.94 + stripe * 0.08);
+    body += step(0.985, hash2(floor(p * 0.5 * PIX))) * 0.15;  // iskričky námrazy
+  }
+  vec3 trans = body * light;
+
+  // odraz: zrkadlová kamera (alebo len farba oblohy)
+  vec3 refl = skyColor;
+  if (reflOn > 0.5) {
+    vec2 uv = reflUv(vPos);
+    if (ice < 0.5) refl = texture2D(reflMap, uv + N.xz * 0.035).rgb;
+    else {
+      // brúsený kov: odraz rozmazaný pozdĺž pásov (os x) a trochu naprieč
+      vec2 du = reflUv(vPos + vec3(0.5, 0.0, 0.0)) - uv, dv = reflUv(vPos + vec3(0.0, 0.0, 0.06)) - uv;
+      vec3 acc = vec3(0.0);
+      for (int i = -3; i <= 3; i++) acc += texture2D(reflMap, uv + du * float(i) / 3.0 + dv * (stripe - 0.5)).rgb;
+      refl = acc / 7.0;
+    }
+  }
+
+  // Fresnel (Schlick) so štylizovaným základom – z tejto kamery by fyzikálne 2 % odrazu nebolo vidno
+  float F = reflStrength + (1.0 - reflStrength) * pow(1.0 - max(dot(N, V), 0.0), 5.0);
+  vec3 H = normalize(sunDir + V);
+  vec3 spec;
+  if (ice < 0.5) spec = sunColor * vis * floor(pow(max(dot(N, H), 0.0), 140.0) * 2.0) / 2.0 * 1.2;
+  else {
+    // anizotropný odlesk (Ward): široký pozdĺž brúsenia, úzky naprieč
+    float ht = H.x / 0.6, hb = (H.z - N.z) / 0.25, hn = max(dot(H, N), 0.05);
+    spec = sunColor * vis * exp(-(ht * ht + hb * hb) / (hn * hn)) * (0.5 + 0.5 * stripe) * 0.9;
+  }
+  gl_FragColor = vec4(mix(trans, refl, F) + spec + lampSpec, 1.0);
 }`;
 
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -89,6 +219,7 @@ export function create(api) {
   const scene = new THREE.Scene();
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
   camera.layers.enable(1); // hlavná kamera vidí svet (0) aj sprity a pomocné objekty (1)
+  camera.layers.enable(3); // … aj hladinu a lekná (3) – tie nevrhajú tieň a v zrkadle nie sú; sprity v zrkadle sú na vrstve 2
   let yaw = Math.PI / 4, yawTarget = yaw;
 
   // ---------- Textúra zeme (rovnaká kresba ako 2D hra) ----------
@@ -112,7 +243,7 @@ export function create(api) {
     for (let i = 0; i < S.tiles.length; i++) {
       const tl = S.tiles[i];
       const sig = tl.g + '|' + (tl.s ? tl.s.k + tl.s.w + tl.s.r : '');
-      if (force || sig !== tileSig[i] || tl.g === 'water') { drawTile(i, se, t); tileSig[i] = sig; changed = true; }
+      if (force || sig !== tileSig[i]) { drawTile(i, se, t); tileSig[i] = sig; changed = true; } // vlny vody sú na GPU
     }
     if (changed) groundTex.needsUpdate = true;
   }
@@ -138,6 +269,8 @@ export function create(api) {
   // malý posun dozadu, aby predná plocha zoslabeného objektu vždy spoľahlivo prešla testom hĺbky (žiadne kmitanie na mobiloch)
   // hĺbkový prechod: rovnaký vertex shader (rovnaká hĺbka – bez bodkovania), ale prázdny fragment shader
   const depthOnlyMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: 'void main() { gl_FragColor = vec4(0.0); }', uniforms: material.uniforms, transparent: true, depthWrite: true, colorWrite: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 });
+  // svet v zrkadle pod hladinou: rovnaký shader, stačia 4 vzorky tieňa
+  const reflMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { SHADOW_TAPS: 4 }, uniforms: material.uniforms });
   const FADE_MIN = 0.3; // ako veľmi ostane vidieť budovu/strom, za ktorým stojí hráč
   let mesh = null, grid = null, builtSeason = -1;
   const AXES = [[0, 1, 2], [1, 2, 0], [2, 0, 1]]; // [normálová os, u, v] – u × v = normála
@@ -157,6 +290,7 @@ export function create(api) {
         const n = [0, 0, 0]; n[ax] = sg;
         const nb = get(x + n[0], y + n[1], z + n[2]);
         if (nb && nb !== W.M.INVIS) continue; // skrytá stena (zem pod budovou ostáva – keď budova zmizne, nesmie tam byť diera)
+        if (m === W.M.WATER && ax === 1 && sg > 0) continue; // vrch vody kreslí samostatná hladina
         const [, ua, va] = AXES[ax];
         const fi = ax === 0 ? (sg > 0 ? 0 : 1) : ax === 1 ? (sg > 0 ? 2 : 3) : (sg > 0 ? 4 : 5);
         const textured = m < 16 && ax === 1 && sg > 0;   // vrch terénu nesie kresbu zeme
@@ -205,6 +339,7 @@ export function create(api) {
     scene.add(mesh);
     for (const fm of fineMeshes) { scene.remove(fm); scene.remove(fm.userData.depthTwin); fm.geometry.dispose(); }
     fineMeshes = grid.fine.map(f => buildFine(f, se));
+    buildWater(se);
     shadowDirty = true;
     builtSeason = se;
   }
@@ -275,6 +410,202 @@ export function create(api) {
     return fmesh;
   }
 
+
+  // ---------- Voda: hladina, lekná, zrkadlová kamera pod hladinou, kruhy na vode ----------
+  const waterMaterial = new THREE.ShaderMaterial({
+    vertexShader: WATER_VERT, fragmentShader: WATER_FRAG,
+    uniforms: {
+      ...material.uniforms, // svetlo a mapa tieňov – tie isté objekty ako svet
+      reflMap: { value: null }, reflMatrix: { value: new THREE.Matrix4() }, reflOn: { value: 0 },
+      skyColor: { value: new THREE.Vector3() }, viewDir: { value: new THREE.Vector3(0, 1, 0) }, time: { value: 0 },
+      ice: { value: 0 }, reflStrength: { value: 0.42 },
+      ripples: { value: Array.from({ length: RIPPLES }, () => new THREE.Vector4()) },
+      waterMask: { value: null }, mapSize: { value: new THREE.Vector2(D.W, D.H) }
+    }
+  });
+  const maskTex = new THREE.DataTexture(new Uint8Array(D.W * D.H), D.W, D.H, THREE.RedFormat, THREE.UnsignedByteType);
+  maskTex.flipY = false; maskTex.magFilter = maskTex.minFilter = THREE.NearestFilter; // riadok = z, stĺpec = x
+  waterMaterial.uniforms.waterMask.value = maskTex;
+  let waterMesh = null, lilyMesh = null;
+  const waterBox = new THREE.Box3();
+  function buildWater(se) {
+    for (const m of [waterMesh, lilyMesh]) if (m) { scene.remove(m); m.geometry.dispose(); }
+    waterMesh = lilyMesh = null;
+    const quads = W.waterQuads(S.tiles), y = W.WATER_Y;
+    maskTex.image.data.set(W.waterMask(S.tiles)); maskTex.needsUpdate = true;
+    if (!quads.length) return;
+    const P = [], I = [];
+    for (const q of quads) {
+      const v = P.length / 3;
+      // poradie rohov: (x,z) (x,z+1) (x+1,z+1) (x+1,z) – proti smeru hodín zhora, normála hore
+      P.push(q.x, y, q.y, q.x, y, q.y + 1, q.x + 1, y, q.y + 1, q.x + 1, y, q.y);
+      I.push(v, v + 1, v + 2, v, v + 2, v + 3);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+    geo.setIndex(I);
+    geo.computeBoundingSphere(); geo.computeBoundingBox();
+    waterBox.copy(geo.boundingBox).expandByScalar(0.5);
+    waterMesh = new THREE.Mesh(geo, waterMaterial);
+    waterMesh.layers.set(3);
+    scene.add(waterMesh);
+    lilyMesh = buildLilies(W.lilyPads(S.tiles, se), y);
+  }
+  // lekná z pixelov hladiny (WATER_PIX na blok) – list s výrezom a ružový kvietok, osvetlené ako svet
+  function buildLilies(pads, y) {
+    if (!pads.length) return null;
+    const P = [], C = [], A = [], E = [], T = [], U = [], N = [], I = [];
+    const px = 1 / WATER_PIX;
+    const quad = (pts, n, col) => {
+      const v = P.length / 3;
+      for (const p of pts) { P.push(...p); C.push(...col); A.push(1); E.push(0); T.push(0); U.push(0, 0); N.push(...n); }
+      I.push(v, v + 1, v + 2, v, v + 2, v + 3);
+    };
+    const top = (x0, z0, x1, z1, h, col) => quad([[x0, h, z0], [x0, h, z1], [x1, h, z1], [x1, h, z0]], [0, 1, 0], col);
+    const box = (x0, z0, x1, z1, h0, h1, col) => {
+      top(x0, z0, x1, z1, h1, col);
+      const s = col.map(c => c * 0.8);
+      quad([[x0, h0, z1], [x1, h0, z1], [x1, h1, z1], [x0, h1, z1]], [0, 0, 1], s);
+      quad([[x1, h0, z0], [x0, h0, z0], [x0, h1, z0], [x1, h1, z0]], [0, 0, -1], s);
+      quad([[x1, h0, z1], [x1, h0, z0], [x1, h1, z0], [x1, h1, z1]], [1, 0, 0], s);
+      quad([[x0, h0, z0], [x0, h0, z1], [x0, h1, z1], [x0, h1, z0]], [-1, 0, 0], s);
+    };
+    const green = hex('#5fae4a'), dark = hex('#4a9a3c');
+    for (const { x, y: z } of pads) {
+      const cx = 0.5, cz = 0.5, rx = 0.22, rz = 0.16, notch = W.hash(x, z, 3) * Math.PI * 2;
+      for (let j = 0; j < WATER_PIX; j++) for (let i = 0; i < WATER_PIX; i++) {
+        const u = (i + 0.5) * px - cx, w = (j + 0.5) * px - cz;
+        if ((u / rx) ** 2 + (w / rz) ** 2 > 1) continue;
+        let da = Math.atan2(w, u) - notch; da = Math.atan2(Math.sin(da), Math.cos(da));
+        if (Math.abs(da) < 0.35) continue; // výrez listu
+        top(x + i * px, z + j * px, x + (i + 1) * px, z + (j + 1) * px, y + 0.01, W.hash(x * 16 + i, z * 16 + j) < 0.3 ? dark : green);
+      }
+      const fx = x + Math.floor(0.55 * WATER_PIX) * px, fz = z + Math.floor(0.42 * WATER_PIX) * px;
+      box(fx - px, fz - px, fx + px, fz + px, y + 0.01, y + 0.01 + 1.5 * px, hex('#ffb6d9'));
+      top(fx - px * 0.5, fz - px * 0.5, fx + px * 0.5, fz + px * 0.5, y + 0.012 + 1.5 * px, hex('#ffe066'));
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(C, 3));
+    geo.setAttribute('ao', new THREE.Float32BufferAttribute(A, 1));
+    geo.setAttribute('emis', new THREE.Float32BufferAttribute(E, 1));
+    geo.setAttribute('tex', new THREE.Float32BufferAttribute(T, 1));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
+    geo.setIndex(I);
+    geo.computeBoundingSphere();
+    const m = new THREE.Mesh(geo, material);
+    m.layers.set(3);
+    scene.add(m);
+    return m;
+  }
+
+  // Kvalita odrazov (nastavenie na zariadení): none = len obloha, medium = polovičné rozlíšenie bez spritov,
+  // real = plné rozlíšenie so všetkým (hráči, kvety, babka)
+  const WATER_Q = ['none', 'medium', 'real'];
+  let waterQuality = 'medium';
+  try { const q = localStorage.getItem('mfWater'); if (WATER_Q.includes(q)) waterQuality = q; } catch (e) { }
+  function setWaterQuality(q) {
+    if (!WATER_Q.includes(q)) return;
+    waterQuality = q;
+    try { localStorage.setItem('mfWater', q); } catch (e) { }
+  }
+  let reflRT = null;
+  const reflCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
+  const frustum = new THREE.Frustum(), projView = new THREE.Matrix4(), bufSize = new THREE.Vector2();
+  const clipPlane = new THREE.Plane(), clipV = new THREE.Vector4(), clipQ = new THREE.Vector4(), invProj = new THREE.Matrix4();
+  const mirrorUp = new THREE.Vector3(), mirrorTarget = new THREE.Vector3();
+  // Šikmá blízka rovina (Lengyel): zrkadlová kamera oreže všetko pod hladinou bez zásahu do shaderov sveta.
+  // Funguje pre ortogonálnu aj perspektívnu projekciu – 3. riadok matice nahradíme rovinou hladiny.
+  function obliqueClip(cam, y) {
+    clipPlane.set(new THREE.Vector3(0, 1, 0), -(y - 0.01)).applyMatrix4(cam.matrixWorldInverse);
+    clipV.set(clipPlane.normal.x, clipPlane.normal.y, clipPlane.normal.z, clipPlane.constant);
+    const e = cam.projectionMatrix.elements;
+    invProj.copy(cam.projectionMatrix).invert();
+    clipQ.set(Math.sign(clipV.x), Math.sign(clipV.y), 1, 1).applyMatrix4(invProj);
+    const r4 = [e[3], e[7], e[11], e[15]];
+    const a = 2 * (r4[0] * clipQ.x + r4[1] * clipQ.y + r4[2] * clipQ.z + r4[3] * clipQ.w) / clipV.dot(clipQ);
+    e[2] = a * clipV.x - r4[0]; e[6] = a * clipV.y - r4[1]; e[10] = a * clipV.z - r4[2]; e[14] = a * clipV.w - r4[3];
+    cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
+  }
+  function renderReflection() {
+    const u = waterMaterial.uniforms;
+    u.reflOn.value = 0;
+    if (!waterMesh || waterQuality === 'none') return;
+    projView.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    frustum.setFromProjectionMatrix(projView);
+    if (!frustum.intersectsBox(waterBox)) return; // jazierko nie je na obrazovke
+    renderer.getDrawingBufferSize(bufSize);
+    const k = waterQuality === 'real' ? 1 : 0.5, w = Math.max(1, Math.round(bufSize.x * k)), h = Math.max(1, Math.round(bufSize.y * k));
+    if (!reflRT) { reflRT = new THREE.WebGLRenderTarget(w, h, { depthBuffer: true }); u.reflMap.value = reflRT.texture; }
+    else if (reflRT.width !== w || reflRT.height !== h) reflRT.setSize(w, h);
+    // kamera zrkadlená cez rovinu hladiny: poloha, cieľ aj „hore“ s opačným y
+    const y = W.WATER_Y;
+    mirrorUp.setFromMatrixColumn(camera.matrixWorld, 1); mirrorUp.y = -mirrorUp.y;
+    mirrorTarget.set(camTarget.x, 2 * y - camTarget.y, camTarget.z);
+    reflCam.position.set(camera.position.x, 2 * y - camera.position.y, camera.position.z);
+    reflCam.up.copy(mirrorUp);
+    reflCam.lookAt(mirrorTarget);
+    reflCam.left = camera.left; reflCam.right = camera.right; reflCam.top = camera.top; reflCam.bottom = camera.bottom;
+    reflCam.near = camera.near; reflCam.far = camera.far;
+    reflCam.updateMatrixWorld();
+    reflCam.updateProjectionMatrix();
+    u.reflMatrix.value.set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1)
+      .multiply(reflCam.projectionMatrix).multiply(reflCam.matrixWorldInverse);
+    obliqueClip(reflCam, y);
+    reflCam.layers.set(0);
+    const sprites = waterQuality === 'real';
+    if (sprites) reflCam.layers.enable(2);
+    // svet v zrkadle: lacnejší materiál, zoslabené budovy plné (odraz nemá byť priesvitný)
+    const oldMats = fineMeshes.map(m => m.material);
+    mesh.material = reflMaterial;
+    for (const m of fineMeshes) m.material = reflMaterial;
+    // Sprite rastie vždy po osi „hore“ kamery a záporná mierka nepomôže (shader berie dĺžku), ale „hore“ zrkadlovej
+    // kamery smeruje do zeme. Preto ukotvenie preklopíme na druhý koniec a obrázok prevrátime zvisle.
+    const flip = sprites ? [...plantSprites.values(), ...[...chars.values()].map(o => o.sp)] : [];
+    const flipTex = new Set(flip.map(sp => sp.material.map).filter(Boolean));
+    const flipAll = () => {
+      for (const sp of flip) sp.center.y = 1 - sp.center.y;
+      for (const t of flipTex) { t.repeat.y = -t.repeat.y; t.offset.y = 1 - t.offset.y; }
+    };
+    flipAll();
+    renderer.setRenderTarget(reflRT);
+    renderer.clear();
+    renderer.render(scene, reflCam);
+    renderer.setRenderTarget(null);
+    flipAll();
+    mesh.material = material;
+    fineMeshes.forEach((m, i) => { m.material = oldMats[i]; });
+    u.reflOn.value = 1;
+  }
+
+  // kruhy na vode: kruhový zásobník (najstarší sa prepíše)
+  const ripples = Array.from({ length: RIPPLES }, () => ({ x: 0, z: 0, t0: -1e9, amp: 0 }));
+  let rippleNext = 0;
+  function ripple(x, z, amp) {
+    if (api.season() === 3) return; // ľad
+    const n = W.nearestWater(S.tiles, x, z, 0.6);
+    if (!n) return;
+    const r = ripples[rippleNext]; rippleNext = (rippleNext + 1) % RIPPLES;
+    r.x = n.x; r.z = n.z; r.t0 = performance.now(); r.amp = amp == null ? 1 : amp;
+  }
+  function updateWater(t, now) {
+    const u = waterMaterial.uniforms;
+    u.time.value = t % 3600;
+    u.viewDir.value.copy(camera.position).sub(camTarget).normalize();
+    ripples.forEach((r, i) => {
+      const age = (now - r.t0) / 1000;
+      u.ripples.value[i].set(r.x, r.z, Math.floor(age * WATER_FPS) / WATER_FPS, age < 3 ? r.amp : 0);
+    });
+    // kroky po brehu: postavička, ktorá sa hýbe tesne pri vode, rozčerí hladinu
+    for (const [id, o] of chars) {
+      if (id === 'babka') continue;
+      const p = o.sp.position, moved = o.wx != null && Math.hypot(p.x - o.wx, p.z - o.wz) > 0.004;
+      o.wx = p.x; o.wz = p.z;
+      if (moved && now - (o.rippleAt || 0) > 450 && W.nearestWater(S.tiles, p.x, p.z, 0.45)) { o.rippleAt = now; ripple(p.x, p.z, 0.45); }
+    }
+  }
+
   // ---------- Mapa tieňov od slnka (GPU) ----------
   // Svet sa z pohľadu slnka nakreslí len do hĺbky. Ortogonálna kamera slnka presne obopína celú mapu.
   // Prekresľuje sa raz za herný krok (5 herných minút) alebo po prestavbe sveta – vždy na začiatku snímky.
@@ -338,6 +669,7 @@ export function create(api) {
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({ alphaTest: 0.4, transparent: false }));
     sp.center.set(0.5, 0.03); sp.scale.set(w, h, 1);
     sp.layers.set(1); // sprity nevrhajú tieň do mapy tieňov
+    sp.layers.enable(2); // … ale odrážajú sa vo vode
     scene.add(sp);
     return sp;
   }
@@ -434,6 +766,9 @@ export function create(api) {
     const dusk = dir ? Math.max(0, 1 - dir.y * 4) * dl : 0;
     const sky = mix3(mix3(SKY_NIGHT, SKY_DAY, dl), SKY_DUSK, dusk * 0.6);
     renderer.setClearColor(new THREE.Color(sky[0], sky[1], sky[2]));
+    waterMaterial.uniforms.skyColor.value.set(sky[0], sky[1], sky[2]);
+    waterMaterial.uniforms.ice.value = se === 3 ? 1 : 0;
+    waterMaterial.uniforms.reflStrength.value = se === 3 ? 0.28 : 0.42;
     return dl;
   }
   // svetlo v bode pre sprity (CPU verzia shaderu)
@@ -558,7 +893,7 @@ export function create(api) {
     ray.setFromCamera(ndc, camera);
     // kvety a huby sa nevyberajú podľa obrázka – platí len políčko zeme pod nimi
     const sprites = [...[...chars.values()].filter(o => o.alive).map(o => o.sp), babka && babka.sp].filter(Boolean);
-    const hits = ray.intersectObjects(sprites.concat(mesh ? [mesh] : [], fineMeshes.filter(m => m.userData.fade > 0.5)), false);
+    const hits = ray.intersectObjects(sprites.concat(mesh ? [mesh] : [], waterMesh ? [waterMesh] : [], fineMeshes.filter(m => m.userData.fade > 0.5)), false);
     for (const h of hits) {
       if (h.object.isSprite || h.object.userData.tile) return Object.assign({}, h.object.userData.tile);
       const q = h.point.clone().addScaledVector(h.face.normal, -0.01);
@@ -631,6 +966,8 @@ export function create(api) {
     void meO;
 
     const fading = updateFades(dt, meO ? meO.h : 1);
+    updateWater(t, now);
+    renderReflection();
     renderer.render(scene, camera);
     if (fading) drawOutlines();
     drawOverlay(t, min, se, night);
@@ -726,7 +1063,7 @@ export function create(api) {
   resize();
   // ladenie: priehľadnosť jemných modelov (1 = plne viditeľný)
   const debugFades = () => fineMeshes.map(m => ({ type: grid.fine[fineMeshes.indexOf(m)].type, fade: +m.userData.fade.toFixed(2), occ: occluders.has(m) }));
-  return { frame, resize, pick, screenToWorld, rotate, sunHoursAt, dir8, debugFades, get yaw() { return yaw; } };
+  return { frame, resize, pick, screenToWorld, rotate, sunHoursAt, dir8, debugFades, ripple, setWaterQuality, get waterQuality() { return waterQuality; }, get yaw() { return yaw; } };
 }
 
 window.Render3D = { create };

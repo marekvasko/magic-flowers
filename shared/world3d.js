@@ -579,7 +579,8 @@
     }
     return out;
   }
-  function surfaceY(g, tx, ty) { return (g.heights[ty * D.W + tx] || 2) / R; }
+  // vrch políčka; voda má hladinu vyššie než svoje podkocky (dno je pod hladinou)
+  function surfaceY(g, tx, ty) { const h = g.heights[ty * D.W + tx] || 2; return h === groundHeight('water') ? WATER_Y : h / R; }
 
   // ---- Slnko ----
   const MAX_ELEV = [50, 62, 40, 22]; // najvyššia výška slnka v stupňoch podľa obdobia
@@ -636,7 +637,41 @@
     return hours;
   }
 
-  const api = { R, NX, NY, NZ, M, FINE, modelsOnRay, TREE_KINDS, treeKind, PALETTE, EMISSIVE, colorOf, hash, buildGrid, get, surfaceY, sunDir, daylight, sunVisibility, sunHours, groundHeight };
+  // ---- Voda (jazierko): hladina, hĺbka k brehu, lekná, najbližší bod vody ----
+  const WATER_Y = groundHeight('grass') / R - 1 / 8;  // hladina je 1/8 bloku pod okolitou zemou (podkocky vody sú dno)
+  const isWater = (tiles, x, y) => x >= 0 && y >= 0 && x < D.W && y < D.H && tiles[y * D.W + x].g === 'water';
+  // Maska vody pre shader (1 = voda) – z nej sa v každom pixeli hladiny počíta vzdialenosť k brehu
+  function waterMask(tiles) {
+    const m = new Uint8Array(D.W * D.H);
+    for (let i = 0; i < tiles.length; i++) m[i] = tiles[i].g === 'water' ? 255 : 0;
+    return m;
+  }
+  // Štvorce hladiny: jeden na každé políčko vody
+  function waterQuads(tiles) {
+    const out = [];
+    for (let y = 0; y < D.H; y++) for (let x = 0; x < D.W; x++) if (isWater(tiles, x, y)) out.push({ x, y });
+    return out;
+  }
+  // Lekná – rovnaké políčka ako v 2D kresbe zeme (hash < 0,12), v zime nie sú
+  function lilyPads(tiles, season) {
+    if (season === 3) return [];
+    const out = [];
+    for (let y = 0; y < D.H; y++) for (let x = 0; x < D.W; x++) if (isWater(tiles, x, y) && hash(x, y) < 0.12) out.push({ x, y });
+    return out;
+  }
+  // Najbližší bod hladiny k bodu (px, pz) do vzdialenosti maxD, inak null
+  function nearestWater(tiles, px, pz, maxD) {
+    let best = null, bd = maxD;
+    const tx = Math.floor(px), tz = Math.floor(pz), r = Math.ceil(maxD);
+    for (let y = tz - r; y <= tz + r; y++) for (let x = tx - r; x <= tx + r; x++) {
+      if (!isWater(tiles, x, y)) continue;
+      const qx = Math.min(x + 1, Math.max(x, px)), qz = Math.min(y + 1, Math.max(y, pz)), d = Math.hypot(qx - px, qz - pz);
+      if (d <= bd) { bd = d; best = { x: qx, z: qz, d }; }
+    }
+    return best;
+  }
+
+  const api = { R, NX, NY, NZ, M, FINE, modelsOnRay, TREE_KINDS, treeKind, PALETTE, EMISSIVE, colorOf, hash, buildGrid, get, surfaceY, sunDir, daylight, sunVisibility, sunHours, groundHeight, WATER_Y, waterMask, waterQuads, lilyPads, nearestWater };
   root.World3D = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof self !== 'undefined' ? self : this);

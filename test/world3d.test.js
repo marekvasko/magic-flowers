@@ -9,7 +9,7 @@ test('svet z kociek je deterministický a má správne výšky', () => {
   const a = W.buildGrid(tiles, 1), b = W.buildGrid(tiles, 1);
   assert.deepStrictEqual(a.m, b.m);
   const water = tiles.findIndex(t => t.g === 'water'), rock = tiles.findIndex(t => t.g === 'rock'), grass = tiles.findIndex(t => t.g === 'grass');
-  assert.strictEqual(W.surfaceY(a, water % D.W, Math.floor(water / D.W)), 0.5);
+  assert.strictEqual(W.surfaceY(a, water % D.W, Math.floor(water / D.W)), 0.875);
   assert.strictEqual(W.surfaceY(a, rock % D.W, Math.floor(rock / D.W)), 1.5);
   assert.strictEqual(W.surfaceY(a, grass % D.W, Math.floor(grass / D.W)), 1);
   // budovy sú jemné modely; v hrubej mriežke majú neviditeľnú náhradu (chalupa babky stojí na (14,2))
@@ -106,4 +106,20 @@ test('kamene z minikociek: všetky tvary, mach mimo zimy, sneh v zime, tieň v h
   assert.ok(rocks.every(r => r.data.includes(W.M.MOSS) && !r.data.includes(W.M.SNOW)));
   assert.ok(win.fine.filter(f => f.type === 'rock').every(r => r.data.includes(W.M.SNOW)));
   assert.ok(!sum.m.includes(W.M.DARKSTONE), 'hrubé balvany sa už nestavajú');
+});
+
+test('voda: hladina 1/8 bloku pod zemou, maska, lekná a najbližšia voda', () => {
+  assert.strictEqual(W.WATER_Y, 0.875);
+  const q = W.waterQuads(tiles), mask = W.waterMask(tiles);
+  assert.strictEqual(q.length, tiles.filter(t => t.g === 'water').length);
+  for (const w of q) assert.strictEqual(mask[w.y * D.W + w.x], 255);
+  assert.strictEqual(mask.filter(v => v).length, q.length);
+  // lekná len na vode a v zime žiadne
+  for (const p of W.lilyPads(tiles, 1)) assert.strictEqual(tiles[p.y * D.W + p.x].g, 'water');
+  assert.strictEqual(W.lilyPads(tiles, 3).length, 0);
+  // z piesku vedľa vody je voda blízko, z lúky ďaleko nie
+  const shore = q.find(w => tiles[w.y * D.W + w.x + 1].g === 'sand');
+  const n = W.nearestWater(tiles, shore.x + 1.3, shore.y + 0.5, 0.6);
+  assert.ok(n && Math.abs(n.x - (shore.x + 1)) < 1e-9 && n.d < 0.31);
+  assert.strictEqual(W.nearestWater(tiles, 20.5, 5.5, 0.6), null);
 });

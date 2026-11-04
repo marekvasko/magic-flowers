@@ -797,6 +797,17 @@
     body.appendChild(h('div', { class: 'row' }, h('div', { class: 'info' },
       h('b', null, `🕰️ Herný deň trvá ${Math.round(S.daySeconds / 60)} minút`),
       h('small', null, `Ročné obdobie = ${D.DAYS_PER_SEASON} dni (~${Math.round(S.daySeconds * D.DAYS_PER_SEASON / 60)} min), rok ≈ ${Math.round(S.daySeconds * D.DAYS_PER_SEASON * 4 / 3600 * 10) / 10} h.`))));
+    // Nastavenie tohto zariadenia (3D): odrazy na vode – náročnosť podľa výkonu telefónu/počítača
+    if (R3) {
+      body.appendChild(h('h3', { style: 'margin:12px 0 6px' }, '📱 Toto zariadenie'));
+      const opts = [['none', 'žiadne'], ['medium', 'stredné'], ['real', 'skutočné']];
+      const btns = opts.map(([q, l]) => h('button', { class: 'btn' + (R3.waterQuality === q ? '' : ' gray'), style: 'flex:1', onclick: () => {
+        R3.setWaterQuality(q); btns.forEach((b, i) => b.classList.toggle('gray', opts[i][0] !== q));
+      } }, l));
+      body.appendChild(h('div', { class: 'row', style: 'flex-direction:column;align-items:stretch' },
+        h('b', null, '🌊 Odrazy vody'), h('div', { style: 'display:flex;gap:6px' }, ...btns),
+        h('small', null, 'Platí len na tomto zariadení. Skutočné odrazy ukážu vo vode aj hráčov a kvety, ale viac zaťažia telefón.')));
+    }
     body.appendChild(h('button', { class: 'btn alt', style: 'width:100%;padding:12px;margin-top:6px', onclick: () => { location.href = (MODE3D ? '/' : '/3d') + '?room=' + S.room; } }, MODE3D ? '🗺️ Prepnúť na 2D' : '🧊 Prepnúť na 3D (beta)'));
     body.appendChild(h('button', { class: 'big', style: 'margin:6px 0', onclick: () => openUI('help') }, '❓ Ako hrať'));
     body.appendChild(h('button', { class: 'btn gray', style: 'width:100%;padding:12px', onclick: () => { S.joined = false; S.ws && S.ws.close(); location.reload(); } }, 'Odísť zo záhrady'));
@@ -897,7 +908,7 @@
         break;
       case 'dirt': for (let i = 0; i < 10; i++) P({ x: m.x, y: m.y, vx: R(2.5), vy: -Math.random() * 2, g: 6, color: '#7a4a20', max: 0.6 }); break;
       case 'drops': for (let i = 0; i < 10; i++) P({ x: m.x + R(0.6), y: m.y - 0.8, vy: 1 + Math.random(), g: 4, color: '#5fb8ff', max: 0.5 }); break;
-      case 'splash': for (let i = 0; i < 14; i++) P({ x: m.x, y: m.y, vx: R(3), vy: -Math.random() * 3, g: 7, color: '#8fd3ff', max: 0.6 }); break;
+      case 'splash': for (let i = 0; i < 14; i++) P({ x: m.x, y: m.y, vx: R(3), vy: -Math.random() * 3, g: 7, color: '#8fd3ff', max: 0.6 }); if (R3) R3.ripple(m.x, m.y, 1); break;
       case 'hearts': for (let i = 0; i < 10; i++) P({ x: m.x + R(1), y: m.y - 0.6, vx: R(0.5), vy: -0.8 - Math.random(), text: '❤️', max: 1.8 }); break;
       case 'gift': P({ x: m.x, y: m.y - 1, vy: -0.6, text: '🎁', max: 1.5 }); break;
       case 'wave': P({ x: m.x, y: m.y - 1.2, vy: -0.4, text: '👋', max: 1.2 }); break;
