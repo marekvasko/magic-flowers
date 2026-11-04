@@ -20,8 +20,10 @@ on:
 permissions:
   contents: read
 
+# Skupina podľa udalosti a PR: zatvorený PR má github.ref = základná vetva (dev), takže
+# so spoločnou skupinou by beh „closed“ zrušil nasadenie dev z push (alebo naopak).
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
