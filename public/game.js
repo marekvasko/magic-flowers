@@ -950,7 +950,11 @@
   $('bChat').onclick = () => { if ($('chatbox').classList.contains('open')) closeChat(); else openChat(); };
   const sendChat = () => { const v = $('chatIn').value.trim(); if (v) send({ t: 'chat', text: v }); $('chatIn').value = ''; closeChat(); };
   $('chatSend').onclick = sendChat;
-  $('chatIn').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); if (e.key === 'Escape') closeChat(); });
+  // Enter/Escape patria len chatu – sendChat/closeChat zruší fokus, takže by ich inak zachytila hra (Enter = akcia)
+  $('chatIn').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); sendChat(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeChat(); }
+  });
 
   // ---------- Efekty ----------
   function spawnFx(m) {
