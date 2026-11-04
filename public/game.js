@@ -960,6 +960,13 @@
         h('b', null, '✨ Častice (dážď, oheň, lístie, víly)'), h('div', { style: 'display:flex;gap:6px' }, ...pbtns),
         h('small', null, 'Platí len na tomto zariadení. Na slabšom telefóne zvoľ menej.')));
     }
+    // Projekt na GitHube: zdrojový kód a hlásenie chýb / nápadov
+    const REPO = 'https://github.com/marekvasko/magic-flowers';
+    const extLink = (label, href) => h('a', { class: 'btn gray', style: 'flex:1;text-align:center;text-decoration:none', href, target: '_blank', rel: 'noopener' }, label);
+    body.appendChild(h('div', { class: 'row', style: 'flex-direction:column;align-items:stretch' },
+      h('b', null, '🐙 Projekt na GitHube'),
+      h('div', { style: 'display:flex;gap:6px' }, extLink('💻 GitHub', REPO), extLink('🐞 Nahlásiť chybu / nápad', REPO + '/issues/new')),
+      h('small', null, 'Našiel si chybu alebo máš nápad? Daj nám vedieť.')));
     body.appendChild(h('button', { class: 'big', style: 'margin:6px 0', onclick: () => openUI('help') }, '❓ Ako hrať'));
     body.appendChild(h('button', { class: 'btn gray', style: 'width:100%;padding:12px', onclick: () => { S.joined = false; S.ws && S.ws.close(); location.reload(); } }, 'Odísť zo záhrady'));
   }
