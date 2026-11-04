@@ -241,11 +241,11 @@ const Art = (() => {
     else { c.fillStyle = 'rgba(0,0,0,0.12)'; c.fillRect(x - s * 0.19, yb - s * 0.26, s * 0.38, s * 0.06); }
     // ruky
     const sw = o.dance ? Math.sin(phase * 3) * s * 0.15 : step;
-    if (o.dig) { // obe ruky dole pred telom, striedavo hrabú (rýchlo dopredu a späť)
-      const k1 = Math.sin(o.dig * 16), k2 = Math.sin(o.dig * 16 + Math.PI);
-      const reach = k => fx ? fx * s * (0.16 + 0.14 * k) : 0;
-      circ(c, x + (fx ? reach(k1) - fx * s * 0.06 : -s * 0.15 + k1 * s * 0.04), yb - s * 0.2 + k1 * s * 0.09, s * 0.07, skin);
-      circ(c, x + (fx ? reach(k2) : s * 0.15 - k2 * s * 0.04), yb - s * 0.2 + k2 * s * 0.09, s * 0.07, skin);
+    if (o.dig) { // obe ruky dole pred telom, jemne a striedavo hrabú
+      const k1 = Math.sin(o.dig * 8), k2 = Math.sin(o.dig * 8 + Math.PI);
+      const reach = k => fx ? fx * s * (0.18 + 0.04 * k) : 0;
+      circ(c, x + (fx ? reach(k1) - fx * s * 0.06 : -s * 0.15 + k1 * s * 0.015), yb - s * 0.2 + k1 * s * 0.03, s * 0.065, skin);
+      circ(c, x + (fx ? reach(k2) : s * 0.15 - k2 * s * 0.015), yb - s * 0.2 + k2 * s * 0.03, s * 0.065, skin);
     } else {
       circ(c, x - s * 0.22, yb - s * 0.36 + (d === 1 || d === 2 ? 0 : sw), s * 0.065, skin);
       circ(c, x + s * 0.22, yb - s * 0.36 - (d === 1 || d === 2 ? 0 : sw), s * 0.065, skin);

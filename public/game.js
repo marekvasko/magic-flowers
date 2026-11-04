@@ -160,13 +160,13 @@
 
   // ---------- Pomocné ----------
   // ladenie: window.MF_TIME = { season: 0–3, min: 0–1439 } prepíše zobrazený čas (len lokálne vykresľovanie, nie server)
-  // Hráč hrabe v tráve (si = index hľadaného políčka, inak -1) – hlinka a tráva odlietajú sprava doľava (2D aj 3D)
+  // Hráč hrabe v tráve (si = index hľadaného políčka, inak -1) – zo stredu políčka jemne odletuje hlinka a tráva sprava doľava (2D aj 3D)
   const searching = o => o && o.si != null && o.si >= 0;
   function scavDirt(si, dt) {
-    const x = si % W + 0.5, y = Math.floor(si / W) + 0.55;
-    for (let k = 0; k < 2 && Math.random() < dt * 30; k++) S.fx.push({
-      x: x + 0.15 + (Math.random() - 0.5) * 0.25, y, vx: -(1 + Math.random() * 1.6), vy: -(0.6 + Math.random() * 1.2), g: 6,
-      color: ['#7a4a20', '#5b3a1a', '#74b84a', '#9b7b45'][Math.random() * 4 | 0], size: 0.035, life: 0, max: 0.45 + Math.random() * 0.2
+    if (Math.random() > dt * 12) return;
+    S.fx.push({
+      x: si % W + 0.5, y: Math.floor(si / W) + 0.5, vx: -(0.4 + Math.random() * 0.6), vy: -(0.3 + Math.random() * 0.5), g: 4,
+      color: ['#7a4a20', '#5b3a1a', '#74b84a', '#9b7b45'][Math.random() * 4 | 0], size: 0.022, life: 0, max: 0.3 + Math.random() * 0.15
     });
   }
   function curMin() { if (window.MF_TIME && window.MF_TIME.min != null) return window.MF_TIME.min; return realMin(); }
