@@ -397,6 +397,12 @@
   }
 
   const BLOCK = { tree: 1, water: 1, hut: 1, babka: 1, cauldron: 1, stall: 1, well: 1, boulder: 1, house: 1, cliff: 1, glacier: 1, spruce: 1, icehouse: 1 };
+  // Po ľadovci sa chodí po vrchu ľadu: hore najviac GLACIER_STEP vrstiev (pol bloku), dolu hocikoľko.
+  // lift = o koľko vrstiev vyššie je hráč vo výskoku (skokom sa vylezie aj o blok).
+  const GLACIER_STEP = 2;
+  function iceLevel(t) { return t && t.g === 'glacier' ? t.ice || 0 : 0; }
+  function passable(t) { return !!t && (!BLOCK[t.g] || t.g === 'glacier'); }
+  function canStep(from, to, lift) { return passable(to) && iceLevel(to) - iceLevel(from) <= GLACIER_STEP + (lift || 0); }
   const TILLABLE = { grass: 'normal', forest: 'forest', sand: 'sand', rock: 'rock' };
 
   function isShade(tiles, x, y) {
@@ -444,7 +450,7 @@
     CHAT_MAX, chatText,
     W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
-    RING, SPAWN, BABKA, BLOCK, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_NAMES, AREA_FX, GATES, ARRIVE,
+    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, iceLevel, passable, canStep, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_NAMES, AREA_FX, GATES, ARRIVE,
     sellPrice, itemName, buildMap, buildMountains, buildArea, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
   };
   root.GameData = api;

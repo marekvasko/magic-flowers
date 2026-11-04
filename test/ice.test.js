@@ -203,3 +203,49 @@ test('ľad a krompáč: názvy, krompáč je náradie', () => {
   assert.ok(D.isTool('pick') && D.isTool('hoe') && !D.isTool('ice'));
   assert.strictEqual(D.sellPrice('ice'), 0);
 });
+
+test('po ľadovci sa chodí: hore najviac pol bloku (skokom blok), dolu hocikoľko', () => {
+  const snow = { g: 'snow' }, ice = n => ({ g: 'glacier', ice: n });
+  assert.ok(D.passable(ice(0)) && D.passable(ice(8)) && !D.passable({ g: 'cliff' }));
+  assert.ok(D.canStep(snow, ice(0)), 'vysekané po dno');
+  assert.ok(D.canStep(snow, ice(2)), 'pol bloku hore');
+  assert.ok(!D.canStep(snow, ice(3)), 'vyššie nie');
+  assert.ok(D.canStep(snow, ice(4), 2), 'so skokom o blok');
+  assert.ok(D.canStep(ice(8), snow) && D.canStep(ice(8), ice(0)), 'dolu hocikoľko');
+  assert.ok(!D.canStep(ice(0), { g: 'cliff' }));
+  // plný ľadovec je schodisko: z okraja hôr sa dá dôjsť na každé jeho políčko
+  const r = room(), tiles = r.hory, start = tiles.findIndex((t, i) => t.g === 'snow' && tiles[i + D.W] && tiles[i + D.W].g === 'glacier');
+  const seen = new Set([start]), q = [start];
+  for (let k = 0; k < q.length; k++) {
+    const i = q[k], x = i % D.W, y = (i / D.W) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx, ny = y + dy, n = ny * D.W + nx;
+      if (nx < 0 || ny < 0 || nx >= D.W || ny >= D.H || seen.has(n) || !D.canStep(tiles[i], tiles[n])) continue;
+      seen.add(n); q.push(n);
+    }
+  }
+  assert.ok(start >= 0);
+  tiles.forEach((t, i) => { if (t.g === 'glacier') assert.ok(seen.has(i), `políčko ľadovca ${i} je dostupné`); });
+});
+
+test('ľad nedorastá pod hráčom a nikdy nie viac ako pol bloku nad suseda', () => {
+  const r = room();
+  for (const t of r.hory) if (t.ice != null) t.ice = 0;
+  const top = r.hory.findIndex((t, i) => Ice.LEVELS[i] === Math.max(...Ice.LEVELS));
+  r.players = new Map([[1, { area: 'hory', x: top % D.W + 0.5, y: ((top / D.W) | 0) + 0.5 }], [2, { area: 'garden', x: 0.5, y: 0.5 }]]);
+  for (let d = 0; d < 30; d++) {
+    Ice.growGlacier(r, D.GLACIER_GROW.snow);
+    r.hory.forEach((t, i) => { if (t.g === 'glacier') assert.ok(D.iceLevel(t) <= Ice.LEVELS[i]); });
+    // nikto nezostane zamurovaný: z každého políčka sa dá vyjsť na suseda
+    r.hory.forEach((t, i) => {
+      if (t.g !== 'glacier') return;
+      const x = i % D.W, y = (i / D.W) | 0;
+      const out = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => { const n = r.hory[(y + dy) * D.W + x + dx]; return D.passable(n) && D.canStep(t, n) && D.canStep(n, t); });
+      assert.ok(out, `z políčka ${i} sa dá vyjsť aj vrátiť`);
+    });
+  }
+  assert.strictEqual(r.hory[top].ice, 0, 'kde hráč stojí, ľad nedorastie');
+  r.players.clear();
+  for (let d = 0; d < 30; d++) Ice.growGlacier(r, D.GLACIER_GROW.snow);
+  assert.strictEqual(Ice.glacierTotal(r), Ice.glacierMax(), 'keď odíde, ľadovec dorastie do pôvodnej výšky');
+});

@@ -883,10 +883,17 @@ export function create(api) {
     return [2, 5, 0, 4, 1, 6, 3, 7][oct];
   }
   const DIR_ANGLE = [Math.PI / 2, Math.PI, 0, -Math.PI / 2];
+  // výška zeme na políčku – na ľadovci stojí postava na vrchu ľadu (po 1/4 bloku)
+  function groundY(x, y) {
+    if (!grid) return 1;
+    x = Math.max(0, Math.min(D.W - 1, Math.floor(x))); y = Math.max(0, Math.min(D.H - 1, Math.floor(y)));
+    const t = S.tiles[y * D.W + x];
+    return t && t.g === 'glacier' ? W.groundHeight('glacier') / R + (t.ice || 0) / D.GLACIER_LAYERS : W.surfaceY(grid, x, y);
+  }
   // opts.jz: výška skoku (políčka), opts.crawl: plazenie
   function drawChar(id, x, z, look, a, phase, opts, dt) {
     const o = charObj(id);
-    const target = grid ? W.surfaceY(grid, Math.max(0, Math.min(D.W - 1, Math.floor(x))), Math.max(0, Math.min(D.H - 1, Math.floor(z)))) : 1;
+    const target = groundY(x, z);
     o.h = lerp(o.h, target, Math.min(1, dt * 10));
     const jz = opts.jz || 0;
     o.ctx.clearRect(0, 0, 96, 128);
@@ -1027,7 +1034,7 @@ export function create(api) {
   function placeCamera(dt) {
     yaw = lerp(yaw, yawTarget, Math.min(1, dt * 8));
     if (Math.abs(yaw - yawTarget) < 0.001) yaw = yawTarget;
-    const me = S.me, h = grid ? W.surfaceY(grid, Math.floor(me.x), Math.floor(me.y)) : 1;
+    const me = S.me, h = groundY(me.x, me.y);
     camTarget.set(me.x, lerp(camTarget.y || h, h, Math.min(1, dt * 6)), me.y);
     const dist = 60;
     camera.position.set(camTarget.x + Math.sin(yaw) * Math.cos(PITCH) * dist, camTarget.y + Math.sin(PITCH) * dist, camTarget.z + Math.cos(yaw) * Math.cos(PITCH) * dist);
@@ -1141,7 +1148,7 @@ export function create(api) {
     c.clearRect(0, 0, cw, ch);
     // značka ťuknutia a cieľové políčko (klávesnica)
     const ring = (x, y, color, r) => {
-      const h = grid ? W.surfaceY(grid, x, y) : 1;
+      const h = groundY(x, y);
       const pts = [[0, 0], [1, 0], [1, 1], [0, 1]].map(([a, b]) => project(x + 0.5 + (a - 0.5) * r, h + 0.01, y + 0.5 + (b - 0.5) * r));
       c.strokeStyle = color; c.lineWidth = Math.max(2, ppb * 0.05);
       c.beginPath(); pts.forEach((p, i) => i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y)); c.closePath(); c.stroke();
