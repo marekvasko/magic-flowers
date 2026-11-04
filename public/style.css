@@ -161,6 +161,22 @@ button { font: inherit; cursor: pointer; border: none; }
 #sleep .sl-card { text-align: center; color: #fff; padding: 20px; max-width: 80%; font-weight: 700; font-size: 17px; }
 #sleep .sl-z { font-size: 54px; animation: slz 2s ease-in-out infinite; }
 #sleep button { margin-top: 14px; }
+/* Prechod do inej plochy: stmavnutie do čiernej s menom plochy a ozdobami po okrajoch */
+#areaFade { position: absolute; inset: 0; z-index: 15; display: flex; align-items: center; justify-content: center; overflow: hidden;
+  background: #000; box-shadow: inset 0 0 70px 0 color-mix(in srgb, var(--af-glow, #fff) 22%, transparent); opacity: 0; transition: opacity .3s ease; pointer-events: auto; }
+#areaFade.on { opacity: 1; }
+#areaFade:not(.on) { pointer-events: none; }
+#areaFade .af-card { text-align: center; color: #fff; opacity: 0; transform: scale(.94); transition: opacity .25s ease, transform .6s ease; }
+#areaFade.named .af-card { opacity: 1; transform: none; }
+#areaFade .af-icon { font-size: 52px; line-height: 1.2; }
+#areaFade .af-name { font-size: 34px; font-weight: 800; letter-spacing: .06em; text-shadow: 0 0 12px color-mix(in srgb, var(--af-glow, #fff) 35%, transparent); }
+#areaFade .af-name::before, #areaFade .af-name::after { content: ''; display: inline-block; width: 36px; height: 2px; margin: 0 12px; vertical-align: middle; background: var(--af-glow, #fff8); opacity: .35; }
+#areaFade .af-deco span { position: absolute; font-size: 20px; opacity: .3; filter: saturate(.45) drop-shadow(0 0 4px color-mix(in srgb, var(--af-glow, #fff) 30%, transparent)); animation: afTw 1.4s ease-in-out infinite alternate; }
+@keyframes afTw { from { transform: translateY(2px) scale(.95); opacity: .2; } to { transform: translateY(-2px) scale(1); opacity: .4; } }
+@media (prefers-reduced-motion: reduce) {
+  #areaFade, #areaFade .af-card { transition: none; }
+  #areaFade .af-deco span { animation: none; }
+}
 @keyframes slz { 50% { transform: translateY(-10px); opacity: .6; } }
 
 /* Počítač (a tablet na šírku): hra na celú obrazovku; koľko sveta je vidno, určuje uhlopriečka (D.VIEW_DIAG) */

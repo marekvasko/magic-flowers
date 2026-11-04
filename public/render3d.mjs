@@ -858,10 +858,23 @@ export function create(api) {
     const ghost = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.35, depthTest: false, depthWrite: false }));
     ghost.center.copy(sp.center); ghost.scale.copy(sp.scale); ghost.renderOrder = 10; ghost.layers.set(1);
     scene.add(ghost);
-    o = { c, ctx: c.getContext('2d'), tex, sp, ghost, shadow: blobShadow(), h: 1 };
+    const shadow = blobShadow(); shadow.material = shadowMat.clone(); // vlastný materiál – tieň sa prelína s postavičkou
+    // vis: viditeľnosť 0–1; iní hráči sa pri príchode/odchode z plochy plynulo objavia a zmiznú
+    o = { c, ctx: c.getContext('2d'), tex, sp, ghost, shadow, h: 1, vis: id === 'me' || id === 'babka' ? 1 : 0, seenArea: S.area };
+    setCharVis(o, o.vis);
     chars.set(id, o);
     return o;
   }
+  const CHAR_FADE = 0.3; // s
+  function setCharVis(o, v) {
+    o.vis = v;
+    const m = o.sp.material, see = v < 1;
+    if (m.transparent !== see) { m.transparent = see; m.alphaTest = see ? 0.02 : 0.4; m.depthWrite = !see; m.needsUpdate = true; }
+    m.opacity = v;
+    o.ghost.material.opacity = 0.35 * v;
+    o.shadow.material.opacity = shadowMat.opacity * v;
+  }
+  function removeChar(id, o) { scene.remove(o.sp); scene.remove(o.ghost); scene.remove(o.shadow); o.shadow.material.dispose(); chars.delete(id); }
   // smer pohybu vo svete → jeden z 8 smerov spritu vzhľadom na natočenie kamery
   function dir8(a) {
     const dx = Math.cos(a), dz = Math.sin(a);
@@ -885,6 +898,7 @@ export function create(api) {
     const sk = Math.max(0.45, 1 - jz); o.shadow.scale.set(sk, 0.75 * sk, 1); // vo výskoku je tieň menší
     o.sp.userData.tile = { x: Math.floor(x), y: Math.floor(z) };
     o.alive = true;
+    o.seenArea = S.area;
     return o;
   }
 
@@ -1105,7 +1119,9 @@ export function create(api) {
     else if (!babka) babka = drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, 0, { babka: true }, 1);
     else { babka.alive = true; if (Math.floor(t) !== babka.lastT) { babka.lastT = Math.floor(t); drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, Math.sin(t) * 0.3, { babka: true }, 1); } }
     for (const [id, o] of chars) {
-      if (!o.alive) { scene.remove(o.sp); scene.remove(o.ghost); scene.remove(o.shadow); chars.delete(id); continue; }
+      // po vlastnom prechode do inej plochy hráči zo starej plochy hneď zmiznú (je to za čiernou clonou)
+      if (!o.alive && (o.vis <= 0 || o.seenArea !== S.area || id === 'babka' || id === 'me')) { removeChar(id, o); continue; }
+      if (o.vis < 1 || !o.alive) setCharVis(o, Math.max(0, Math.min(1, o.vis + (o.alive ? dt : -dt) / CHAR_FADE)));
       o.sp.material.color.setRGB(...lightAt(o.sp.position.x, o.sp.position.y, o.sp.position.z, lights, lights.length));
     }
     void meO;
@@ -1161,6 +1177,7 @@ export function create(api) {
 
     // mená, emócie, bubliny
     const label = (o, name, e, bubble) => {
+      c.globalAlpha = o.vis; // meno sa prelína s postavičkou
       const P = project(o.sp.position.x, o.sp.position.y + 1.35, o.sp.position.z);
       c.font = 'bold ' + (ts * 0.24 | 0) + 'px system-ui, sans-serif'; c.textAlign = 'center';
       const w = c.measureText(name).width + ts * 0.2;
@@ -1168,6 +1185,7 @@ export function create(api) {
       c.fillStyle = '#fff'; c.fillText(name, P.x, P.y);
       if (e) { c.font = (ts * 0.42 | 0) + 'px serif'; c.fillText(e === 'dance' ? (Math.floor(t * 3) % 2 ? '🎵' : '🎶') : api.EMOJI[e], P.x + ts * 0.45, P.y - ts * 0.25 + Math.sin(t * 6) * ts * 0.05); }
       if (bubble && bubble.until > performance.now()) Art.bubble(c, bubble.text, P.x, P.y, ts);
+      c.globalAlpha = 1;
     };
     for (const o of S.others.values()) { const co = chars.get(o.id); if (co) label(co, o.name, o.e, S.bubbles[o.id]); }
     const mo = chars.get('me'); if (mo) label(mo, S.name, S.myEmote, S.bubbles[S.id]);

@@ -92,8 +92,11 @@
   }
 
   function onMsg(m) {
+    // počas stmavovania pred prechodom sa správy z novej plochy odložia, kým sa svet za čiernou nevymení
+    if (S.areaFx && S.areaFx.pending && m.t !== 'area' && m.t !== 'welcome' && m.t !== 'error') { S.areaFx.queue.push(m); return; }
     switch (m.t) {
       case 'welcome':
+        if (S.areaFx) endAreaFx(true); // nové pripojenie – rozbehnutý prechod už neplatí
         S.id = m.id; S.tiles = m.tiles; S.me.x = m.x; S.me.y = m.y; S.joined = true;
         S.area = m.area || 'garden'; S.areaSeq = m.seq | 0; S.tilesGen++;
         findAnchors();
@@ -109,11 +112,7 @@
         renderHotbar(); updateHud();
         if (S.modal && S.modal.refresh) S.modal.refresh();
         break;
-      case 'area': // prechod medzi záhradou a horami
-        S.area = m.area; S.areaSeq = m.seq; S.tiles = m.tiles; S.tilesGen++;
-        S.me.x = m.x; S.me.y = m.y; S.others.clear(); stopWalk();
-        findAnchors(); sfx('magic');
-        break;
+      case 'area': areaChange(m); break; // prechod do inej plochy (záhrada ↔ hory)
       case 'room':
         S.storageRate = m.storageRate || D.STORAGE_AGE_RATE; S.icehouse = m.icehouse || { built: false, ice: 0 };
         S.eternal = m.eternal; S.storageFb = m.storageFb || {}; S.storageTick = m.tick; S.names = m.names; S.mode = m.mode; S.daySeconds = m.daySeconds; S.storage = m.storage || {};
@@ -155,6 +154,59 @@
       case 'brewed': S.brewed = m.k; S.cauldron = []; sfx(m.k === 'sliz' ? 'bad' : 'magic'); if (S.modal && S.modal.refresh) S.modal.refresh(); break;
       case 'error': alert(m.text); S.joined = false; $('conn').classList.add('hidden'); break;
     }
+  }
+
+  // ---------- Prechod do inej plochy: stmavnutie do čiernej, výmena sveta, meno plochy, rozjasnenie ----------
+  const AREA_FADE = 300, AREA_HOLD = 900; // ms; meno plochy ostane na čiernej ≈ 0,9 s, aby sa dalo prečítať
+  const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let areaHideT = 0;
+  function applyArea(m) {
+    S.area = m.area; S.areaSeq = m.seq; S.tiles = m.tiles; S.tilesGen++;
+    S.me.x = m.x; S.me.y = m.y; S.others.clear(); stopWalk();
+    findAnchors();
+  }
+  // vzhľad clony podľa cieľovej plochy (D.AREA_FX): farba žiary, ikona, meno a ozdoby rozložené po okrajoch
+  function paintAreaFade(area) {
+    const el = $('areaFade'), f = D.AREA_FX[area] || {}, deco = f.deco || ['✨'];
+    el.style.setProperty('--af-glow', f.glow || '#ffffff88');
+    el.querySelector('.af-icon').textContent = f.icon || '✨';
+    el.querySelector('.af-name').textContent = D.AREA_NAMES[area] || area;
+    const N = 16, box = el.querySelector('.af-deco');
+    box.innerHTML = '';
+    for (let i = 0; i < N; i++) {
+      // obvod obdĺžnika: hore, vpravo, dole, vľavo (v % obrazovky, kúsok od okraja)
+      const u = (i + 0.5) / N * 4, side = Math.floor(u), k = u - side, a = 4 + k * 92, sp = document.createElement('span');
+      const [l, t] = side === 0 ? [a, 3] : side === 1 ? [93, a] : side === 2 ? [100 - a, 92] : [3, 100 - a];
+      sp.textContent = deco[i % deco.length];
+      sp.style.left = l + '%'; sp.style.top = t + '%'; sp.style.animationDelay = (-(i * 0.37) % 1.4) + 's';
+      box.appendChild(sp);
+    }
+  }
+  function areaChange(m) {
+    stopWalk(); S.keys = {}; S.stick.x = S.stick.y = 0;
+    const fx = S.areaFx;
+    if (fx && fx.pending) { fx.msg = m; paintAreaFade(m.area); return; } // ešte stmavuje – platí posledná správa
+    if (fx) { applyArea(m); paintAreaFade(m.area); clearTimeout(fx.timer); fx.timer = setTimeout(endAreaFx, AREA_HOLD); return; } // už je čierno
+    const el = $('areaFade');
+    clearTimeout(areaHideT);
+    paintAreaFade(m.area);
+    el.classList.remove('hidden', 'named'); void el.offsetWidth; el.classList.add('on');
+    sfx('magic');
+    const nfx = S.areaFx = { pending: true, msg: m, queue: [] };
+    nfx.timer = setTimeout(() => {
+      nfx.pending = false;
+      applyArea(nfx.msg); // svet sa prestavia za čiernou
+      el.classList.add('named');
+      for (const q of nfx.queue.splice(0)) onMsg(q);
+      nfx.timer = setTimeout(endAreaFx, AREA_HOLD);
+    }, reducedMotion() ? 0 : AREA_FADE);
+  }
+  function endAreaFx(now) {
+    const el = $('areaFade');
+    if (S.areaFx) clearTimeout(S.areaFx.timer);
+    S.areaFx = null;
+    el.classList.remove('on');
+    areaHideT = setTimeout(() => el.classList.add('hidden'), now === true || reducedMotion() ? 0 : AREA_FADE);
   }
 
   function findAnchors() {
@@ -357,7 +409,7 @@
   function setCrawlToggle(on) { S.crawlTgl = on; $('bCrawl').classList.toggle('on', on); }
   const KEYMAP = { ArrowUp: 'u', KeyW: 'u', ArrowDown: 'd', KeyS: 'd', ArrowLeft: 'l', KeyA: 'l', ArrowRight: 'r', KeyD: 'r' };
   addEventListener('keydown', e => {
-    if (!S.joined || S.asleep || document.activeElement.tagName === 'INPUT') return;
+    if (!S.joined || S.asleep || S.areaFx || document.activeElement.tagName === 'INPUT') return;
     S.kbd = true;
     if (KEYMAP[e.code]) { S.keys[KEYMAP[e.code]] = true; stopWalk(); e.preventDefault(); }
     if (e.code === 'Space') { if (!e.repeat) jump(); e.preventDefault(); }
@@ -469,7 +521,7 @@
   }
 
   function tapWorld(cx, cy) {
-    if (S.asleep) return;
+    if (S.asleep || S.areaFx) return;
     if (!R3) return;
     const tgt = R3.pick(cx, cy); // lúč do 3D scény
     if (!tgt) return;
@@ -1072,7 +1124,7 @@
   function update(dt) {
     const me = S.me;
     let vx = S.stick.x, vy = S.stick.y;
-    if (S.asleep) { vx = vy = 0; S.keys = {}; S.path = null; }
+    if (S.asleep || S.areaFx) { vx = vy = 0; S.keys = {}; S.path = null; }
     if (S.keys.l) vx -= 1; if (S.keys.r) vx += 1; if (S.keys.u) vy -= 1; if (S.keys.d) vy += 1;
     if (R3 && (vx || vy)) [vx, vy] = R3.screenToWorld(vx, vy); // joystick je vzhľadom na obrazovku, kamera je otočená
     if (vx || vy) stopWalk();
