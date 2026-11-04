@@ -127,6 +127,9 @@ button { font: inherit; cursor: pointer; border: none; }
 #chatbox:not(.open) #chathist, #chatbox.open #chatlog { display: none; }
 #chatbox:not(.open) .chatrow { visibility: hidden; }
 #chatbox.open { pointer-events: auto; }
+/* dotykové ovládanie: vpravo nad lištou sú tlačidlá skoku a plazenia – chat im nechá miesto */
+#app:has(#game.touch) #chatbox { right: 88px; }
+@media (pointer: coarse) { #chatbox { right: 88px; } }
 .chatrow { display: flex; gap: 6px; }
 /* riadok na písanie v rovnakom štýle ako správy (menovky) */
 #chatbox input { flex: 1; min-width: 0; padding: 8px 10px; border: 0; border-radius: 0; background: rgba(0,0,0,0.55); color: #fff; font-size: 16px; outline: 2px solid transparent; touch-action: auto; user-select: text; -webkit-user-select: text; }
