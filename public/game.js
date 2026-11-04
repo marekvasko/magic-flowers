@@ -365,11 +365,8 @@
     if (A.stall && box(A.stall.x - 0.1, A.stall.x + 3.1, A.stall.y - 1.1, A.stall.y + 1)) return { x: A.stall.x + 1, y: A.stall.y };
     if (A.well && box(A.well.x, A.well.x + 1, A.well.y - 0.4, A.well.y + 1)) return A.well;
     if (A.cauldron && box(A.cauldron.x, A.cauldron.x + 1, A.cauldron.y - 0.3, A.cauldron.y + 1)) return A.cauldron;
-    const tx = Math.floor(wx), ty = Math.floor(wy);
-    // vysoká rastlina zasahuje do políčka nad sebou
-    const below = tileAt(tx, ty + 1);
-    if (!ctxAction(tx, ty) && below && below.s && below.s.p && D.stageOf(below.s.p) >= 2 && wy - ty > 0.4) return { x: tx, y: ty + 1 };
-    return { x: tx, y: ty };
+    // kvety sa vyberajú len políčkom, na ktorom rastú (nie podľa výšky obrázka)
+    return { x: Math.floor(wx), y: Math.floor(wy) };
   }
 
   // BFS po políčkach – nájde cestu k prvému políčku, ktoré spĺňa podmienku

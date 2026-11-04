@@ -556,7 +556,8 @@ export function create(api) {
     const r = api.glCanvas.getBoundingClientRect();
     const ndc = new THREE.Vector2((clientX - r.left) / r.width * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
     ray.setFromCamera(ndc, camera);
-    const sprites = [...[...chars.values()].filter(o => o.alive).map(o => o.sp), ...plantSprites.values(), babka && babka.sp].filter(Boolean);
+    // kvety a huby sa nevyberajú podľa obrázka – platí len políčko zeme pod nimi
+    const sprites = [...[...chars.values()].filter(o => o.alive).map(o => o.sp), babka && babka.sp].filter(Boolean);
     const hits = ray.intersectObjects(sprites.concat(mesh ? [mesh] : [], fineMeshes.filter(m => m.userData.fade > 0.5)), false);
     for (const h of hits) {
       if (h.object.isSprite || h.object.userData.tile) return Object.assign({}, h.object.userData.tile);
