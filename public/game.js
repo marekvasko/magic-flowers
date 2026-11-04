@@ -948,8 +948,12 @@
   const closeChat = () => { $('chatbox').classList.remove('open'); $('chatIn').blur(); chatWheel(); };
   function openChat() { $('chatbox').classList.add('open'); $('chathist').scrollTop = $('chathist').scrollHeight; chatWheel(); $('chatIn').focus(); }
   $('bChat').onclick = () => { if ($('chatbox').classList.contains('open')) closeChat(); else openChat(); };
-  const sendChat = () => { const v = $('chatIn').value.trim(); if (v) send({ t: 'chat', text: v }); $('chatIn').value = ''; closeChat(); };
+  const sendChat = () => { const v = $('chatIn').value.trim(); if (v) send({ t: 'chat', text: v }); $('chatIn').value = ''; chatCount(); closeChat(); };
   $('chatSend').onclick = sendChat;
+  // Limit správy (rovnaký ako na serveri); počítadlo sa ukáže 20 znakov pred koncom
+  $('chatIn').maxLength = D.CHAT_MAX;
+  const chatCount = () => { const n = $('chatIn').value.length; $('chatCount').textContent = n >= D.CHAT_MAX - 20 ? `${n}/${D.CHAT_MAX}` : ''; $('chatCount').classList.toggle('full', n >= D.CHAT_MAX); };
+  $('chatIn').addEventListener('input', chatCount);
   // Enter/Escape patria len chatu – sendChat/closeChat zruší fokus, takže by ich inak zachytila hra (Enter = akcia)
   $('chatIn').addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); sendChat(); }

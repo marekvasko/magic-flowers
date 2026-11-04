@@ -311,7 +311,12 @@
     return 0;
   }
 
+  // Chat: najdlhšia správa (pole na písanie aj server); server navyše vyhodí < > a medzery na krajoch
+  const CHAT_MAX = 120;
+  function chatText(raw) { return String(raw || '').replace(/[<>]/g, '').trim().slice(0, CHAT_MAX).trim(); }
+
   const api = {
+    CHAT_MAX, chatText,
     W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
     RING, SPAWN, BABKA, BLOCK, TILLABLE,
