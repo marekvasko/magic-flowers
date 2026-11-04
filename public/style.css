@@ -167,10 +167,12 @@ button { font: inherit; cursor: pointer; border: none; }
 @media (min-width: 820px) and (min-aspect-ratio: 1/1) {
   #app { max-width: none; }
   /* Počítač: žiadny pás cez celú obrazovku – panel v strede s pevnou šírkou na 9 miest (klávesy 1–9) */
-  #bottom { bottom: 12px; }
-  #bar { width: max-content; max-width: calc(100% - 24px); margin: 0 auto; padding: 6px 14px 10px; border: 3px solid #8b5a2b; border-radius: 18px; box-shadow: 0 4px 14px #0006; }
+  /* rad akcií má šírku panelu – otáčanie pohľadu je zarovnané s jeho okrajmi */
+  #bottom { left: 50%; right: auto; bottom: 12px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); }
+  #actions { padding: 0 0 8px; }
+  #bar { padding: 6px 14px 10px; border: 3px solid #8b5a2b; border-radius: 18px; box-shadow: 0 4px 14px #0006; }
   #selName { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #rotL { left: 12px; } #rotR { right: 12px; }
+  #rotL { left: 0; } #rotR { right: 0; }
   #hotbar { padding: 4px 0 0; width: calc(9 * 58px + 8 * 6px); max-width: 100%; }
   .slot { flex: 0 0 58px; }
   .slot.empty:nth-child(n) { display: flex; }
