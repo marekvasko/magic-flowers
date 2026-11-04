@@ -536,7 +536,8 @@
     return out;
   }
   // Neviditeľná náhrada jemného modelu v hrubej mriežke: podkocka je plná, ak je aspoň ~40 % jej minikociek plných.
-  function stampInvisible(g, fm) {
+  // g.owner: pre každú podkocku index jemného modelu, ktorému patrí jeho neviditeľná náhrada (-1 = žiadny)
+  function stampInvisible(g, fm, index) {
     const k = FINE / R; // minikociek na podkocku
     const cx0 = Math.round(fm.ox * R), cy0 = Math.round(fm.oy * R), cz0 = Math.round(fm.oz * R);
     for (let cz = 0; cz < fm.sz / k; cz++) for (let cy = 0; cy < Math.ceil(fm.sy / k); cy++) for (let cx = 0; cx < fm.sx / k; cx++) {
@@ -545,7 +546,10 @@
         const fy = cy * k + y;
         if (fy < fm.sy && fm.data[((cz * k + z) * fm.sy + fy) * fm.sx + cx * k + x]) n++;
       }
-      if (n >= k * k * k * (fm.invis || 0.4)) set(g, cx0 + cx, cy0 + cy, cz0 + cz, M.INVIS);
+      const x = cx0 + cx, y = cy0 + cy, z = cz0 + cz;
+      // vlastníka zapíšeme pre každú podkocku s aspoň jednou minikockou (aj riedke koruny), náhradu len pre plné
+      if (n && x >= 0 && y >= 0 && z >= 0 && x < NX && y < NY && z < NZ) g.owner[idx(x, y, z)] = index;
+      if (n >= k * k * k * (fm.invis || 0.4)) set(g, x, y, z, M.INVIS);
     }
   }
 
@@ -559,10 +563,22 @@
     }
     stamp(g, tiles, season);
     g.fine = fineModels(tiles, season);
-    for (const fm of g.fine) stampInvisible(g, fm);
+    g.owner = new Int16Array(NX * NY * NZ).fill(-1);
+    g.fine.forEach((fm, i) => stampInvisible(g, fm, i));
     return g;
   }
   // Výška povrchu políčka v blokoch (na tú postavíme rastliny a postavičky)
+  // Ktoré jemné modely pretína úsečka (pochod po 0,1 bloku cez hrubú mriežku) – rýchle hľadanie zakrývajúcich objektov
+  function modelsOnRay(g, px, py, pz, dx, dy, dz, maxDist, out) {
+    for (let s = 0.15; s < maxDist; s += 0.1) {
+      const x = Math.floor((px + dx * s) * R), y = Math.floor((py + dy * s) * R), z = Math.floor((pz + dz * s) * R);
+      if (y >= NY) break;
+      if (x < 0 || y < 0 || z < 0 || x >= NX || z >= NZ) continue;
+      const o = g.owner[idx(x, y, z)];
+      if (o >= 0) out.add(o);
+    }
+    return out;
+  }
   function surfaceY(g, tx, ty) { return (g.heights[ty * D.W + tx] || 2) / R; }
 
   // ---- Slnko ----
@@ -620,7 +636,7 @@
     return hours;
   }
 
-  const api = { R, NX, NY, NZ, M, FINE, TREE_KINDS, treeKind, PALETTE, EMISSIVE, colorOf, hash, buildGrid, get, surfaceY, sunDir, daylight, sunVisibility, sunHours, groundHeight };
+  const api = { R, NX, NY, NZ, M, FINE, modelsOnRay, TREE_KINDS, treeKind, PALETTE, EMISSIVE, colorOf, hash, buildGrid, get, surfaceY, sunDir, daylight, sunVisibility, sunHours, groundHeight };
   root.World3D = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof self !== 'undefined' ? self : this);

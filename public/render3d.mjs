@@ -33,6 +33,9 @@ void main() {
 }`;
 const FRAG = `
 precision highp float;
+#ifndef SHADOW_TAPS
+#define SHADOW_TAPS 16
+#endif
 uniform sampler2D map; uniform sampler2D shadowMap;
 uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec3 emisColor;
 uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount; uniform float opacity;
@@ -53,11 +56,11 @@ float sunVisibility() {
   float a = fract(sin(dot(floor(vPos.xz * 64.0), vec2(12.9898, 78.233))) * 43758.5453) * 6.2832;
   mat2 rot = mat2(cos(a), sin(a), -sin(a), cos(a));
   float lit = 0.0;
-  for (int i = 0; i < 16; i++) {
+  for (int i = 0; i < SHADOW_TAPS; i++) {
     float d = texture2D(shadowMap, sc.xy + rot * PD[i] * shadowRadius * shadowTexel).r;
     lit += sc.z - 0.0008 <= d ? 1.0 : 0.0;
   }
-  return lit / 16.0;
+  return lit / float(SHADOW_TAPS);
 }
 void main() {
   vec3 base = vTex > 0.5 ? texture2D(map, vUv).rgb * vColor : vColor;
@@ -129,10 +132,12 @@ export function create(api) {
   // Rovnaký shader pre objekty, ktoré práve miznú (hráč zašiel za ne): priehľadný, bez zápisu do hĺbky.
   // Uniformy zdieľa s hlavným materiálom; priehľadnosť sa nastaví pre každý objekt tesne pred vykreslením.
   // Svetlo zdieľajú (rovnaké objekty uniform), ale priehľadnosť má každý materiál vlastnú – hlavný materiál ostáva úplne nepriehľadný.
-  const fadeMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms: { ...material.uniforms, opacity: { value: 1 } }, transparent: true, depthWrite: false });
+  // priesvitná plocha: stačia 4 vzorky tieňa (pri ~30 % priehľadnosti rozdiel nevidno)
+  const fadeMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { SHADOW_TAPS: 4 }, uniforms: { ...material.uniforms, opacity: { value: 1 } }, transparent: true, depthWrite: false });
   // hĺbkový prechod tým istým shaderom (rovnaký výpočet hĺbky → žiadne bodkovanie)
   // malý posun dozadu, aby predná plocha zoslabeného objektu vždy spoľahlivo prešla testom hĺbky (žiadne kmitanie na mobiloch)
-  const depthOnlyMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms: { ...material.uniforms, opacity: { value: 1 } }, transparent: true, depthWrite: true, colorWrite: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 });
+  // hĺbkový prechod: rovnaký vertex shader (rovnaká hĺbka – bez bodkovania), ale prázdny fragment shader
+  const depthOnlyMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: 'void main() { gl_FragColor = vec4(0.0); }', uniforms: material.uniforms, transparent: true, depthWrite: true, colorWrite: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 });
   const FADE_MIN = 0.3; // ako veľmi ostane vidieť budovu/strom, za ktorým stojí hráč
   let mesh = null, grid = null, builtSeason = -1;
   const AXES = [[0, 1, 2], [1, 2, 0], [2, 0, 1]]; // [normálová os, u, v] – u × v = normála
@@ -447,23 +452,18 @@ export function create(api) {
   // ---------- Kamera ----------
   let viewTop = 1;
   // ---------- Objekty, za ktorými stojí hráč: zmiznú a ostane z nich len jemný obrys ----------
-  const occRay = new THREE.Raycaster();
   let occluders = new Set(), occAt = 0;
   function computeOccluders(meH) {
+    // pochod cez hrubú mriežku: neviditeľná náhrada každého modelu vie, ku ktorému modelu patrí (bez testov trojuholníkov)
+    const toCam = camera.position.clone().sub(camTarget).normalize(), idx = new Set();
+    for (const yOff of [0.2, 0.65, 1.15]) W.modelsOnRay(grid, S.me.x, meH + yOff, S.me.y, toCam.x, toCam.y, toCam.z, 25, idx);
     const set = new Set();
-    const toCam = camera.position.clone().sub(camTarget).normalize();
-    for (const yOff of [0.2, 0.65, 1.15]) {
-      occRay.set(new THREE.Vector3(S.me.x, meH + yOff, S.me.y), toCam);
-      for (const m of fineMeshes) {
-        if (set.has(m) || !occRay.ray.intersectsBox(m.userData.box)) continue;
-        if (occRay.intersectObject(m, false).length) set.add(m);
-      }
-    }
+    for (const i of idx) if (fineMeshes[i]) set.add(fineMeshes[i]);
     return set;
   }
   function updateFades(dt, meH) {
     const now = performance.now();
-    if (now - occAt > 100) { occluders = computeOccluders(meH); occAt = now; for (const m of occluders) m.userData.occUntil = now + 400; }
+    if (now - occAt > 100) { occluders = window.MF_NOFADE ? new Set() : computeOccluders(meH); occAt = now; for (const m of occluders) m.userData.occUntil = now + 400; }
     let any = false;
     const fadingList = [];
     for (const m of fineMeshes) {
@@ -498,7 +498,7 @@ export function create(api) {
     color: new THREE.Color(1, 0.97, 0.9), transparent: true, opacity: 0.7, depthWrite: false, depthTest: false,
     stencilWrite: true, stencilRef: 1, stencilFunc: THREE.NotEqualStencilFunc, stencilZPass: THREE.ReplaceStencilOp
   });
-  const OUTLINE_DIRS = Array.from({ length: 8 }, (_, i) => [Math.cos(i * Math.PI / 4), Math.sin(i * Math.PI / 4)]);
+  const OUTLINE_DIRS = [[1, 1], [-1, 1], [1, -1], [-1, -1]].map(([x, y]) => [x * 0.85, y * 0.85]); // 4 posuny stačia na obrys ~1,5 px
   const camRight = new THREE.Vector3(), camUp = new THREE.Vector3();
   function drawOutlines() {
     const cssW = api.glCanvas.getBoundingClientRect().width || 1;
