@@ -1191,7 +1191,7 @@
     const se = season(), m = curMin(), hr = m / 60, night = D.isNight(m);
     // hráč v strede obrazovky; pri okraji sveta sa výrez zastaví – horný a dolný okraj môže zájsť
     // pod panel a lištu nástrojov na celú šírku (mobil), aby hráča nikdy nezakryli; malý panel na počítači nie
-    const bar = $('bottom'), hudH = $('hud').offsetHeight * dpr;
+    const bar = $('bar'), hudH = $('hud').offsetHeight * dpr;
     const barH = bar.offsetWidth * dpr >= cw * 0.9 ? bar.offsetHeight * dpr : 0;
     cam.x = Math.max(0, Math.min(W * ts - cw, S.me.x * ts - cw / 2));
     cam.y = Math.max(-hudH, Math.min(H * ts - ch + barH, S.me.y * ts - ch / 2));

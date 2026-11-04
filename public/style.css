@@ -45,7 +45,9 @@ button { font: inherit; cursor: pointer; border: none; }
 #chatlog .chatline.out { opacity: 0 !important; }
 .chatline b { color: #ffd76a; }
 
-#bottom { position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; padding: 4px 0 env(safe-area-inset-bottom); background: #1b2e1de6; border-top: 2px solid #8b5a2b; box-shadow: 0 -4px 12px #0004; }
+/* Spodok: rad akcií (emócie, otáčanie pohľadu) voľne nad panelom s inventárom */
+#bottom { position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; }
+#bar { padding: 4px 0 env(safe-area-inset-bottom); background: #1b2e1de6; border-top: 2px solid #8b5a2b; box-shadow: 0 -4px 12px #0004; }
 #selName { text-align: center; color: #fff; font-size: 12.5px; font-weight: 600; height: 18px; text-shadow: 0 1px 2px #000; }
 /* Mobil: lišta na celú šírku – aspoň 6 miest (prázdne doplnia rad), viac predmetov sa posúva do strany */
 #hotbar { pointer-events: auto; display: flex; gap: 6px; padding: 6px 8px; overflow-x: auto; scrollbar-width: none; touch-action: pan-x; }
@@ -72,8 +74,11 @@ button { font: inherit; cursor: pointer; border: none; }
 #bCrawl { width: 46px; height: 46px; font-size: 22px; }
 #bCrawl.on { background: #ffe082; border-color: #e0a020; box-shadow: 0 0 0 4px #ffe08266, 0 3px 0 #0004; }
 .mvbtn:active { transform: translateY(2px); box-shadow: 0 1px 0 #0004; }
-#emotes { display: flex; justify-content: center; gap: 10px; padding: 2px 8px 8px; }
-#emotes button { pointer-events: auto; width: 42px; height: 42px; border-radius: 50%; background: #fff8e7cc; font-size: 20px; box-shadow: 0 2px 0 #0004; }
+/* Akcie bez podkladu – každé tlačidlo má len tieň; otáčanie pohľadu (3D) na okrajoch obrazovky */
+#actions { position: relative; display: flex; justify-content: center; padding: 0 8px 8px; }
+#emotes { display: flex; gap: 10px; }
+#emotes button, .rotbtn { pointer-events: auto; width: 42px; height: 42px; border-radius: 50%; background: #fff8e7e6; font-size: 20px; box-shadow: 0 3px 8px #0007, 0 1px 2px #0005; }
+#emotes button:active, .rotbtn:active { transform: translateY(2px); }
 
 /* Modálne okná */
 #modal { position: absolute; inset: 0; background: #0008; display: flex; align-items: flex-end; justify-content: center; z-index: 10; }
@@ -146,12 +151,11 @@ button { font: inherit; cursor: pointer; border: none; }
 #conn { position: absolute; top: 40%; left: 50%; transform: translateX(-50%); background: #000b; color: #fff; padding: 12px 18px; border-radius: 14px; z-index: 20; font-weight: 700; }
 /* Trend ceny: ikonka z 3 šípok nad sebou */
 .tr { display: inline-block; vertical-align: middle; line-height: 0; margin: 0 2px; }
-/* 3D: WebGL plátno pod prekrytím a tlačidlá otáčania pohľadu v horných rohoch */
+/* 3D: WebGL plátno pod prekrytím */
 #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 #cv.overlay { background: transparent; }
-.rotbtn { position: absolute; top: calc(env(safe-area-inset-top) + 74px); width: 46px; height: 46px; border-radius: 50%; background: #fff8e7e6; border: 3px solid #8b5a2b; font-size: 24px; font-weight: 800; color: #5b3a1a; box-shadow: 0 3px 0 #0003; z-index: 2; }
-#rotL { left: 8px; } #rotR { right: 8px; }
-.rotbtn:active { transform: translateY(2px); }
+.rotbtn { position: absolute; top: 0; font-size: 24px; font-weight: 800; line-height: 1; color: #5b3a1a; }
+#rotL { left: calc(8px + env(safe-area-inset-left)); } #rotR { right: calc(8px + env(safe-area-inset-right)); }
 /* Spánok: stmavenie obrazovky, svet za ním pretáča noc */
 #sleep { position: absolute; inset: 0; z-index: 9; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle, #0b1030aa, #050818e6); }
 #sleep .sl-card { text-align: center; color: #fff; padding: 20px; max-width: 80%; font-weight: 700; font-size: 17px; }
@@ -163,12 +167,13 @@ button { font: inherit; cursor: pointer; border: none; }
 @media (min-width: 820px) and (min-aspect-ratio: 1/1) {
   #app { max-width: none; }
   /* Počítač: žiadny pás cez celú obrazovku – panel v strede s pevnou šírkou na 9 miest (klávesy 1–9) */
-  #bottom { left: 50%; right: auto; bottom: 12px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); display: grid; grid-template-columns: auto auto; align-items: center; column-gap: 14px; padding: 6px 14px 10px; border: 3px solid #8b5a2b; border-radius: 18px; box-shadow: 0 4px 14px #0006; }
-  #selName { grid-column: 1 / -1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #bottom { bottom: 12px; }
+  #bar { width: max-content; max-width: calc(100% - 24px); margin: 0 auto; padding: 6px 14px 10px; border: 3px solid #8b5a2b; border-radius: 18px; box-shadow: 0 4px 14px #0006; }
+  #selName { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #rotL { left: 12px; } #rotR { right: 12px; }
   #hotbar { padding: 4px 0 0; width: calc(9 * 58px + 8 * 6px); max-width: 100%; }
   .slot { flex: 0 0 58px; }
   .slot.empty:nth-child(n) { display: flex; }
-  #emotes { padding: 4px 0 0; gap: 8px; }
   #chatbox { left: 12px; right: auto; width: min(460px, calc(100% - 24px)); } /* chat vľavo, rovnako ako na mobile */
   #modal { align-items: center; }
   .modal-card { max-width: 620px; max-height: 86%; border-radius: 22px; border-bottom: 4px solid #8b5a2b; }

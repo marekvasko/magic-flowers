@@ -30,8 +30,6 @@
   <!-- Hra -->
   <div id="game" class="screen hidden">
     <canvas id="cv"></canvas>
-    <button id="rotL" class="rotbtn hidden" title="Otočiť pohľad">⟲</button>
-    <button id="rotR" class="rotbtn hidden" title="Otočiť pohľad">⟳</button>
     <div id="joy" class="hidden"><div id="joyKnob"></div></div>
     <div id="moves"><button id="bCrawl" class="mvbtn" title="Plaziť sa (Shift)">🐛</button><button id="bJump" class="mvbtn" title="Skok (medzerník)">⤴</button></div>
     <div id="hud">
@@ -47,13 +45,19 @@
     </div>
     <div id="toasts"></div>
     <div id="bottom">
-      <div id="selName"></div>
-      <div id="hotbar"></div>
-      <div id="emotes">
-        <button data-e="wave">👋</button>
-        <button data-e="heart">❤️</button>
-        <button data-e="dance">💃</button>
-        <button id="bChat">💬</button>
+      <div id="actions">
+        <button id="rotL" class="rotbtn hidden" title="Otočiť pohľad">⟲</button>
+        <div id="emotes">
+          <button data-e="wave">👋</button>
+          <button data-e="heart">❤️</button>
+          <button data-e="dance">💃</button>
+          <button id="bChat">💬</button>
+        </div>
+        <button id="rotR" class="rotbtn hidden" title="Otočiť pohľad">⟳</button>
+      </div>
+      <div id="bar">
+        <div id="selName"></div>
+        <div id="hotbar"></div>
       </div>
     </div>
   </div>
