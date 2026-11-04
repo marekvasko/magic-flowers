@@ -53,7 +53,7 @@ THREE.ColorManagement.enabled = false;
 
 export function create(api) {
   const { S } = api;
-  const renderer = new THREE.WebGLRenderer({ canvas: api.glCanvas, antialias: true });
+  const renderer = new THREE.WebGLRenderer({ canvas: api.glCanvas, antialias: true, stencil: true }); // stencil – obrys zoslabených objektov
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
   const scene = new THREE.Scene();
@@ -231,7 +231,6 @@ export function create(api) {
     const fmesh = new THREE.Mesh(geo, material);
     fmesh.userData.box = geo.boundingBox;
     fmesh.userData.fade = 1;
-    fmesh.userData.maskMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
     // pri zoslabení: najprv len hĺbka (aby bolo vidno iba prednú plochu modelu), potom model priehľadne
     fmesh.renderOrder = 2;
     const depthTwin = new THREE.Mesh(geo, depthOnlyMaterial);
@@ -430,10 +429,11 @@ export function create(api) {
   }
   function updateFades(dt, meH) {
     const now = performance.now();
-    if (now - occAt > 100) { occluders = computeOccluders(meH); occAt = now; }
+    if (now - occAt > 100) { occluders = computeOccluders(meH); occAt = now; for (const m of occluders) m.userData.occUntil = now + 400; }
     let any = false;
     for (const m of fineMeshes) {
-      const target = occluders.has(m) ? FADE_MIN : 1;
+      // zoslabený ostane ešte chvíľu po poslednom zásahu – na hrane objektu tak nebliká
+      const target = now < (m.userData.occUntil || 0) ? FADE_MIN : 1;
       const f = m.userData.fade = target > m.userData.fade ? Math.min(1, m.userData.fade + dt * 4) : Math.max(FADE_MIN, m.userData.fade - dt * 4);
       const fading = f < 0.98;
       m.material = fading ? fadeMaterial : material;
@@ -442,49 +442,40 @@ export function create(api) {
     }
     return any;
   }
-  // maska skrytých objektov (biela = objekt) → obrys po jej okraji
-  let maskRT = null;
-  const outlineScene = new THREE.Scene(), outlineCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-  const outlineMat = new THREE.ShaderMaterial({
-    uniforms: { mask: { value: null }, px: { value: new THREE.Vector2() }, color: { value: new THREE.Vector3(1, 0.97, 0.9) } },
-    vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-    fragmentShader: `
-      uniform sampler2D mask; uniform vec2 px; uniform vec3 color; varying vec2 vUv;
-      void main() {
-        float c = texture2D(mask, vUv).r, m = c;
-        for (int i = 0; i < 12; i++) {
-          float a = float(i) * 0.5236;
-          m = max(m, texture2D(mask, vUv + px * vec2(cos(a), sin(a))).r);
-        }
-        float edge = m - c;           // len pixely tesne mimo tvaru objektu
-        if (edge < 0.02) discard;
-        gl_FragColor = vec4(color, edge * 0.7);
-      }`,
-    transparent: true, depthTest: false, depthWrite: false
+  // Obrys zoslabených objektov cez stencil buffer – v tom istom snímku, bez pomocného obrázka a bez prepínania
+  // cieľa vykresľovania (to na mobilných GPU spôsobovalo blikanie celej obrazovky):
+  // 1) objekt sa označí v stencile, 2) nakreslí sa niekoľkokrát posunutý o ~1,5 px do strán len mimo označenia.
+  const stencilMark = new THREE.MeshBasicMaterial({
+    colorWrite: false, depthWrite: false, depthTest: false,
+    stencilWrite: true, stencilRef: 1, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp
   });
-  outlineScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), outlineMat));
+  const outlineDraw = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(1, 0.97, 0.9), transparent: true, opacity: 0.7, depthWrite: false, depthTest: false,
+    stencilWrite: true, stencilRef: 1, stencilFunc: THREE.NotEqualStencilFunc, stencilZPass: THREE.ReplaceStencilOp
+  });
+  const OUTLINE_DIRS = Array.from({ length: 8 }, (_, i) => [Math.cos(i * Math.PI / 4), Math.sin(i * Math.PI / 4)]);
+  const camRight = new THREE.Vector3(), camUp = new THREE.Vector3();
   function drawOutlines() {
-    const size = renderer.getDrawingBufferSize(new THREE.Vector2());
-    if (!maskRT || maskRT.width !== size.x || maskRT.height !== size.y) { if (maskRT) maskRT.dispose(); maskRT = new THREE.WebGLRenderTarget(size.x, size.y); }
-    const clear = renderer.getClearColor(new THREE.Color()), clearA = renderer.getClearAlpha();
-    renderer.setRenderTarget(maskRT);
-    renderer.setClearColor(0x000000, 1); renderer.clear();
+    const cssW = api.glCanvas.getBoundingClientRect().width || 1;
+    const px = (camera.right - camera.left) / cssW * 1.5; // ~1,5 CSS px vo svetových jednotkách
+    camRight.setFromMatrixColumn(camera.matrixWorld, 0);
+    camUp.setFromMatrixColumn(camera.matrixWorld, 1);
     renderer.autoClear = false;
-    // maska = tvar zoslabených objektov; obrys sa kreslí po jej okraji
     for (const m of fineMeshes) {
       if (m.userData.fade > 0.98) continue;
-      const k = (1 - m.userData.fade) / (1 - FADE_MIN), old = m.material;
-      m.userData.maskMat.color.setRGB(k, k, k);
-      m.material = m.userData.maskMat;
+      const old = m.material, pos = m.position.clone();
+      m.material = stencilMark;
       renderer.render(m, camera);
+      outlineDraw.opacity = 0.7 * (1 - m.userData.fade) / (1 - FADE_MIN);
+      m.material = outlineDraw;
+      for (const [dx, dy] of OUTLINE_DIRS) {
+        m.position.copy(pos).addScaledVector(camRight, dx * px).addScaledVector(camUp, dy * px);
+        renderer.render(m, camera);
+      }
+      m.position.copy(pos);
       m.material = old;
+      m.updateMatrixWorld();
     }
-    renderer.setRenderTarget(null);
-    renderer.setClearColor(clear, clearA);
-    const t = 2 * renderer.getPixelRatio();
-    outlineMat.uniforms.mask.value = maskRT.texture;
-    outlineMat.uniforms.px.value.set(t / size.x, t / size.y);
-    renderer.render(outlineScene, outlineCam);
     renderer.autoClear = true;
   }
 
