@@ -893,8 +893,7 @@ export function create(api) {
   // opts.jz: výška skoku (políčka), opts.crawl: plazenie
   function drawChar(id, x, z, look, a, phase, opts, dt) {
     const o = charObj(id);
-    const target = groundY(x, z);
-    o.h = lerp(o.h, target, Math.min(1, dt * 10));
+    o.h = groundY(x, z); // na schod (ľad, skala…) postava vyskočí hneď, bez plynulého prechodu
     const jz = opts.jz || 0;
     o.ctx.clearRect(0, 0, 96, 128);
     Art.char(o.ctx, 48, 124, 100, look || {}, opts.dance ? 0 : dir8(a), phase, Object.assign({ noShadow: true }, opts, { jz: 0 }));
