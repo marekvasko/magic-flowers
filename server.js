@@ -117,7 +117,7 @@ function serialize(room) {
     v: SAVE_VERSION, tick: room.tick, wall: room.wall, mode: room.mode, daySeconds: room.daySeconds,
     rng: room.rng, seq: room.seq, events: room.events,
     weather: room.weather, saves: room.saves, storage: room.storage, storageFb: room.storageFb, market: room.market, contracts: room.contracts,
-    fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom, scav: room.scav,
+    fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom, scav: room.scav, scavSalt: room.scavSalt,
     tiles: room.tiles.map(t => ({ s: t.s }))
   });
 }
@@ -450,32 +450,27 @@ function act(pl, m) {
 // ---------- Hľadanie divých semienok ----------
 // Motyka v tráve kope a elixíry sa dajú použiť kdekoľvek; s čímkoľvek iným (alebo s prázdnou rukou) sa hľadá.
 function searchesWith(item) { return item !== 'hoe' && !item.startsWith('po_'); }
-// Hráč sa prikrčí a hľadá hernú hodinu; pohnúť sa alebo urobiť niečo iné hľadanie preruší.
+// Hráč sa prikrčí a hrabe v tráve D.SCAVENGE.ticks krokov; pohnúť sa alebo urobiť niečo iné hľadanie preruší.
+// Kde sú semienka, vie len server – klient dostane až výsledok.
 function startScavenge(pl, i, item) {
   const room = pl.room;
   pl.scavN = (pl.scavN | 0) + 1;
-  pl.scav = { i, n: pl.scavN, px: pl.x, py: pl.y, from: room.tick, to: room.tick + D.SCAVENGE.ticks };
-  E.schedule(room, pl.scav.to, 'scavDone', { key: pl.key, n: pl.scav.n });
-  send(pl.ws, { t: 'scav', from: pl.scav.from, to: pl.scav.to, i });
-  if (Scav.fill(room, i) < 0.5) toast(pl, 'Hľadáš v tráve… vyzerá to, že tu už niekto nedávno hľadal. 🔍');
-  else toast(pl, 'Hľadáš v tráve divé semienka… 🔍' + (pl.save.inv[item] && (item.startsWith('seed_') || D.isWild(item)) ? ' (Na sadenie najprv prekopaj zem motykou.)' : ''));
-  fx(room, 'dirt', i % D.W + 0.5, Math.floor(i / D.W) + 0.5);
+  pl.scav = { i, n: pl.scavN, px: pl.x, py: pl.y, seeds: !!item && (item.startsWith('seed_') || D.isWild(item)) };
+  E.schedule(room, room.tick + D.SCAVENGE.ticks, 'scavDone', { key: pl.key, n: pl.scav.n });
 }
 function stopScavenge(pl, msg) {
   const room = pl.room, n = pl.scav.n;
   pl.scav = null;
   E.cancel(room, e => e.type === 'scavDone' && e.data.key === pl.key && e.data.n === n);
-  send(pl.ws, { t: 'scav', from: null });
   if (msg) toast(pl, msg);
 }
 function finishScavenge(pl) {
-  const room = pl.room, i = pl.scav.i, t = room.tiles[i];
+  const room = pl.room, i = pl.scav.i, t = room.tiles[i], seeds = pl.scav.seeds;
   pl.scav = null;
-  send(pl.ws, { t: 'scav', from: null });
   if (!Scav.canSearch(t)) return toast(pl, 'Kým si hľadal(a), niekto tu trávu prekopal.');
   const x = i % D.W + 0.5, y = Math.floor(i / D.W) + 0.5;
   room.dirty = true;
-  if (!Scav.roll(room, i)) return toast(pl, 'Nič si nenašiel(a)… Skús inde alebo inokedy. 🌾');
+  if (!Scav.roll(room, i)) return toast(pl, 'Nič tu nie je… skús vedľa. 🌾' + (seeds ? ' (Na sadenie najprv prekopaj zem motykou.)' : ''));
   const id = 'wild_' + season(room);
   give(pl, id, 1);
   toast(pl, `🌾 Našiel(a) si ${D.itemName(id).toLowerCase()}!`, 'gift');
@@ -621,7 +616,7 @@ wss.on('connection', ws => {
           if (typeof m.a === 'number' && isFinite(m.a)) pl.a = +m.a.toFixed(3); // presný smer pohľadu (3D: 8 smerov)
           pl.cr = !!m.cr; // plazí sa
           sv.x = pl.x; sv.y = pl.y;
-          if (pl.scav && Math.hypot(pl.x - pl.scav.px, pl.y - pl.scav.py) > 0.35) stopScavenge(pl, 'Pohol(a) si sa – hľadanie sa prerušilo.');
+          if (pl.scav && Math.hypot(pl.x - pl.scav.px, pl.y - pl.scav.py) > 0.35) stopScavenge(pl, 'Pohol(a) si sa skôr, než si dohľadal(a).');
         }
         break;
       case 'act': if (!pl.sleep) act(pl, m); break;
@@ -790,8 +785,8 @@ setInterval(() => {
   for (const room of rooms.values()) {
     if (!room.players.size) continue;
     const list = [...room.players.values()].map(p => ({
-      id: p.id, name: p.name, x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, a: p.a, look: p.look, cr: p.cr || p.scav ? 1 : 0, j: p.jn | 0,
-      e: p.sleep ? 'sleep' : p.scav ? 'search' : p.emote && now - p.emoteAt < 6000 ? p.emote : null
+      id: p.id, name: p.name, x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, a: p.a, look: p.look, cr: p.cr ? 1 : 0, j: p.jn | 0, si: p.scav ? p.scav.i : -1,
+      e: p.sleep ? 'sleep' : p.emote && now - p.emoteAt < 6000 ? p.emote : null
     }));
     broadcast(room, { t: 'pl', list });
   }

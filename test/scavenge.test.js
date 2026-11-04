@@ -18,48 +18,66 @@ test('hľadať sa dá len v neprekopanej tráve', () => {
   for (const g of ['forest', 'path', 'sand', 'rock', 'water', 'tree']) assert.ok(!Scav.canSearch({ g, s: null }), g);
 });
 
-test('šanca závisí od dennej hodiny: ráno najlepšie, v noci takmer nič', () => {
-  const morning = Scav.chance(room(at(7)), field), noon = Scav.chance(room(at(13)), field), night = Scav.chance(room(at(23)), field);
+test('hustota semienok závisí od dennej hodiny: ráno najviac, v noci takmer nič', () => {
+  const morning = Scav.density(room(at(7)), field), noon = Scav.density(room(at(13)), field), night = Scav.density(room(at(23)), field);
   assert.ok(morning > noon && noon > night, `${morning} ${noon} ${night}`);
-  assert.ok(Math.abs(noon - C.chance) < 1e-9);
+  assert.ok(Math.abs(noon - C.density) < 1e-9);
 });
 
-test('šanca závisí od políčka: okraj lesa je lepší, prehľadané políčko je prázdne a pomaly sa plní', () => {
-  assert.ok(edge != null && Scav.chance(room(at(13)), edge) > Scav.chance(room(at(13)), field));
-  const r = room(at(13));
-  Scav.empty(r, field);
-  assert.strictEqual(Scav.chance(r, field), 0);
-  r.tick += TPD * C.refillDays / 2;
-  assert.ok(Math.abs(Scav.fill(r, field) - 0.5) < 1e-9);
-  r.tick += TPD * C.refillDays;
-  assert.strictEqual(Scav.fill(r, field), 1);
-  Scav.prune(r);
-  assert.deepStrictEqual(r.scav, {}, 'plné políčka sa z uloženia vyhodia');
-});
-
-test('zima je skúpa, leto štedré', () => {
-  const spring = Scav.chance(room(at(13, 1)), field), summer = Scav.chance(room(at(13, 1 + D.DAYS_PER_SEASON)), field);
-  const winter = Scav.chance(room(at(13, 1 + 3 * D.DAYS_PER_SEASON)), field);
+test('okraj lesa má viac semienok, zima menej', () => {
+  assert.ok(edge != null && Scav.density(room(at(13)), edge) > Scav.density(room(at(13)), field));
+  const spring = Scav.density(room(at(13, 1)), field), summer = Scav.density(room(at(13, 1 + D.DAYS_PER_SEASON)), field);
+  const winter = Scav.density(room(at(13, 1 + 3 * D.DAYS_PER_SEASON)), field);
   assert.ok(summer > spring && spring > winter);
 });
 
-test('hod kockou vyprázdni políčko aj keď sa nič nenájde', () => {
-  const r = room(at(13), 1);
-  Scav.roll(r, field);
-  assert.strictEqual(Scav.fill(r, field), 0);
-  assert.strictEqual(Scav.roll(r, field), false, 'prázdne políčko nič nedá');
+const grass = tiles.map((t, i) => i).filter(i => tiles[i].g === 'grass');
+const spots = r => grass.filter(i => Scav.hasSeed(r, i));
+
+test('semienka sú len na niektorých políčkach, počas hodiny ostávajú a potom sa premiestnia', () => {
+  const r = room(at(13), 3);
+  const a = spots(r);
+  assert.ok(a.length > 0 && a.length < grass.length * 0.2, 'políčok so semienkom: ' + a.length + '/' + grass.length);
+  r.tick += C.window - 1 - (r.tick % C.window); // koniec tej istej hodiny
+  assert.deepStrictEqual(spots(r), a, 'v rámci hodiny sa nemenia');
+  r.tick += 1; // ďalšia hodina
+  const b = spots(r);
+  assert.notDeepStrictEqual(b, a, 'v ďalšej hodine sú inde');
+  for (const i of grass) assert.strictEqual(Scav.chance(r, i), Scav.hasSeed(r, i) ? C.find : 0);
 });
 
-test('za deň poctivého hľadania (hodinu za hodinou, vždy na novom políčku) nájdeš v priemere okolo 4 semienok', () => {
-  let found = 0, days = 200;
-  const grass = tiles.map((t, i) => i).filter(i => tiles[i].g === 'grass');
+test('prehľadané políčko je do konca hodiny prázdne, staré záznamy sa vyhodia', () => {
+  const r = room(at(13), 3), i = spots(r)[0];
+  Scav.roll(r, i);
+  assert.strictEqual(Scav.hasSeed(r, i), false);
+  assert.strictEqual(Scav.roll(r, i), false, 'druhýkrát nič');
+  r.tick += C.window;
+  Scav.prune(r);
+  assert.deepStrictEqual(r.scav, {});
+});
+
+test('tajné číslo sveta je jedno a rôzne svety majú semienka inde', () => {
+  const a = room(at(13), 11), b = room(at(13), 12);
+  const sa = spots(a);
+  const salt = a.scavSalt;
+  assert.ok(Number.isInteger(salt), 'vytvorí sa pri prvom hľadaní');
+  assert.deepStrictEqual(spots(a), sa);
+  assert.strictEqual(a.scavSalt, salt, 'a už sa nemení');
+  assert.notDeepStrictEqual(spots(b), sa);
+});
+
+test('za deň poctivého hľadania z políčka na políčko (≈ 70 pokusov cez deň) nájdeš v priemere okolo 4 semienok', () => {
+  let found = 0;
+  const days = 300;
   for (let d = 0; d < days; d++) {
     const r = room(0, 1000 + d);
-    let k = 0;
-    for (let h = 6; h < 21; h++) { r.tick = at(h, 1 + (d % 4)); if (Scav.roll(r, grass[k++ * 7 % grass.length])) found++; }
+    for (let k = 0; k < 70; k++) {
+      r.tick = at(6 + k * 15 / 70, 1 + (d % 4)); // od 6:00 do 21:00
+      if (Scav.roll(r, grass[(d * 31 + k * 7) % grass.length])) found++;
+    }
   }
   const avg = found / days;
-  assert.ok(avg > 3 && avg < 6, 'priemer za deň: ' + avg);
+  assert.ok(avg > 2.5 && avg < 6, 'priemer za deň: ' + avg);
 });
 
 test('divé semienko: len sezónne, nemagické a nie prísne druhy', () => {

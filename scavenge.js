@@ -1,5 +1,6 @@
 // Hľadanie divých semienok v tráve a divé semienka, ktoré „poznajú trh“.
-// Stav: room.scav = { index políčka: krok, kedy ho niekto naposledy vyprázdnil } – chýbajúce políčko je plné.
+// Stav (len na serveri): room.scavSalt – tajné číslo, z ktorého sa odvodí, kde sú semienka;
+// room.scav = { index políčka: hodina (okno), v ktorej ho niekto prehľadal }.
 const D = require('./shared/data.js');
 const E = require('./engine.js');
 const C = D.SCAVENGE, TPD = D.TICKS_PER_DAY;
@@ -10,12 +11,6 @@ const TRAMPLED = { path: 1, house: 1, hut: 1, stall: 1, well: 1, cauldron: 1, ba
 // Hľadať sa dá len v neprekopanej tráve
 function canSearch(tile) { return !!tile && tile.g === 'grass' && !tile.s; }
 
-// Zásoba semienok políčka 0–1: po prehľadaní je prázdna a za C.refillDays dní sa znova naplní
-function fill(room, i) {
-  const at = room.scav && room.scav[i];
-  if (at == null) return 1;
-  return Math.max(0, Math.min(1, (room.tick - at) / (C.refillDays * TPD)));
-}
 // Okolie: okraj lesa pomáha, udupaná tráva pri cestách a budovách škodí
 function tileFactor(tiles, i) {
   const x = i % D.W, y = Math.floor(i / D.W);
@@ -34,21 +29,42 @@ function timeFactor(min) {
   for (const [a, b, k] of C.hours) if (h >= a && h < b) return k;
   return 1;
 }
-function chance(room, i) {
-  return Math.min(0.95, C.chance * fill(room, i) * tileFactor(room.tiles, i) * timeFactor(D.minOfTick(room.tick)) * C.seasons[D.seasonOf(D.dayOfTick(room.tick))]);
+const windowOf = tick => Math.floor(tick / C.window);
+// Tajné číslo sveta – z neho sa odvodí, kde sú semienka (klient ho nikdy nedostane)
+function salt(room) {
+  if (room.scavSalt == null) room.scavSalt = Math.floor(E.rand(room) * 4294967296) >>> 0;
+  return room.scavSalt;
 }
-// Políčko je prehľadané – zásoba sa vyprázdni (aj keď sa nič nenašlo)
-function empty(room, i) { room.scav = room.scav || {}; room.scav[i] = room.tick; }
+// Deterministický hash (políčko, hodina) → 0–1
+function hash01(a, b, c) {
+  let h = (a ^ Math.imul(b + 1, 0x9E3779B1) ^ Math.imul(c + 1, 0x85EBCA77)) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x7FEB352D); h = Math.imul(h ^ (h >>> 15), 0x846CA68B); h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+// Hustota semienok na políčku teraz (pravdepodobnosť, že tam v tejto hodine nejaké je)
+function density(room, i) {
+  return C.density * tileFactor(room.tiles, i) * timeFactor(D.minOfTick(room.tick)) * C.seasons[D.seasonOf(D.dayOfTick(room.tick))];
+}
+// Je teraz v políčku semienko? Prehľadané políčko je do konca hodiny prázdne.
+function hasSeed(room, i) {
+  const w = windowOf(room.tick);
+  if (room.scav && room.scav[i] === w) return false;
+  return hash01(salt(room), i, w) < density(room, i);
+}
+function chance(room, i) { return hasSeed(room, i) ? C.find : 0; }
+// Políčko je prehľadané – v tejto hodine už nič nedá (aj keď sa nič nenašlo)
+function empty(room, i) { room.scav = room.scav || {}; room.scav[i] = windowOf(room.tick); }
 // Hod kockou na konci hľadania; vráti, či sa našlo divé semienko
 function roll(room, i) {
   const c = chance(room, i);
   empty(room, i);
-  return E.rand(room) < c;
+  return c > 0 && E.rand(room) < c;
 }
-// Plné políčka netreba pamätať – udrží to uloženie malé
+// Staré hodiny netreba pamätať – udrží to uloženie malé
 function prune(room) {
   if (!room.scav) return;
-  for (const i in room.scav) if (fill(room, i) >= 1) delete room.scav[i];
+  const w = windowOf(room.tick);
+  for (const i in room.scav) if (room.scav[i] !== w) delete room.scav[i];
 }
 
 // Druhy, ktoré môžu vyrásť z divého semienka daného obdobia (bez magických a bez tých, čo rastú len na jednej pôde)
@@ -71,4 +87,4 @@ function tileView(t) {
   return { g: t.g, s: Object.assign({}, t.s, { p: Object.assign({}, p, { sp: 'wild' }) }) };
 }
 
-module.exports = { canSearch, fill, tileFactor, timeFactor, chance, empty, roll, prune, wildCandidates, pickWild, tileView };
+module.exports = { canSearch, tileFactor, timeFactor, density, hasSeed, chance, empty, roll, prune, wildCandidates, pickWild, tileView };

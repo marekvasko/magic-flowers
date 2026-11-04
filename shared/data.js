@@ -201,11 +201,13 @@
   }
 
   // Hľadanie divých semienok v neprekopanej tráve (s prázdnou rukou alebo s predmetom, ktorý tam nič nerobí). Má to byť pomalé a neisté – záchrana, keď nemáš nič.
-  // Šanca = chance × zásoba políčka (po prehľadaní sa plní refillDays dní) × okolie × denná hodina × obdobie.
+  // Hľadá sa priestorom: server si každú hernú hodinu tajne vylosuje, v ktorých políčkach trávy semienka sú
+  // (hustota = density × okolie × denná hodina × obdobie). Hráč chodí z políčka na políčko; klient nevie nič.
   const SCAVENGE = {
-    ticks: 12,          // jedno hľadanie trvá hernú hodinu
-    chance: 0.3,        // základná šanca na plnom políčku cez deň na jar
-    refillDays: 4,      // za koľko dní sa prehľadané políčko znova naplní
+    ticks: 2,           // jedno hľadanie trvá 2 kroky (10 herných minút); výsledok príde, len ak hráč stále hľadá
+    window: 12,         // po koľkých krokoch sa semienka v tráve premiestnia (herná hodina)
+    density: 0.07,      // podiel políčok so semienkom cez deň na jar, ďaleko od lesa a ciest
+    find: 0.75,         // šanca, že ho na správnom políčku aj nájdeš
     edge: 0.15,         // + za každého lesného suseda (najviac 4) – na okraji lesa sa semienka sypú viac
     trampled: 0.6,      // × pri ceste a pri budovách – udupaná tráva
     // [od hodiny, do hodiny, násobok] – ráno v rose sa hľadá najlepšie, v noci takmer nič nevidno

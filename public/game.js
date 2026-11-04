@@ -6,7 +6,7 @@
 
   const SHIRTS = ['#4a90d9', '#e05a5a', '#5cb85c', '#f0ad4e', '#9b59d0', '#20b2aa', '#ff7eb6', '#555555'];
   const HAIRS = ['#5b3a1a', '#2b1a10', '#e8c36a', '#c0532a', '#9e9e9e', '#d96fa8', '#3a6ea5'];
-  const EMOJI = { wave: '👋', heart: '❤️', laugh: '😂', flower: '🌸', dance: '🎵', sleep: '💤', search: '🔍' };
+  const EMOJI = { wave: '👋', heart: '❤️', laugh: '😂', flower: '🌸', dance: '🎵', sleep: '💤' };
   const SECRETS = [
     'Mesiac šepká: „Keď sa dvaja roztancujú v kruhu z húb, víly to nevydržia a pridajú sa…“',
     'Mesiac šepká: „Kto pije jesenný odvar víl, môže tancovať aj sám.“',
@@ -115,7 +115,6 @@
       case 'market': S.market = m; if (S.modal && S.modal.refresh) S.modal.refresh(); break;
       case 'board': S.board = m.list; if (S.modal && S.modal.refresh) S.modal.refresh(); break;
       case 'tile': S.tiles[m.i] = m.v; break;
-      case 'scav': S.scav = m.from == null ? null : { from: m.from, to: m.to }; break;
       case 'tiles': S.tiles = m.tiles; break;
       case 'time':
         // Server posiela celé číslo kroku; deň a minúta sa z neho odvodia, medzi krokmi len plynulo dopočítame.
@@ -126,11 +125,11 @@
         const seen = new Set();
         for (const p of m.list) {
           seen.add(p.id);
-          if (p.id === S.id) { S.myEmote = p.e; continue; }
+          if (p.id === S.id) { S.myEmote = p.e; S.mySi = p.si; continue; }
           let o = S.others.get(p.id);
           if (!o) { o = { x: p.x, y: p.y, phase: 0, jz: 0, jv: 0, j: p.j }; S.others.set(p.id, o); }
           if (p.j !== o.j && !o.jz) o.jv = JUMP_V; // iný hráč skočil
-          Object.assign(o, { id: p.id, tx: p.x, ty: p.y, dir: p.dir, a: p.a, look: p.look || {}, name: p.name, e: p.e, cr: !!p.cr, j: p.j });
+          Object.assign(o, { id: p.id, tx: p.x, ty: p.y, dir: p.dir, a: p.a, look: p.look || {}, name: p.name, e: p.e, cr: !!p.cr, j: p.j, si: p.si });
         }
         for (const id of [...S.others.keys()]) if (!seen.has(id)) S.others.delete(id);
         break;
@@ -161,19 +160,14 @@
 
   // ---------- Pomocné ----------
   // ladenie: window.MF_TIME = { season: 0–3, min: 0–1439 } prepíše zobrazený čas (len lokálne vykresľovanie, nie server)
-  // Ako ďaleko je hľadanie divých semienok (0–1), null keď nehľadám
-  function scavProgress() {
-    if (!S.scav) return null;
-    const tick = S.tick + Math.min(1, (performance.now() - S.timeAt) / S.tickMs);
-    return Math.max(0, Math.min(1, (tick - S.scav.from) / (S.scav.to - S.scav.from)));
-  }
-  // Ukazovateľ hľadania pod menom (2D aj 3D)
-  function scavBar(c, X, Y, ts) {
-    const k = scavProgress();
-    if (k == null) return;
-    const w = ts * 0.9, hh = ts * 0.09, y = Y + ts * 0.14;
-    c.fillStyle = 'rgba(0,0,0,0.5)'; c.fillRect(X - w / 2 - 1, y - 1, w + 2, hh + 2);
-    c.fillStyle = '#9ccc65'; c.fillRect(X - w / 2, y, w * k, hh);
+  // Hráč hrabe v tráve (si = index hľadaného políčka, inak -1) – hlinka a tráva odlietajú sprava doľava (2D aj 3D)
+  const searching = o => o && o.si != null && o.si >= 0;
+  function scavDirt(si, dt) {
+    const x = si % W + 0.5, y = Math.floor(si / W) + 0.55;
+    for (let k = 0; k < 2 && Math.random() < dt * 30; k++) S.fx.push({
+      x: x + 0.15 + (Math.random() - 0.5) * 0.25, y, vx: -(1 + Math.random() * 1.6), vy: -(0.6 + Math.random() * 1.2), g: 6,
+      color: ['#7a4a20', '#5b3a1a', '#74b84a', '#9b7b45'][Math.random() * 4 | 0], size: 0.035, life: 0, max: 0.45 + Math.random() * 0.2
+    });
   }
   function curMin() { if (window.MF_TIME && window.MF_TIME.min != null) return window.MF_TIME.min; return realMin(); }
   function realMin() { return (S.min + Math.min(D.MIN_PER_TICK, (performance.now() - S.timeAt) / S.tickMs * D.MIN_PER_TICK)) % 1440; }
@@ -376,7 +370,7 @@
     $('rotR').onclick = () => R3 && R3.rotate(1);
     import('/render3d.mjs').then(() => {
       R3 = window.Render3D.create({
-        S, glCanvas: gl, ov: cv, ovCtx: ctx, EMOJI, scavBar, curMin, season, ctxAction, frontTile
+        S, searching, glCanvas: gl, ov: cv, ovCtx: ctx, EMOJI, curMin, season, ctxAction, frontTile
       });
       window._r3pick = (x, y) => R3.pick(x, y); // pre ladenie / testy
       window._r3 = R3;
@@ -1100,6 +1094,8 @@
       p.vy += p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt;
     }
     S.fx = S.fx.filter(p => p.life < p.max);
+    if (searching({ si: S.mySi })) scavDirt(S.mySi, dt);
+    for (const o of S.others.values()) if (searching(o)) scavDirt(o.si, dt);
     for (const f of S.screenFx) f.life += dt;
     S.screenFx = S.screenFx.filter(f => f.life < f.max);
     if (S.vily && Math.random() < dt * 0.8) S.fx.push({ fairy: true, cx: me.x + (Math.random() - 0.5) * 6, cy: me.y + (Math.random() - 0.5) * 6, a: Math.random() * 6, rad: 0.5 + Math.random(), life: 0, max: 4, color: '#ff9cf0' });
@@ -1173,8 +1169,8 @@
     if (A.house) objs.push([A.house.y + 2, () => Art.house(c, SX(A.house.x), SY(A.house.y), ts, se, night)]);
     if (A.stall) objs.push([A.stall.y + 0.9, () => Art.stall(c, SX(A.stall.x), SY(A.stall.y), ts, t)]);
     objs.push([D.BABKA.y + 0.9, () => Art.char(c, SX(D.BABKA.x + 0.5), SY(D.BABKA.y + 0.9), ts, { shirt: '#7b4a9e', hair: '#eee' }, 0, Math.sin(t) * 0.3, { babka: true })]);
-    for (const o of S.others.values()) objs.push([o.y, () => Art.char(c, SX(o.x), SY(o.y), ts, o.look, o.dir, o.phase || (o.e === 'dance' ? t * 4 : 0), { dance: o.e === 'dance', lift: (o.jz || 0) * ts, crawl: o.cr })]);
-    objs.push([S.me.y, () => Art.char(c, SX(S.me.x), SY(S.me.y), ts, S.look || {}, S.me.dir, S.myEmote === 'dance' ? t * 4 : S.me.phase, { dance: S.myEmote === 'dance', lift: S.me.jz * ts, crawl: S.me.crawl || !!S.scav })]);
+    for (const o of S.others.values()) objs.push([o.y, () => Art.char(c, SX(o.x), SY(o.y), ts, o.look, o.dir, o.phase || (o.e === 'dance' ? t * 4 : 0), { dance: o.e === 'dance', lift: (o.jz || 0) * ts, crawl: o.cr, dig: searching(o) && t })]);
+    objs.push([S.me.y, () => Art.char(c, SX(S.me.x), SY(S.me.y), ts, S.look || {}, S.me.dir, S.myEmote === 'dance' ? t * 4 : S.me.phase, { dance: S.myEmote === 'dance', lift: S.me.jz * ts, crawl: S.me.crawl, dig: searching({ si: S.mySi }) && t })]);
     objs.sort((a, b) => a[0] - b[0]);
     for (const o of objs) o[1]();
 
@@ -1268,7 +1264,6 @@
     };
     for (const o of S.others.values()) label(o.x, o.y, o.name, o.e, S.bubbles[o.id]);
     label(S.me.x, S.me.y, S.name, S.myEmote, S.bubbles[S.id]);
-    scavBar(c, SX(S.me.x), SY(S.me.y - 1.2), ts);
     label(D.BABKA.x + 0.5, D.BABKA.y + 0.9, 'Babka', null, null);
 
     // efekty na obrazovke

@@ -193,6 +193,7 @@ const Art = (() => {
   // Postavička – x stred, y chodidlá.
   // dir: 0 dole, 1 vľavo, 2 vpravo, 3 hore, 4 vľavo dole, 5 vpravo dole, 6 vľavo hore, 7 vpravo hore
   // o.lift: výška skoku v px (tieň ostáva na zemi), o.crawl: plazí sa (pokrčené kolená, predklon)
+  // o.dig: čas v s, keď hráč hrabe v tráve – je prikrčený a rukami striedavo hrabe pred sebou
   function char(c, x, y, s, look, dir, phase, o) {
     o = o || {};
     const lift = o.lift || 0;
@@ -205,6 +206,7 @@ const Art = (() => {
     }
     const skin = '#f2c9a0';
     let d = dir;
+    if (o.dig) { o = Object.assign({}, o, { crawl: true }); phase = 0; }
     let bob = Math.abs(Math.sin(phase)) * s * 0.04;
     if (o.dance) { d = Math.floor(phase * 1.2) % 4; bob = Math.abs(Math.sin(phase * 3)) * s * 0.12; }
     // uhlopriečne smery kreslíme ako pohľad dole/hore natočený do strany
@@ -239,8 +241,15 @@ const Art = (() => {
     else { c.fillStyle = 'rgba(0,0,0,0.12)'; c.fillRect(x - s * 0.19, yb - s * 0.26, s * 0.38, s * 0.06); }
     // ruky
     const sw = o.dance ? Math.sin(phase * 3) * s * 0.15 : step;
-    circ(c, x - s * 0.22, yb - s * 0.36 + (d === 1 || d === 2 ? 0 : sw), s * 0.065, skin);
-    circ(c, x + s * 0.22, yb - s * 0.36 - (d === 1 || d === 2 ? 0 : sw), s * 0.065, skin);
+    if (o.dig) { // obe ruky dole pred telom, striedavo hrabú (rýchlo dopredu a späť)
+      const k1 = Math.sin(o.dig * 16), k2 = Math.sin(o.dig * 16 + Math.PI);
+      const reach = k => fx ? fx * s * (0.16 + 0.14 * k) : 0;
+      circ(c, x + (fx ? reach(k1) - fx * s * 0.06 : -s * 0.15 + k1 * s * 0.04), yb - s * 0.2 + k1 * s * 0.09, s * 0.07, skin);
+      circ(c, x + (fx ? reach(k2) : s * 0.15 - k2 * s * 0.04), yb - s * 0.2 + k2 * s * 0.09, s * 0.07, skin);
+    } else {
+      circ(c, x - s * 0.22, yb - s * 0.36 + (d === 1 || d === 2 ? 0 : sw), s * 0.065, skin);
+      circ(c, x + s * 0.22, yb - s * 0.36 - (d === 1 || d === 2 ? 0 : sw), s * 0.065, skin);
+    }
     // hlava
     const hy = yb - s * 0.74;
     circ(c, x, hy, s * 0.21, skin);
