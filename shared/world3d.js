@@ -7,7 +7,7 @@
 
   // ---- Materiály (id < 16 = terén, ich vrchná plocha nesie textúru zeme) ----
   const M = {
-    AIR: 0, DIRT: 1, TOPSOIL: 2, PATH: 3, SAND: 4, STONE: 5, WATER: 6,
+    AIR: 0, DIRT: 1, TOPSOIL: 2, PATH: 3, SAND: 4, STONE: 5, WATER: 6, SNOWFIELD: 7, SCREE: 8, ICE: 9, CLIFF: 10, ALP: 11,
     TRUNK: 16, LEAF: 17, LEAF2: 18, BLOSSOM: 19, SPRUCE: 20, SNOW: 21,
     PLANK: 22, PLANK_DARK: 23, THATCH: 24, ROOF_RED: 25, WALL_WHITE: 26, BAND_BLUE: 27, DOOR: 28,
     WINDOW: 29, AWN_RED: 30, AWN_WHITE: 31, COUNTER: 32, POT: 33, BREW: 34, DARKSTONE: 35,
@@ -24,7 +24,8 @@
   // Farby podľa ročného obdobia [jar, leto, jeseň, zima]; emis = svieti v noci
   const PALETTE = {
     [M.DIRT]: ['#7a5634'], [M.TOPSOIL]: ['#6f9a3c', '#5f8f34', '#8f8a3a', '#dfe7ea'], [M.PATH]: ['#b89a62', '#b89a62', '#b89a62', '#d8d4c6'],
-    [M.SAND]: ['#d8c48a', '#d8c48a', '#d8c48a', '#e8e6dc'], [M.STONE]: ['#9a958d', '#9a958d', '#9a958d', '#c9ccce'], [M.WATER]: ['#3d8fcf', '#3d8fcf', '#3d8fcf', '#a9d4ec'],
+    [M.SAND]: ['#d8c48a', '#d8c48a', '#d8c48a', '#e8e6dc'], [M.SNOWFIELD]: ['#e6eef3'], [M.SCREE]: ['#a8a39a', '#a8a39a', '#a8a39a', '#cfd4d7'],
+    [M.ICE]: ['#9fd0ec'], [M.CLIFF]: ['#7d776f'], [M.ALP]: ['#7fae55', '#6f9f4a', '#9a9446', '#dfe7ea'], [M.STONE]: ['#9a958d', '#9a958d', '#9a958d', '#c9ccce'], [M.WATER]: ['#3d8fcf', '#3d8fcf', '#3d8fcf', '#a9d4ec'],
     [M.TRUNK]: ['#6d4c2f'], [M.LEAF]: ['#5cb34a', '#3f8f3a', '#d9822b', '#3f8f3a'], [M.LEAF2]: ['#4a9a3c', '#347a30', '#e6b42b', '#347a30'],
     [M.BLOSSOM]: ['#ffc8de', '#e53935', '#c4621e', '#ffffff'], [M.SPRUCE]: ['#2e6b3a', '#2a6235', '#2e6b3a', '#2f5d3a'], [M.SNOW]: ['#f4f7f9'],
     [M.PLANK]: ['#c9a77a'], [M.PLANK_DARK]: ['#8b6a45'], [M.THATCH]: ['#b5884a', '#b5884a', '#a8783e', '#f2f6f8'],
@@ -48,14 +49,28 @@
 
   function hash(x, y, k) { let h = (x * 374761393 + y * 668265263 + (k || 0) * 2147483647) | 0; h = (h ^ (h >>> 13)) * 1274126177; return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
 
-  // Výška terénu v podkockách pre typ zeme
-  function groundHeight(g) { return g === 'water' ? 1 : (g === 'rock' || g === 'boulder') ? 3 : 2; }
+  // Výška terénu v podkockách pre typ zeme (hory: sutina a sneh vyššie, ľadovec ešte vyššie, skalné steny najvyššie)
+  const HEIGHT = { water: 1, rock: 3, boulder: 3, scree: 3, snow: 3, glacier: 3, cliff: 8 }; // ľad ľadovca nad zemou kreslí render3d (po 1/4 bloku)
+  function groundHeight(g) { return HEIGHT[g] || 2; }
+  // skalné steny majú rôznu výšku podľa políčka (zubaté hrebene)
+  function tileHeight(g, tx, ty) { return g === 'cliff' ? 7 + Math.floor(hash(tx, ty, 5) * 4) : groundHeight(g); }
   function topMaterial(g) {
     if (g === 'water') return M.WATER;
-    if (g === 'path') return M.PATH;
+    if (g === 'path' || g === 'gate' || g === 'lot') return M.PATH;
     if (g === 'sand') return M.SAND;
     if (g === 'rock' || g === 'boulder') return M.STONE;
+    if (g === 'snow') return M.SNOWFIELD;
+    if (g === 'scree') return M.SCREE;
+    if (g === 'glacier') return M.ICE;
+    if (g === 'cliff') return M.CLIFF;
+    if (g === 'alp' || g === 'spruce') return M.ALP;
     return M.TOPSOIL;
+  }
+  // materiál pod vrchnou vrstvou: skaly, sutina a dno ľadovca kameň (v stene striedavo tmavší a svetlejší)
+  function subMaterial(g, x, y, z) {
+    if (g === 'cliff') { const h = hash(x, y, z + 77); return h < 0.3 ? M.DARKSTONE : h < 0.45 ? M.STONE_LIGHT : M.STONE; }
+    if (g === 'rock' || g === 'boulder' || g === 'scree' || g === 'snow') return M.STONE;
+    return M.DIRT;
   }
 
   // Mriežka: materiál na každú podkocku. x ∈ [0,NX), y ∈ [0,NY), z ∈ [0,NZ)
@@ -438,6 +453,29 @@
     }
   };
   const TREE_KINDS = Object.keys(TREE_BUILD);
+  // Ľadovňa (2×2 polia = 16×16 minikociek): kamenná pivnica zapustená do zeme, strmá šindľová strecha až po zem,
+  // drevené dvere vpredu a nad nimi okienko s modrým svetlom ľadu. V zime sneh na streche.
+  function icehouseModel(season) {
+    const C = fineCanvas(2, 2, 26), { put, fbox } = C;
+    fbox(1, 0, 2, 14, 5, 14, (x, y, z) => (x === 1 || x === 14 || z === 2 || z === 14) ? stoneVar(x, y, z) : M.DARKSTONE);
+    // strecha: sedlová, hrebeň v smere z, schody po 1 minikocke, presah
+    for (let k = 0; k <= 8; k++) {
+      const y = 5 + k * 2;
+      fbox(-1 + k, y, 0, 16 - k, y + 1, 16, (x, yy, z) => (x === -1 + k || x === 16 - k) ? (z % 2 ? M.SHINGLE : M.SHINGLE_DARK) : M.PLANK_DARK);
+    }
+    fbox(7, 21, 0, 8, 22, 16, M.RIDGE);
+    // štít vpredu (z = 16) a vzadu: drevo
+    for (let k = 0; k < 8; k++) fbox(k + 1, 6 + k * 2, 15, 14 - k, 7 + k * 2, 15, M.PLANK);
+    // dvere a okienko
+    fbox(5, 0, 15, 10, 8, 15, (x) => x === 5 || x === 10 ? M.PLANK_DARK : M.DOOR);
+    put(9, 4, 16, M.HANDLE);
+    fbox(6, 11, 16, 9, 12, 16, M.ICE);
+    // kamenné schodíky dolu do pivnice
+    fbox(5, 0, 16, 10, 0, 18, M.STONE_LIGHT);
+    if (season === 3) C.snow([M.SHINGLE, M.SHINGLE_DARK, M.RIDGE, M.PLANK_DARK], 5);
+    return C.done();
+  }
+
   // Otočenie dát modelu o 90° okolo zvislej osi (pôdorys je štvorcový)
   function rotate90(f) {
     const { sx, sy, sz, data } = f, out = new Uint8Array(data.length);
@@ -507,7 +545,8 @@
     { g: 'hut', build: babkaHut, tile: [1, 1] },
     { g: 'stall', build: marketStall, tile: [1, 0] },
     { g: 'well', build: wellModel, tile: [0, 0] },
-    { g: 'cauldron', build: cauldronModel, tile: [0, 0] }
+    { g: 'cauldron', build: cauldronModel, tile: [0, 0] },
+    { g: 'icehouse', build: icehouseModel, tile: [0, 1] }
   ];
   function fineModels(tiles, season) {
     const out = [];
@@ -519,11 +558,13 @@
       out.push(Object.assign(m, { type: ft.g, ox: tx - FM / FINE, oy: groundHeight('grass') / R, oz: ty - FM / FINE, tile: { x: tx + ft.tile[0], y: ty + ft.tile[1] } }));
     }
     for (let i = 0; i < tiles.length; i++) {
-      if (tiles[i].g !== 'tree') continue;
-      const tx = i % D.W, ty = (i / D.W) | 0, kind = treeKind(tx, ty);
+      const g = tiles[i].g;
+      if (g !== 'tree' && g !== 'spruce') continue;
+      // v horách rastú len ihličnany
+      const tx = i % D.W, ty = (i / D.W) | 0, kind = g === 'spruce' ? (hash(tx, ty, 11) < 0.75 ? 'smrek' : 'borovica') : treeKind(tx, ty);
       const m = treeModel(kind, season, Math.floor(hash(tx, ty, 13) * 4));
       // dáta modelu sú zdieľané medzi rovnakými stromami – vlastný je len obal s pozíciou
-      out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'tree', kind, ox: tx - FM / FINE, oy: groundHeight('tree') / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.25 });
+      out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'tree', kind, ox: tx - FM / FINE, oy: groundHeight(g) / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.25 });
     }
     const ROCK_KINDS = Object.keys(ROCK_BUILD);
     let rockN = 0;
@@ -557,9 +598,9 @@
   function buildGrid(tiles, season) {
     const g = makeGrid();
     for (let ty = 0; ty < D.H; ty++) for (let tx = 0; tx < D.W; tx++) {
-      const gt = tiles[ty * D.W + tx].g, h = groundHeight(gt);
+      const gt = tiles[ty * D.W + tx].g, h = tileHeight(gt, tx, ty);
       g.heights[ty * D.W + tx] = h;
-      for (let y = 0; y < h; y++) box(g, tx * R, y, ty * R, tx * R + 1, y, ty * R + 1, y === h - 1 ? topMaterial(gt) : (gt === 'rock' || gt === 'boulder' ? M.STONE : M.DIRT));
+      for (let y = 0; y < h; y++) for (let z = ty * R; z <= ty * R + 1; z++) for (let x = tx * R; x <= tx * R + 1; x++) set(g, x, y, z, y === h - 1 ? topMaterial(gt) : subMaterial(gt, x, y, z));
     }
     stamp(g, tiles, season);
     g.fine = fineModels(tiles, season);
