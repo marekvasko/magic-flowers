@@ -515,6 +515,45 @@ const Art = (() => {
     return iconCache[id];
   }
 
-  return { bloom, plant, char, ground, soil, tree, shroom, boulder, hut, house, stall, well, cauldron, icon, hash, ell, circ };
+  // Bublina chatu nad hráčom: zalomí slová do max. 4 riadkov (šírka ~4,5 políčka), zvyšok skončí „…“.
+  // (x, y) = účiarie menovky; bublina sa kreslí nad ňu so šípkou nadol.
+  function wrapText(c, text, maxW, maxLines) {
+    const lines = []; let cur = '';
+    for (let w of text.split(/\s+/).filter(Boolean)) {
+      const tryL = cur ? cur + ' ' + w : w;
+      if (c.measureText(tryL).width <= maxW) { cur = tryL; continue; }
+      if (cur) lines.push(cur);
+      // príliš dlhé slovo – rozsekni po znakoch
+      while (c.measureText(w).width > maxW) {
+        let n = w.length - 1; while (n > 1 && c.measureText(w.slice(0, n)).width > maxW) n--;
+        lines.push(w.slice(0, n)); w = w.slice(n);
+      }
+      cur = w;
+    }
+    if (cur) lines.push(cur);
+    if (lines.length <= maxLines) return lines;
+    lines.length = maxLines;
+    let l = lines[maxLines - 1];
+    while (l && c.measureText(l + '…').width > maxW) l = l.slice(0, -1);
+    lines[maxLines - 1] = l.trimEnd() + '…';
+    return lines;
+  }
+  function bubble(c, text, x, y, ts) {
+    const fs = Math.max(11, ts * 0.26 | 0), lh = fs * 1.2, pad = ts * 0.14;
+    c.font = fs + 'px system-ui, sans-serif'; c.textAlign = 'center';
+    const lines = wrapText(c, text, Math.max(120, ts * 4.5), 4);
+    const bw = Math.max(...lines.map(l => c.measureText(l).width)) + pad * 2, bh = lines.length * lh + pad * 1.4;
+    const bottom = y - ts * 0.34, top = bottom - bh, left = x - bw / 2, tail = ts * 0.1;
+    c.fillStyle = '#fff'; c.strokeStyle = '#0003'; c.lineWidth = Math.max(1, ts * 0.02);
+    c.beginPath();
+    if (c.roundRect) c.roundRect(left, top, bw, bh, Math.min(bh / 2, ts * 0.14)); else c.rect(left, top, bw, bh);
+    c.moveTo(x - tail, bottom); c.lineTo(x, bottom + tail); c.lineTo(x + tail, bottom);
+    c.fill(); c.stroke();
+    c.fillStyle = '#222'; c.textBaseline = 'middle';
+    lines.forEach((l, k) => c.fillText(l, x, top + pad * 0.7 + lh * (k + 0.5)));
+    c.textBaseline = 'alphabetic';
+  }
+
+  return { bloom, plant, char, ground, soil, tree, shroom, boulder, hut, house, stall, well, cauldron, icon, hash, ell, circ, bubble, wrapText };
 })();
 window.Art = Art; // pre 3D modul (render3d.mjs)

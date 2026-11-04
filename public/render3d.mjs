@@ -1033,13 +1033,7 @@ export function create(api) {
       c.fillStyle = 'rgba(0,0,0,0.45)'; c.fillRect(P.x - w / 2, P.y - ts * 0.22, w, ts * 0.3);
       c.fillStyle = '#fff'; c.fillText(name, P.x, P.y);
       if (e) { c.font = (ts * 0.42 | 0) + 'px serif'; c.fillText(e === 'dance' ? (Math.floor(t * 3) % 2 ? '🎵' : '🎶') : api.EMOJI[e], P.x + ts * 0.45, P.y - ts * 0.25 + Math.sin(t * 6) * ts * 0.05); }
-      if (bubble && bubble.until > performance.now()) {
-        c.font = (ts * 0.26 | 0) + 'px system-ui, sans-serif';
-        const txt = bubble.text.length > 28 ? bubble.text.slice(0, 27) + '…' : bubble.text;
-        const bw = c.measureText(txt).width + ts * 0.3;
-        c.fillStyle = '#fff'; c.fillRect(P.x - bw / 2, P.y - ts * 0.75, bw, ts * 0.4);
-        c.fillStyle = '#222'; c.fillText(txt, P.x, P.y - ts * 0.47);
-      }
+      if (bubble && bubble.until > performance.now()) Art.bubble(c, bubble.text, P.x, P.y, ts);
     };
     for (const o of S.others.values()) { const co = chars.get(o.id); if (co) label(co, o.name, o.e, S.bubbles[o.id]); }
     const mo = chars.get('me'); if (mo) label(mo, S.name, S.myEmote, S.bubbles[S.id]);

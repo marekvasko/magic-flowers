@@ -80,7 +80,7 @@ The game always fills the whole screen, on a phone and on a computer, in portrai
 - **Market:** buy seeds and compost, sell flowers and elixirs, buy upgrades, read market news (see Economy).
 - **Babka bylinkárka (the herb grandma):** her hut has the contract board (see Economy) and she gives tips.
 - **Gifts:** select an item and tap another player.
-- **Emotes:** 👋 ❤️ 💃 and chat 💬.
+- **Emotes:** 👋 ❤️ 💃 and chat 💬 (key **T**). Messages appear as speech bubbles above the player (wrapped, up to 4 lines) and briefly in the corner; opening the chat shows the history of the last 50 messages.
 
 ## Flowers (real species from Slovakia, Czechia and Europe)
 
