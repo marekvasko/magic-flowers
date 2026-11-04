@@ -463,6 +463,7 @@
       d.onclick = () => selectItem(id);
       bar.appendChild(d);
     }
+    for (let i = ids.length; i < 6; i++) bar.appendChild(Object.assign(document.createElement('div'), { className: 'slot empty' })); // doplní rad na mobile
     const sel = bar.querySelector('.on');
     if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     let txt = D.itemName(S.sel);
@@ -1012,8 +1013,9 @@
     const c = ctx, ts = cam.ts, cw = cv.width, ch = cv.height;
     const se = season(), m = curMin(), hr = m / 60, night = D.isNight(m);
     // hráč v strede obrazovky; pri okraji sveta sa výrez zastaví – horný a dolný okraj môže zájsť
-    // pod panel a lištu nástrojov (je tam len prázdno), aby hráča nikdy nezakryli
-    const hudH = $('hud').offsetHeight * dpr, barH = $('bottom').offsetHeight * dpr;
+    // pod panel a lištu nástrojov na celú šírku (mobil), aby hráča nikdy nezakryli; malý panel na počítači nie
+    const bar = $('bottom'), hudH = $('hud').offsetHeight * dpr;
+    const barH = bar.offsetWidth * dpr >= cw * 0.9 ? bar.offsetHeight * dpr : 0;
     cam.x = Math.max(0, Math.min(W * ts - cw, S.me.x * ts - cw / 2));
     cam.y = Math.max(-hudH, Math.min(H * ts - ch + barH, S.me.y * ts - ch / 2));
     c.fillStyle = '#1b2e1d'; c.fillRect(0, 0, cw, ch);
