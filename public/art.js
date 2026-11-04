@@ -192,16 +192,14 @@ const Art = (() => {
 
   // Postavička – x stred, y chodidlá.
   // dir: 0 dole, 1 vľavo, 2 vpravo, 3 hore, 4 vľavo dole, 5 vpravo dole, 6 vľavo hore, 7 vpravo hore
-  // o.lift: výška skoku v px (tieň ostáva na zemi), o.crawl: plazí sa (nízko pri zemi)
+  // o.lift: výška skoku v px (tieň ostáva na zemi), o.crawl: plazí sa (pokrčené kolená, predklon)
   function char(c, x, y, s, look, dir, phase, o) {
     o = o || {};
     const lift = o.lift || 0;
-    if (lift > 0 || o.crawl) {
+    if (lift > 0) {
       if (!o.noShadow) { const k = Math.max(0.45, 1 - lift / s); ell(c, x, y, s * 0.24 * k, s * 0.08 * k, 0, 'rgba(0,0,0,' + 0.25 * k + ')'); }
-      c.save(); c.translate(x, y - lift);
-      if (o.crawl) c.scale(1.18, 0.58);
-      c.translate(-x, -y);
-      char(c, x, y, s, look, dir, phase, Object.assign({}, o, { lift: 0, crawl: false, noShadow: true }));
+      c.save(); c.translate(0, -lift);
+      char(c, x, y, s, look, dir, phase, Object.assign({}, o, { lift: 0, noShadow: true }));
       c.restore();
       return;
     }
@@ -215,15 +213,21 @@ const Art = (() => {
     if (!o.noShadow) ell(c, x, y, s * 0.24, s * 0.08, 0, 'rgba(0,0,0,0.25)');
     const yb = y - bob;
     const step = Math.sin(phase) * s * 0.06;
+    // plazenie: kolená pokrčené (kratšie nohy), trup sa predkloní v bokoch smerom pohybu;
+    // pri pohľade spredu/zozadu predklon nevidno do strany, tak sa hlava len prikrčí k telu
+    const fx = d === 1 ? -1 : d === 2 ? 1 : side;
+    const kn = o.crawl ? s * 0.08 : 0;
+    if (o.crawl) { c.save(); c.translate(-fx * s * 0.08, 0); } // ťažisko dozadu, nech sa postavička zmestí do spritu
     // nohy
     c.fillStyle = o.babka ? '#5b3a6b' : '#3b4a6b';
     if (!o.babka) {
-      c.fillRect(x - s * 0.13, yb - s * 0.22 + (d === 1 || d === 2 ? 0 : step * 0.5), s * 0.1, s * 0.2);
-      c.fillRect(x + s * 0.03, yb - s * 0.22 - (d === 1 || d === 2 ? 0 : step * 0.5), s * 0.1, s * 0.2);
+      c.fillRect(x - s * 0.13, yb - s * 0.22 + kn + (d === 1 || d === 2 ? 0 : step * 0.5), s * 0.1, s * 0.2 - kn);
+      c.fillRect(x + s * 0.03, yb - s * 0.22 + kn - (d === 1 || d === 2 ? 0 : step * 0.5), s * 0.1, s * 0.2 - kn);
       c.fillStyle = '#4a3020';
       c.fillRect(x - s * 0.14 + (d === 1 ? -step : d === 2 ? step : 0), yb - s * 0.05, s * 0.12, s * 0.05);
       c.fillRect(x + s * 0.02 - (d === 1 ? -step : d === 2 ? step : 0), yb - s * 0.05, s * 0.12, s * 0.05);
     }
+    if (o.crawl) { const hx = x, hyp = yb - s * 0.2; c.translate(hx, hyp + kn + (fx ? 0 : s * 0.07)); c.rotate(fx * (d === 0 || d === 3 ? 0.3 : 0.45)); c.translate(-hx, -hyp); }
     // telo
     const shirt = look.shirt || '#4a90d9';
     c.fillStyle = shirt;
@@ -269,6 +273,7 @@ const Art = (() => {
     if (o.babka && d === 0 && !side) { c.strokeStyle = '#555'; c.lineWidth = 1; c.beginPath(); c.arc(x - s * 0.075, hy + s * 0.03, s * 0.055, 0, TAU); c.moveTo(x + s * 0.13, hy + s * 0.03); c.arc(x + s * 0.075, hy + s * 0.03, s * 0.055, 0, TAU); c.stroke(); }
     // slamený klobúk pre farmára
     if (look.hat) { ell(c, x, hy - s * 0.12, s * 0.32, s * 0.08, 0, '#e8c86a'); ell(c, x, hy - s * 0.2, s * 0.16, s * 0.1, 0, '#e8c86a'); c.fillStyle = '#c0392b'; c.fillRect(x - s * 0.16, hy - s * 0.17, s * 0.32, s * 0.03); }
+    if (o.crawl) c.restore();
   }
 
   // ---- Prostredie ----
