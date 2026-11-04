@@ -946,7 +946,7 @@ export function create(api) {
       if (A.hut) { add(A.hut.x + 0.5, 2.05, A.hut.y + 2.2, 2.2, FL_WINDOW); add(A.hut.x + 2.4, 2.05, A.hut.y + 2.2, 2.2, FL_WINDOW); }
       if (A.house) { add(A.house.x + 0.62, 2.2, A.house.y + 2.3, 2.2, FL_WINDOW); add(A.house.x + 2.37, 2.2, A.house.y + 2.3, 2.2, FL_WINDOW); add(A.house.x + 2.06, 2.4, A.house.y + 2.06, 1.8, FL_LANTERN); }
       if (A.cauldron) add(A.cauldron.x + 0.5, 1.3, A.cauldron.y + 0.5, 2.6, FL_FIRE);   // oheň pod kotlíkom
-      if (A.stall) add(A.stall.x + 2.94, 2.56, A.stall.y + 0.94, 2.4, FL_LANTERN);           // lampáš na trhu
+      if (A.stall) add(A.stall.x + 2.94, 2.56, A.stall.y + 0.94, 2.4, FL_FIRE);              // lampáš na trhu (horí v ňom plamienok)
       particles.fairyLights(grid, t, add);
       for (let i = 0; i < S.tiles.length && lights.length < MAX_LIGHTS; i++) {
         const p = S.tiles[i].s && S.tiles[i].s.p;
@@ -980,7 +980,7 @@ export function create(api) {
 
     const fading = updateFades(dt, meO ? meO.h : 1);
     const lit = curAmb.map((v, i) => Math.min(1.2, v + curSun[i] * 0.7));
-    particles.update(dt, t, { grid, fine: grid && grid.fine, fineMeshes, target: camTarget, viewW, viewH: viewTop * 2, se, lit, cauldron: fireCenter() });
+    particles.update(dt, t, { grid, fine: grid && grid.fine, fineMeshes, target: camTarget, viewW, viewH: viewTop * 2, se, lit, cauldron: fireCenter(), lantern: lanternCenter() });
     updateWater(t, now);
     renderReflection();
     renderer.render(scene, camera);
@@ -1065,6 +1065,11 @@ export function create(api) {
   function fireCenter() {
     const f = grid && grid.fine.find(m => m.type === 'cauldron');
     return f ? { x: f.ox + 1, y: f.oy + 1.5 / W.FINE, z: f.oz + 1 } : null;
+  }
+  // lampáš na trhu: minikocka (23, 12, 7) modelu stánku, k tomu okraj modelu 4 minikocky
+  function lanternCenter() {
+    const f = grid && grid.fine.find(m => m.type === 'stall');
+    return f ? { x: f.ox + 27.5 / W.FINE, y: f.oy + 12.5 / W.FINE, z: f.oz + 11.5 / W.FINE } : null;
   }
 
   resize();
