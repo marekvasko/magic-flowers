@@ -202,9 +202,23 @@
     const el = chatEl(name, text);
     $('chatlog').appendChild(el);
     while ($('chatlog').children.length > 5) $('chatlog').removeChild($('chatlog').firstChild);
-    setTimeout(() => { el.style.opacity = 0; }, 9000);
-    setTimeout(() => el.remove(), 10000);
+    chatWheel();
+    setTimeout(() => el.classList.add('out'), 9000);
+    setTimeout(() => { el.remove(); chatWheel(); }, 10000);
   }
+  // Kolotoč: čím vyššie je správa nad spodkom zoznamu, tým je ďalej vzadu (naklonená, menšia, priesvitnejšia).
+  // Rovnaký výpočet pre krátky log aj históriu, takže správy pri otvorení chatu nezmenia vzhľad.
+  function chatWheel() {
+    const box = $('chatbox').classList.contains('open') ? $('chathist') : $('chatlog');
+    const B = box.getBoundingClientRect().bottom, span = 260;
+    for (const el of box.children) {
+      const r = el.getBoundingClientRect(), d = Math.min(1, Math.max(0, (B - r.bottom) / span));
+      el.style.transform = d ? `translateZ(${-d * 140 | 0}px) rotateX(${d * 28 | 0}deg)` : '';
+      el.style.opacity = (1 - d * 0.7).toFixed(2);
+    }
+  }
+  let wheelRaf = 0;
+  $('chathist').addEventListener('scroll', () => { if (!wheelRaf) wheelRaf = requestAnimationFrame(() => { wheelRaf = 0; chatWheel(); }); }, { passive: true });
 
   // ---------- Kontextová akcia ----------
   function ctxAction(tx, ty) {
@@ -925,8 +939,8 @@
   }
 
   // Chat
-  const closeChat = () => { $('chatbox').classList.remove('open'); $('chatIn').blur(); };
-  function openChat() { $('chatbox').classList.add('open'); $('chathist').scrollTop = $('chathist').scrollHeight; $('chatIn').focus(); }
+  const closeChat = () => { $('chatbox').classList.remove('open'); $('chatIn').blur(); chatWheel(); };
+  function openChat() { $('chatbox').classList.add('open'); $('chathist').scrollTop = $('chathist').scrollHeight; chatWheel(); $('chatIn').focus(); }
   $('bChat').onclick = () => { if ($('chatbox').classList.contains('open')) closeChat(); else openChat(); };
   const sendChat = () => { const v = $('chatIn').value.trim(); if (v) send({ t: 'chat', text: v }); $('chatIn').value = ''; closeChat(); };
   $('chatSend').onclick = sendChat;
@@ -975,6 +989,7 @@
   function barH() { const app = $('app'), r = $('bottom').getBoundingClientRect(); app.style.setProperty('--bar-h', Math.max(0, Math.round(app.getBoundingClientRect().bottom - r.top)) + 'px'); }
   new ResizeObserver(barH).observe($('bottom'));
   addEventListener('resize', barH);
+  addEventListener('resize', () => chatWheel());
 
   function update(dt) {
     const me = S.me;

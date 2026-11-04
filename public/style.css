@@ -39,7 +39,9 @@ button { font: inherit; cursor: pointer; border: none; }
 .toast.out { opacity: 0; transition: opacity .5s; }
 @keyframes tin { from { transform: translateY(-10px); opacity: 0; } }
 /* Správa chatu: vlastný rám v štýle menoviek nad hráčmi */
-.chatline { background: rgba(0,0,0,0.45); color: #fff; padding: 2px 7px; font-size: 13px; transition: opacity 1s; overflow-wrap: anywhere; }
+.chatline { background: rgba(0,0,0,0.45); color: #fff; padding: 2px 7px; font-size: 13px; overflow-wrap: anywhere; transform-origin: left bottom; }
+#chatlog .chatline { transition: opacity 1s; }
+#chatlog .chatline.out { opacity: 0 !important; }
 .chatline b { color: #ffd76a; }
 
 #bottom { position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; padding: 4px 0 env(safe-area-inset-bottom); background: #1b2e1de6; border-top: 2px solid #8b5a2b; box-shadow: 0 -4px 12px #0004; }
@@ -117,7 +119,8 @@ button { font: inherit; cursor: pointer; border: none; }
 /* Chat nad lištou nástrojov (--bar-h nastavuje game.js). Zatvorený: posledné správy (#chatlog) a neviditeľný
    riadok na písanie, ktorý drží miesto – správy tak ostanú na tom istom mieste aj po otvorení (história #chathist). */
 #chatbox { position: absolute; left: 8px; right: 8px; bottom: calc(var(--bar-h, 150px) + 8px); display: flex; flex-direction: column; gap: 6px; z-index: 5; pointer-events: none; }
-#chatlog, #chathist { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+/* perspektíva pre efekt kolotoča: vyššie správy sú vzadu, posúvaním idú dopredu (chatWheel v game.js) */
+#chatlog, #chathist { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; perspective: 600px; perspective-origin: left bottom; }
 #chatlog .chatline { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 #chathist { max-height: min(40vh, 300px); overflow-y: auto; touch-action: pan-y; user-select: text; -webkit-user-select: text; }
 #chathist:empty::before { content: 'Zatiaľ žiadne správy.'; background: rgba(0,0,0,0.45); color: #fff; font-size: 13px; padding: 2px 7px; }
@@ -125,8 +128,11 @@ button { font: inherit; cursor: pointer; border: none; }
 #chatbox:not(.open) .chatrow { visibility: hidden; }
 #chatbox.open { pointer-events: auto; }
 .chatrow { display: flex; gap: 6px; }
-#chatbox input { flex: 1; padding: 11px; border-radius: 12px; border: 2px solid #8b5a2b; font-size: 16px; touch-action: auto; user-select: text; -webkit-user-select: text; }
-#chatbox button { width: 48px; border-radius: 12px; background: #6b3fa0; color: #fff; font-size: 18px; }
+/* riadok na písanie v rovnakom štýle ako správy (menovky) */
+#chatbox input { flex: 1; min-width: 0; padding: 8px 10px; border: 0; border-radius: 0; background: rgba(0,0,0,0.55); color: #fff; font-size: 16px; outline: 2px solid transparent; touch-action: auto; user-select: text; -webkit-user-select: text; }
+#chatbox input:focus { outline-color: #ffd76a88; }
+#chatbox input::placeholder { color: #fffb; }
+#chatbox button { width: 44px; border-radius: 0; background: rgba(0,0,0,0.55); color: #ffd76a; font-size: 18px; }
 #conn { position: absolute; top: 40%; left: 50%; transform: translateX(-50%); background: #000b; color: #fff; padding: 12px 18px; border-radius: 14px; z-index: 20; font-weight: 700; }
 /* Trend ceny: ikonka z 3 šípok nad sebou */
 .tr { display: inline-block; vertical-align: middle; line-height: 0; margin: 0 2px; }
@@ -153,7 +159,7 @@ button { font: inherit; cursor: pointer; border: none; }
   .slot { flex: 0 0 58px; }
   .slot.empty:nth-child(n) { display: flex; }
   #emotes { padding: 4px 0 0; gap: 8px; }
-  #chatbox { left: 50%; right: auto; width: min(560px, calc(100% - 16px)); transform: translateX(-50%); }
+  #chatbox { left: 12px; right: auto; width: min(460px, calc(100% - 24px)); } /* chat vľavo, rovnako ako na mobile */
   #modal { align-items: center; }
   .modal-card { max-width: 620px; max-height: 86%; border-radius: 22px; border-bottom: 4px solid #8b5a2b; }
   #mBody { padding-bottom: 16px; }
