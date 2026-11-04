@@ -97,7 +97,11 @@ export function create(api) {
   });
   // Rovnaký shader pre objekty, ktoré práve miznú (hráč zašiel za ne): priehľadný, bez zápisu do hĺbky.
   // Uniformy zdieľa s hlavným materiálom; priehľadnosť sa nastaví pre každý objekt tesne pred vykreslením.
-  const fadeMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms: material.uniforms, transparent: true, depthWrite: false });
+  // Svetlo zdieľajú (rovnaké objekty uniform), ale priehľadnosť má každý materiál vlastnú – hlavný materiál ostáva úplne nepriehľadný.
+  const fadeMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms: { ...material.uniforms, opacity: { value: 1 } }, transparent: true, depthWrite: false });
+  // hĺbkový prechod tým istým shaderom (rovnaký výpočet hĺbky → žiadne bodkovanie)
+  const depthOnlyMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms: { ...material.uniforms, opacity: { value: 1 } }, transparent: true, depthWrite: true, colorWrite: false });
+  const FADE_MIN = 0.3; // ako veľmi ostane vidieť budovu/strom, za ktorým stojí hráč
   let mesh = null, grid = null, builtSeason = -1;
   let vtx = null; // { pos: Float32Array, nrm: Int8Array, sun: Float32Array, target: Float32Array, n }
   const AXES = [[0, 1, 2], [1, 2, 0], [2, 0, 1]]; // [normálová os, u, v] – u × v = normála
@@ -165,32 +169,11 @@ export function create(api) {
     mesh = new THREE.Mesh(geo, material);
     scene.add(mesh);
     vtx = { pos: new Float32Array(P), nrm: new Int8Array(N), sun: sunA, target: new Float32Array(vi).fill(1), from: new Float32Array(vi).fill(1), n: vi, mesh, start: 0.05 };
-    for (const fm of fineMeshes) { scene.remove(fm); fm.geometry.dispose(); }
+    for (const fm of fineMeshes) { scene.remove(fm); scene.remove(fm.userData.depthTwin); fm.geometry.dispose(); }
     fineMeshes = grid.fine.map(f => buildFine(f, se));
     parts = [vtx].concat(fineMeshes.map(m => m.userData.vtx));
     sunJob = null; lastSunKey = '';
     builtSeason = se;
-  }
-
-  // Pôdorys jemného modelu: všetky stĺpce minikociek, ktoré model zaberá pri pohľade zhora, ako plochý tvar tesne nad zemou.
-  // Riadky stĺpcov sa spájajú do obdĺžnikov, aby tvar mal málo trojuholníkov.
-  function footprintMesh(f) {
-    const F = W.FINE, { sx, sy, sz, data } = f, P = [];
-    const col = (x, z) => { for (let y = 0; y < sy; y++) if (data[(z * sy + y) * sx + x]) return true; return false; };
-    const y = f.oy + 0.02;
-    for (let z = 0; z < sz; z++) {
-      let x = 0;
-      while (x < sx) {
-        if (!col(x, z)) { x++; continue; }
-        const x0 = x; while (x < sx && col(x, z)) x++;
-        const ax = f.ox + x0 / F, bx = f.ox + x / F, az = f.oz + z / F, bz = f.oz + (z + 1) / F;
-        P.push(ax, y, az, ax, y, bz, bx, y, bz, ax, y, az, bx, y, bz, bx, y, az);
-      }
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
-    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
-    return m;
   }
 
   // ---------- Jemné modely z minikociek (1 blok = 8×8×8) ----------
@@ -248,8 +231,14 @@ export function create(api) {
     const fmesh = new THREE.Mesh(geo, material);
     fmesh.userData.box = geo.boundingBox;
     fmesh.userData.fade = 1;
-    fmesh.userData.foot = footprintMesh(f);
-    fmesh.onBeforeRender = () => { if (fmesh.material === fadeMaterial) { material.uniforms.opacity.value = fmesh.userData.fade; fadeMaterial.uniformsNeedUpdate = true; } };
+    fmesh.userData.maskMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    // pri zoslabení: najprv len hĺbka (aby bolo vidno iba prednú plochu modelu), potom model priehľadne
+    fmesh.renderOrder = 2;
+    const depthTwin = new THREE.Mesh(geo, depthOnlyMaterial);
+    depthTwin.renderOrder = 1; depthTwin.visible = false;
+    scene.add(depthTwin);
+    fmesh.userData.depthTwin = depthTwin;
+    fmesh.onBeforeRender = () => { if (fmesh.material === fadeMaterial) { fadeMaterial.uniforms.opacity.value = fmesh.userData.fade; fadeMaterial.uniformsNeedUpdate = true; } };
     fmesh.userData.tile = f.tile;
     // lúč tieňa začína až za vlastnou neviditeľnou náhradou modelu v hrubej mriežke
     fmesh.userData.vtx = { pos: new Float32Array(P), nrm: new Int8Array(N), sun: sunA, target: new Float32Array(vi).fill(1), from: new Float32Array(vi).fill(1), n: vi, mesh: fmesh, start: 0.45 };
@@ -444,11 +433,12 @@ export function create(api) {
     if (now - occAt > 100) { occluders = computeOccluders(meH); occAt = now; }
     let any = false;
     for (const m of fineMeshes) {
-      const target = occluders.has(m) ? 0 : 1;
-      const f = m.userData.fade = target > m.userData.fade ? Math.min(1, m.userData.fade + dt * 5) : Math.max(0, m.userData.fade - dt * 5);
-      m.visible = f > 0.02;
-      m.material = f > 0.98 ? material : fadeMaterial;
-      if (f < 0.98) any = true;
+      const target = occluders.has(m) ? FADE_MIN : 1;
+      const f = m.userData.fade = target > m.userData.fade ? Math.min(1, m.userData.fade + dt * 4) : Math.max(FADE_MIN, m.userData.fade - dt * 4);
+      const fading = f < 0.98;
+      m.material = fading ? fadeMaterial : material;
+      m.userData.depthTwin.visible = fading;
+      if (fading) any = true;
     }
     return any;
   }
@@ -480,12 +470,14 @@ export function create(api) {
     renderer.setRenderTarget(maskRT);
     renderer.setClearColor(0x000000, 1); renderer.clear();
     renderer.autoClear = false;
-    // do masky kreslíme len pôdorys skrytého objektu na zemi (nie jeho tvar nad zemou)
+    // maska = tvar zoslabených objektov; obrys sa kreslí po jej okraji
     for (const m of fineMeshes) {
       if (m.userData.fade > 0.98) continue;
-      const k = 1 - m.userData.fade, foot = m.userData.foot;
-      foot.material.color.setRGB(k, k, k);
-      renderer.render(foot, camera);
+      const k = (1 - m.userData.fade) / (1 - FADE_MIN), old = m.material;
+      m.userData.maskMat.color.setRGB(k, k, k);
+      m.material = m.userData.maskMat;
+      renderer.render(m, camera);
+      m.material = old;
     }
     renderer.setRenderTarget(null);
     renderer.setClearColor(clear, clearA);
