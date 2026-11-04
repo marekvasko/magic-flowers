@@ -59,6 +59,14 @@ All of it lives in `economy.js` and runs on the event scheduler; its state (`roo
 - **Flowers wilt** (`items.js`): every cut flower has a vase life per species (poppy 2 days, tulip 4, chrysanthemum 7, lavender 8, edelweiss 12, fern flower 1). Flowers are kept in batches with an age; the oldest go first. Freshness lowers the buy-back price down to 50 %. When the life runs out (checked every game hour, for offline players too) they turn into *wilted flowers*; 4 of them make 1 compost in the storage. In the cool shared storage flowers age 2× slower. A blooming plant left in the field fades after the same time – annuals die, perennials (rose, lavender) bloom again later.
 - **Contract board** at Babka's hut: short contracts, contracts for the next season (posted in advance so you can plan) and big contracts from reputation 2. Reserve a contract, the deadline is fixed, you can deliver in parts. Completion gives coins and reputation; a missed deadline costs 5 reputation. Reputation level = how many contracts you may hold at once.
 
+## How much of the world you see (same on every device)
+
+The game always fills the whole screen, on a phone and on a computer, in portrait and in landscape. So that no device shows more of the world than another, the zoom is set so that the **screen diagonal always spans exactly `VIEW_DIAG` = 22 blocks** (`shared/data.js`, the same rule in 2D and 3D):
+
+- A screen of `pxW × pxH` pixels shows `22·pxW/√(pxW²+pxH²)` × `22·pxH/√(pxW²+pxH²)` blocks (`GameData.viewSize`). For example, a phone held upright (390 × 844) shows 9.2 × 20.0 blocks and a 1440 × 900 monitor shows 18.7 × 11.7 blocks.
+- The player is in the centre of the screen. Near the edge of the world the view stops moving, so it never shows anything outside the world.
+- In 3D, the orthographic camera's view plane has the same 22-block diagonal.
+
 ## Gameplay
 
 - **Movement:** put a finger anywhere on the screen and drag – a joystick appears right there and stays anchored at that spot until you lift your finger. Or tap the spot you want to walk to (the character finds a path around obstacles). On a computer use WASD / arrow keys or drag with the mouse, Space for the action and 1–9 for the toolbar.

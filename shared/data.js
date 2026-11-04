@@ -1,6 +1,14 @@
 // Zdieľané herné dáta – používa server (Node) aj klient (prehliadač).
 (function (root) {
   const W = 20, H = 34;
+  // Koľko sveta vidí hráč: hra zaberá celú obrazovku a mierka je taká, že uhlopriečka obrazovky
+  // má vždy presne VIEW_DIAG blokov – na mobile na výšku aj na počítači na šírku, hráč je v strede.
+  // Rozmery výrezu v blokoch pre obrazovku pxW × pxH vráti viewSize (platí pre 2D aj 3D).
+  const VIEW_DIAG = 22;
+  function viewSize(pxW, pxH) {
+    const d = Math.hypot(pxW, pxH) || 1;
+    return { w: VIEW_DIAG * pxW / d, h: VIEW_DIAG * pxH / d };
+  }
   const DAYS_PER_SEASON = 4;
   // Diskrétny čas: deň má vždy presne TICKS_PER_DAY krokov, jeden krok = MIN_PER_TICK herných minút.
   const TICKS_PER_DAY = 288, MIN_PER_TICK = 5;
@@ -304,7 +312,7 @@
   }
 
   const api = {
-    W, H, DAYS_PER_SEASON, TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
+    W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
     RING, SPAWN, BABKA, BLOCK, TILLABLE,
     sellPrice, itemName, buildMap, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32

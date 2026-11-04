@@ -54,6 +54,7 @@ button { font: inherit; cursor: pointer; border: none; }
 .slot .wbar i { display: block; height: 100%; background: #3aa0ff; border-radius: 2px; }
 .slot .wbar.fresh { bottom: 2px; right: 22px; }
 .slot .n { z-index: 1; }
+.slot .k { display: none; position: absolute; left: 4px; top: 1px; font-size: 10px; font-weight: 800; color: #8b5a2b; }
 #joy { position: absolute; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; background: #ffffff22; border: 3px solid #ffffff66; pointer-events: none; z-index: 3; box-shadow: 0 0 0 1px #0002; }
 #joyKnob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff, #cfc0a0); box-shadow: 0 3px 6px #0006; }
 #emotes { display: flex; justify-content: center; gap: 10px; padding: 2px 8px 8px; }
@@ -119,3 +120,14 @@ button { font: inherit; cursor: pointer; border: none; }
 #sleep .sl-z { font-size: 54px; animation: slz 2s ease-in-out infinite; }
 #sleep button { margin-top: 14px; }
 @keyframes slz { 50% { transform: translateY(-10px); opacity: .6; } }
+
+/* Počítač (a tablet na šírku): hra na celú obrazovku; koľko sveta je vidno, určuje uhlopriečka (D.VIEW_DIAG) */
+@media (min-width: 820px) and (min-aspect-ratio: 1/1) {
+  #app { max-width: none; }
+  #hotbar { justify-content: safe center; }
+  #chatbox { left: 50%; right: auto; width: min(560px, calc(100% - 16px)); transform: translateX(-50%); }
+  #modal { align-items: center; }
+  .modal-card { max-width: 620px; max-height: 86%; border-radius: 22px; border-bottom: 4px solid #8b5a2b; }
+  #mBody { padding-bottom: 16px; }
+}
+@media (hover: hover) and (pointer: fine) { .slot .k { display: block; } }
