@@ -204,7 +204,7 @@
   // Hľadá sa priestorom: server si každú hernú hodinu tajne vylosuje, v ktorých políčkach trávy semienka sú
   // (hustota = density × okolie × denná hodina × obdobie). Hráč chodí z políčka na políčko; klient nevie nič.
   const SCAVENGE = {
-    ticks: 2,           // jedno hľadanie trvá 2 kroky (10 herných minút); výsledok príde, len ak hráč stále hľadá
+    ticks: 1,           // výsledok príde v najbližšom kroku (do 5 herných minút), len ak hráč v tom kroku stále hľadá
     window: 12,         // po koľkých krokoch sa semienka v tráve premiestnia (herná hodina)
     density: 0.07,      // podiel políčok so semienkom cez deň na jar, ďaleko od lesa a ciest
     find: 0.75,         // šanca, že ho na správnom políčku aj nájdeš
