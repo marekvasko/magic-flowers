@@ -206,17 +206,21 @@
     setTimeout(() => el.classList.add('out'), 9000);
     setTimeout(() => { el.remove(); chatWheel(); }, 10000);
   }
-  // Kolotoč: len dve vrchné viditeľné správy sú „vzadu“ (naklonené, menšie, priesvitnejšie) – vrchná viac, druhá menej;
-  // posúvaním nadol idú dopredu. Rovnaký výpočet pre krátky log aj históriu; pri 1–2 správach sa nič nenakláňa.
+  // Kolotoč v histórii: okno má 15 riadkov, spodných 13 je normálne, 14. a 15. riadok prichádzajú z pozadia –
+  // správa je tam menšia, naklonená, priesvitnejšia a zasunutá za správu pod ňou (staršie sú vždy za novšími).
+  // Posúvaním nahor sa správa vysunie dopredu a za ňou sa objaví ďalšia. Pri menej ako 14 správach nič.
+  // Počíta sa z polohy v rozložení (offsetTop), nie z bounding boxu, aby transformácia neovplyvňovala sama seba.
+  const CHAT_ROW = 25;
   function chatWheel() {
-    const box = $('chatbox').classList.contains('open') ? $('chathist') : $('chatlog');
-    const items = [...box.children], T = box.getBoundingClientRect().top;
-    const vis = items.filter(el => el.getBoundingClientRect().bottom > T + 1);
-    const span = vis.length > 2 ? vis[2].getBoundingClientRect().top - vis[0].getBoundingClientRect().top : 0;
-    for (const el of items) {
-      const d = span ? Math.min(1, Math.max(0, 1 - (el.getBoundingClientRect().top - T) / span)) : 0;
-      el.style.transform = d ? `translateZ(${-d * 140 | 0}px) rotateX(${d * 28 | 0}deg)` : '';
-      el.style.opacity = (1 - d * 0.7).toFixed(2);
+    const box = $('chathist');
+    if (!$('chatbox').classList.contains('open')) return;
+    const H = parseFloat(getComputedStyle(box).maxHeight) || 0, flat = H - 2 * CHAT_ROW;
+    const bottom = box.scrollTop + box.clientHeight, items = box.children;
+    for (let i = 0; i < items.length; i++) {
+      const el = items[i], e = Math.max(0, (bottom - el.offsetTop - flat) / (2 * CHAT_ROW)), d = Math.min(1, e);
+      el.style.zIndex = i + 1;
+      el.style.transform = d ? `translateY(${(d * CHAT_ROW).toFixed(1)}px) perspective(500px) rotateX(${(d * 30).toFixed(1)}deg) scale(${(1 - d * 0.15).toFixed(3)})` : '';
+      el.style.opacity = e ? Math.max(0, 1 - e * 0.8).toFixed(2) : '';
     }
   }
   let wheelRaf = 0;
