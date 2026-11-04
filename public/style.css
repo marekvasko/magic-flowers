@@ -118,9 +118,10 @@ button { font: inherit; cursor: pointer; border: none; }
 .wish b { display: block; font-size: 16px; color: #4a2a72; }
 .help p { font-size: 14px; line-height: 1.45; margin: 6px 0; }
 #chatbox { position: absolute; left: 8px; right: 8px; bottom: calc(var(--bar-h, 150px) + 8px); display: flex; flex-direction: column; gap: 6px; z-index: 5; }
-#chathist { max-height: min(40vh, 300px); overflow-y: auto; display: flex; flex-direction: column; gap: 3px; padding: 6px; border-radius: 12px; background: #0009; touch-action: pan-y; user-select: text; -webkit-user-select: text; }
-#chathist:empty::before { content: 'Zatiaľ žiadne správy.'; color: #fffa; font-size: 13px; padding: 2px 4px; }
-#chathist .chatline { background: none; padding: 1px 4px; }
+#chathist { max-height: min(40vh, 300px); overflow-y: auto; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; touch-action: pan-y; user-select: text; -webkit-user-select: text; }
+/* História: každá správa vo vlastnom ráme v štýle menoviek nad hráčmi */
+#chathist .chatline, #chathist:empty::before { background: rgba(0,0,0,0.45); color: #fff; border-radius: 0; padding: 2px 7px; }
+#chathist:empty::before { content: 'Zatiaľ žiadne správy.'; font-size: 13px; }
 .chatrow { display: flex; gap: 6px; }
 #chatbox input { flex: 1; padding: 11px; border-radius: 12px; border: 2px solid #8b5a2b; font-size: 16px; touch-action: auto; user-select: text; -webkit-user-select: text; }
 #chatbox button { width: 48px; border-radius: 12px; background: #6b3fa0; color: #fff; font-size: 18px; }

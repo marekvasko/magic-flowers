@@ -516,7 +516,7 @@ const Art = (() => {
   }
 
   // Bublina chatu nad hráčom: zalomí slová do max. 4 riadkov (šírka ~4,5 políčka), zvyšok skončí „…“.
-  // (x, y) = účiarie menovky; bublina sa kreslí nad ňu so šípkou nadol.
+  // (x, y) = účiarie menovky; bublina (biely obdĺžnik) sa kreslí nad ňu.
   function wrapText(c, text, maxW, maxLines) {
     const lines = []; let cur = '';
     for (let w of text.split(/\s+/).filter(Boolean)) {
@@ -543,12 +543,8 @@ const Art = (() => {
     c.font = fs + 'px system-ui, sans-serif'; c.textAlign = 'center';
     const lines = wrapText(c, text, Math.max(120, ts * 4.5), 4);
     const bw = Math.max(...lines.map(l => c.measureText(l).width)) + pad * 2, bh = lines.length * lh + pad * 1.4;
-    const bottom = y - ts * 0.34, top = bottom - bh, left = x - bw / 2, tail = ts * 0.1;
-    c.fillStyle = '#fff'; c.strokeStyle = '#0003'; c.lineWidth = Math.max(1, ts * 0.02);
-    c.beginPath();
-    if (c.roundRect) c.roundRect(left, top, bw, bh, Math.min(bh / 2, ts * 0.14)); else c.rect(left, top, bw, bh);
-    c.moveTo(x - tail, bottom); c.lineTo(x, bottom + tail); c.lineTo(x + tail, bottom);
-    c.fill(); c.stroke();
+    const top = y - ts * 0.34 - bh;
+    c.fillStyle = '#fff'; c.fillRect(x - bw / 2, top, bw, bh);
     c.fillStyle = '#222'; c.textBaseline = 'middle';
     lines.forEach((l, k) => c.fillText(l, x, top + pad * 0.7 + lh * (k + 0.5)));
     c.textBaseline = 'alphabetic';
