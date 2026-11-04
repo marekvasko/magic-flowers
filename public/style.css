@@ -42,12 +42,14 @@ button { font: inherit; cursor: pointer; border: none; }
 .chatline { background: #0008; color: #fff; padding: 3px 8px; border-radius: 8px; font-size: 13px; transition: opacity 1s; }
 .chatline b { color: #ffd76a; }
 
-#bottom { position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; padding-bottom: env(safe-area-inset-bottom); background: linear-gradient(#0000, #1b2e1dcc 18%, #1b2e1d); }
+#bottom { position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; padding: 4px 0 env(safe-area-inset-bottom); background: #1b2e1de6; border-top: 2px solid #8b5a2b; box-shadow: 0 -4px 12px #0004; }
 #selName { text-align: center; color: #fff; font-size: 12.5px; font-weight: 600; height: 18px; text-shadow: 0 1px 2px #000; }
-#hotbar { pointer-events: auto; display: flex; gap: 6px; padding: 4px 8px 6px; overflow-x: auto; scrollbar-width: none; touch-action: pan-x; }
+/* Mobil: lišta na celú šírku – aspoň 6 miest (prázdne doplnia rad), viac predmetov sa posúva do strany */
+#hotbar { pointer-events: auto; display: flex; gap: 6px; padding: 6px 8px; overflow-x: auto; scrollbar-width: none; touch-action: pan-x; }
 #hotbar::-webkit-scrollbar { display: none; }
-.slot { position: relative; flex: 0 0 auto; width: 52px; height: 52px; border-radius: 12px; background: #fff8e7; border: 3px solid #8b5a2b; display: flex; align-items: center; justify-content: center; }
-.slot img { width: 40px; height: 40px; pointer-events: none; }
+.slot { position: relative; flex: 1 0 52px; max-width: 80px; aspect-ratio: 1; border-radius: 12px; background: #fff8e7; border: 3px solid #8b5a2b; display: flex; align-items: center; justify-content: center; }
+.slot img { width: 72%; height: 72%; pointer-events: none; }
+.slot.empty { background: #fff8e714; border: 2px dashed #fff8e740; }
 .slot.on { border-color: #ffd23f; box-shadow: 0 0 0 3px #ffd23f88; transform: translateY(-3px); }
 .slot .n { position: absolute; right: 2px; bottom: 0; font-size: 12px; font-weight: 800; color: #2b2116; text-shadow: 0 0 3px #fff, 0 0 3px #fff; }
 .slot .wbar { position: absolute; left: 4px; right: 4px; bottom: 3px; height: 4px; background: #0002; border-radius: 2px; }
@@ -124,7 +126,13 @@ button { font: inherit; cursor: pointer; border: none; }
 /* Počítač (a tablet na šírku): hra na celú obrazovku; koľko sveta je vidno, určuje uhlopriečka (D.VIEW_DIAG) */
 @media (min-width: 820px) and (min-aspect-ratio: 1/1) {
   #app { max-width: none; }
-  #hotbar { justify-content: safe center; }
+  /* Počítač: žiadny pás cez celú obrazovku – malý panel v strede, len taký široký, koľko treba */
+  #bottom { left: 50%; right: auto; bottom: 12px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); display: grid; grid-template-columns: auto auto; align-items: center; column-gap: 14px; padding: 6px 14px 10px; border: 3px solid #8b5a2b; border-radius: 18px; box-shadow: 0 4px 14px #0006; }
+  #selName { grid-column: 1 / -1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #hotbar { padding: 4px 0 0; min-width: 0; }
+  .slot { flex: 0 0 58px; }
+  .slot.empty { display: none; }
+  #emotes { padding: 4px 0 0; gap: 8px; }
   #chatbox { left: 50%; right: auto; width: min(560px, calc(100% - 16px)); transform: translateX(-50%); }
   #modal { align-items: center; }
   .modal-card { max-width: 620px; max-height: 86%; border-radius: 22px; border-bottom: 4px solid #8b5a2b; }
