@@ -671,7 +671,9 @@
     return best;
   }
 
-  const api = { R, NX, NY, NZ, M, FINE, modelsOnRay, TREE_KINDS, treeKind, PALETTE, EMISSIVE, colorOf, hash, buildGrid, get, surfaceY, sunDir, daylight, sunVisibility, sunHours, groundHeight, WATER_Y, waterMask, waterQuads, lilyPads, nearestWater };
+  // farby lístia stromu v danom období (pre padajúce lístie); ihličnany a zima → null
+  const leafMats = (kind, se) => (LEAVES[kind] && LEAVES[kind][se]) || null;
+  const api = { R, NX, NY, NZ, M, FINE, modelsOnRay, TREE_KINDS, treeKind, leafMats, PALETTE, EMISSIVE, colorOf, hash, buildGrid, get, surfaceY, sunDir, daylight, sunVisibility, sunHours, groundHeight, WATER_Y, waterMask, waterQuads, lilyPads, nearestWater };
   root.World3D = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof self !== 'undefined' ? self : this);

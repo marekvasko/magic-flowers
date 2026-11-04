@@ -860,6 +860,13 @@
       body.appendChild(h('div', { class: 'row', style: 'flex-direction:column;align-items:stretch' },
         h('b', null, '🌊 Odrazy vody'), h('div', { style: 'display:flex;gap:6px' }, ...btns),
         h('small', null, 'Platí len na tomto zariadení. Skutočné odrazy ukážu vo vode aj hráčov a kvety, ale viac zaťažia telefón.')));
+      const popts = [['low', 'menej'], ['high', 'viac']];
+      const pbtns = popts.map(([q, l]) => h('button', { class: 'btn' + (R3.particleQuality === q ? '' : ' gray'), style: 'flex:1', onclick: () => {
+        R3.setParticleQuality(q); pbtns.forEach((b, i) => b.classList.toggle('gray', popts[i][0] !== q));
+      } }, l));
+      body.appendChild(h('div', { class: 'row', style: 'flex-direction:column;align-items:stretch' },
+        h('b', null, '✨ Častice (dážď, oheň, lístie, víly)'), h('div', { style: 'display:flex;gap:6px' }, ...pbtns),
+        h('small', null, 'Platí len na tomto zariadení. Na slabšom telefóne zvoľ menej.')));
     }
     body.appendChild(h('button', { class: 'btn alt', style: 'width:100%;padding:12px;margin-top:6px', onclick: () => { location.href = (MODE3D ? '/' : '/3d') + '?room=' + S.room; } }, MODE3D ? '🗺️ Prepnúť na 2D' : '🧊 Prepnúť na 3D (beta)'));
     body.appendChild(h('button', { class: 'big', style: 'margin:6px 0', onclick: () => openUI('help') }, '❓ Ako hrať'));
