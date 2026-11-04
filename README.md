@@ -154,6 +154,7 @@ The same game, server and gardens, rendered with Three.js (`public/render3d.mjs`
   - **Market lantern:** a small two-cube flame flickers inside it with a glow and an occasional spark; its light flickers as strongly as the cauldron fire.
   - **Fairies** (the fairy visit and the fairy potion): a glow with a white core, fluttering wings and a sparkle trail. At night each fairy is also a moving point light.
   - **Falling leaves** from deciduous trees in their seasonal colours: many in autumn, a few in summer, apple blossom petals in spring, none in winter. Leaves flip as they fall and rest on the ground for a moment.
+  - **Fireflies** at night around trees, the pond and the mushroom ring: many in summer, fewer in spring and autumn, none in winter or in rain. They drift slowly at knee-to-head height and blink (a short flash, then a faint glow). They fade in at dusk and fade out at dawn.
   - Snow is still drawn on the 2D overlay.
   - **Menu → "✨ Častice"** (per device, `localStorage.mfParticles`): *menej* (default on touch devices) or *viac*.
 - **Gameplay hook:** `World3D.sunHours(grid, x, y, season)` returns how many hours of direct sun a tile gets per day. Leafless deciduous trees let more sun through in winter. In 3D, tapping a plant already shows it; later it can replace the simple "shade = next to a tree" rule on the server.

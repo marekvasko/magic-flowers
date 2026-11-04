@@ -104,6 +104,15 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
   // ---------- Stav častíc ----------
   let flames = [], embers = [], smoke = [], sparks = [], leaves = [], splashes = [];
   let fireAcc = 0, emberAcc = 0, smokeAcc = 0;
+  // svetlušky: domovy pri stromoch, jazierku a hubovom kruhu (prepočítajú sa, keď sa zmení mapa)
+  let flies = [], homes = [], homesSig = '';
+  const FLY_COL = [0.78, 1, 0.32], FLY_HOME = { tree: 1, water: 1, shroom: 1 };
+  function flyHomes() {
+    const sig = S.tiles.length + ':' + S.tiles.reduce((n, t) => n + (FLY_HOME[t.g] ? 1 : 0), 0);
+    if (sig === homesSig) return;
+    homesSig = sig; homes = [];
+    S.tiles.forEach((t, i) => { if (FLY_HOME[t.g]) homes.push({ x: i % D.W + 0.5, z: ((i / D.W) | 0) + 0.5, water: t.g === 'water' }); });
+  }
   const FLAME_HOT = [1, 0.95, 0.62], FLAME_MID = [1, 0.55, 0.14], FLAME_END = [0.75, 0.16, 0.05];
   const RAIN_COL = [0.72, 0.82, 0.98], SMOKE_COL = [0.55, 0.55, 0.58], SPLASH_COL = [0.75, 0.86, 1];
   const fairyCol = new Map();
@@ -251,6 +260,30 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
       const flip = p.rest < 0 ? 0.7 + 0.3 * Math.sin(p.life * 6 + p.ph) : 0.8;
       const a = p.rest < 0 ? Math.min(1, p.life * 3) : Math.min(1, 4 - p.rest);
       soft.put(p.x, p.y, p.z, litC(p.c).map(v => v * flip), p.s * (p.rest < 0 ? 0.7 + 0.3 * Math.abs(Math.sin(p.life * 3 + p.ph)) : 1), a, PIXEL);
+      return true;
+    });
+
+    // ---- svetlušky: len v noci, najviac v lete, v zime žiadne; blikajú a pomaly krúžia ----
+    const dark = Math.max(0, 1 - W.daylight(ctx.min) / 0.35);
+    const flyWant = se === 3 || S.weather === 'rain' ? 0 : Math.round((se === 1 ? 45 : 18) * dark * q);
+    if (flyWant) flyHomes();
+    if (flies.length < flyWant && homes.length) {
+      const cand = homes.filter(h => near(h.x, h.z));
+      if (cand.length) {
+        const h = pick(cand), x = h.x + rnd(-1.2, 1.2), z = h.z + rnd(-1.2, 1.2);
+        flies.push({ x, z, y: (h.water ? W.WATER_Y : groundAt(grid, x, z)) + rnd(0.3, 1.3), r: rnd(0.3, 0.8), w: [rnd(0.2, 0.5), rnd(0.3, 0.7), rnd(0.2, 0.5)], ph: [rnd(0, 9), rnd(0, 9), rnd(0, 9)], blink: rnd(1.3, 2.6), bp: rnd(0, 9), a: 0, out: false });
+      }
+    }
+    if (flies.length > flyWant) for (let i = flyWant; i < flies.length; i++) flies[i].out = true;
+    flies = flies.filter(f => {
+      f.a = Math.max(0, Math.min(1, f.a + (f.out || !near(f.x, f.z, 1) ? -dt : dt * 0.5)));
+      if (f.out && f.a <= 0) return false;
+      if (!near(f.x, f.z, 1) && f.a <= 0) return false;
+      const x = f.x + Math.sin(t * f.w[0] + f.ph[0]) * f.r, y = f.y + Math.sin(t * f.w[1] + f.ph[1]) * 0.18, z = f.z + Math.cos(t * f.w[2] + f.ph[2]) * f.r;
+      // blik: krátke rozsvietenie, potom tma (zostane slabý odlesk, aby svetluška nezmizla úplne)
+      const b = Math.pow(Math.max(0, Math.sin(t * 6.283 / f.blink + f.bp)), 3);
+      glow.put(x, y, z, FLY_COL, 0.6, f.a * (0.1 + 0.9 * b), GLOW);
+      glow.put(x, y, z, [1, 1, 0.75], 0.1, f.a * (0.3 + 0.7 * b), GLOW);
       return true;
     });
 
