@@ -270,8 +270,8 @@
   const AREA_NAMES = { garden: 'Záhrada', hory: 'Hory' };
   // prechod medzi plochami (stmavnutie s menom): ikona, farba žiary na okrajoch a ozdoby po okrajoch – nová plocha pridá záznam
   const AREA_FX = {
-    garden: { icon: '🌸', glow: '#8fd16a', deco: ['🌸', '🌼', '🌷', '🌿', '🦋', '🍃'] },
-    hory: { icon: '🏔️', glow: '#a9d8ff', deco: ['❄️', '🌲', '⛰️', '🪨', '🦅', '❄️'] },
+    garden: { icon: '🌸', glow: '#7fa86a', deco: ['🌸', '🌼', '🌷', '🌿', '🦋', '🍃'] },
+    hory: { icon: '🏔️', glow: '#9bb4c8', deco: ['❄️', '🌲', '⛰️', '🪨', '🦅', '❄️'] },
   };
   const GATES = { garden: [[16, 0], [17, 0]], hory: [[9, H - 1], [10, H - 1]] };
   const ARRIVE = { garden: { x: 17, y: 1.6 }, hory: { x: 10, y: H - 2.4 } };
