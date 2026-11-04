@@ -213,6 +213,9 @@ test('po ľadovci sa chodí: hore najviac pol bloku (skokom blok), dolu hocikoľ
   assert.ok(D.canStep(snow, ice(4), 2), 'so skokom o blok');
   assert.ok(D.canStep(ice(8), snow) && D.canStep(ice(8), ice(0)), 'dolu hocikoľko');
   assert.ok(!D.canStep(ice(0), { g: 'cliff' }));
+  assert.ok(D.canStep(ice(2), ice(2), 0, true), 'plazením po rovine áno');
+  assert.ok(!D.canStep(snow, ice(1), 0, true) && !D.canStep(ice(2), snow, 0, true), 'plazením cez schod ani hore, ani dolu');
+  assert.ok(D.canStep(snow, { g: 'rock' }, 0, true), 'mimo ľadovca plazenie nič nemení');
   // plný ľadovec je schodisko: z okraja hôr sa dá dôjsť na každé jeho políčko
   const r = room(), tiles = r.hory, start = tiles.findIndex((t, i) => t.g === 'snow' && tiles[i + D.W] && tiles[i + D.W].g === 'glacier');
   const seen = new Set([start]), q = [start];

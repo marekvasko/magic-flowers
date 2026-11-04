@@ -226,8 +226,14 @@
   function season() { return window.MF_TIME && window.MF_TIME.season != null ? window.MF_TIME.season : D.seasonOf(S.day); }
   const GLACIER_MAX = D.glacierLevels(D.buildMountains()); // pôvodná výška ľadu na políčkach hôr
   function tileAt(x, y) { return (x < 0 || y < 0 || x >= W || y >= H) ? null : S.tiles[y * W + x]; }
-  // Dá sa vstúpiť na políčko pod bodom (x, y) z políčka here? Na ľadovec len o pol bloku vyššie (vo výskoku o blok).
-  function solid(x, y, here, lift) { const t = tileAt(Math.floor(x), Math.floor(y)); return !t || !D.canStep(here, t, lift); }
+  // Dá sa vstúpiť na políčko pod bodom (x, y) z políčka here? Na ľadovec len o pol bloku vyššie (vo výskoku o blok),
+  // plazením vôbec nie cez výškový rozdiel – políčka, na ktorých už čiastočne leží (overlap), ho však nezadržia.
+  function solid(x, y, here, lift, crawl, overlap) {
+    const tx = Math.floor(x), ty = Math.floor(y), t = tileAt(tx, ty);
+    if (!t) return true;
+    if (crawl && D.passable(t) && overlap.has(ty * W + tx)) return false;
+    return !D.canStep(here, t, lift, crawl);
+  }
   function playerOn(tx, ty) {
     for (const o of S.others.values()) if (Math.hypot(o.x - (tx + 0.5), o.y - (ty + 0.5)) < 0.8) return o;
     return null;
@@ -516,7 +522,7 @@
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
         const nx = x + dx, ny = y + dy, n = ny * W + nx;
         if (nx < 0 || ny < 0 || nx >= W || ny >= H || prev[n] !== -2) continue;
-        if (!D.canStep(S.tiles[i], S.tiles[n])) continue;
+        if (!D.canStep(S.tiles[i], S.tiles[n], 0, S.me.crawl)) continue;
         prev[n] = i; q.push(n);
       }
     }
@@ -1056,7 +1062,7 @@
       <p>📋 <b>Zákazky</b> nájdeš na nástenke pri 👵 babke. Zarezervuj si ich, termín platí; odovzdávať môžeš aj po častiach. Za splnenie dostaneš peniaze a ⭐ reputáciu, za nesplnenie reputáciu stratíš. ⚗️ V babkinom <b>kotlíku</b> sa z troch kvetov varia elixíry.</p>
       <p>🥀 <b>Kvety vädnú:</b> odrezaný kvet vydrží len pár dní (mak 2, tulipán 4, chryzantéma 7…) a s vekom klesá jeho výkupná cena. Rozkvitnutá rastlina na poli po čase odkvitne. V chladnom sklade vädnú kvety 2× pomalšie, zvädnuté sa dajú skompostovať.</p>
       <p>📦 V <b>domčeku</b> je spoločný sklad pre celú záhradu – peniaze má každý svoje.</p>
-      <p>🏔️ <b>Hory:</b> chodník na severovýchodnom okraji záhrady (za babkinou chalúpkou) vedie do hôr. Na ľadovci pod skalami vysekáš <b>krompáčom</b> ⛏️ ľad – každé ťuknutie zoberie vrchnú vrstvu. Po ľadovci sa dá chodiť: vyjdeš o pol bloku, so skokom o celý blok, a kde stojíš, tam ľad nedorastie. Ľadu je málo: ľadovec sám nedorastá, len keď prší alebo sneží, a v teple sa topí od okrajov. Kto ho vykope priveľa, nechá ostatných bez ľadu. V zime vysekáš ľad aj na zamrznutom jazierku (z každého políčka raz za deň).</p>
+      <p>🏔️ <b>Hory:</b> chodník na severovýchodnom okraji záhrady (za babkinou chalúpkou) vedie do hôr. Na ľadovci pod skalami vysekáš <b>krompáčom</b> ⛏️ ľad – každé ťuknutie zoberie vrchnú vrstvu. Po ľadovci sa dá chodiť: vyjdeš o pol bloku, so skokom o celý blok, a kde stojíš, tam ľad nedorastie. Plazením cez schod nezídeš ani nevyjdeš – nespadneš z hrany. Ľadu je málo: ľadovec sám nedorastá, len keď prší alebo sneží, a v teple sa topí od okrajov. Kto ho vykope priveľa, nechá ostatných bez ľadu. V zime vysekáš ľad aj na zamrznutom jazierku (z každého políčka raz za deň).</p>
       <p>🧊 Uneseš najviac ${D.ICE_CARRY} kusov ľadu, ťahá ťa dolu (chodíš pomalšie) a do pol dňa sa ti v batohu roztopí – ponáhľaj sa s ním do ľadovne. V lete ho trh dobre vykúpi, v zime takmer vôbec.</p>
       <p>🧊 <b>Ľadovňa</b> pri domčeku (kúpi ju ktokoľvek na trhu v záložke Vylepšiť) drží ${D.ICEHOUSE.cap} blokov ľadu. Kým je v nej ľad, kvety v sklade vädnú 4× pomalšie. Ľad sa topí – v lete rýchlo, v zime vôbec – tak ho dopĺňaj.</p>
       <p>⚙️ V menu sa dá nastaviť, či svet <b>beží ďalej aj bez hráčov</b>, a ako dlho trvá herný deň.</p>
@@ -1167,9 +1173,14 @@
       // hráč stojí na najvyššom políčku pod sebou – kým celkom nezíde z ľadu, nezasekne sa o jeho hranu
       const corners = (x, y) => [[x - rx, y - ry], [x + rx, y - ry], [x - rx, y + ry], [x + rx, y + ry]];
       let here = tileAt(Math.floor(me.x), Math.floor(me.y));
-      for (const [cx, cy] of corners(me.x, me.y)) { const t = tileAt(Math.floor(cx), Math.floor(cy)); if (D.passable(t) && D.iceLevel(t) > D.iceLevel(here)) here = t; }
+      const overlap = new Set();
+      for (const [cx, cy] of corners(me.x, me.y)) {
+        const t = tileAt(Math.floor(cx), Math.floor(cy));
+        overlap.add(Math.floor(cy) * W + Math.floor(cx));
+        if (D.passable(t) && D.iceLevel(t) > D.iceLevel(here)) here = t;
+      }
       const lift = Math.floor((me.jz || 0) * D.GLACIER_LAYERS);
-      const free = (x, y) => corners(x, y).every(([cx, cy]) => !solid(cx, cy, here, lift));
+      const free = (x, y) => corners(x, y).every(([cx, cy]) => !solid(cx, cy, here, lift, me.crawl, overlap));
       const nx = me.x + vx * sp;
       if (free(nx, me.y)) me.x = nx;
       const ny = me.y + vy * sp;

@@ -398,11 +398,15 @@
 
   const BLOCK = { tree: 1, water: 1, hut: 1, babka: 1, cauldron: 1, stall: 1, well: 1, boulder: 1, house: 1, cliff: 1, glacier: 1, spruce: 1, icehouse: 1 };
   // Po ľadovci sa chodí po vrchu ľadu: hore najviac GLACIER_STEP vrstiev (pol bloku), dolu hocikoľko.
-  // lift = o koľko vrstiev vyššie je hráč vo výskoku (skokom sa vylezie aj o blok).
+  // lift = o koľko vrstiev vyššie je hráč vo výskoku (skokom sa vylezie aj o blok). Plazením sa výškový rozdiel neprejde ani hore, ani dolu.
   const GLACIER_STEP = 2;
   function iceLevel(t) { return t && t.g === 'glacier' ? t.ice || 0 : 0; }
   function passable(t) { return !!t && (!BLOCK[t.g] || t.g === 'glacier'); }
-  function canStep(from, to, lift) { return passable(to) && iceLevel(to) - iceLevel(from) <= GLACIER_STEP + (lift || 0); }
+  function canStep(from, to, lift, crawl) {
+    if (!passable(to)) return false;
+    const up = iceLevel(to) - iceLevel(from);
+    return crawl ? up === 0 : up <= GLACIER_STEP + (lift || 0);
+  }
   const TILLABLE = { grass: 'normal', forest: 'forest', sand: 'sand', rock: 'rock' };
 
   function isShade(tiles, x, y) {
