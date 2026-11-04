@@ -66,18 +66,18 @@ test('tajné číslo sveta je jedno a rôzne svety majú semienka inde', () => {
   assert.notDeepStrictEqual(spots(b), sa);
 });
 
-test('za deň poctivého hľadania z políčka na políčko (≈ 70 pokusov cez deň) nájdeš v priemere okolo 4 semienok', () => {
+test('za deň poctivého hľadania z políčka na políčko (pokus každý krok od 6:00 do 21:00) nájdeš v priemere okolo 8–10 semienok', () => {
   let found = 0;
   const days = 300;
   for (let d = 0; d < days; d++) {
     const r = room(0, 1000 + d);
-    for (let k = 0; k < 70; k++) {
-      r.tick = at(6 + k * 15 / 70, 1 + (d % 4)); // od 6:00 do 21:00
+    for (let k = 0; k < 180; k++) {
+      r.tick = at(6 + k * 15 / 180, 1 + (d % 4)); // od 6:00 do 21:00, jeden pokus za krok
       if (Scav.roll(r, grass[(d * 31 + k * 7) % grass.length])) found++;
     }
   }
   const avg = found / days;
-  assert.ok(avg > 2.5 && avg < 6, 'priemer za deň: ' + avg);
+  assert.ok(avg > 6 && avg < 14, 'priemer za deň: ' + avg);
 });
 
 test('divé semienko: len sezónne, nemagické a nie prísne druhy', () => {
