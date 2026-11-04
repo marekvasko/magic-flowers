@@ -1,5 +1,5 @@
 // 3D častice: dážď (kvapky s čľapnutím a kruhmi na vode), oheň pod kotlíkom (plamene, iskry, dym),
-// víly s trblietavou stopou a padajúce lístie zo stromov. Všetko je vo svete (nie na obrazovke),
+// víly s trblietavou stopou, padajúce lístie zo stromov a hlinka pri hľadaní semienok v tráve. Všetko je vo svete (nie na obrazovke),
 // takže častice sa hýbu s kamerou, zakrývajú ich budovy a padajú na zem.
 import * as THREE from '/vendor/three/three.module.js';
 
@@ -102,7 +102,8 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
   let lastRipple = 0;
 
   // ---------- Stav častíc ----------
-  let flames = [], embers = [], smoke = [], sparks = [], leaves = [], splashes = [];
+  let flames = [], embers = [], smoke = [], sparks = [], leaves = [], splashes = [], digs = [];
+  const DIG_COLS = ['#7a4a20', '#5b3a1a', '#74b84a', '#9b7b45'].map(hex);
   let fireAcc = 0, emberAcc = 0, smokeAcc = 0;
   // svetlušky: domovy pri stromoch, jazierku a hubovom kruhu (prepočítajú sa, keď sa zmení mapa)
   let flies = [], homes = [], homesSig = '';
@@ -326,6 +327,25 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
       p.life += dt; if (p.life >= p.max) return false;
       p.vy -= 9 * dt; p.x += p.vx * dt; p.z += p.vz * dt; p.y += p.vy * dt;
       soft.put(p.x, p.y, p.z, litC(SPLASH_COL), 0.04, 0.7 * (1 - p.life / p.max), PIXEL);
+      return true;
+    });
+
+    // ---- hľadanie semienok: zo stredu hľadaného políčka jemne odletuje hlinka a tráva sprava doľava (na obrazovke) ----
+    const diggers = [S.mySi].concat([...S.others.values()].map(o => o.si)).filter(si => si != null && si >= 0);
+    for (const si of diggers) {
+      const x = si % D.W + 0.5, z = ((si / D.W) | 0) + 0.5;
+      if (!near(x, z) || Math.random() >= dt * 12 * q) continue;
+      const v = rnd(0.4, 1);
+      digs.push({ x, z, y: groundAt(grid, x, z) + 0.03, vx: -camRight.x * v + rnd(-0.1, 0.1), vz: -camRight.z * v + rnd(-0.1, 0.1), vy: rnd(0.5, 0.9), life: 0, rest: -1, c: pick(DIG_COLS), s: rnd(0.03, 0.045) });
+    }
+    digs = digs.filter(p => {
+      p.life += dt;
+      if (p.rest < 0) {
+        p.vy -= 5 * dt; p.x += p.vx * dt; p.z += p.vz * dt; p.y += p.vy * dt;
+        const g = groundAt(grid, p.x, p.z);
+        if (p.y <= g + 0.01) { p.y = g + 0.01; p.rest = 0; }
+      } else if ((p.rest += dt) > 0.6) return false;
+      soft.put(p.x, p.y, p.z, litC(p.c), p.s, p.rest < 0 ? 1 : 1 - p.rest / 0.6, PIXEL);
       return true;
     });
 

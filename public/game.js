@@ -160,7 +160,8 @@
 
   // ---------- Pomocné ----------
   // ladenie: window.MF_TIME = { season: 0–3, min: 0–1439 } prepíše zobrazený čas (len lokálne vykresľovanie, nie server)
-  // Hráč hrabe v tráve (si = index hľadaného políčka, inak -1) – zo stredu políčka jemne odletuje hlinka a tráva sprava doľava (2D aj 3D)
+  // Hráč hrabe v tráve (si = index hľadaného políčka, inak -1) – zo stredu políčka jemne odletuje hlinka a tráva sprava doľava.
+  // V 3D sú to častice vo svete (particles3d.mjs), tu len v 2D.
   const searching = o => o && o.si != null && o.si >= 0;
   function scavDirt(si, dt) {
     if (Math.random() > dt * 12) return;
@@ -1104,8 +1105,10 @@
       p.vy += p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt;
     }
     S.fx = S.fx.filter(p => p.life < p.max);
-    if (searching({ si: S.mySi })) scavDirt(S.mySi, dt);
-    for (const o of S.others.values()) if (searching(o)) scavDirt(o.si, dt);
+    if (!MODE3D) {
+      if (searching({ si: S.mySi })) scavDirt(S.mySi, dt);
+      for (const o of S.others.values()) if (searching(o)) scavDirt(o.si, dt);
+    }
     for (const f of S.screenFx) f.life += dt;
     S.screenFx = S.screenFx.filter(f => f.life < f.max);
     if (S.vily && Math.random() < dt * 0.8) S.fx.push({ fairy: true, cx: me.x + (Math.random() - 0.5) * 6, cy: me.y + (Math.random() - 0.5) * 6, a: Math.random() * 6, rad: 0.5 + Math.random(), life: 0, max: 4, color: '#ff9cf0' });
