@@ -206,13 +206,15 @@
     setTimeout(() => el.classList.add('out'), 9000);
     setTimeout(() => { el.remove(); chatWheel(); }, 10000);
   }
-  // Kolotoč: čím vyššie je správa nad spodkom zoznamu, tým je ďalej vzadu (naklonená, menšia, priesvitnejšia).
-  // Rovnaký výpočet pre krátky log aj históriu, takže správy pri otvorení chatu nezmenia vzhľad.
+  // Kolotoč: len dve vrchné viditeľné správy sú „vzadu“ (naklonené, menšie, priesvitnejšie) – vrchná viac, druhá menej;
+  // posúvaním nadol idú dopredu. Rovnaký výpočet pre krátky log aj históriu; pri 1–2 správach sa nič nenakláňa.
   function chatWheel() {
     const box = $('chatbox').classList.contains('open') ? $('chathist') : $('chatlog');
-    const B = box.getBoundingClientRect().bottom, span = 260;
-    for (const el of box.children) {
-      const r = el.getBoundingClientRect(), d = Math.min(1, Math.max(0, (B - r.bottom) / span));
+    const items = [...box.children], T = box.getBoundingClientRect().top;
+    const vis = items.filter(el => el.getBoundingClientRect().bottom > T + 1);
+    const span = vis.length > 2 ? vis[2].getBoundingClientRect().top - vis[0].getBoundingClientRect().top : 0;
+    for (const el of items) {
+      const d = span ? Math.min(1, Math.max(0, 1 - (el.getBoundingClientRect().top - T) / span)) : 0;
       el.style.transform = d ? `translateZ(${-d * 140 | 0}px) rotateX(${d * 28 | 0}deg)` : '';
       el.style.opacity = (1 - d * 0.7).toFixed(2);
     }
