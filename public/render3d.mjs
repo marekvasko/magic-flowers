@@ -503,7 +503,7 @@ export function create(api) {
   // Kvalita odrazov (nastavenie na zariadení): none = len obloha, medium = polovičné rozlíšenie bez spritov,
   // real = plné rozlíšenie so všetkým (hráči, kvety, babka)
   const WATER_Q = ['none', 'medium', 'real'];
-  let waterQuality = 'medium';
+  let waterQuality = 'real';
   try { const q = localStorage.getItem('mfWater'); if (WATER_Q.includes(q)) waterQuality = q; } catch (e) { }
   function setWaterQuality(q) {
     if (!WATER_Q.includes(q)) return;

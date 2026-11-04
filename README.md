@@ -134,7 +134,7 @@ The same game, server and gardens, rendered with Three.js (`public/render3d.mjs`
   - **Waves:** procedural (directional waves plus noise), stepped to 16 px per block and 8 steps per second so they read as pixel art. Ripples appear when someone fills the watering can or walks along the shore.
   - **Ice (winter):** no waves, brushed-metal look with a reflection blurred along the streaks and an anisotropic (Ward) highlight.
   - **Lily pads:** small mini-cube meshes on top of the water.
-  - **Menu → "🌊 Odrazy vody"** (per device, `localStorage.mfWater`):
+  - **Menu → "🌊 Odrazy vody"** (per device, `localStorage.mfWater`, default *skutočné*):
     - *žiadne* – sky colour only;
     - *stredné* – half-resolution mirror, terrain and models only;
     - *skutočné* – full resolution including players, flowers and Babka.
