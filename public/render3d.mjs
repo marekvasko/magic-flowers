@@ -6,7 +6,6 @@ import * as THREE from '/vendor/three/three.module.js';
 const D = window.GameData, W = window.World3D, Art = window.Art;
 const R = W.R;
 const PITCH = Math.atan(1 / Math.SQRT2);       // klasická izometria ~35,26°
-const VIEW_BLOCKS = 11;                          // koľko blokov sa zmestí na šírku obrazovky
 const FACE_SHADE = [0.62, 0.62, 1.0, 0.5, 0.8, 0.8]; // +x, -x, +y, -y, +z, -z (ako v Minecrafte)
 const AO_CURVE = [0.5, 0.68, 0.84, 1];
 const GT = 32;                                   // px na políčko v textúre zeme
@@ -785,7 +784,7 @@ export function create(api) {
   }
 
   // ---------- Kamera ----------
-  let viewTop = 1;
+  let viewTop = 1, viewW = 11;
   // ---------- Objekty, za ktorými stojí hráč: zmiznú a ostane z nich len jemný obrys ----------
   let occluders = new Set(), occAt = 0;
   function computeOccluders(meH) {
@@ -862,10 +861,11 @@ export function create(api) {
   function resize() {
     const r = api.glCanvas.getBoundingClientRect();
     renderer.setSize(r.width, r.height, false);
-    const halfW = VIEW_BLOCKS / 2, H = VIEW_BLOCKS * r.height / r.width;
-    const bottomFrac = api.bottomH() / r.height;
-    viewTop = H * (1 - bottomFrac) * 0.5;          // hráč v strede viditeľnej časti nad lištou
-    camera.left = -halfW; camera.right = halfW; camera.top = viewTop; camera.bottom = viewTop - H;
+    // uhlopriečka zobrazovacej plochy má vždy D.VIEW_DIAG blokov (ako v 2D), hráč v strede
+    viewW = D.viewSize(r.width, r.height).w;
+    const vh = D.viewSize(r.width, r.height).h;
+    viewTop = vh / 2;
+    camera.left = -viewW / 2; camera.right = viewW / 2; camera.top = viewTop; camera.bottom = viewTop - vh;
     camera.updateProjectionMatrix();
   }
   const camTarget = new THREE.Vector3();
@@ -911,7 +911,7 @@ export function create(api) {
     const c = api.ov;
     return { x: (v3.x + 1) / 2 * c.width, y: (1 - v3.y) / 2 * c.height };
   }
-  function pxPerBlock() { return api.ov.width / VIEW_BLOCKS; }
+  function pxPerBlock() { return api.ov.width / viewW; }
 
   let babka = null, last = performance.now(), lastGround = 0;
   function frame(t) {

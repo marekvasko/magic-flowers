@@ -309,8 +309,7 @@
     $('rotR').onclick = () => R3 && R3.rotate(1);
     import('/render3d.mjs').then(() => {
       R3 = window.Render3D.create({
-        S, glCanvas: gl, ov: cv, ovCtx: ctx, EMOJI, curMin, season, ctxAction, frontTile,
-        bottomH: () => $('bottom').offsetHeight
+        S, glCanvas: gl, ov: cv, ovCtx: ctx, EMOJI, curMin, season, ctxAction, frontTile
       });
       window._r3pick = (x, y) => R3.pick(x, y); // pre ladenie / testy
       window._r3 = R3;
@@ -450,10 +449,10 @@
     const bar = $('hotbar');
     const ids = hotbarIds();
     bar.innerHTML = '';
-    for (const id of ids) {
+    for (const [i, id] of ids.entries()) {
       const d = document.createElement('div');
       d.className = 'slot' + (id === S.sel ? ' on' : '');
-      d.innerHTML = `<img src="${Art.icon(id)}">`;
+      d.innerHTML = `<img src="${Art.icon(id)}">` + (i < 9 ? `<span class="k">${i + 1}</span>` : '');
       if (id === 'can') d.innerHTML += `<div class="wbar"><i style="width:${S.water / S.canCap * 100}%"></i></div>`;
       else if (id.startsWith('fl_')) { // čerstvosť najstaršieho kusu
         const o = oldestBatch(id);
@@ -927,12 +926,13 @@
   // ---------- Herná slučka ----------
   const cam = { x: 0, y: 0, ts: 40 };
   let dpr = 1, lc = document.createElement('canvas'), lctx = lc.getContext('2d');
+  // Hra zaberá celú obrazovku; políčko je také veľké, aby uhlopriečka mala D.VIEW_DIAG políčok.
   function resize() {
     dpr = Math.min(2.5, window.devicePixelRatio || 1);
     const r = cv.getBoundingClientRect();
     cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
     lc.width = cv.width; lc.height = cv.height;
-    cam.ts = cv.width / 9;
+    cam.ts = Math.hypot(cv.width, cv.height) / D.VIEW_DIAG;
     if (R3) R3.resize();
   }
   addEventListener('resize', resize);
@@ -1011,10 +1011,11 @@
   function render(t) {
     const c = ctx, ts = cam.ts, cw = cv.width, ch = cv.height;
     const se = season(), m = curMin(), hr = m / 60, night = D.isNight(m);
-    const bottomH = ($('bottom').offsetHeight || 220) * dpr;
-    const viewH = ch - bottomH;
+    // hráč v strede obrazovky; pri okraji sveta sa výrez zastaví – horný a dolný okraj môže zájsť
+    // pod panel a lištu nástrojov (je tam len prázdno), aby hráča nikdy nezakryli
+    const hudH = $('hud').offsetHeight * dpr, barH = $('bottom').offsetHeight * dpr;
     cam.x = Math.max(0, Math.min(W * ts - cw, S.me.x * ts - cw / 2));
-    cam.y = Math.max(-ts * 1.2, Math.min(H * ts - viewH, S.me.y * ts - viewH * 0.55));
+    cam.y = Math.max(-hudH, Math.min(H * ts - ch + barH, S.me.y * ts - ch / 2));
     c.fillStyle = '#1b2e1d'; c.fillRect(0, 0, cw, ch);
     const x0 = Math.max(0, Math.floor(cam.x / ts)), x1 = Math.min(W - 1, Math.ceil((cam.x + cw) / ts));
     const y0 = Math.max(0, Math.floor(cam.y / ts)), y1 = Math.min(H - 1, Math.ceil((cam.y + ch) / ts));
