@@ -208,7 +208,8 @@
   }
   // Kolotoč v histórii: okno má 15 riadkov, spodných 13 je normálne, 14. a 15. riadok prichádzajú z pozadia –
   // správa je tam menšia, naklonená, priesvitnejšia a zasunutá za správu pod ňou (staršie sú vždy za novšími).
-  // Posúvaním nahor sa správa vysunie dopredu a za ňou sa objaví ďalšia. Pri menej ako 14 správach nič.
+  // Posúvaním nahor sa správa vysunie dopredu a za ňou sa objaví ďalšia; vďaka 2 prázdnym riadkom navrchu (CSS padding)
+  // sa dopredu dostane aj najstaršia. Pri menej ako 14 správach nič.
   // Počíta sa z polohy v rozložení (offsetTop), nie z bounding boxu, aby transformácia neovplyvňovala sama seba.
   const CHAT_ROW = 25;
   function chatWheel() {
