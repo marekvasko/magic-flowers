@@ -1,0 +1,205 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const D = require('../shared/data.js');
+const I = require('../items.js');
+const Ice = require('../ice.js');
+const TPD = D.TICKS_PER_DAY;
+
+// Minimálny svet: záhrada z generátora, hory, sklad
+function room(tick) {
+  const r = { tick: tick || 0, storage: {}, tiles: D.buildMap().map(g => ({ g, s: null })), hory: Ice.loadHory(null), icehouse: null };
+  Ice.applyIcehouse(r);
+  return r;
+}
+const find = (tiles, g) => tiles.findIndex(t => t.g === g);
+
+test('hory majú rovnakú veľkosť ako záhrada, prechody a príchody sedia', () => {
+  const h = D.buildMountains(), g = D.buildMap();
+  assert.strictEqual(h.length, D.W * D.H);
+  for (const area of D.AREAS) {
+    const tiles = D.buildArea(area);
+    for (const [x, y] of D.GATES[area]) assert.strictEqual(tiles[y * D.W + x], 'gate', `${area} ${x},${y}`);
+    const a = D.ARRIVE[area], t = tiles[Math.floor(a.y) * D.W + Math.floor(a.x)];
+    assert.ok(!D.BLOCK[t] && t !== 'gate', `príchod do ${area} je na voľnom políčku (${t})`);
+  }
+  assert.ok(h.includes('glacier') && h.includes('water'));
+  assert.strictEqual(g.filter(t => t === 'lot').length, 4);
+});
+
+test('z príchodu v horách sa dá dôjsť k ľadovcu aj späť k prechodu', () => {
+  const tiles = D.buildMountains(), W = D.W, H = D.H;
+  const a = D.ARRIVE.hory, start = Math.floor(a.y) * W + Math.floor(a.x);
+  const seen = new Set([start]), q = [start];
+  while (q.length) {
+    const i = q.shift(), x = i % W, y = (i / W) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx, ny = y + dy, n = ny * W + nx;
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H || seen.has(n) || D.BLOCK[tiles[n]]) continue;
+      seen.add(n); q.push(n);
+    }
+  }
+  const gates = D.GATES.hory.map(([x, y]) => y * W + x);
+  assert.ok(gates.some(i => seen.has(i)), 'prechod do záhrady');
+  const nextToGlacier = [...seen].some(i => [1, -1, W, -W].some(d => tiles[i + d] === 'glacier'));
+  assert.ok(nextToGlacier, 'k ľadovcu sa dá podísť');
+});
+
+test('prechod: na políčku gate vráti druhú plochu', () => {
+  const r = room();
+  const [gx, gy] = D.GATES.garden[0], [hx, hy] = D.GATES.hory[0];
+  assert.strictEqual(Ice.gateTarget(r.tiles, 'garden', gx + 0.5, gy + 0.3), 'hory');
+  assert.strictEqual(Ice.gateTarget(r.hory, 'hory', hx + 0.5, hy + 0.7), 'garden');
+  assert.strictEqual(Ice.gateTarget(r.tiles, 'garden', D.SPAWN.x, D.SPAWN.y), null);
+});
+
+test('ľadovec: úrovne od pol bloku na okraji po 2 bloky v strede', () => {
+  const g = D.buildMountains(), L = D.glacierLevels(g);
+  g.forEach((t, i) => assert.strictEqual(L[i] > 0, t === 'glacier'));
+  const edge = g.findIndex((t, i) => t === 'glacier' && g[i + D.W] !== 'glacier');
+  assert.strictEqual(L[edge], 2, 'okraj = pol bloku = 2 vrstvy');
+  assert.ok(Math.max(...L) >= 6 && Math.max(...L) <= D.GLACIER_TOP, 'stred má aspoň 3 úrovne, najviac 2 bloky');
+  // susedné políčka sa líšia najviac o jednu úroveň (pol bloku)
+  g.forEach((t, i) => { if (t === 'glacier' && g[i + 1] === 'glacier') assert.ok(Math.abs(L[i] - L[i + 1]) <= 2); });
+});
+
+test('ľadovec: krompáč berie vrchnú vrstvu až po dno', () => {
+  const r = room(), i = find(r.hory, 'glacier'), max = Ice.LEVELS[i];
+  assert.strictEqual(r.hory[i].ice, max);
+  for (let k = 0; k < max; k++) assert.ok(Ice.digIce(r, r.hory, i, 1).ok);
+  assert.strictEqual(Ice.digIce(r, r.hory, i, 1).ok, false);
+});
+
+test('ľadu je málo: menší ľadovec, sám nedorastá, topí sa od okrajov', () => {
+  const r = room(), total = () => Ice.glacierTotal(r);
+  assert.ok(Ice.glacierMax() <= 140, `ľadovec má len ${Ice.glacierMax()} vrstiev`);
+  assert.deepStrictEqual(Ice.dawnIce(r, 3, 'sun'), [], 'v zime bez snehu sa nič nemení');
+  r.tick += D.TICKS_PER_DAY;
+  Ice.dawnIce(r, 1, 'sun');                      // slnečný letný deň
+  assert.strictEqual(total(), Ice.glacierMax() - D.GLACIER_MELT[1]);
+  const edges = r.hory.map((t, i) => i).filter(i => Ice.LEVELS[i] === 2);
+  assert.ok(r.hory.every((t, i) => t.ice == null || Ice.LEVELS[i] === 2 || t.ice === Ice.LEVELS[i]), 'topí sa len okraj');
+  assert.ok(edges.some(i => r.hory[i].ice < 2));
+  // leto bez dažďa: po čase sa minie úplne
+  for (let d = 0; d < 40; d++) { r.tick += D.TICKS_PER_DAY; Ice.dawnIce(r, 1, 'sun'); }
+  assert.strictEqual(total(), 0, 'ľadovec sa môže minúť');
+});
+
+test('ľadovec dorastá len v daždi a snehu, raz za deň, od skál nadol', () => {
+  const r = room();
+  for (const t of r.hory) if (t.ice != null) t.ice = 0;
+  r.tick = 5 * D.TICKS_PER_DAY;
+  Ice.dawnIce(r, 0, 'rain');
+  assert.strictEqual(Ice.glacierTotal(r), D.GLACIER_GROW.rain, 'prázdny ľadovec sa netopí, dážď pridá vrstvy');
+  const top = r.hory.map((t, i) => i).filter(i => Ice.LEVELS[i] === Math.max(...Ice.LEVELS));
+  assert.ok(top.every(i => r.hory[i].ice > 0), 'najprv pod skalami');
+  assert.strictEqual(Ice.feedGlacier(r, 'rain'), 0, 'v ten istý deň druhý dážď nepridá');
+  r.tick += D.TICKS_PER_DAY;
+  assert.strictEqual(Ice.feedGlacier(r, 'snow'), D.GLACIER_GROW.snow);
+  assert.strictEqual(Ice.feedGlacier(r, 'sun'), 0);
+  for (let d = 0; d < 50; d++) { r.tick += D.TICKS_PER_DAY; Ice.feedGlacier(r, 'snow'); }
+  assert.strictEqual(Ice.glacierTotal(r), Ice.glacierMax(), 'nedorastie nad pôvodnú výšku');
+});
+
+test('ľad v batohu sa do pol dňa roztopí, od najstaršieho', () => {
+  const sv = { inv: {} }, c = I.playerC(sv);
+  I.addItems(c, 'ice', 2, 0);
+  I.addItems(c, 'ice', 1, 100);
+  assert.strictEqual(I.meltSweep(c, D.ICE_LIFE - 1), 0);
+  assert.strictEqual(I.meltSweep(c, D.ICE_LIFE), 2);
+  assert.strictEqual(sv.inv.ice, 1);
+  assert.strictEqual(I.meltSweep(c, D.ICE_LIFE + 100), 1);
+  assert.ok(!sv.inv.ice && !sv.fb.ice);
+  assert.deepStrictEqual(I.wiltSweep(c, 10 * D.TICKS_PER_DAY), {}, 'ľad nevädne na zvädnuté kvety');
+});
+
+test('jazierko: ľad len v zime, z políčka raz za deň, cez noc zamrzne', () => {
+  const r = room(), i = find(r.tiles, 'water');
+  assert.strictEqual(Ice.digIce(r, r.tiles, i, 1).ok, false, 'v lete nie je zamrznuté');
+  assert.ok(Ice.digIce(r, r.tiles, i, 3).ok);
+  assert.strictEqual(Ice.digIce(r, r.tiles, i, 3).ok, false, 'druhý raz v ten istý deň nie');
+  assert.ok(Ice.dawnIce(r, 3, 'sun').includes('garden'));
+  assert.ok(!r.tiles[i].cut);
+  assert.ok(Ice.digIce(r, r.tiles, i, 3).ok);
+  assert.strictEqual(Ice.digIce(r, r.tiles, find(r.tiles, 'grass'), 3).ok, false);
+});
+
+test('uloženie hôr zachová zásobu ľadu a otvory, nové hory majú plný ľadovec', () => {
+  const r = room(), i = find(r.hory, 'glacier'), w = find(r.hory, 'water');
+  Ice.digIce(r, r.hory, i, 3); Ice.digIce(r, r.hory, w, 3);
+  const back = Ice.loadHory(JSON.parse(JSON.stringify(Ice.saveHory(r))));
+  assert.strictEqual(back[i].ice, Ice.LEVELS[i] - 1);
+  assert.strictEqual(back[w].cut, 1);
+  assert.strictEqual(Ice.loadHory(undefined)[i].ice, Ice.LEVELS[i]);
+  const big = Ice.loadHory(r.hory.map(t => ({ ice: 99 })));
+  assert.strictEqual(big[i].ice, Ice.LEVELS[i], 'uložená výška sa oreže na pôvodnú');
+});
+
+test('krompáč sa kupuje raz, s dostatkom mincí', () => {
+  const sv = { coins: 10, rep: 0, inv: {} };
+  assert.ok(Ice.buyTool(sv, 'pick'));
+  sv.coins = 100;
+  assert.strictEqual(Ice.buyTool(sv, 'pick'), null);
+  assert.strictEqual(sv.coins, 100 - D.TOOLS.pick.price);
+  assert.strictEqual(sv.inv.pick, 1);
+  assert.ok(Ice.buyTool(sv, 'pick'), 'druhý krompáč nie');
+  assert.ok(Ice.buyTool(sv, 'nic'));
+});
+
+test('ľadovňa: stavba na pozemku, reputácia, prekopaná zem', () => {
+  const r = room(), sv = { coins: 1000, rep: 0, inv: {} };
+  assert.ok(Ice.buildIcehouse(r, sv), 'bez reputácie nie');
+  sv.rep = D.REP_LEVELS[D.ICEHOUSE.rep];
+  const lot = Ice.lotIdx();
+  r.tiles[lot[0]].s = { k: 'normal' };
+  assert.ok(Ice.buildIcehouse(r, sv), 'na prekopanej zemi nie');
+  r.tiles[lot[0]].s = null;
+  assert.strictEqual(Ice.buildIcehouse(r, sv), null);
+  assert.strictEqual(sv.coins, 1000 - D.ICEHOUSE.price);
+  assert.ok(lot.every(i => r.tiles[i].g === 'icehouse'));
+  assert.ok(Ice.buildIcehouse(r, sv), 'druhá ľadovňa nie');
+});
+
+test('ľadovňa sa plní do kapacity a topí sa podľa obdobia (v zime nie)', () => {
+  const r = room();
+  assert.strictEqual(Ice.fillIcehouse(r, 5), 0, 'nepostavená');
+  r.icehouse = { built: true, ice: 0 };
+  assert.strictEqual(Ice.fillIcehouse(r, 100), D.ICEHOUSE.cap);
+  assert.strictEqual(Ice.fillIcehouse(r, 1), 0, 'plná');
+  assert.strictEqual(Ice.meltHourly(r, 3), false);
+  assert.strictEqual(r.icehouse.ice, D.ICEHOUSE.cap, 'v zime sa netopí');
+  let hours = 0, emptied = false;
+  while (!emptied && hours < 1000) { emptied = Ice.meltHourly(r, 1); hours++; }
+  assert.strictEqual(hours, Math.round(D.ICEHOUSE.cap / D.ICEHOUSE.melt[1]), 'v lete sa roztopí za cap / melt hodín');
+  assert.strictEqual(r.icehouse.ice, 0);
+  assert.strictEqual(Ice.meltHourly(r, 1), false, 'prázdna sa už nevyprázdni znova');
+});
+
+test('s ľadom v ľadovni kvety v sklade starnú pomalšie, vek sa pri zmene neskočí', () => {
+  const r = room();
+  r.icehouse = { built: true, ice: 0 };
+  I.addItems(I.storageC(r), 'fl_tulipan', 2, 0);
+  const age = () => I.batchesView(I.storageC(r), r.tick).fl_tulipan[0].age;
+  r.tick = 100;
+  assert.strictEqual(age(), 100 * D.STORAGE_AGE_RATE);
+  Ice.fillIcehouse(r, 2);
+  assert.strictEqual(I.storageRate(r), D.ICEHOUSE.rate);
+  assert.strictEqual(age(), 50, 'pri naplnení sa vek nezmení');
+  r.tick = 200;
+  assert.strictEqual(age(), 50 + 100 * D.ICEHOUSE.rate);
+  Ice.setIce(r, 0);                         // roztopí sa
+  assert.strictEqual(age(), 75, 'pri roztopení sa vek nezmení');
+  r.tick = 300;
+  assert.strictEqual(age(), 75 + 100 * D.STORAGE_AGE_RATE);
+  // tulipán (4 dni) v chladenom sklade vydrží 4 / 0,25 = 16 dní
+  const r2 = room(); r2.icehouse = { built: true, ice: D.ICEHOUSE.cap };
+  I.addItems(I.storageC(r2), 'fl_tulipan', 1, 0);
+  assert.deepStrictEqual(I.wiltSweep(I.storageC(r2), 16 * TPD - 1), {});
+  assert.deepStrictEqual(I.wiltSweep(I.storageC(r2), 16 * TPD), { 'Tulipán': 1 });
+});
+
+test('ľad a krompáč: názvy, krompáč je náradie', () => {
+  assert.strictEqual(D.itemName('ice'), 'Ľad');
+  assert.strictEqual(D.itemName('pick'), 'Krompáč');
+  assert.ok(D.isTool('pick') && D.isTool('hoe') && !D.isTool('ice'));
+  assert.strictEqual(D.sellPrice('ice'), 0);
+});

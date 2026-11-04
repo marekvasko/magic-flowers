@@ -288,6 +288,7 @@ const Art = (() => {
   // ---- Prostredie ----
   const GRASS = ['#86c95b', '#74b84a', '#aab24e', '#e7edf0'];
   const FOREST = ['#5f9a46', '#4f8a3c', '#8a8a3f', '#cfd8dc'];
+  const ALP = ['#8cc76a', '#7fbb5c', '#b0a95a', '#eef3f6'];
 
   function ground(c, g, x, y, s, se, t, tx, ty) {
     const h = hash(tx, ty);
@@ -298,9 +299,59 @@ const Art = (() => {
       case 'rock': case 'boulder': base = se === 3 ? '#d8dcde' : '#a9a39a'; break;
       case 'water': base = se === 3 ? '#a9d4ec' : '#4aa3df'; break;
       case 'forest': case 'ring': case 'shroom': case 'tree': base = FOREST[se]; break;
+      case 'alp': case 'spruce': base = ALP[se]; break;
+      case 'scree': base = se === 3 ? '#e3e7ea' : '#b7b1a6'; break;
+      case 'snow': base = se === 3 ? '#f7fbfd' : '#eaf1f5'; break;
+      case 'glacier': base = '#a9d4ec'; break; // ako ľad na jazierku v zime
+      case 'cliff': base = se === 3 ? '#cfd4d7' : '#7d776f'; break;
+      case 'gate': base = se === 3 ? '#e0dccf' : '#d9b77e'; break;
+      case 'lot': base = se === 3 ? '#e4e1d8' : '#cfc6b4'; break;
       default: base = GRASS[se];
     }
     c.fillStyle = base; c.fillRect(x, y, s + 1, s + 1);
+    if (g === 'alp' || g === 'spruce') {
+      if (se !== 3) {
+        c.strokeStyle = 'rgba(30,80,20,0.3)'; c.lineWidth = Math.max(1, s * 0.025);
+        for (let i = 0; i < 2; i++) { const gx = x + hash(tx, ty, i) * s, gy = y + hash(tx, ty, i + 9) * s; c.beginPath(); c.moveTo(gx, gy); c.lineTo(gx - s * 0.03, gy - s * 0.07); c.stroke(); }
+        if (h > 0.8) circ(c, x + hash(tx, ty, 3) * s, y + hash(tx, ty, 4) * s, s * 0.045, h > 0.92 ? '#f4f3e8' : '#3f5fd8'); // plesnivec a horec
+      } else if (h > 0.7) circ(c, x + hash(tx, ty, 3) * s, y + hash(tx, ty, 4) * s, s * 0.05, '#fff');
+      return;
+    }
+    if (g === 'scree' || g === 'cliff') {
+      for (let i = 0; i < 4; i++) ell(c, x + hash(tx, ty, i) * s, y + hash(tx, ty, i + 5) * s, s * 0.06, s * 0.04, hash(tx, ty, i + 2) * 3, se === 3 ? 'rgba(150,160,170,0.35)' : 'rgba(80,75,70,0.35)');
+      return;
+    }
+    if (g === 'snow') {
+      for (let i = 0; i < 3; i++) circ(c, x + hash(tx, ty, i) * s, y + hash(tx, ty, i + 5) * s, s * 0.025, 'rgba(150,190,220,0.45)');
+      return;
+    }
+    if (g === 'glacier') { // rovnaké biele šmuhy ako na zamrznutom jazierku, len nehybné
+      c.strokeStyle = 'rgba(255,255,255,0.6)'; c.lineWidth = Math.max(1, s * 0.03);
+      for (let i = 0; i < 2; i++) {
+        const wy = y + s * (0.3 + i * 0.4), off = (hash(tx, ty, i + 20) - 0.5) * s * 0.2;
+        c.beginPath(); c.moveTo(x + s * 0.2 + off, wy); c.quadraticCurveTo(x + s * 0.4 + off, wy - s * 0.08, x + s * 0.6 + off, wy); c.stroke();
+      }
+      return;
+    }
+    if (g === 'gate') { // chodník na okraji mapy so šípkami a smerovníkom
+      const up = ty === 0;
+      c.strokeStyle = 'rgba(110,80,40,0.55)'; c.lineWidth = Math.max(1, s * 0.06);
+      for (let i = 0; i < 2; i++) {
+        const cy = y + s * (0.35 + i * 0.3), d = (up ? -1 : 1) * s * 0.1;
+        c.beginPath(); c.moveTo(x + s * 0.3, cy - d); c.lineTo(x + s * 0.5, cy + d); c.lineTo(x + s * 0.7, cy - d); c.stroke();
+      }
+      if (tx % 2 === 0) {
+        c.fillStyle = '#6d4c2f'; c.fillRect(x + s * 0.08, y + s * 0.15, s * 0.06, s * 0.7);
+        c.fillStyle = '#c9a77a'; c.fillRect(x - s * 0.02, y + s * 0.12, s * 0.3, s * 0.2);
+        c.font = (s * 0.17 | 0) + 'px serif'; c.textAlign = 'center'; c.fillStyle = '#000'; c.fillText(up ? '⛰️' : '🏡', x + s * 0.13, y + s * 0.28);
+      }
+      return;
+    }
+    if (g === 'lot') { // stavebný pozemok: štrk a kolíky v rohoch
+      for (let i = 0; i < 5; i++) circ(c, x + hash(tx, ty, i) * s, y + hash(tx, ty, i + 5) * s, s * 0.03, 'rgba(110,100,85,0.4)');
+      c.fillStyle = '#8b5a2b'; c.fillRect(x + s * (tx % 2 ? 0.82 : 0.08), y + s * (ty % 2 ? 0.8 : 0.08), s * 0.1, s * 0.12);
+      return;
+    }
     if (g === 'water') {
       c.strokeStyle = se === 3 ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.35)'; c.lineWidth = Math.max(1, s * 0.03);
       for (let i = 0; i < 2; i++) {
@@ -333,6 +384,28 @@ const Art = (() => {
       if (se === 2 && h > 0.6) ell(c, x + hash(tx, ty, 7) * s, y + hash(tx, ty, 8) * s, s * 0.06, s * 0.035, h * 6, '#d9822b');
     } else if (h > 0.7) circ(c, x + hash(tx, ty, 3) * s, y + hash(tx, ty, 4) * s, s * 0.05, '#fff');
     if (g === 'ring') { c.fillStyle = 'rgba(255,255,255,0.06)'; c.fillRect(x, y, s, s); }
+  }
+
+  // Ľad na políčku: kúsky ľadu na ľadovci (koľko ešte ostáva) a otvor vysekaný do zamrznutej vody
+  function iceTile(c, tl, x, y, s, se, tx, ty) {
+    if (tl.g === 'glacier') { // ľad ako na jazierku, zdvihnutý o toľko vrstiev (po 1/4 bloku), koľko ich tu ešte stojí
+      if (!tl.ice) return;
+      const lift = tl.ice * s * 0.09;
+      c.fillStyle = '#86b9d6'; c.fillRect(x, y + s - lift, s + 1, lift);                 // predná stena
+      c.strokeStyle = 'rgba(255,255,255,0.35)'; c.lineWidth = Math.max(1, s * 0.02);
+      for (let k = 1; k < tl.ice; k++) { const ly = y + s - k * s * 0.09; c.beginPath(); c.moveTo(x, ly); c.lineTo(x + s, ly); c.stroke(); } // vrstvy
+      c.fillStyle = '#a9d4ec'; c.fillRect(x, y - lift, s + 1, s);                         // vrch
+      c.strokeStyle = 'rgba(255,255,255,0.6)'; c.lineWidth = Math.max(1, s * 0.03);
+      for (let i = 0; i < 2; i++) {
+        const wy = y - lift + s * (0.3 + i * 0.4), off = (hash(tx, ty, i + 20) - 0.5) * s * 0.2;
+        c.beginPath(); c.moveTo(x + s * 0.2 + off, wy); c.quadraticCurveTo(x + s * 0.4 + off, wy - s * 0.08, x + s * 0.6 + off, wy); c.stroke();
+      }
+      return;
+    }
+    if (tl.cut) {
+      ell(c, x + s * 0.5, y + s * 0.5, s * 0.28, s * 0.2, 0, '#ffffff');
+      ell(c, x + s * 0.5, y + s * 0.52, s * 0.22, s * 0.15, 0, '#1f5f8a');
+    }
   }
 
   function soil(c, so, x, y, s, se) {
@@ -386,6 +459,34 @@ const Art = (() => {
     c.fillStyle = '#f5f0e0'; c.fillRect(x - s * 0.05, y - s * 0.22, s * 0.1, s * 0.2);
     c.beginPath(); c.arc(x, y - s * 0.2, s * 0.17, Math.PI, TAU); c.fillStyle = night ? '#ff6b6b' : '#d32f2f'; c.fill();
     circ(c, x - s * 0.07, y - s * 0.27, s * 0.03, '#fff'); circ(c, x + s * 0.06, y - s * 0.3, s * 0.025, '#fff'); circ(c, x + s * 0.01, y - s * 0.23, s * 0.02, '#fff');
+  }
+
+  // Skalná stena v horách (x,y = ľavý horný roh políčka) – vyčnieva nahor, v zime so snehom
+  function cliff(c, x, y, s, se, tx, ty) {
+    const h = hash(tx, ty, 21), top = y - s * (0.35 + h * 0.4);
+    c.fillStyle = '#6e6861';
+    c.beginPath(); c.moveTo(x - 1, y + s); c.lineTo(x - 1, top + s * 0.2); c.lineTo(x + s * 0.35, top); c.lineTo(x + s * 0.7, top + s * 0.12); c.lineTo(x + s + 1, top + s * 0.25); c.lineTo(x + s + 1, y + s); c.fill();
+    c.fillStyle = '#8a837a';
+    c.beginPath(); c.moveTo(x + s * 0.35, top); c.lineTo(x + s * 0.7, top + s * 0.12); c.lineTo(x + s * 0.6, y + s * 0.7); c.lineTo(x + s * 0.3, y + s * 0.8); c.fill();
+    c.fillStyle = se === 3 || ty < 3 ? '#f4f7f9' : 'rgba(0,0,0,0)';
+    c.beginPath(); c.moveTo(x - 1, top + s * 0.2); c.lineTo(x + s * 0.35, top); c.lineTo(x + s * 0.7, top + s * 0.12); c.lineTo(x + s + 1, top + s * 0.25); c.lineTo(x + s + 1, top + s * 0.38); c.lineTo(x + s * 0.5, top + s * 0.25); c.lineTo(x - 1, top + s * 0.35); c.fill();
+  }
+
+  // Ľadovňa (2×2, x,y = ľavý horný roh): kamenná pivnica do zeme so strmou šindľovou strechou; ukazovateľ ľadu na dverách
+  function icehouse(c, x, y, s, se, fill) {
+    const w = s * 2;
+    ell(c, x + w / 2, y + s * 2, w * 0.55, s * 0.18, 0, 'rgba(0,0,0,0.2)');
+    c.fillStyle = '#9a958d'; c.fillRect(x + s * 0.1, y + s * 0.9, w - s * 0.2, s * 1.1);
+    c.fillStyle = '#7d7872';
+    for (let r = 0; r < 3; r++) for (let k = 0; k < 4; k++) c.fillRect(x + s * (0.15 + k * 0.45 + (r % 2) * 0.2), y + s * (1.0 + r * 0.35), s * 0.3, s * 0.04);
+    c.fillStyle = se === 3 ? '#f2f6f8' : '#7a6450';
+    c.beginPath(); c.moveTo(x - s * 0.15, y + s * 1.0); c.lineTo(x + w / 2, y - s * 0.2); c.lineTo(x + w + s * 0.15, y + s * 1.0); c.fill();
+    c.strokeStyle = se === 3 ? '#d5dde2' : '#5e4c3d'; c.lineWidth = Math.max(1, s * 0.03);
+    for (let k = 1; k < 4; k++) { const yy = y - s * 0.2 + k * s * 0.3, dx = k * s * 0.3 * (w / 2 + s * 0.15) / (s * 1.2); c.beginPath(); c.moveTo(x + w / 2 - dx, yy); c.lineTo(x + w / 2 + dx, yy); c.stroke(); }
+    c.fillStyle = '#5a3d24'; c.fillRect(x + s * 0.7, y + s * 1.2, s * 0.6, s * 0.8);
+    c.fillStyle = '#2b3a44'; c.fillRect(x + s * 0.78, y + s * 1.3, s * 0.44, s * 0.12);
+    c.fillStyle = '#6ec6ff'; c.fillRect(x + s * 0.78, y + s * 1.3, s * 0.44 * Math.max(0, Math.min(1, fill || 0)), s * 0.12);
+    c.font = (s * 0.3 | 0) + 'px serif'; c.textAlign = 'center'; c.fillText('🧊', x + w / 2, y + s * 0.75);
   }
 
   function boulder(c, x, y, s, se) {
@@ -484,6 +585,16 @@ const Art = (() => {
       c.beginPath(); c.arc(29, 24, 11, Math.PI, 0); c.stroke();
       ell(c, 58, 21, 4, 3, 0.8, '#2f7fb8');
       for (let i = 0; i < 3; i++) circ(c, 56 + i * 2, 30 + i * 6, 2, '#9fd8ff');
+    } else if (id === 'pick') {
+      c.strokeStyle = '#8b5a2b'; c.lineWidth = 6; c.lineCap = 'round'; c.beginPath(); c.moveTo(16, 56); c.lineTo(42, 18); c.stroke();
+      c.strokeStyle = '#8e99a3'; c.lineWidth = 7; c.beginPath(); c.moveTo(18, 14); c.quadraticCurveTo(42, 4, 60, 30); c.stroke();
+      c.strokeStyle = '#c6cfd6'; c.lineWidth = 2; c.beginPath(); c.moveTo(22, 11); c.quadraticCurveTo(42, 3, 56, 24); c.stroke();
+    } else if (id === 'ice') {
+      c.fillStyle = '#bfe6fb'; c.beginPath(); c.moveTo(32, 8); c.lineTo(56, 20); c.lineTo(32, 32); c.lineTo(8, 20); c.fill();
+      c.fillStyle = '#8ccbec'; c.beginPath(); c.moveTo(8, 20); c.lineTo(32, 32); c.lineTo(32, 58); c.lineTo(8, 46); c.fill();
+      c.fillStyle = '#6fb6de'; c.beginPath(); c.moveTo(56, 20); c.lineTo(32, 32); c.lineTo(32, 58); c.lineTo(56, 46); c.fill();
+      c.fillStyle = 'rgba(255,255,255,0.8)'; c.beginPath(); c.moveTo(20, 18); c.lineTo(30, 13); c.lineTo(34, 15); c.lineTo(24, 20); c.fill();
+      c.fillRect(13, 28, 3, 12);
     } else if (id === 'compost') {
       ell(c, 32, 40, 20, 18, 0, '#8b6a45'); ell(c, 32, 22, 12, 6, 0, '#6d4c2f');
       c.fillStyle = '#5b3a1a'; c.fillRect(26, 18, 12, 6);
@@ -565,6 +676,6 @@ const Art = (() => {
     c.textBaseline = 'alphabetic';
   }
 
-  return { bloom, plant, char, ground, soil, tree, shroom, boulder, hut, house, stall, well, cauldron, icon, hash, ell, circ, bubble, wrapText };
+  return { bloom, plant, char, ground, soil, iceTile, tree, shroom, boulder, cliff, icehouse, hut, house, stall, well, cauldron, icon, hash, ell, circ, bubble, wrapText };
 })();
 window.Art = Art; // pre 3D modul (render3d.mjs)

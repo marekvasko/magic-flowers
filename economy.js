@@ -61,6 +61,7 @@ function sellQuote(room, id) {
   if (id.startsWith('seed_')) { const sp = id.slice(5); return room.market.seeds[sp] ? Math.max(1, Math.round(seedPrice(room, sp) * 0.4)) : D.sellPrice(id); }
   if (id === 'compost') return Math.max(1, Math.round(compostPrice(room) * 0.5));
   if (id.startsWith('po_') || id === 'wilted') return D.sellPrice(id);
+  if (id === 'ice') return D.ICE_PRICE[season(room)]; // v lete drahý, v zime takmer zadarmo
   return null;
 }
 function buyQuote(room, id) {
@@ -96,7 +97,7 @@ function buy(room, sv, id, n) {
 // Predaj po kusoch – každý predaný kus zníži cenu ďalšieho (trh sa nasycuje).
 // Kvety sa predávajú od najstarších a cena sa násobí ich čerstvosťou.
 function sell(room, sv, id, n) {
-  if (sellQuote(room, id) == null || id === 'hoe' || id === 'can') return { n: 0, msg: 'Toto trh nevykupuje.' };
+  if (sellQuote(room, id) == null || D.isTool(id)) return { n: 0, msg: 'Toto trh nevykupuje.' };
   n = Math.min(n, sv.inv[id] || 0);
   if (!n) return { n: 0, msg: 'Nemáš čo predať.' };
   const batches = I.removeItems(I.playerC(sv), id, n, room.tick);

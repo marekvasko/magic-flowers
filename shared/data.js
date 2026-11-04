@@ -124,6 +124,29 @@
   };
   for (const k in LIFE) SPECIES[k].life = LIFE[k];
   const STORAGE_AGE_RATE = 0.5; // v chladnom sklade kvety starnú 2× pomalšie
+
+  // ---- Ľad ----
+  // Krompáč (náradie, kúpi sa na trhu) vyseká ľad na ľadovci v horách a v zime na zamrznutej vode.
+  // Ľadovňa je spoločná stavba v záhrade: drží ľad, ktorý sa topí, a kým v nej nejaký je, sklad chladí viac.
+  const TOOLS = { pick: { name: 'Krompáč', icon: '⛏️', price: 60, rep: 0, desc: 'Vysekáš ním ľad na ľadovci v horách a v zime na zamrznutom jazierku.' } };
+  const ICEHOUSE = {
+    name: 'Ľadovňa', icon: '🧊', price: 400, rep: 1, cap: 12,
+    rate: 0.25,                        // s ľadom v ľadovni kvety v sklade starnú 4× pomalšie
+    melt: [1 / 12, 1 / 6, 1 / 12, 0],  // koľko blokov ľadu sa roztopí za hernú hodinu v jari, lete, jeseni, zime
+    lot: { x0: 0, y0: 30, x1: 1, y1: 31 } // stavebný pozemok vedľa domčeka (2×2)
+  };
+  // Ľadovec je z minikociek po 1/4 bloku. Stúpa v úrovniach: okraj má pol bloku (2 vrstvy), každé políčko
+  // ďalej od okraja o pol bloku viac, stred najviac 2 bloky (8 vrstiev). Krompáč zoberie vrchnú vrstvu = 1 ľad,
+  // každé ráno na každom políčku 1 vrstva dorastie, najviac do pôvodnej výšky.
+  const GLACIER_LAYERS = 4, GLACIER_TOP = 8;
+  // Ľadu je málo: ľadovec sám nedorastá – len v daždivý a snežný deň (aj dážď privolaný kúzlom), od skál nadol.
+  // Inak sa topí od okrajov (vrstiev za deň v jari, lete, jeseni, zime). Pri veľkom kopaní sa môže minúť.
+  const GLACIER_MELT = [4, 12, 4, 0];
+  const GLACIER_GROW = { rain: 14, snow: 20 };
+  // Ľad v batohu: najviac ICE_CARRY kusov, každý spomalí chôdzu o ICE_SLOW a do pol dňa sa roztopí.
+  const ICE_CARRY = 6, ICE_SLOW = 0.06, ICE_LIFE = TICKS_PER_DAY / 2;
+  const ICE_PRICE = [5, 12, 5, 1]; // výkupná cena ľadu na trhu podľa obdobia
+  const isTool = id => id === 'hoe' || id === 'can' || id === 'pick';
   const WILTED_PER_COMPOST = 4;
 
   const POTIONS = {
@@ -221,6 +244,8 @@
     if (isWild(id)) return 'Divé semienko (' + SEASONS[+id.slice(5)].toLowerCase() + ')';
     if (id === 'hoe') return 'Motyka';
     if (id === 'can') return 'Krhla';
+    if (id === 'pick') return 'Krompáč';
+    if (id === 'ice') return 'Ľad';
     if (id === 'compost') return 'Kompost';
     if (id === 'wilted') return 'Zvädnuté kvety';
     if (id.startsWith('seed_')) return 'Semienka: ' + ((SPECIES[id.slice(5)] || {}).name || '?');
@@ -240,6 +265,31 @@
   }
 
   const RING = { x0: 2, y0: 2, x1: 4, y1: 4 };
+  // Prechody medzi plochami: na políčku 'gate' sa hráč presunie na príchodové miesto druhej plochy.
+  const AREAS = ['garden', 'hory'];
+  const AREA_NAMES = { garden: 'Záhrada', hory: 'Hory' };
+  const GATES = { garden: [[16, 0], [17, 0]], hory: [[9, H - 1], [10, H - 1]] };
+  const ARRIVE = { garden: { x: 17, y: 1.6 }, hory: { x: 10, y: H - 2.4 } };
+  // Pôvodná výška ľadu (vo vrstvách) na každom políčku: 2 × vzdialenosť od okraja ľadovca, najviac GLACIER_TOP
+  function glacierLevels(g) {
+    const dist = new Array(W * H).fill(0), q = [];
+    for (let i = 0; i < g.length; i++) {
+      if (g[i] !== 'glacier') continue;
+      const x = i % W, y = (i / W) | 0;
+      const edge = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => { const nx = x + dx, ny = y + dy; return nx < 0 || ny < 0 || nx >= W || ny >= H || g[ny * W + nx] !== 'glacier'; });
+      if (edge) { dist[i] = 1; q.push(i); }
+    }
+    for (let k = 0; k < q.length; k++) {
+      const i = q[k], x = i % W, y = (i / W) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy, n = ny * W + nx;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H || g[n] !== 'glacier' || dist[n]) continue;
+        dist[n] = dist[i] + 1; q.push(n);
+      }
+    }
+    return dist.map(d => Math.min(GLACIER_TOP, 2 * d));
+  }
+  function buildArea(area) { return area === 'hory' ? buildMountains() : buildMap(); }
   const SPAWN = { x: 10.5, y: 30.5 };
   const BABKA = { x: 15, y: 5 };
 
@@ -268,6 +318,8 @@
     set(BABKA.x, BABKA.y, 'babka');
     set(17, 5, 'cauldron');
     set(18, 2, 'tree'); set(19, 4, 'tree'); set(13, 1, 'tree');
+    // Horský chodník: na severovýchodnom okraji mapy sa ide do hôr
+    for (const [x, y] of GATES.garden) { set(x, y, 'gate'); set(x, y + 1, 'path'); }
     // Cesty
     for (let y = 4; y < H; y++) set(10, y, 'path');
     for (let x = 10; x <= 15; x++) set(x, 6, 'path');
@@ -289,10 +341,57 @@
     for (let y = 27; y <= 28; y++) for (let x = 2; x <= 4; x++) set(x, y, 'house');
     for (let x = 3; x <= 9; x++) set(x, 29, 'path');
     set(3, 29, 'path');
+    // Pozemok pre ľadovňu (kým sa nepostaví)
+    const L = ICEHOUSE.lot;
+    for (let y = L.y0; y <= L.y1; y++) for (let x = L.x0; x <= L.x1; x++) set(x, y, 'lot');
     return g;
   }
 
-  const BLOCK = { tree: 1, water: 1, hut: 1, babka: 1, cauldron: 1, stall: 1, well: 1, boulder: 1, house: 1 };
+  // ---- Hory: druhá hracia plocha (rovnaká veľkosť ako záhrada) ----
+  // Hore skalné steny a ľadovec, v strede sutina s plesom, dole horská lúka so smrekmi a chodník do záhrady.
+  function buildMountains() {
+    const g = new Array(W * H).fill('alp');
+    const set = (x, y, v) => { if (x >= 0 && y >= 0 && x < W && y < H) g[y * W + x] = v; };
+    const rnd = mulberry32(4242);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (y < 13) set(x, y, 'snow');
+      else if (y < 21) set(x, y, rnd() < 0.08 ? 'boulder' : 'scree');
+      else if ((x < 3 || x > 16) && rnd() < 0.55) set(x, y, 'spruce');
+      else if (rnd() < 0.05) set(x, y, 'spruce');
+    }
+    // Skalné steny na severe a po bokoch
+    for (let x = 0; x < W; x++) { set(x, 0, 'cliff'); if (rnd() < 0.6) set(x, 1, 'cliff'); }
+    for (let y = 0; y < 16; y++) {
+      const l = 1 + Math.floor(rnd() * 2) + (y < 8 ? 1 : 0), r = 1 + Math.floor(rnd() * 2) + (y < 8 ? 1 : 0);
+      for (let x = 0; x < l; x++) set(x, y, 'cliff');
+      for (let x = 0; x < r; x++) set(W - 1 - x, y, 'cliff');
+    }
+    // Ľadovec – jazyk ľadu pod stenami
+    for (let y = 1; y <= 10; y++) for (let x = 2; x < W - 2; x++) {
+      const dx = (x - 9.5) / 4.6, dy = (y - 4) / 2.9;
+      if (dx * dx + dy * dy < 1) set(x, y, 'glacier');
+    }
+    // Pleso
+    for (let y = 13; y <= 19; y++) for (let x = 2; x <= 9; x++) {
+      const dx = (x - 5.5) / 2.4, dy = (y - 16) / 2.1;
+      if (dx * dx + dy * dy < 1) set(x, y, 'water');
+    }
+    // Chodník z dolného okraja k ľadovcu
+    let px = 10;
+    for (let y = H - 1; y >= 11; y--) {
+      for (const x of [px - 1, px]) if (g[y * W + x] !== 'water') set(x, y, 'path');
+      if (y % 5 === 0) px += (y % 10 === 0 ? 1 : -1);
+    }
+    for (const [x, y] of GATES.hory) set(x, y, 'gate');
+    // pod chodníkom nesmie byť strom ani balvan (aby sa dalo prejsť)
+    for (let y = 11; y < H; y++) for (let x = 0; x < W; x++) if (g[y * W + x] === 'path') for (const dx of [-1, 1]) {
+      const n = g[y * W + x + dx];
+      if (n === 'spruce' || n === 'boulder') set(x + dx, y, y < 13 ? 'snow' : y < 21 ? 'scree' : 'alp');
+    }
+    return g;
+  }
+
+  const BLOCK = { tree: 1, water: 1, hut: 1, babka: 1, cauldron: 1, stall: 1, well: 1, boulder: 1, house: 1, cliff: 1, glacier: 1, spruce: 1, icehouse: 1 };
   const TILLABLE = { grass: 'normal', forest: 'forest', sand: 'sand', rock: 'rock' };
 
   function isShade(tiles, x, y) {
@@ -340,8 +439,8 @@
     CHAT_MAX, chatText,
     W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
-    RING, SPAWN, BABKA, BLOCK, TILLABLE, SCAVENGE, isWild,
-    sellPrice, itemName, buildMap, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
+    RING, SPAWN, BABKA, BLOCK, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_NAMES, GATES, ARRIVE,
+    sellPrice, itemName, buildMap, buildMountains, buildArea, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
   };
   root.GameData = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

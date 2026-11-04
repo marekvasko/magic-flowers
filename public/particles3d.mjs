@@ -109,7 +109,7 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
   let flies = [], homes = [], homesSig = '';
   const FLY_COL = [0.78, 1, 0.32], FLY_HOME = { tree: 1, water: 1, shroom: 1 };
   function flyHomes() {
-    const sig = S.tiles.length + ':' + S.tiles.reduce((n, t) => n + (FLY_HOME[t.g] ? 1 : 0), 0);
+    const sig = (S.tilesGen || 0) + ':' + S.tiles.length + ':' + S.tiles.reduce((n, t) => n + (FLY_HOME[t.g] ? 1 : 0), 0);
     if (sig === homesSig) return;
     homesSig = sig; homes = [];
     S.tiles.forEach((t, i) => { if (FLY_HOME[t.g]) homes.push({ x: i % D.W + 0.5, z: ((i / D.W) | 0) + 0.5, water: t.g === 'water' }); });

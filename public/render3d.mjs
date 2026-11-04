@@ -212,6 +212,64 @@ void main() {
   gl_FragColor = vec4(mix(trans, refl, F) + spec + lampSpec, 1.0);
 }`;
 
+// ---------- Shader ľadovca: ten istý ľad ako na zamrznutom jazierku, ale na každej stene ----------
+// Farba ľadu, pásy brúsenia, iskričky námrazy, Fresnel s odrazom oblohy a anizotropný odlesk (Ward).
+// Pásy idú vodorovne pozdĺž steny (na vrchu pozdĺž osi x ako na jazierku); zrkadlo tu nie je – odráža sa obloha.
+const GLACIER_VERT = `
+attribute float shade;
+uniform mat4 shadowMatrix; uniform float shadowNormalBias;
+varying vec3 vPos; varying vec3 vN; varying float vShade; varying vec4 vShadow;
+void main() {
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vPos = wp.xyz; vN = normal; vShade = shade;
+  vShadow = shadowMatrix * vec4(wp.xyz + normal * shadowNormalBias, 1.0);
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}`;
+const GLACIER_FRAG = `
+precision highp float;
+#define SHADOW_TAPS 8
+uniform sampler2D shadowMap; uniform float shadowOn; uniform vec2 shadowTexel; uniform float shadowRadius;
+uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec3 sunDir;
+uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount;
+uniform vec3 skyColor; uniform vec3 viewDir;
+varying vec3 vPos; varying vec3 vN; varying float vShade; varying vec4 vShadow;
+${SHADOW_GLSL}
+const float PIX = ${WATER_PIX}.0;
+float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), f.x), mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+void main() {
+  vec3 N0 = normalize(vN);
+  // súradnice na stene: T = pozdĺž pásov (vodorovne), B = naprieč
+  vec3 T = abs(N0.x) > 0.5 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+  vec3 B = abs(N0.y) > 0.5 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
+  vec2 q = vec2(dot(vPos, T), dot(vPos, B));
+  vec2 p = (floor(q * PIX) + 0.5) / PIX;          // pixel ľadu
+  float stripe = floor(vnoise(vec2(p.x * 1.2, p.y * 13.0)) * 4.0) / 3.0;
+  vec3 N = normalize(N0 + B * (stripe - 0.5) * 0.1);
+  vec3 V = normalize(viewDir);
+  vec3 light = ambient + sunColor * sunVisibility(dot(N0, sunDir));
+  vec3 lampSpec = vec3(0.0);
+  for (int i = 0; i < ${MAX_LIGHTS}; i++) {
+    if (i >= lightCount) break;
+    float f = 1.0 - smoothstep(0.0, lights[i].w, distance(vPos, lights[i].xyz));
+    light += lampColor * f;
+    vec3 Hl = normalize(normalize(lights[i].xyz - vPos) + V);
+    lampSpec += lampColor * f * floor(pow(max(dot(N, Hl), 0.0), 40.0) * 3.0) / 3.0 * 0.6;
+  }
+  // telo ľadu ako na jazierku: svetlé pásy, hlbšia modrá v tieni stien, iskričky námrazy
+  vec3 body = mix(vec3(0.74, 0.87, 0.94), vec3(0.6, 0.77, 0.88), 0.3 + 0.3 * hash2(floor(p * 0.25))) * (0.94 + stripe * 0.08);
+  body += step(0.985, hash2(floor(p * 0.5 * PIX))) * 0.15;
+  vec3 trans = body * light * vShade;
+  float F = 0.28 + 0.72 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
+  vec3 H = normalize(sunDir + V);
+  float ht = dot(H, T) / 0.6, hb = (dot(H, B) - dot(N, B)) / 0.25, hn = max(dot(H, N), 0.05);
+  vec3 spec = sunColor * sunVisibility(dot(N0, sunDir)) * exp(-(ht * ht + hb * hb) / (hn * hn)) * (0.5 + 0.5 * stripe) * 0.9;
+  gl_FragColor = vec4(mix(trans, skyColor * vShade, F) + spec + lampSpec, 1.0);
+}`;
+
 const lerp = (a, b, t) => a + (b - a) * t;
 const mix3 = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
 const hex = h => { const n = parseInt(h.slice(1), 16); return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; };
@@ -246,14 +304,18 @@ export function create(api) {
     if (tl.s) Art.soil(gctx, tl.s, x * GT, y * GT, GT, se);
   }
   function refreshGround(se, t, force) {
-    let changed = false;
+    let changed = false, holes = '';
     for (let i = 0; i < S.tiles.length; i++) {
       const tl = S.tiles[i];
-      const sig = tl.g + '|' + (tl.s ? tl.s.k + tl.s.w + tl.s.r : '');
+      if (tl.cut) holes += i + ',';
+      const sig = tl.g + '|' + (tl.s ? tl.s.k + tl.s.w + tl.s.r : '') + '|' + (tl.ice == null ? '' : tl.ice);
       if (force || sig !== tileSig[i]) { drawTile(i, se, t); tileSig[i] = sig; changed = true; } // vlny vody sú na GPU
     }
     if (changed) groundTex.needsUpdate = true;
+    if (grid && S.tiles.some(t => t.ice != null) && S.tiles.map(t => t.ice == null ? '' : t.ice).join(',') !== glacierSig) { buildGlacier(); shadowDirty = true; }
+    if (holes !== holesSig) { holesSig = holes; if (lilyMesh) { scene.remove(lilyMesh); lilyMesh.geometry.dispose(); } lilyMesh = buildPads(se, W.WATER_Y); }
   }
+  let holesSig = '';
 
   // ---------- Sieť sveta z podkociek ----------
   const material = new THREE.ShaderMaterial({
@@ -279,7 +341,7 @@ export function create(api) {
   // svet v zrkadle pod hladinou: rovnaký shader, stačia 4 vzorky tieňa
   const reflMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { SHADOW_TAPS: 4 }, uniforms: material.uniforms });
   const FADE_MIN = 0.3; // ako veľmi ostane vidieť budovu/strom, za ktorým stojí hráč
-  let mesh = null, grid = null, builtSeason = -1;
+  let mesh = null, grid = null, builtSeason = -1, builtGen = -1;
   const AXES = [[0, 1, 2], [1, 2, 0], [2, 0, 1]]; // [normálová os, u, v] – u × v = normála
 
   function buildMesh(se) {
@@ -289,7 +351,7 @@ export function create(api) {
     let vi = 0;
     for (let z = 0; z < W.NZ; z++) for (let y = 0; y < W.NY; y++) for (let x = 0; x < W.NX; x++) {
       const m = get(x, y, z);
-      if (!m || m === W.M.INVIS) continue;
+      if (!m || m === W.M.INVIS || m === W.M.ICE) continue; // ľad má vlastnú sieť a shader (buildGlacier)
       const matCol = toLin(hex(W.colorOf(m, se)));
       const em = W.EMISSIVE[m] ? 1 : 0;
       for (let f = 0; f < 6; f++) {
@@ -347,6 +409,7 @@ export function create(api) {
     for (const fm of fineMeshes) { scene.remove(fm); scene.remove(fm.userData.depthTwin); fm.geometry.dispose(); }
     fineMeshes = grid.fine.map(f => buildFine(f, se));
     buildWater(se);
+    buildGlacier();
     shadowDirty = true;
     builtSeason = se;
   }
@@ -434,6 +497,64 @@ export function create(api) {
   maskTex.flipY = false; maskTex.magFilter = maskTex.minFilter = THREE.NearestFilter; // riadok = z, stĺpec = x
   waterMaterial.uniforms.waterMask.value = maskTex;
   let waterMesh = null, lilyMesh = null;
+
+  // ---------- Ľadovec: steny ľadových podkociek + kocky ľadu, ktoré sa ešte dajú vysekať ----------
+  const glacierMaterial = new THREE.ShaderMaterial({
+    vertexShader: GLACIER_VERT, fragmentShader: GLACIER_FRAG,
+    uniforms: { ...material.uniforms, skyColor: waterMaterial.uniforms.skyColor, viewDir: waterMaterial.uniforms.viewDir }
+  });
+  let glacierMesh = null, glacierSig = '';
+  function buildGlacier() {
+    if (glacierMesh) { scene.remove(glacierMesh); glacierMesh.geometry.dispose(); glacierMesh = null; }
+    glacierSig = S.tiles.map(t => t.ice == null ? '' : t.ice).join(',');
+    const P = [], Nn = [], Sh = [], I = [];
+    const quad = (pts, n, fi) => {
+      const v = P.length / 3;
+      for (const p of pts) { P.push(...p); Nn.push(...n); Sh.push(FACE_SHADE[fi]); }
+      I.push(v, v + 1, v + 2, v, v + 2, v + 3);
+    };
+    // kváder (x0..x1, y0..y1, z0..z1) v blokoch; stena sa vynechá, ak ju zakryje plná podkocka (skip)
+    const cuboid = (x0, y0, z0, x1, y1, z1, skip) => {
+      if (!skip || !skip(0)) quad([[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]], [1, 0, 0], 0);
+      if (!skip || !skip(1)) quad([[x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [x0, y0, z0]], [-1, 0, 0], 1);
+      if (!skip || !skip(2)) quad([[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]], [0, 1, 0], 2);
+      if (!skip || !skip(3)) quad([[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]], [0, -1, 0], 3);
+      if (!skip || !skip(4)) quad([[x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [x0, y0, z1]], [0, 0, 1], 4);
+      if (!skip || !skip(5)) quad([[x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]], [0, 0, -1], 5);
+    };
+    const DIRS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+    for (let z = 0; z < W.NZ; z++) for (let y = 0; y < W.NY; y++) for (let x = 0; x < W.NX; x++) {
+      if (W.get(grid, x, y, z) !== W.M.ICE) continue;
+      cuboid(x / R, y / R, z / R, (x + 1) / R, (y + 1) / R, (z + 1) / R, f => {
+        const nb = W.get(grid, x + DIRS[f][0], y + DIRS[f][1], z + DIRS[f][2]);
+        return nb && nb !== W.M.INVIS;
+      });
+    }
+    // ľad nad dnom: na každom políčku stĺpec z vrstiev po 1/4 bloku (koľko vrstiev, toľko sa tu ešte dá vysekať);
+    // bočná stena sa kreslí len tam, kde sused nesiaha rovnako vysoko
+    const L = D.GLACIER_LAYERS, base = W.groundHeight('glacier') / R;
+    const iceTop = (x, y) => { const t = x >= 0 && y >= 0 && x < D.W && y < D.H ? S.tiles[y * D.W + x] : null; return t && t.g === 'glacier' ? base + (t.ice || 0) / L : -1; };
+    for (let i = 0; i < S.tiles.length; i++) {
+      const n = S.tiles[i].ice;
+      if (!n) continue;
+      const x = i % D.W, z = (i / D.W) | 0, top = base + n / L;
+      quad([[x, top, z], [x, top, z + 1], [x + 1, top, z + 1], [x + 1, top, z]], [0, 1, 0], 2);
+      const side = (nx, nz, pts, nrm, fi) => { const y0 = Math.max(base, iceTop(nx, nz)); if (y0 < top) quad(pts(y0), nrm, fi); };
+      side(x + 1, z, y0 => [[x + 1, y0, z], [x + 1, top, z], [x + 1, top, z + 1], [x + 1, y0, z + 1]], [1, 0, 0], 0);
+      side(x - 1, z, y0 => [[x, y0, z + 1], [x, top, z + 1], [x, top, z], [x, y0, z]], [-1, 0, 0], 1);
+      side(x, z + 1, y0 => [[x + 1, y0, z + 1], [x + 1, top, z + 1], [x, top, z + 1], [x, y0, z + 1]], [0, 0, 1], 4);
+      side(x, z - 1, y0 => [[x, y0, z], [x, top, z], [x + 1, top, z], [x + 1, y0, z]], [0, 0, -1], 5);
+    }
+    if (!P.length) return;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(Nn, 3));
+    geo.setAttribute('shade', new THREE.Float32BufferAttribute(Sh, 1));
+    geo.setIndex(I);
+    geo.computeBoundingSphere();
+    glacierMesh = new THREE.Mesh(geo, glacierMaterial); // vrstva 0: vrhá tieň a odráža sa vo vode
+    scene.add(glacierMesh);
+  }
   const waterBox = new THREE.Box3();
   function buildWater(se) {
     for (const m of [waterMesh, lilyMesh]) if (m) { scene.remove(m); m.geometry.dispose(); }
@@ -456,11 +577,14 @@ export function create(api) {
     waterMesh = new THREE.Mesh(geo, waterMaterial);
     waterMesh.layers.set(3);
     scene.add(waterMesh);
-    lilyMesh = buildLilies(W.lilyPads(S.tiles, se), y);
+    lilyMesh = buildPads(se, y);
   }
-  // lekná z pixelov hladiny (WATER_PIX na blok) – list s výrezom a ružový kvietok, osvetlené ako svet
-  function buildLilies(pads, y) {
-    if (!pads.length) return null;
+  // lekná z pixelov hladiny (WATER_PIX na blok) – list s výrezom a ružový kvietok, osvetlené ako svet;
+  // v zime namiesto nich otvory vysekané do ľadu (tmavá voda s bielym okrajom)
+  function buildPads(se, y) {
+    const pads = W.lilyPads(S.tiles, se);
+    const holes = se === 3 ? S.tiles.map((t, i) => t.cut && t.g === 'water' ? { x: i % D.W, y: (i / D.W) | 0 } : null).filter(Boolean) : [];
+    if (!pads.length && !holes.length) return null;
     const P = [], C = [], A = [], E = [], T = [], U = [], N = [], I = [];
     const px = 1 / WATER_PIX;
     const quad = (pts, n, col) => {
@@ -490,6 +614,12 @@ export function create(api) {
       const fx = x + Math.floor(0.55 * WATER_PIX) * px, fz = z + Math.floor(0.42 * WATER_PIX) * px;
       box(fx - px, fz - px, fx + px, fz + px, y + 0.01, y + 0.01 + 1.5 * px, hex('#ffb6d9'));
       top(fx - px * 0.5, fz - px * 0.5, fx + px * 0.5, fz + px * 0.5, y + 0.012 + 1.5 * px, hex('#ffe066'));
+    }
+    const rim = hex('#f4f9fc'), deep = hex('#1f5f8a');
+    for (const { x, y: z } of holes) for (let j = 0; j < WATER_PIX; j++) for (let i = 0; i < WATER_PIX; i++) {
+      const u = (i + 0.5) / WATER_PIX - 0.5, w = (j + 0.5) / WATER_PIX - 0.5, d = (u / 0.32) ** 2 + (w / 0.26) ** 2;
+      if (d > 1) continue;
+      top(x + i * px, z + j * px, x + (i + 1) * px, z + (j + 1) * px, y + 0.01, d > 0.6 ? rim : deep);
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
@@ -904,7 +1034,7 @@ export function create(api) {
     ray.setFromCamera(ndc, camera);
     // kvety a huby sa nevyberajú podľa obrázka – platí len políčko zeme pod nimi
     const sprites = [...[...chars.values()].filter(o => o.alive).map(o => o.sp), babka && babka.sp].filter(Boolean);
-    const hits = ray.intersectObjects(sprites.concat(mesh ? [mesh] : [], waterMesh ? [waterMesh] : [], fineMeshes.filter(m => m.userData.fade > 0.5)), false);
+    const hits = ray.intersectObjects(sprites.concat(mesh ? [mesh] : [], glacierMesh ? [glacierMesh] : [], waterMesh ? [waterMesh] : [], fineMeshes.filter(m => m.userData.fade > 0.5)), false);
     for (const h of hits) {
       if (h.object.isSprite || h.object.userData.tile) return Object.assign({}, h.object.userData.tile);
       const q = h.point.clone().addScaledVector(h.face.normal, -0.01);
@@ -928,7 +1058,8 @@ export function create(api) {
   function frame(t) {
     const now = performance.now(), dt = Math.min(0.1, (now - last) / 1000); last = now;
     const min = api.curMin(), se = api.season(), night = D.isNight(min);
-    if (builtSeason !== se) { buildMesh(se); refreshGround(se, t, true); drawnSeason = se; }
+    // prestavba sveta: nové obdobie, iná plocha (záhrada / hory) alebo nová stavba
+    if (builtSeason !== se || builtGen !== S.tilesGen) { builtGen = S.tilesGen; buildMesh(se); holesSig = null; refreshGround(se, t, true); drawnSeason = se; }
     if (now - lastGround > 600) { refreshGround(se, t, false); lastGround = now; }
     lighting(min, se);
     updateShadowMap(min, se);
@@ -970,7 +1101,8 @@ export function create(api) {
     const me = S.me;
     const meO = drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : DIR_ANGLE[me.dir], S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz, crawl: me.crawl, dig: api.searching({ si: S.mySi }) && t }, dt);
     for (const o of S.others.values()) drawChar(o.id, o.x, o.y, o.look, o.a != null ? o.a : DIR_ANGLE[o.dir || 0], o.e === 'dance' ? t * 4 : o.phase, { dance: o.e === 'dance', jz: o.jz, crawl: o.cr, dig: api.searching(o) && t }, dt);
-    if (!babka) babka = drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, 0, { babka: true }, 1);
+    if (S.area !== 'garden') babka = null; // babka býva v záhrade (bez alive ju upratovanie nižšie odstráni)
+    else if (!babka) babka = drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, 0, { babka: true }, 1);
     else { babka.alive = true; if (Math.floor(t) !== babka.lastT) { babka.lastT = Math.floor(t); drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, Math.sin(t) * 0.3, { babka: true }, 1); } }
     for (const [id, o] of chars) {
       if (!o.alive) { scene.remove(o.sp); scene.remove(o.ghost); scene.remove(o.shadow); chars.delete(id); continue; }
