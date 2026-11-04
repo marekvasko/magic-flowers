@@ -2,6 +2,7 @@
 // s tieňom stien podľa strany, ambientným zatienením rohov a tieňom od slnka z mapy tieňov (GPU).
 // Herná logika, sieť aj ovládanie zostávajú v game.js – toto je len iný pohľad na ten istý svet.
 import * as THREE from '/vendor/three/three.module.js';
+import { createParticles } from '/particles3d.mjs';
 
 const D = window.GameData, W = window.World3D, Art = window.Art;
 const R = W.R;
@@ -10,6 +11,13 @@ const FACE_SHADE = [0.62, 0.62, 1.0, 0.5, 0.8, 0.8]; // +x, -x, +y, -y, +z, -z (
 const AO_CURVE = [0.5, 0.68, 0.84, 1];
 const GT = 32;                                   // px na políčko v textúre zeme
 const MAX_LIGHTS = 16;
+// blčanie svetiel (pomerná zmena dosahu): oheň, lampáš, okno, ostatné (hráči, kvety, víly)
+const FL_FIRE = 0.16, FL_LANTERN = 0.08, FL_WINDOW = 0.035, FL_SOFT = 0.03;
+// plynulý „plameňový“ šum zo súčtu sínusov s nesúdeliteľnými frekvenciami
+function flicker(t, seed, amt) {
+  const n = 0.5 * Math.sin(t * 7.3 + seed) + 0.3 * Math.sin(t * 13.7 + seed * 2.1) + 0.2 * Math.sin(t * 23.9 + seed * 3.7);
+  return 1 + amt * n;
+}
 
 // ---------- Shader: plochý, bez rozptylu a odrazov ----------
 // Svetlo = okolie + slnko × (viditeľnosť slnka z mapy tieňov) + lampy. Zatienenie rohov (AO) je vo vrcholoch.
@@ -926,18 +934,20 @@ export function create(api) {
     updateShadowMap(min, se);
     placeCamera(dt);
 
-    // svetelné zdroje (okná, kotlík, hráči, svietiace kvety) – len keď je šero
+    // svetelné zdroje (okná, kotlík, lampáše, hráči, víly, svietiace kvety) – len keď je šero
+    // každé svetlo blčí ako plameň: oheň najviac, lampáše menej, okná a ostatné len jemne
     const lights = [];
     const dl = W.daylight(min);
     if (dl < 0.8) {
       const A = api.S.anchors;
-      const add = (x, y, z, r) => { if (lights.length < MAX_LIGHTS) lights.push(new THREE.Vector4(x, y, z, r)); };
+      const add = (x, y, z, r, fl) => { if (lights.length < MAX_LIGHTS) lights.push(new THREE.Vector4(x, y, z, r * flicker(t, x * 7.1 + z * 3.3, fl || FL_SOFT))); };
       add(S.me.x, 1.6, S.me.y, 3.2);
       for (const o of S.others.values()) add(o.x, 1.6, o.y, 2.6);
-      if (A.hut) { add(A.hut.x + 0.5, 2.05, A.hut.y + 2.2, 2.2); add(A.hut.x + 2.4, 2.05, A.hut.y + 2.2, 2.2); }
-      if (A.house) { add(A.house.x + 0.62, 2.2, A.house.y + 2.3, 2.2); add(A.house.x + 2.37, 2.2, A.house.y + 2.3, 2.2); add(A.house.x + 2.06, 2.4, A.house.y + 2.06, 1.8); }
-      if (A.cauldron) add(A.cauldron.x + 0.5, 1.3, A.cauldron.y + 0.5, 2.6);   // oheň pod kotlíkom
-      if (A.stall) add(A.stall.x + 2.94, 2.56, A.stall.y + 0.94, 2.4);           // lampáš na trhu
+      if (A.hut) { add(A.hut.x + 0.5, 2.05, A.hut.y + 2.2, 2.2, FL_WINDOW); add(A.hut.x + 2.4, 2.05, A.hut.y + 2.2, 2.2, FL_WINDOW); }
+      if (A.house) { add(A.house.x + 0.62, 2.2, A.house.y + 2.3, 2.2, FL_WINDOW); add(A.house.x + 2.37, 2.2, A.house.y + 2.3, 2.2, FL_WINDOW); add(A.house.x + 2.06, 2.4, A.house.y + 2.06, 1.8, FL_LANTERN); }
+      if (A.cauldron) add(A.cauldron.x + 0.5, 1.3, A.cauldron.y + 0.5, 2.6, FL_FIRE);   // oheň pod kotlíkom
+      if (A.stall) add(A.stall.x + 2.94, 2.56, A.stall.y + 0.94, 2.4, FL_LANTERN);           // lampáš na trhu
+      particles.fairyLights(grid, t, add);
       for (let i = 0; i < S.tiles.length && lights.length < MAX_LIGHTS; i++) {
         const p = S.tiles[i].s && S.tiles[i].s.p;
         if (p && !p.d && (p.sp === 'papradie' || p.sp === 'duhova') && D.stageOf(p) === 3) add(i % D.W + 0.5, 1.6, ((i / D.W) | 0) + 0.5, 2.2);
@@ -969,6 +979,8 @@ export function create(api) {
     void meO;
 
     const fading = updateFades(dt, meO ? meO.h : 1);
+    const lit = curAmb.map((v, i) => Math.min(1.2, v + curSun[i] * 0.7));
+    particles.update(dt, t, { grid, fine: grid && grid.fine, fineMeshes, target: camTarget, viewW, viewH: viewTop * 2, se, lit, cauldron: fireCenter() });
     updateWater(t, now);
     renderReflection();
     renderer.render(scene, camera);
@@ -995,18 +1007,11 @@ export function create(api) {
 
     // efekty (pohyb častíc je v 2D – ukotvíme ich do bodu vo svete)
     for (const p of S.fx) {
+      if (p.fairy) continue; // víly sú 3D častice (particles3d.mjs)
       const a = 1 - p.life / p.max;
-      if (p.ox === undefined) { p.ox = p.fairy ? p.cx : p.x; p.oy = p.fairy ? p.cy : p.y; }
+      if (p.ox === undefined) { p.ox = p.x; p.oy = p.y; }
       const gy = grid ? W.surfaceY(grid, Math.max(0, Math.min(D.W - 1, Math.floor(p.ox))), Math.max(0, Math.min(D.H - 1, Math.floor(p.oy)))) : 1;
       const o = project(p.ox, gy + 0.5, p.oy);
-      if (p.fairy) {
-        const ang = p.a + p.life * 1.6, X = o.x + Math.cos(ang) * p.rad * ppb, Y = o.y + Math.sin(ang * 1.3) * p.rad * 0.7 * ppb - ppb * 0.5;
-        c.globalAlpha = Math.min(1, a * 3);
-        const g = c.createRadialGradient(X, Y, 0, X, Y, ppb * 0.35); g.addColorStop(0, p.color); g.addColorStop(1, 'rgba(255,255,255,0)');
-        c.fillStyle = g; c.beginPath(); c.arc(X, Y, ppb * 0.35, 0, 6.29); c.fill();
-        Art.circ(c, X, Y, ppb * 0.04, '#fff'); c.globalAlpha = 1;
-        continue;
-      }
       const X = o.x + (p.x - p.ox) * ppb, Y = o.y + (p.y - p.oy) * ppb;
       c.globalAlpha = Math.max(0, a);
       if (p.text) { c.font = (ppb * 0.4 | 0) + 'px serif'; c.textAlign = 'center'; c.fillText(p.text, X, Y); }
@@ -1017,11 +1022,8 @@ export function create(api) {
 
     // počasie
     const ts = ppb;
-    if (S.weather === 'rain') {
-      c.strokeStyle = 'rgba(180,210,255,0.55)'; c.lineWidth = Math.max(1, ts * 0.02); c.beginPath();
-      for (let i = 0; i < 90; i++) { const rx = (Art.hash(i, 1) * cw + t * 60) % cw, ry = (Art.hash(i, 2) * ch + t * ch * 1.4) % ch; c.moveTo(rx, ry); c.lineTo(rx - ts * 0.08, ry + ts * 0.35); }
-      c.stroke();
-    } else if (S.weather === 'snow' || (se === 3 && Math.sin(t * 0.1) > 0.5)) {
+    // dážď je 3D častica (particles3d.mjs), sneh zatiaľ ostáva na prekrytí
+    if (S.weather !== 'rain' && (S.weather === 'snow' || (se === 3 && Math.sin(t * 0.1) > 0.5))) {
       for (let i = 0; i < 70; i++) { const sx = (Art.hash(i, 1) * cw + Math.sin(t + i) * ts * 0.4) % cw, sy = (Art.hash(i, 2) * ch + t * ts * 0.9 * (0.6 + Art.hash(i, 3))) % ch; Art.circ(c, sx, sy, ts * 0.035, 'rgba(255,255,255,0.85)'); }
     }
 
@@ -1057,10 +1059,18 @@ export function create(api) {
   // hodiny priameho slnka pre políčko (zatiaľ len informácia; neskôr pre rast rastlín)
   function sunHoursAt(x, y) { return grid ? W.sunHours(grid, x, y, api.season()) : null; }
 
+  // ---------- Častice a blčanie svetiel ----------
+  const particles = createParticles({ scene, camera, renderer, W, D, S, api, ripple });
+  // stred ohniska pod kotlíkom (model má okraj FM minikociek, ohnisko je v strede políčka nad zemou)
+  function fireCenter() {
+    const f = grid && grid.fine.find(m => m.type === 'cauldron');
+    return f ? { x: f.ox + 1, y: f.oy + 1.5 / W.FINE, z: f.oz + 1 } : null;
+  }
+
   resize();
   // ladenie: priehľadnosť jemných modelov (1 = plne viditeľný)
   const debugFades = () => fineMeshes.map(m => ({ type: grid.fine[fineMeshes.indexOf(m)].type, fade: +m.userData.fade.toFixed(2), occ: occluders.has(m) }));
-  return { frame, resize, pick, screenToWorld, rotate, sunHoursAt, dir8, debugFades, ripple, setWaterQuality, get waterQuality() { return waterQuality; }, get yaw() { return yaw; } };
+  return { frame, resize, pick, screenToWorld, rotate, sunHoursAt, dir8, debugFades, ripple, setWaterQuality, get waterQuality() { return waterQuality; }, setParticleQuality: particles.setQuality, get particleQuality() { return particles.quality; }, get yaw() { return yaw; } };
 }
 
 window.Render3D = { create };
