@@ -925,11 +925,12 @@
   }
 
   // Chat
-  function openChat() { $('chatbox').classList.remove('hidden'); $('chathist').scrollTop = $('chathist').scrollHeight; $('chatIn').focus(); }
-  $('bChat').onclick = () => { if ($('chatbox').classList.contains('hidden')) openChat(); else $('chatbox').classList.add('hidden'); };
-  const sendChat = () => { const v = $('chatIn').value.trim(); if (v) send({ t: 'chat', text: v }); $('chatIn').value = ''; $('chatbox').classList.add('hidden'); $('chatIn').blur(); };
+  const closeChat = () => { $('chatbox').classList.remove('open'); $('chatIn').blur(); };
+  function openChat() { $('chatbox').classList.add('open'); $('chathist').scrollTop = $('chathist').scrollHeight; $('chatIn').focus(); }
+  $('bChat').onclick = () => { if ($('chatbox').classList.contains('open')) closeChat(); else openChat(); };
+  const sendChat = () => { const v = $('chatIn').value.trim(); if (v) send({ t: 'chat', text: v }); $('chatIn').value = ''; closeChat(); };
   $('chatSend').onclick = sendChat;
-  $('chatIn').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); if (e.key === 'Escape') $('chatbox').classList.add('hidden'); });
+  $('chatIn').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); if (e.key === 'Escape') closeChat(); });
 
   // ---------- Efekty ----------
   function spawnFx(m) {
