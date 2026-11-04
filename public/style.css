@@ -50,6 +50,7 @@ button { font: inherit; cursor: pointer; border: none; }
 .slot { position: relative; flex: 1 0 52px; max-width: 80px; aspect-ratio: 1; border-radius: 12px; background: #fff8e7; border: 3px solid #8b5a2b; display: flex; align-items: center; justify-content: center; }
 .slot img { width: 72%; height: 72%; pointer-events: none; }
 .slot.empty { background: #fff8e714; border: 2px dashed #fff8e740; }
+.slot.empty:nth-child(n+7) { display: none; } /* mobil: rad doplnia prázdne miesta len do 6 */
 .slot.on { border-color: #ffd23f; box-shadow: 0 0 0 3px #ffd23f88; transform: translateY(-3px); }
 .slot .n { position: absolute; right: 2px; bottom: 0; font-size: 12px; font-weight: 800; color: #2b2116; text-shadow: 0 0 3px #fff, 0 0 3px #fff; }
 .slot .wbar { position: absolute; left: 4px; right: 4px; bottom: 3px; height: 4px; background: #0002; border-radius: 2px; }
@@ -126,12 +127,12 @@ button { font: inherit; cursor: pointer; border: none; }
 /* Počítač (a tablet na šírku): hra na celú obrazovku; koľko sveta je vidno, určuje uhlopriečka (D.VIEW_DIAG) */
 @media (min-width: 820px) and (min-aspect-ratio: 1/1) {
   #app { max-width: none; }
-  /* Počítač: žiadny pás cez celú obrazovku – malý panel v strede, len taký široký, koľko treba */
+  /* Počítač: žiadny pás cez celú obrazovku – panel v strede s pevnou šírkou na 9 miest (klávesy 1–9) */
   #bottom { left: 50%; right: auto; bottom: 12px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); display: grid; grid-template-columns: auto auto; align-items: center; column-gap: 14px; padding: 6px 14px 10px; border: 3px solid #8b5a2b; border-radius: 18px; box-shadow: 0 4px 14px #0006; }
   #selName { grid-column: 1 / -1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #hotbar { padding: 4px 0 0; min-width: 0; }
+  #hotbar { padding: 4px 0 0; width: calc(9 * 58px + 8 * 6px); max-width: 100%; }
   .slot { flex: 0 0 58px; }
-  .slot.empty { display: none; }
+  .slot.empty:nth-child(n) { display: flex; }
   #emotes { padding: 4px 0 0; gap: 8px; }
   #chatbox { left: 50%; right: auto; width: min(560px, calc(100% - 16px)); transform: translateX(-50%); }
   #modal { align-items: center; }
