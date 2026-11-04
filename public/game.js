@@ -1180,7 +1180,11 @@
         if (D.passable(t) && D.iceLevel(t) > D.iceLevel(here)) here = t;
       }
       const lift = Math.floor((me.jz || 0) * D.GLACIER_LAYERS);
-      const free = (x, y) => corners(x, y).every(([cx, cy]) => !solid(cx, cy, here, lift, me.crawl, overlap));
+      // plazenie: meria sa od políčka pod stredom postavy a stred nesmie prejsť na inú výšku
+      // (inak by sa dalo vyliezť, keď sa už rohom dotýka vyššieho ľadu)
+      const mid = tileAt(Math.floor(me.x), Math.floor(me.y)), from = me.crawl ? mid : here;
+      const free = (x, y) => corners(x, y).every(([cx, cy]) => !solid(cx, cy, from, lift, me.crawl, overlap))
+        && (!me.crawl || D.iceLevel(tileAt(Math.floor(x), Math.floor(y))) === D.iceLevel(mid));
       const nx = me.x + vx * sp;
       if (free(nx, me.y)) me.x = nx;
       const ny = me.y + vy * sp;
