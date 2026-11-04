@@ -968,7 +968,7 @@ export function create(api) {
     }
     for (const o of chars.values()) o.alive = false;
     const me = S.me;
-    const meO = drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : DIR_ANGLE[me.dir], S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz, crawl: me.crawl }, dt);
+    const meO = drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : DIR_ANGLE[me.dir], S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz, crawl: me.crawl || !!S.scav }, dt);
     for (const o of S.others.values()) drawChar(o.id, o.x, o.y, o.look, o.a != null ? o.a : DIR_ANGLE[o.dir || 0], o.e === 'dance' ? t * 4 : o.phase, { dance: o.e === 'dance', jz: o.jz, crawl: o.cr }, dt);
     if (!babka) babka = drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, 0, { babka: true }, 1);
     else { babka.alive = true; if (Math.floor(t) !== babka.lastT) { babka.lastT = Math.floor(t); drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, Math.sin(t) * 0.3, { babka: true }, 1); } }
@@ -1038,7 +1038,7 @@ export function create(api) {
       if (bubble && bubble.until > performance.now()) Art.bubble(c, bubble.text, P.x, P.y, ts);
     };
     for (const o of S.others.values()) { const co = chars.get(o.id); if (co) label(co, o.name, o.e, S.bubbles[o.id]); }
-    const mo = chars.get('me'); if (mo) label(mo, S.name, S.myEmote, S.bubbles[S.id]);
+    const mo = chars.get('me'); if (mo) { label(mo, S.name, S.myEmote, S.bubbles[S.id]); const P = project(mo.sp.position.x, mo.sp.position.y + 1.35, mo.sp.position.z); api.scavBar(c, P.x, P.y, ts); }
     if (babka) label(babka, 'Babka', null, null);
 
     // dúha a zlatý dážď

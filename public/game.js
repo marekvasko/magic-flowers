@@ -6,7 +6,7 @@
 
   const SHIRTS = ['#4a90d9', '#e05a5a', '#5cb85c', '#f0ad4e', '#9b59d0', '#20b2aa', '#ff7eb6', '#555555'];
   const HAIRS = ['#5b3a1a', '#2b1a10', '#e8c36a', '#c0532a', '#9e9e9e', '#d96fa8', '#3a6ea5'];
-  const EMOJI = { wave: '👋', heart: '❤️', laugh: '😂', flower: '🌸', dance: '🎵', sleep: '💤' };
+  const EMOJI = { wave: '👋', heart: '❤️', laugh: '😂', flower: '🌸', dance: '🎵', sleep: '💤', search: '🔍' };
   const SECRETS = [
     'Mesiac šepká: „Keď sa dvaja roztancujú v kruhu z húb, víly to nevydržia a pridajú sa…“',
     'Mesiac šepká: „Kto pije jesenný odvar víl, môže tancovať aj sám.“',
@@ -104,7 +104,7 @@
         S.coins = m.coins; S.water = m.water; S.inv = m.inv; S.recipes = m.recipes; S.seen = m.seen; S.vily = m.vily;
         S.fb = m.fb || {}; S.fbTick = m.tick;
         Object.assign(S, { rep: m.rep || 0, up: m.up || {}, canCap: m.canCap, plotLimit: m.plotLimit, plotsUsed: m.plotsUsed, maxActive: m.maxActive });
-        if (!S.inv[S.sel]) S.sel = 'hoe';
+        if (S.sel !== 'hand' && !S.inv[S.sel]) S.sel = 'hoe';
         renderHotbar(); updateHud();
         if (S.modal && S.modal.refresh) S.modal.refresh();
         break;
@@ -115,6 +115,7 @@
       case 'market': S.market = m; if (S.modal && S.modal.refresh) S.modal.refresh(); break;
       case 'board': S.board = m.list; if (S.modal && S.modal.refresh) S.modal.refresh(); break;
       case 'tile': S.tiles[m.i] = m.v; break;
+      case 'scav': S.scav = m.from == null ? null : { from: m.from, to: m.to }; break;
       case 'tiles': S.tiles = m.tiles; break;
       case 'time':
         // Server posiela celé číslo kroku; deň a minúta sa z neho odvodia, medzi krokmi len plynulo dopočítame.
@@ -160,6 +161,20 @@
 
   // ---------- Pomocné ----------
   // ladenie: window.MF_TIME = { season: 0–3, min: 0–1439 } prepíše zobrazený čas (len lokálne vykresľovanie, nie server)
+  // Ako ďaleko je hľadanie divých semienok (0–1), null keď nehľadám
+  function scavProgress() {
+    if (!S.scav) return null;
+    const tick = S.tick + Math.min(1, (performance.now() - S.timeAt) / S.tickMs);
+    return Math.max(0, Math.min(1, (tick - S.scav.from) / (S.scav.to - S.scav.from)));
+  }
+  // Ukazovateľ hľadania pod menom (2D aj 3D)
+  function scavBar(c, X, Y, ts) {
+    const k = scavProgress();
+    if (k == null) return;
+    const w = ts * 0.9, hh = ts * 0.09, y = Y + ts * 0.14;
+    c.fillStyle = 'rgba(0,0,0,0.5)'; c.fillRect(X - w / 2 - 1, y - 1, w + 2, hh + 2);
+    c.fillStyle = '#9ccc65'; c.fillRect(X - w / 2, y, w * k, hh);
+  }
   function curMin() { if (window.MF_TIME && window.MF_TIME.min != null) return window.MF_TIME.min; return realMin(); }
   function realMin() { return (S.min + Math.min(D.MIN_PER_TICK, (performance.now() - S.timeAt) / S.tickMs * D.MIN_PER_TICK)) % 1440; }
   function season() { return window.MF_TIME && window.MF_TIME.season != null ? window.MF_TIME.season : D.seasonOf(S.day); }
@@ -236,7 +251,7 @@
     const other = playerOn(tx, ty);
     if (other) {
       if (sel === 'po_laska') return { i: '💕', l: 'Darovať' };
-      if (sel === 'hoe' || sel === 'can') return { i: '👋', l: 'Zamávať' };
+      if (sel === 'hoe' || sel === 'can' || sel === 'hand') return { i: '👋', l: 'Zamávať' };
       return { i: '🎁', l: 'Darovať' };
     }
     switch (t.g) {
@@ -256,7 +271,8 @@
       if (s && !p && (!s.o || s.o === S.name.toLowerCase())) return { i: '🔄', l: 'Zarovnať' };
     }
     if (sel === 'can' && s) return { i: '💧', l: 'Poliať' };
-    if (sel.startsWith('seed_') && s && !p) return { i: '🌱', l: 'Sadiť' };
+    if ((sel.startsWith('seed_') || D.isWild(sel)) && s && !p) return { i: '🌱', l: 'Sadiť' };
+    if (sel === 'hand' && t.g === 'grass' && !s) return { i: '🔍', l: 'Hľadať' };
     if (sel === 'compost' && s && !s.r) return { i: '🟤', l: 'Pohnojiť' };
     if (sel.startsWith('po_')) return { i: '🧪', l: 'Použiť' };
     if (p && !p.d) return { i: '🔍', l: 'Pozrieť', info: true };
@@ -285,6 +301,7 @@
     const t = tileAt(tx, ty), p = t.s && t.s.p;
     if (!p) return;
     const sp = D.SPECIES[p.sp];
+    if (!sp) return toast('Divé semienko – uvidíme, čo z neho vyrastie, keď vyklíči.' + (p.d ? ' Žiaľ, zahynulo.' : t.s.w ? '' : ' · smäd'));
     const st = ['semienko', 'klíčok', 'púčik', 'kvitne'][D.stageOf(p)];
     const shade = D.isShade(S.tiles, tx, ty);
     const notes = [];
@@ -305,7 +322,7 @@
       else plantInfo(tx, ty);
       return;
     }
-    send({ t: 'act', x: tx, y: ty, item: S.sel });
+    send({ t: 'act', x: tx, y: ty, item: S.sel === 'hand' ? '' : S.sel });
     if (a.l === 'Kopať') sfx('dig'); else if (a.l === 'Poliať' || a.l === 'Načrieť') sfx('water'); else sfx('pop');
   }
 
@@ -358,7 +375,7 @@
     $('rotR').onclick = () => R3 && R3.rotate(1);
     import('/render3d.mjs').then(() => {
       R3 = window.Render3D.create({
-        S, glCanvas: gl, ov: cv, ovCtx: ctx, EMOJI, curMin, season, ctxAction, frontTile
+        S, glCanvas: gl, ov: cv, ovCtx: ctx, EMOJI, scavBar, curMin, season, ctxAction, frontTile
       });
       window._r3pick = (x, y) => R3.pick(x, y); // pre ladenie / testy
       window._r3 = R3;
@@ -492,10 +509,11 @@
 
   // ---------- Hotbar ----------
   function hotbarIds() {
-    const order = id => id === 'hoe' ? 0 : id === 'can' ? 1 : id === 'compost' ? 2 : id.startsWith('seed_') ? 3 : id.startsWith('fl_') ? 4 : id === 'wilted' ? 4.5 : 5;
+    const order = id => id === 'hoe' ? 0 : id === 'can' ? 1 : id === 'hand' ? 1.5 : id === 'compost' ? 2 : id.startsWith('seed_') || D.isWild(id) ? 3 : id.startsWith('fl_') ? 4 : id === 'wilted' ? 4.5 : 5;
     const spOrder = Object.keys(D.SPECIES);
     const rank = id => { const k = id.replace(/^(seed_|fl_|po_)/, ''); const i = spOrder.indexOf(k); return i < 0 ? 99 : i; };
-    return Object.keys(S.inv).filter(id => S.inv[id] > 0).sort((a, b) => order(a) - order(b) || rank(a) - rank(b));
+    // ruka nie je predmet – je v lište vždy (prázdnou rukou sa hľadajú divé semienka)
+    return Object.keys(S.inv).filter(id => S.inv[id] > 0).concat('hand').sort((a, b) => order(a) - order(b) || rank(a) - rank(b));
   }
   function selectItem(id) { if (!id) return; S.sel = id; renderHotbar(); }
   function renderHotbar() {
@@ -512,7 +530,7 @@
         if (o) d.innerHTML += `<span class="n">${S.inv[id]}</span><div class="wbar fresh"><i style="width:${o.rem * 100}%;background:${freshColor(o.rem)}"></i></div>`;
         else d.innerHTML += `<span class="n">${S.inv[id]}</span>`;
       }
-      else if (id !== 'hoe') d.innerHTML += `<span class="n">${S.inv[id]}</span>`;
+      else if (id !== 'hoe' && id !== 'hand') d.innerHTML += `<span class="n">${S.inv[id]}</span>`;
       d.onclick = () => selectItem(id);
       bar.appendChild(d);
     }
@@ -527,6 +545,8 @@
       txt += ' · ' + sp.seasons.map(s => D.SEASON_ICONS[s]).join('') + ' · ' + ({ sun: '☀️', shade: '🌳', any: '⛅' })[sp.light] + (sp.soil ? ' · ' + ({ sand: 'piesok', rich: 'kompost', rock: 'skalka' })[sp.soil] : '');
     }
     if (S.sel.startsWith('fl_')) txt += ' · ' + freshText(S.sel);
+    if (S.sel === 'hand') txt += ' · ťukni na trávu a hľadaj divé semienka 🔍';
+    if (D.isWild(S.sel)) txt += ' · ' + D.SEASON_ICONS[+S.sel.slice(5)] + ' · nevedno, čo z neho vyrastie';
     if (S.sel === 'wilted') txt += ` · ${D.WILTED_PER_COMPOST} ks = 1 kompost (v sklade)`;
     if (S.sel.startsWith('po_')) txt += ' · ' + D.POTIONS[S.sel.slice(3)].desc;
     $('selName').textContent = txt;
@@ -1149,7 +1169,7 @@
     if (A.stall) objs.push([A.stall.y + 0.9, () => Art.stall(c, SX(A.stall.x), SY(A.stall.y), ts, t)]);
     objs.push([D.BABKA.y + 0.9, () => Art.char(c, SX(D.BABKA.x + 0.5), SY(D.BABKA.y + 0.9), ts, { shirt: '#7b4a9e', hair: '#eee' }, 0, Math.sin(t) * 0.3, { babka: true })]);
     for (const o of S.others.values()) objs.push([o.y, () => Art.char(c, SX(o.x), SY(o.y), ts, o.look, o.dir, o.phase || (o.e === 'dance' ? t * 4 : 0), { dance: o.e === 'dance', lift: (o.jz || 0) * ts, crawl: o.cr })]);
-    objs.push([S.me.y, () => Art.char(c, SX(S.me.x), SY(S.me.y), ts, S.look || {}, S.me.dir, S.myEmote === 'dance' ? t * 4 : S.me.phase, { dance: S.myEmote === 'dance', lift: S.me.jz * ts, crawl: S.me.crawl })]);
+    objs.push([S.me.y, () => Art.char(c, SX(S.me.x), SY(S.me.y), ts, S.look || {}, S.me.dir, S.myEmote === 'dance' ? t * 4 : S.me.phase, { dance: S.myEmote === 'dance', lift: S.me.jz * ts, crawl: S.me.crawl || !!S.scav })]);
     objs.sort((a, b) => a[0] - b[0]);
     for (const o of objs) o[1]();
 
@@ -1243,6 +1263,7 @@
     };
     for (const o of S.others.values()) label(o.x, o.y, o.name, o.e, S.bubbles[o.id]);
     label(S.me.x, S.me.y, S.name, S.myEmote, S.bubbles[S.id]);
+    scavBar(c, SX(S.me.x), SY(S.me.y - 1.2), ts);
     label(D.BABKA.x + 0.5, D.BABKA.y + 0.9, 'Babka', null, null);
 
     // efekty na obrazovke

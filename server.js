@@ -8,6 +8,7 @@ const D = require('./shared/data.js');
 const E = require('./engine.js');
 const Econ = require('./economy.js');
 const I = require('./items.js');
+const Scav = require('./scavenge.js');
 
 const PORT = +process.env.PORT || 3000;
 // Dĺžka herného dňa je napevno D.BASE_DAY_SECONDS (20 min); DAY_SECONDS v prostredí slúži len na testovanie.
@@ -64,7 +65,7 @@ function newWorldState() {
   return {
     v: SAVE_VERSION, tick: D.DAWN_TICK + 6, wall: Date.now(), mode: DEFAULT_MODE, daySeconds: DAY_SECONDS,
     rng: crypto.randomBytes(4).readUInt32LE(0), seq: 0, events: [],
-    weather: 'sun', saves: {}, storage: {}, market: null, contracts: null, fairyNight: -1, eternal: false
+    weather: 'sun', saves: {}, storage: {}, market: null, contracts: null, fairyNight: -1, eternal: false, scav: {}
   };
 }
 
@@ -116,7 +117,7 @@ function serialize(room) {
     v: SAVE_VERSION, tick: room.tick, wall: room.wall, mode: room.mode, daySeconds: room.daySeconds,
     rng: room.rng, seq: room.seq, events: room.events,
     weather: room.weather, saves: room.saves, storage: room.storage, storageFb: room.storageFb, market: room.market, contracts: room.contracts,
-    fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom,
+    fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom, scav: room.scav,
     tiles: room.tiles.map(t => ({ s: t.s }))
   });
 }
@@ -158,7 +159,10 @@ function broadcast(room, msg) { const s = JSON.stringify(msg); for (const p of r
 function toast(pl, text, kind) { send(pl.ws, { t: 'toast', text, kind: kind || 'info' }); }
 function toastAll(room, text, kind) { broadcast(room, { t: 'toast', text, kind: kind || 'info' }); }
 function fx(room, k, x, y, extra) { broadcast(room, Object.assign({ t: 'fx', k, x, y }, extra || {})); }
-function tileMsg(room, i) { room.dirty = true; broadcast(room, { t: 'tile', i, v: room.tiles[i] }); }
+// Políčka posielame cez Scav.tileView – druh divej rastliny ostane skrytý, kým nevyklíči.
+function tilesView(room) { return room.tiles.map(Scav.tileView); }
+function tilesMsg(room) { broadcast(room, { t: 'tiles', tiles: tilesView(room) }); }
+function tileMsg(room, i) { room.dirty = true; broadcast(room, { t: 'tile', i, v: Scav.tileView(room.tiles[i]) }); }
 function plotsUsed(room, key) { let n = 0; for (const t of room.tiles) if (t.s && t.s.o === key) n++; return n; }
 function sendMe(pl) {
   const sv = pl.save;
@@ -218,16 +222,28 @@ function growPlant(room, i) {
   if (bad) p.q = Math.max(1, p.q - 1);
 }
 
+// Divá rastlina vyklíčila – hráč sa konečne dozvie, čo z nej bude
+function revealWild(room, i) {
+  const s = room.tiles[i].s, p = s && s.p;
+  if (!p || !p.wild || p.d || !(p.prog > 0)) return;
+  delete p.wild;
+  const sv = s.o && room.saves[s.o];
+  if (sv && sv.seen && !sv.seen.includes(p.sp)) sv.seen.push(p.sp);
+  const pl = s.o && playerByKey(room, s.o);
+  if (pl) toast(pl, `🌱 Z divého semienka vykukol klíčok: ${D.SPECIES[p.sp].name}!`, 'gift');
+}
+
 function dawn(room) {
   const se = season(room);
-  for (let i = 0; i < room.tiles.length; i++) growPlant(room, i);
+  for (let i = 0; i < room.tiles.length; i++) { growPlant(room, i); revealWild(room, i); }
+  Scav.prune(room);
   const r = E.rand(room);
   room.weather = se === 3 ? (r < 0.4 ? 'snow' : 'sun') : (r < (se === 0 ? 0.35 : 0.25) ? 'rain' : 'sun');
   for (const t of room.tiles) if (t.s) t.s.w = room.weather === 'rain' ? 1 : 0;
   Econ.onDawn(room);
   room.dirty = true;
   if (!room.players.size) return;
-  broadcast(room, { t: 'tiles', tiles: room.tiles });
+  tilesMsg(room);
   broadcast(room, roomInfo(room));
   if ((room.day - 1) % D.DAYS_PER_SEASON === 0 && room.day > 1) toastAll(room, `Nastáva ${D.SEASONS[se].toLowerCase()} ${D.SEASON_ICONS[se]}`, 'day');
   const wtxt = { rain: 'Prší – záhrada sa poleje sama. 🌧️', snow: 'Sneží. ❄️', sun: 'Slnečno. ☀️' }[room.weather];
@@ -253,6 +269,10 @@ const HANDLERS = {
     }
     if (Object.keys(I.wiltSweep(I.storageC(room), room.tick)).length) broadcast(room, roomInfo(room));
     E.schedule(room, room.tick + 12, 'hourly');
+  },
+  scavDone(room, d) {
+    const pl = playerByKey(room, d.key);
+    if (pl && pl.scav && pl.scav.n === d.n) finishScavenge(pl);
   },
   vilyEnd(room, d) {
     const pl = playerByKey(room, d.key);
@@ -329,6 +349,10 @@ function act(pl, m) {
   if (Math.hypot(pl.x - (x + 0.5), pl.y - (y + 0.5)) > 2.4) return toast(pl, 'Si príliš ďaleko.');
   if (item && !sv.inv[item]) return;
   const i = y * D.W + x, t = room.tiles[i];
+  if (pl.scav) {
+    if (!item && pl.scav.i === i) return toast(pl, 'Ešte stále hľadáš… 🔍');
+    stopScavenge(pl, 'Prestal(a) si hľadať.');
+  }
 
   // Iný hráč – darovanie
   const other = playerAt(room, pl, x, y);
@@ -380,9 +404,13 @@ function act(pl, m) {
       tileMsg(room, i); sendMe(pl); fx(room, 'dirt', x + 0.5, y + 0.5); return;
     }
     if (t.s && !t.s.p && (!t.s.o || t.s.o === pl.key)) { // zarovnať prázdne políčko – uvoľní miesto v povolení
-      t.s = null; tileMsg(room, i); sendMe(pl); return;
+      t.s = null; Scav.empty(room, i); tileMsg(room, i); sendMe(pl); return; // čerstvo zarovnaná zem semienka nemá
     }
     if (t.g === 'ring' || t.g === 'shroom') return toast(pl, 'Kruh z húb radšej nechaj tak… niekto tu v noci tancuje. 🍄');
+    return;
+  }
+  if (!item) {
+    if (Scav.canSearch(t)) return startScavenge(pl, i);
     return;
   }
   if (item === 'can') {
@@ -406,7 +434,52 @@ function act(pl, m) {
     if (sp.strict && t.s.k !== sp.soil) toast(pl, `Hmm, ${sp.name} tu asi nebude rásť…`);
     tileMsg(room, i); sendMe(pl); return;
   }
+  if (D.isWild(item)) {
+    if (!t.s) return toast(pl, 'Najprv zem prekopaj motykou.');
+    if (t.s.p) return;
+    const ws = +item.slice(5);
+    if (ws !== season(room) && !room.eternal) return toast(pl, `Toto divé semienko je z obdobia ${D.SEASONS[ws].toLowerCase()} – vtedy ho aj zasaď.`);
+    take(pl, item, 1);
+    // druh sa určí teraz a už sa nezmení; hráč ho uvidí, až keď vyklíči
+    t.s.p = { sp: Scav.pickWild(room, ws, sp => Econ.flowerPrice(room, sp)), prog: 0, q: 3, dry: 0, wild: 1 };
+    toast(pl, 'Zasadil(a) si divé semienko. Čo z neho vyrastie? 🤔');
+    tileMsg(room, i); sendMe(pl); return;
+  }
   if (item.startsWith('po_')) return usePotion(pl, item.slice(3), x, y);
+}
+
+// ---------- Hľadanie divých semienok ----------
+// Hráč sa prikrčí a hľadá hernú hodinu; pohnúť sa alebo urobiť niečo iné hľadanie preruší.
+function startScavenge(pl, i) {
+  const room = pl.room;
+  pl.scavN = (pl.scavN | 0) + 1;
+  pl.scav = { i, n: pl.scavN, px: pl.x, py: pl.y, from: room.tick, to: room.tick + D.SCAVENGE.ticks };
+  E.schedule(room, pl.scav.to, 'scavDone', { key: pl.key, n: pl.scav.n });
+  send(pl.ws, { t: 'scav', from: pl.scav.from, to: pl.scav.to, i });
+  if (Scav.fill(room, i) < 0.5) toast(pl, 'Hľadáš v tráve… vyzerá to, že tu už niekto nedávno hľadal. 🔍');
+  else toast(pl, 'Hľadáš v tráve divé semienka… 🔍');
+  fx(room, 'dirt', i % D.W + 0.5, Math.floor(i / D.W) + 0.5);
+}
+function stopScavenge(pl, msg) {
+  const room = pl.room, n = pl.scav.n;
+  pl.scav = null;
+  E.cancel(room, e => e.type === 'scavDone' && e.data.key === pl.key && e.data.n === n);
+  send(pl.ws, { t: 'scav', from: null });
+  if (msg) toast(pl, msg);
+}
+function finishScavenge(pl) {
+  const room = pl.room, i = pl.scav.i, t = room.tiles[i];
+  pl.scav = null;
+  send(pl.ws, { t: 'scav', from: null });
+  if (!Scav.canSearch(t)) return toast(pl, 'Kým si hľadal(a), niekto tu trávu prekopal.');
+  const x = i % D.W + 0.5, y = Math.floor(i / D.W) + 0.5;
+  room.dirty = true;
+  if (!Scav.roll(room, i)) return toast(pl, 'Nič si nenašiel(a)… Skús inde alebo inokedy. 🌾');
+  const id = 'wild_' + season(room);
+  give(pl, id, 1);
+  toast(pl, `🌾 Našiel(a) si ${D.itemName(id).toLowerCase()}!`, 'gift');
+  fx(room, 'pop', x, y, { c: '#9ccc65' });
+  sendMe(pl);
 }
 
 function usePotion(pl, k, x, y) {
@@ -415,13 +488,13 @@ function usePotion(pl, k, x, y) {
   take(pl, 'po_' + k, 1);
   if (k === 'rast') {
     eachAround(room, x, y, 1, (i, t) => {
-      if (t.s && t.s.p && !t.s.p.d) { const sp = D.SPECIES[t.s.p.sp]; t.s.p.prog = Math.min(sp.days, t.s.p.prog + 1); t.s.w = 1; tileMsg(room, i); }
+      if (t.s && t.s.p && !t.s.p.d) { const sp = D.SPECIES[t.s.p.sp]; t.s.p.prog = Math.min(sp.days, t.s.p.prog + 1); t.s.w = 1; revealWild(room, i); tileMsg(room, i); }
     });
     fx(room, 'sparkle', x + 0.5, y + 0.5, { c: '#7ed957' });
   } else if (k === 'dazd') {
     room.weather = 'rain';
     for (let i = 0; i < room.tiles.length; i++) if (room.tiles[i].s) room.tiles[i].s.w = 1;
-    broadcast(room, { t: 'tiles', tiles: room.tiles });
+    tilesMsg(room);
     toastAll(room, `🌧️ ${pl.name} privolal(a) dážď!`, 'magic');
   } else if (k === 'jar') {
     eachAround(room, x, y, 1, (i, t) => { if (t.s && t.s.p && !t.s.p.d) { t.s.p.b = 1; tileMsg(room, i); } });
@@ -438,7 +511,7 @@ function usePotion(pl, k, x, y) {
   } else if (k === 'duha') {
     for (const o of room.players.values()) o.save.coins += 300;
     for (let i = 0; i < room.tiles.length; i++) { const t = room.tiles[i]; if (t.s && t.s.p && !t.s.p.d) t.s.p.q = 3; }
-    broadcast(room, { t: 'tiles', tiles: room.tiles });
+    tilesMsg(room);
     broadcast(room, { t: 'fx', k: 'rainbow' });
     toastAll(room, `🌈 ${pl.name} uvaril(a) Dúhový elixír! Nad záhradou sa klenie dúha. Všetci dostávajú 300 🪙 a kvety najvyššiu kvalitu!`, 'magic');
     for (const o of room.players.values()) sendMe(o);
@@ -463,7 +536,7 @@ function wishingWell(pl) {
   } else if (r < 0.75 && room.weather !== 'rain' && season(room) !== 3) {
     room.weather = 'rain';
     for (const t of room.tiles) if (t.s) t.s.w = 1;
-    broadcast(room, { t: 'tiles', tiles: room.tiles });
+    tilesMsg(room);
     toastAll(room, '🪙 Studňa zahučala a z neba sa spustil dážď!', 'magic');
   } else if (r < 0.77) {
     give(pl, 'seed_papradie', 1);
@@ -519,7 +592,7 @@ wss.on('connection', ws => {
       pl = { id: nextId++, key, name, ws, room, save: sv, x: sv.x || D.SPAWN.x, y: sv.y || D.SPAWN.y, dir: 0, emote: null, emoteAt: 0, look };
       room.players.set(pl.id, pl);
       send(ws, {
-        t: 'welcome', id: pl.id, room: roomId, W: D.W, H: D.H, tiles: room.tiles, x: pl.x, y: pl.y
+        t: 'welcome', id: pl.id, room: roomId, W: D.W, H: D.H, tiles: tilesView(room), x: pl.x, y: pl.y
       });
       send(ws, timeMsg(room));
       send(ws, Econ.marketView(room));
@@ -547,6 +620,7 @@ wss.on('connection', ws => {
           if (typeof m.a === 'number' && isFinite(m.a)) pl.a = +m.a.toFixed(3); // presný smer pohľadu (3D: 8 smerov)
           pl.cr = !!m.cr; // plazí sa
           sv.x = pl.x; sv.y = pl.y;
+          if (pl.scav && Math.hypot(pl.x - pl.scav.px, pl.y - pl.scav.py) > 0.35) stopScavenge(pl, 'Pohol(a) si sa – hľadanie sa prerušilo.');
         }
         break;
       case 'act': if (!pl.sleep) act(pl, m); break;
@@ -556,6 +630,7 @@ wss.on('connection', ws => {
           if (pl.sleep || room.ff) return;
           if (!D.canSleep(room.min)) return toast(pl, 'Ešte je skoro. Spať sa dá od 18:00. 🌇');
           if (!nearHouse(pl)) return toast(pl, 'Posteľ je v domčeku – podíď bližšie. 🏠');
+          if (pl.scav) stopScavenge(pl);
           pl.sleep = true; pl.emote = null;
           const s = sleepMsg(room);
           if (s.ids.length < s.total) toastAll(room, `💤 ${pl.name} ide spať (${s.ids.length}/${s.total}). Keď pôjdu spať všetci, noc prebehne.`, 'day');
@@ -630,7 +705,7 @@ wss.on('connection', ws => {
         } else if (k === 'jar') {
           room.eternal = true;
           for (const t of room.tiles) if (t.s) t.s.w = 1;
-          broadcast(room, { t: 'tiles', tiles: room.tiles });
+          tilesMsg(room);
           broadcast(room, roomInfo(room));
           broadcast(room, { t: 'fx', k: 'rainbow' });
           toastAll(room, `✨ ${pl.name} si prial(a) večnú jar! Záhrada sa odteraz polieva sama a kvetom nevadí ročné obdobie.`, 'magic');
@@ -714,8 +789,8 @@ setInterval(() => {
   for (const room of rooms.values()) {
     if (!room.players.size) continue;
     const list = [...room.players.values()].map(p => ({
-      id: p.id, name: p.name, x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, a: p.a, look: p.look, cr: p.cr ? 1 : 0, j: p.jn | 0,
-      e: p.sleep ? 'sleep' : p.emote && now - p.emoteAt < 6000 ? p.emote : null
+      id: p.id, name: p.name, x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, a: p.a, look: p.look, cr: p.cr || p.scav ? 1 : 0, j: p.jn | 0,
+      e: p.sleep ? 'sleep' : p.scav ? 'search' : p.emote && now - p.emoteAt < 6000 ? p.emote : null
     }));
     broadcast(room, { t: 'pl', list });
   }
