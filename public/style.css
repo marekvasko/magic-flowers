@@ -53,7 +53,7 @@ button { font: inherit; cursor: pointer; border: none; }
 .slot { position: relative; flex: 1 0 52px; max-width: 80px; aspect-ratio: 1; border-radius: 12px; background: #fff8e7; border: 3px solid #8b5a2b; display: flex; align-items: center; justify-content: center; }
 .slot img { width: 72%; height: 72%; pointer-events: none; }
 .slot.empty { background: #fff8e714; border: 2px dashed #fff8e740; }
-.slot.empty:nth-child(n+7) { display: none; } /* mobil: rad doplnia prázdne miesta len do 6 */
+.slot.empty:not(.keep):nth-child(n+7) { display: none; } /* mobil: rad doplnia prázdne miesta len do 6 */
 .slot.on { border-color: #ffd23f; box-shadow: 0 0 0 3px #ffd23f88; transform: translateY(-3px); }
 .slot .n { position: absolute; right: 2px; bottom: 0; font-size: 12px; font-weight: 800; color: #2b2116; text-shadow: 0 0 3px #fff, 0 0 3px #fff; }
 .slot .wbar { position: absolute; left: 4px; right: 4px; bottom: 3px; height: 4px; background: #0002; border-radius: 2px; }

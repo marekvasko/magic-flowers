@@ -104,7 +104,7 @@
         S.coins = m.coins; S.water = m.water; S.inv = m.inv; S.recipes = m.recipes; S.seen = m.seen; S.vily = m.vily;
         S.fb = m.fb || {}; S.fbTick = m.tick;
         Object.assign(S, { rep: m.rep || 0, up: m.up || {}, canCap: m.canCap, plotLimit: m.plotLimit, plotsUsed: m.plotsUsed, maxActive: m.maxActive });
-        if (!S.inv[S.sel]) S.sel = 'hoe';
+        if (S.sel && !S.inv[S.sel]) S.sel = 'hoe'; // '' = prázdna ruka (vybraté prázdne miesto v lište)
         renderHotbar(); updateHud();
         if (S.modal && S.modal.refresh) S.modal.refresh();
         break;
@@ -251,7 +251,7 @@
     const other = playerOn(tx, ty);
     if (other) {
       if (sel === 'po_laska') return { i: '💕', l: 'Darovať' };
-      if (sel === 'hoe' || sel === 'can') return { i: '👋', l: 'Zamávať' };
+      if (!sel || sel === 'hoe' || sel === 'can') return { i: '👋', l: 'Zamávať' };
       return { i: '🎁', l: 'Darovať' };
     }
     switch (t.g) {
@@ -346,8 +346,8 @@
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') S.crawlKey = true;
     if (e.code === 'KeyE' || e.code === 'Enter') { const f = frontTile(); doAction(f.x, f.y); e.preventDefault(); }
     if (e.code === 'Escape') closeModal();
-    if (/^Digit[1-9]$/.test(e.code)) { const ids = hotbarIds(); const id = ids[+e.code.slice(5) - 1]; if (id) selectItem(id); }
-    if (e.code === 'KeyQ') { const ids = hotbarIds(); selectItem(ids[(ids.indexOf(S.sel) + 1) % ids.length]); }
+    if (/^Digit[1-9]$/.test(e.code)) { const ids = hotbarIds(); selectItem(ids[+e.code.slice(5) - 1] || ''); }
+    if (e.code === 'KeyQ') { const ids = hotbarIds().concat(''); selectItem(ids[(ids.indexOf(S.sel) + 1) % ids.length]); }
     if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
     if (R3 && e.code === 'BracketLeft') R3.rotate(-1);
     if (R3 && e.code === 'BracketRight') R3.rotate(1);
@@ -515,7 +515,7 @@
     const rank = id => { const k = id.replace(/^(seed_|fl_|po_)/, ''); const i = spOrder.indexOf(k); return i < 0 ? 99 : i; };
     return Object.keys(S.inv).filter(id => S.inv[id] > 0).sort((a, b) => order(a) - order(b) || rank(a) - rank(b));
   }
-  function selectItem(id) { if (!id) return; S.sel = id; renderHotbar(); }
+  function selectItem(id) { if (id == null) return; S.sel = id; renderHotbar(); }
   function renderHotbar() {
     const bar = $('hotbar');
     const ids = hotbarIds();
@@ -534,10 +534,16 @@
       d.onclick = () => selectItem(id);
       bar.appendChild(d);
     }
-    for (let i = ids.length; i < 9; i++) bar.appendChild(Object.assign(document.createElement('div'), { className: 'slot empty' })); // doplní rad (mobil 6, počítač 9 miest)
+    // doplní rad (mobil 6, počítač 9 miest); prvé prázdne miesto je vždy vidieť – jeho výberom máš prázdnu ruku
+    for (let i = ids.length; i < Math.max(9, ids.length + 1); i++) {
+      const d = Object.assign(document.createElement('div'), { className: 'slot empty' + (i === ids.length ? ' keep' + (S.sel === '' ? ' on' : '') : '') });
+      d.onclick = () => selectItem('');
+      bar.appendChild(d);
+    }
     const sel = bar.querySelector('.on');
     if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     let txt = D.itemName(S.sel);
+    if (!S.sel) txt = 'Prázdna ruka · hľadaj v tráve divé semienka 🔍';
     if (S.sel === 'can') txt += ` · ${S.water}/${S.canCap} 💧`;
     if (S.sel === 'hoe') txt += ` · pole ${S.plotsUsed}/${S.plotLimit >= 999 ? '∞' : S.plotLimit}`;
     if (S.sel.startsWith('seed_')) {
