@@ -22,7 +22,7 @@ const LIGHT = {
   day: { label: 'Garden, day', amb: [0.62, 0.64, 0.72], sun: [0.55, 0.52, 0.44], dark: 0, lamp: false, bg: 0x9ec7e0 },
   night: { label: 'Garden, night + lantern', amb: [0.22, 0.25, 0.42], sun: [0, 0, 0], dark: 0, lamp: true, bg: 0x0d1428 }
 };
-const ANCH = ['tree', 'giant', 'bush', 'log'];
+const ANCH = ['tree', 'giant', 'bush', 'log', 'corner'];
 
 export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone }) {
   const Webs = window.Webs;
@@ -61,7 +61,7 @@ export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone })
     webIn.onchange = () => { st.web = Math.max(1, +webIn.value | 0); saveSt(); rebuild(); };
     bar.replaceChildren(
       seg(h, Object.values(LIGHT).map(l => l.label), Object.keys(LIGHT).indexOf(st.light), i => { st.light = Object.keys(LIGHT)[i]; saveSt(); renderBar(); applyLight(); request(); }),
-      seg(h, ANCH, ANCH.indexOf(st.anchor), i => { st.anchor = ANCH[i]; saveSt(); renderBar(); rebuild(); }),
+      seg(h, ANCH, ANCH.indexOf(st.anchor), i => { st.anchor = ANCH[i]; saveSt(); renderBar(); resetView(); rebuild(); }),
       h('label', null, 'tiles ', seg(h, ['1', '2', '3', '4', '5'], st.n - 1, i => { st.n = i + 1; saveSt(); renderBar(); rebuild(); })),
       h('label', null, 'silk ', seg(h, ['1', '2', '3'], st.silk - 1, i => { st.silk = i + 1; saveSt(); renderBar(); rebuild(); })),
       h('label', null, 'web id ', webIn),
@@ -131,7 +131,7 @@ export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone })
     cv.ondblclick = resetView;
     new ResizeObserver(() => request()).observe(viewEl);
   }
-  function resetView() { Object.assign(view, { yaw: 0.35, pitch: 0.38, dist: 2.2 + st.n * 1.1 }); request(); }
+  function resetView() { Object.assign(view, st.anchor === 'corner' ? { yaw: 0.5, pitch: 0.45, dist: 1.8 } : { yaw: 0.35, pitch: 0.38, dist: 2.2 + st.n * 1.1 }); request(); }
   const matBark = new THREE.MeshLambertMaterial({ color: 0x7a5236 }), matLeaf = new THREE.MeshLambertMaterial({ color: 0x3f7a36 }), matGround = new THREE.MeshLambertMaterial({ color: 0x5a4a36 });
   const amb = new THREE.AmbientLight(0xffffff, 1), sunL = new THREE.DirectionalLight(0xffffff, 0), lampL = new THREE.PointLight(0xffc878, 0, 3.5, 1.5);
   scene.add(amb, sunL, lampL);
@@ -155,14 +155,31 @@ export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone })
     objs = [];
     const T = tiles(), P = Webs.webParams(over()), g = Webs.webGeom(T.t, T.w, T.hh, T.wb, over());
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(T.w, T.hh), matGround); ground.rotation.x = -Math.PI / 2; ground.position.set(T.w / 2, 0, T.hh / 2); objs.push(ground);
+    if (st.anchor === 'corner') return rebuildCorner(P);
     for (const o of [g.a, g.b]) if (o) objs.push(anchorMesh(o));
     web = new THREE.Mesh(new THREE.PlaneGeometry(g.len, g.hgt), webMaterial(THREE, world, viewDir, P, { w: g.len, h: g.hgt, seed: st.web, keep: st.silk >= 3 ? 1 : st.silk === 2 ? 0.72 : 0.42 }, MAX_LIGHTS));
     web.position.set((g.u0 + g.u1) / 2, g.hgt / 2 + 0.02, g.line);
     objs.push(web);
     for (const o of objs) scene.add(o);
     target.set((g.u0 + g.u1) / 2, g.hgt * 0.5, g.line);
-    const u = web.material.uniforms;
-    stats.textContent = `web ${st.web}: ${g.len.toFixed(2)} × ${g.hgt.toFixed(2)} tiles between ${g.a ? g.a.g : '–'} and ${g.b ? g.b.g : '–'} · ${u.uMode.value.x ? 'concentric' : 'spiral'} fill · ${u.uMode.value.z} rays · pitch ${u.uMode.value.w.toFixed(3)} · ${Object.keys(changed()).length} changed`;
+    const u = web.material.uniforms, inf = web.material.userData.info;
+    stats.textContent = `web ${st.web}: ${g.len.toFixed(2)} × ${g.hgt.toFixed(2)} tiles between ${g.a ? g.a.g : '–'} and ${g.b ? g.b.g : '–'} · ${inf.hubs} centre${inf.hubs > 1 ? 's' : ''} · mooring ${inf.moor[0]} + ${inf.moor[1]} · ${u.uMode.value.x ? 'concentric' : 'spiral'} fill · ${u.uMode.value.z}+ rays · pitch ${u.uMode.value.w.toFixed(3)} · ${Object.keys(changed()).length} changed`;
+    placeLamp(); applyLight(); request();
+  }
+  // kútová pavučina: stena (kváder) na zemi, pavučina šikmo v kúte pri päte steny a jej konci (ako v hre)
+  function rebuildCorner(P) {
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(2, 1.6, 1), new THREE.MeshLambertMaterial({ color: 0xd8cbb0 }));
+    wall.position.set(3, 0.8, 2.5); objs.push(wall); // stena x 2…4, z 2…3; pavučina pri jej južnej päte (z = 3) a východnom konci (x = 4)
+    const L = 0.7, up = 0.42, out = 0.4;
+    const top = new THREE.Vector3(4 - L / 2, up, 3), bot = new THREE.Vector3(4 - L / 2, 0.01, 3 + out);
+    const X = new THREE.Vector3(1, 0, 0), Y = top.clone().sub(bot), len = Y.length(); Y.normalize();
+    web = new THREE.Mesh(new THREE.PlaneGeometry(L, len), webMaterial(THREE, world, viewDir, P, { w: L, h: len, seed: st.web, keep: 1, corner: true }, MAX_LIGHTS));
+    web.matrixAutoUpdate = false;
+    web.matrix.makeBasis(X, Y, X.clone().cross(Y)).setPosition(top.clone().add(bot).multiplyScalar(0.5));
+    objs.push(web);
+    for (const o of objs) scene.add(o);
+    target.set(4 - L / 2, 0.25, 3.2);
+    stats.textContent = `corner web ${st.web}: ${L} × ${len.toFixed(2)} tiles, tangle + veil ${P.veil} · ${Object.keys(changed()).length} changed`;
     placeLamp(); applyLight(); request();
   }
   function placeLamp() {

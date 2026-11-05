@@ -20,7 +20,11 @@
     rays: Pd(12, 4, 28, 1, 'structure'), raysVar: Pd(5, 0, 10, 1, 'structure'), fill: Pd(2, 0, 2, 1, 'structure'),
     pitch: Pd(0.055, 0.015, 0.16, 0.005, 'structure'), pitchVar: Pd(0.35, 0, 1, 0.05, 'structure'),
     hub: Pd(0.05, 0, 0.2, 0.01, 'structure'), free: Pd(0.11, 0, 0.4, 0.01, 'structure'), radius: Pd(0.47, 0.2, 0.75, 0.01, 'structure'),
-    centerJitter: Pd(0.12, 0, 0.3, 0.01, 'structure'), moor: Pd(3, 1, 6, 1, 'structure'), sag: Pd(0.06, 0, 0.3, 0.01, 'structure'),
+    centerJitter: Pd(0.12, 0, 0.3, 0.01, 'structure'), sag: Pd(0.06, 0, 0.3, 0.01, 'structure'),
+    // veľká pavučina: náhodne 1 … hubs stredov (na každý aspoň hubSpan políčka šírky), na každom kmeni moorMin … moor kotviacich vlákien
+    hubs: Pd(3, 1, 4, 1, 'structure'), hubSpan: Pd(1.3, 0.5, 3, 0.1, 'structure'), moorMin: Pd(1, 0, 6, 1, 'structure'), moor: Pd(4, 0, 6, 1, 'structure'),
+    // kútová pavučina krížiaka: hustota mliečneho závoja
+    veil: Pd(0.18, 0, 0.6, 0.01, 'look'),
     // Perlinov šum: ohnutie lúčov, zvlnenie závitov, nerovný okraj, rozostup
     bend: Pd(0.22, 0, 0.8, 0.01, 'noise'), bendFreq: Pd(2.3, 0.2, 8, 0.1, 'noise'), wobble: Pd(0.035, 0, 0.2, 0.005, 'noise'),
     wobbleFreq: Pd(4, 0.5, 12, 0.5, 'noise'), edgeNoise: Pd(0.12, 0, 0.5, 0.01, 'noise'), pitchNoise: Pd(0.25, 0, 1, 0.05, 'noise'),
