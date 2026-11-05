@@ -412,3 +412,26 @@ test('pavučina: parametre sa orežú na rozsah; vlákna začínajú na kmeňoch
   const n1 = Webs.analyze(les, SEEDS[0], { span: 1, gladeSpan: 1 }).cands.flat(), n4 = Webs.analyze(les, SEEDS[0], { span: 4, gladeSpan: 5 }).cands.flat();
   assert.ok(n1.every(c => c.n === 1) && n4.some(c => c.n >= 3) && n4.length > n1.length);
 });
+
+test('pavučina z čiar: rovnaké stredy ako shader, kotvy na kmeňoch ležia v rovine, vydutie len uprostred', () => {
+  const opts = { w: 5.3, h: 1.1, seed: 8 };
+  const a = Webs.webThreads({}, opts), b = Webs.webThreads({}, opts);
+  assert.deepStrictEqual(a.pos, b.pos, 'rovnaké semienko → rovnaké vlákna');
+  assert.deepStrictEqual(a.layout.hubs, Webs.webLayout(Webs.webParams(), opts).hubs);
+  assert.strictEqual(a.pos.length, a.count * 3);
+  assert.strictEqual(a.tan.length, a.pos.length);
+  assert.ok(a.count / 2 > 300, 'dosť úsečiek');
+  let maxZ = 0;
+  for (let i = 0; i < a.count; i++) {
+    const x = a.pos[i * 3] + opts.w / 2, y = a.pos[i * 3 + 1] + opts.h / 2, z = a.pos[i * 3 + 2];
+    assert.ok(x >= -1e-6 && x <= opts.w + 1e-6 && y >= -1e-6 && y <= opts.h + 1e-6, 'v rámci pavučiny');
+    if (x < 1e-6 || x > opts.w - 1e-6) assert.ok(Math.abs(z) < 1e-6, 'na kmeni bez vydutia');
+    maxZ = Math.max(maxZ, Math.abs(z));
+    assert.ok(Math.abs(Math.hypot(a.tan[i * 3], a.tan[i * 3 + 1], a.tan[i * 3 + 2]) - 1) < 1e-5, 'smer vlákna je jednotkový');
+  }
+  assert.ok(maxZ > 0.05 && maxZ <= Webs.WEB_PARAMS.bow.def * 1.25 + 1e-9);
+  assert.ok(Webs.webThreads({ bow: 0 }, opts).pos.every((v, i) => i % 3 !== 2 || v === 0), 'bez vydutia rovná');
+  const torn = Webs.webThreads({}, Object.assign({ keep: 0.42 }, opts));
+  assert.ok(torn.count < a.count * 0.8, 'vyťahaná pavučina má menej vlákien');
+  assert.ok(Webs.webThreads({}, { w: 0.7, h: 0.57, seed: 3, corner: true }).count > 40, 'kútová spleť');
+});
