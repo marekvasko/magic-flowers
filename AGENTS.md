@@ -20,7 +20,7 @@ See `README.md` for gameplay and architecture. [`CONTRIBUTING.md`](CONTRIBUTING.
 
 - `main` – released code only. Production deploys from release tags on `main`.
 - `dev` – integration branch, deployed to staging at `https://dev.zahrada.spis-ai.com/`. All issue PRs target `dev`.
-- `issue/{issue number}-short-description-of-issue` – one branch per issue, created from the latest `origin/dev` **with `gh issue develop`** so GitHub links it (and its PR) to the issue. **Strict format**: lowercase, words separated by `-`, no other prefixes or suffixes.
+- `issue/{issue number}-short-description-of-issue` – one branch per issue, created from the latest `origin/dev` **with `gh issue develop`** so GitHub links the branch to the issue. **Strict format**: lowercase, words separated by `-`, no other prefixes or suffixes.
   - ✅ `issue/12-sleep-through-the-night`
   - ❌ `feature/sleep`, `issue-12-sleep`, `issue/12_Sleep`, `issue/sleep-12`
 - **History is linear on `main` and `dev`.** There are no merge commits, and GitHub enforces this. Keep issue branches up to date with `git rebase origin/dev`, never `git merge`. Force-push your own issue branch with `--force-with-lease` only. Never force-push `main` or `dev`.
@@ -29,7 +29,7 @@ See `README.md` for gameplay and architecture. [`CONTRIBUTING.md`](CONTRIBUTING.
 ## Worktrees: never touch the original repository directory
 
 - The original clone (e.g. `/mnt/backup/MagicFlowers`) is **read-only for agents**. It may only be checked out on `main` or `dev` and updated with `git pull --ff-only`. No edits, no commits, no feature branches there.
-- **Always start work in a new git worktree** next to the clone. Create the branch on GitHub with `gh issue develop` first. It becomes a *linked branch* of the issue, so the PR opened from it appears in the issue's **Development** section. Don't create the branch with `git worktree add -b` or `git push`, because then GitHub has no link (closing keywords only link PRs into the default branch `main`).
+- **Always start work in a new git worktree** next to the clone. Create the branch on GitHub with `gh issue develop` first. It becomes a *linked branch* of the issue: the issue's **Development** section shows the branch, and its PR is one click away. For PRs into `dev`, GitHub shows the branch there, not the PR itself, and there's no API to link the PR. Don't create the branch with `git worktree add -b` or `git push`, because then GitHub has no link at all (closing keywords only link PRs into the default branch `main`).
 
   ```sh
   cd /mnt/backup/MagicFlowers
@@ -41,7 +41,7 @@ See `README.md` for gameplay and architecture. [`CONTRIBUTING.md`](CONTRIBUTING.
   npm ci
   ```
 
-  Check the link with `gh issue develop --list 12`. If a branch already exists without a link, link the PR by hand in the issue's *Development* section, or ask the maintainer to.
+  Check the link with `gh issue develop --list 12`. If a branch was created without a link, tell the maintainer in the PR so they can link it by hand in the issue's *Development* section.
 
 - One worktree per issue. When the PR is merged or closed, remove it: `git worktree remove <path>`, then `git branch -D issue/...`.
 
