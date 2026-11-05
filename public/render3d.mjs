@@ -1079,17 +1079,20 @@ void main() {
 
   // ---------- Lúče slnka z mapy tieňov (Les divov, MF_LES_SUN ≠ 'dapple') ----------
   // Mapu tieňov premietneme na zem zóny slnka do malej masky (RAY_RES vzoriek na políčko) a prečítame ju späť.
-  // Na hranách osvetlených škvŕn (svetlo / tieň) postavíme zvislé pruhy smerom k slnku: steny hranola svetla,
-  // ktorý ide od škvrny na zemi hore cez medzeru v korunách. Aditívne, smerom hore a na okraji zóny slabnú.
-  const RAY_RES = 2, RAY_TOP = 9; // vzoriek na políčko; výška (bloky), kam lúč siaha
+  // Na hranách osvetlených škvŕn (svetlo / tieň) postavíme pruhy smerom k slnku: steny lúča od miesta, kde tieň
+  // dopadá na zem, po hranu koruny (či kmeňa), ktorá ho vrhá – dĺžku berieme z mapy tieňov (vzdialenosť tieniaceho
+  // povrchu od zeme pozdĺž lúča, kanál G masky). Aditívne, na okraji zóny slabnú.
+  const RAY_RES = 2, RAY_MAX = 32; // vzoriek na políčko; najdlhší lúč (bloky), zároveň mierka kanála G
   const rayMaskMat = new THREE.ShaderMaterial({
-    uniforms: { shadowMap: material.uniforms.shadowMap, shadowMatrix: material.uniforms.shadowMatrix, box: { value: new THREE.Vector4() }, gy: { value: 1 } },
+    uniforms: { shadowMap: material.uniforms.shadowMap, shadowMatrix: material.uniforms.shadowMatrix, box: { value: new THREE.Vector4() }, gy: { value: 1 }, depthRange: { value: 1 } },
     vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
-    fragmentShader: `uniform sampler2D shadowMap; uniform mat4 shadowMatrix; uniform vec4 box; uniform float gy; varying vec2 vUv;
+    fragmentShader: `uniform sampler2D shadowMap; uniform mat4 shadowMatrix; uniform vec4 box; uniform float gy; uniform float depthRange; varying vec2 vUv;
 void main() {
   vec4 s = shadowMatrix * vec4(mix(box.x, box.z, vUv.x), gy + 0.05, mix(box.y, box.w, vUv.y), 1.0);
   vec3 sc = s.xyz / s.w * 0.5 + 0.5;
-  gl_FragColor = vec4(sc.z - 0.0008 <= texture2D(shadowMap, sc.xy).r ? 1.0 : 0.0, 0.0, 0.0, 1.0);
+  float d = texture2D(shadowMap, sc.xy).r;
+  // R = slnko, G = ako ďaleko pozdĺž lúča k slnku je to, čo zem zatieňuje (mapa tieňov je ortografická – hĺbka je lineárna)
+  gl_FragColor = vec4(sc.z - 0.0008 <= d ? 1.0 : 0.0, clamp((sc.z - d) * depthRange / ${RAY_MAX.toFixed(1)}, 0.0, 1.0), 0.0, 1.0);
 }`, depthTest: false, depthWrite: false
   });
   const rayMaskScene = new THREE.Scene(), rayMaskQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), rayMaskMat);
@@ -1103,7 +1106,8 @@ void main() { vY = rayY; vW = rayW; gl_Position = projectionMatrix * viewMatrix 
 uniform float op; uniform vec3 col;
 varying float vY; varying float vW;
 void main() {
-  float a = op * vW * smoothstep(0.0, 0.05, vY) * pow(1.0 - vY, 1.6);
+  // vY 0 = zem, 1 = hrana, ktorá tieň vrhá: lúč slabne smerom hore a pri korune sa stratí
+  float a = op * vW * smoothstep(0.0, 0.05, vY) * (1.0 - 0.55 * vY) * (1.0 - smoothstep(0.75, 1.0, vY));
   gl_FragColor = vec4(col * a, 1.0);
 }`;
   const sunRays = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.ShaderMaterial({
@@ -1122,34 +1126,41 @@ void main() {
     const gy = W.surfaceY(grid, Math.floor(zone.cx), Math.floor(zone.cz));
     rayMaskMat.uniforms.box.value.set(x0, z0, x0 + nx * c, z0 + nz * c);
     rayMaskMat.uniforms.gy.value = gy;
+    rayMaskMat.uniforms.depthRange.value = lightCam.far - lightCam.near;
     const buf = new Uint8Array(nx * nz * 4);
     renderer.setRenderTarget(rayMaskRT);
     renderer.render(rayMaskScene, camera);
     renderer.readRenderTargetPixels(rayMaskRT, 0, 0, nx, nz, buf);
     renderer.setRenderTarget(null);
     const lit = (i, j) => i >= 0 && j >= 0 && i < nx && j < nz && buf[(j * nx + i) * 4] > 127;
+    // vzdialenosť od zeme po to, čo tieň vrhá (len v tieni; mimo masky nič)
+    const casterAt = (i, j) => i >= 0 && j >= 0 && i < nx && j < nz ? buf[(j * nx + i) * 4 + 1] / 255 * RAY_MAX : 0;
     // váha okraja zóny – rovnaká ako stmavnutie slnka v shaderi
     const zw = (x, z) => 1 - smooth(0.8, 1, Math.hypot((x - zone.cx) / zone.rx, (z - zone.cz) / zone.rz));
-    const L = Math.min(16, RAY_TOP / Math.max(0.15, dir.y)), dx = dir.x * L, dy = dir.y * L, dz = dir.z * L;
     const P = [], Y = [], Wt = [];
-    const quad = (ax, az, bx, bz) => {
+    const quad = (ax, az, bx, bz, L) => {
       const wa = zw(ax, az), wb = zw(bx, bz);
-      if (wa < 0.01 && wb < 0.01) return;
+      if ((wa < 0.01 && wb < 0.01) || L < 0.4) return;
+      L *= 0.95; // končí tesne pred tým, čo tieň vrhá (cez neho neprejde; hĺbkový test lúč za ním skryje)
+      const dx = dir.x * L, dy = dir.y * L, dz = dir.z * L;
       P.push(ax, gy, az, bx, gy, bz, bx + dx, gy + dy, bz + dz, ax, gy, az, bx + dx, gy + dy, bz + dz, ax + dx, gy + dy, az + dz);
       Y.push(0, 0, 1, 0, 1, 1); Wt.push(wa, wb, wb, wa, wb, wa);
     };
-    // hrany medzi svetlom a tieňom, zlúčené do úsekov najviac jedného políčka (váha okraja sa medzi koncami len lineárne mieša)
+    // hrany medzi svetlom a tieňom, zlúčené do úsekov najviac jedného políčka (váha okraja sa medzi koncami len lineárne mieša);
+    // dĺžka lúča = vzdialenosť tieniacej hrany nad tienistou stranou (úsek sa rozdelí, keď sa výrazne zmení)
     for (let i = 0; i <= nx; i++) for (let j = 0; j < nz;) {
       if (lit(i - 1, j) === lit(i, j)) { j++; continue; }
-      const k = lit(i, j), j0 = j;
-      while (j < nz && j - j0 < RAY_RES && lit(i - 1, j) !== lit(i, j) && lit(i, j) === k) j++;
-      quad(x0 + i * c, z0 + j0 * c, x0 + i * c, z0 + j * c);
+      const k = lit(i, j), sh = k ? i - 1 : i, L0 = casterAt(sh, j), j0 = j;
+      let sum = 0;
+      while (j < nz && j - j0 < RAY_RES && lit(i - 1, j) !== lit(i, j) && lit(i, j) === k && Math.abs(casterAt(sh, j) - L0) < 1) sum += casterAt(sh, j++);
+      quad(x0 + i * c, z0 + j0 * c, x0 + i * c, z0 + j * c, sum / (j - j0));
     }
     for (let j = 0; j <= nz; j++) for (let i = 0; i < nx;) {
       if (lit(i, j - 1) === lit(i, j)) { i++; continue; }
-      const k = lit(i, j), i0 = i;
-      while (i < nx && i - i0 < RAY_RES && lit(i, j - 1) !== lit(i, j) && lit(i, j) === k) i++;
-      quad(x0 + i0 * c, z0 + j * c, x0 + i * c, z0 + j * c);
+      const k = lit(i, j), sh = k ? j - 1 : j, L0 = casterAt(i, sh), i0 = i;
+      let sum = 0;
+      while (i < nx && i - i0 < RAY_RES && lit(i, j - 1) !== lit(i, j) && lit(i, j) === k && Math.abs(casterAt(i, sh) - L0) < 1) sum += casterAt(i++, sh);
+      quad(x0 + i0 * c, z0 + j * c, x0 + i * c, z0 + j * c, sum / (i - i0));
     }
     sunRays.geometry.dispose();
     const geo = new THREE.BufferGeometry();
