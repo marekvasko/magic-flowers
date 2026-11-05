@@ -56,8 +56,10 @@ export function buildTiles(D, area, opt) {
     if (!Number.isInteger(seed)) return { area, w, h, seeded, error: st ? 'no-room-seed' : 'no-seed' };
     seed >>>= 0;
   }
-  const base = D.buildArea(area, seed == null ? 0 : seed);
-  const saved = st ? st[SAVED_KEY[area] || area] : null;
+  // Les divov má vo svete uložené celé rozloženie (reťazec znakov) – to má prednosť pred semienkom, ako v hre
+  const savedLes = area === 'les' && st && D.decodeLes ? D.decodeLes(st.les) : null;
+  const base = savedLes || D.buildArea(area, seed == null ? 0 : seed);
+  const saved = st && area !== 'les' ? st[SAVED_KEY[area] || area] : null;
   const sv = Array.isArray(saved) && saved.length === base.length ? saved : null;
   // pôvodná výška ľadovca (ako ice.js LEVELS) – glacierLevels počíta s rozmermi záhrady
   const levels = base.includes('glacier') && base.length === D.W * D.H ? D.glacierLevels(base) : null;

@@ -14,14 +14,9 @@ function loadPomedzie(seed) { return D.buildPomedzie(seed).map(g => ({ g })); }
 
 // Les divov sa ukladá celý (jeden znak na políčko) – rozloženie sveta ostane rovnaké, aj keď sa generátor neskôr zmení.
 // Neplatné alebo chýbajúce uloženie → rozloženie zo semienka.
-const LES_CODE = { path: '.', moss: ',', fern: 'f', roots: 'r', fungi: 'h', glade: 'o', giant: 'G', trunk: 'g', tree: 'T', bush: 'b', log: 'l', gate: '#' };
-const LES_TYPE = Object.fromEntries(Object.entries(LES_CODE).map(([k, v]) => [v, k]));
+const LES_CODE = D.LES_CODE;
 function saveLes(room) { return room.les.map(t => LES_CODE[t.g]).join(''); }
-function loadLes(saved, seed) {
-  const { w, h } = D.areaSize('les');
-  const ok = typeof saved === 'string' && saved.length === w * h && [...saved].every(c => LES_TYPE[c]);
-  return (ok ? [...saved].map(c => LES_TYPE[c]) : D.buildLes(seed)).map(g => ({ g }));
-}
+function loadLes(saved, seed) { return (D.decodeLes(saved) || D.buildLes(seed)).map(g => ({ g })); }
 
 // Je políčko (x, y) na ploche?
 function inside(area, x, y) { const { w, h } = D.areaSize(area); return x >= 0 && y >= 0 && x < w && y < h; }

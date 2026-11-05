@@ -626,6 +626,18 @@
     return g;
   }
 
+  // Uloženie rozloženia Lesa divov: jeden znak na políčko (areas.js saveLes/loadLes, ladiaca stránka)
+  const LES_CODE = { path: '.', moss: ',', fern: 'f', roots: 'r', fungi: 'h', glade: 'o', giant: 'G', trunk: 'g', tree: 'T', bush: 'b', log: 'l', gate: '#' };
+  const LES_TYPE = Object.fromEntries(Object.entries(LES_CODE).map(([k, v]) => [v, k]));
+  // Uložený reťazec → typy políčok, alebo null, ak uloženie nesedí (zlá dĺžka, neznámy znak)
+  function decodeLes(saved) {
+    const { w, h } = AREA_SIZE.les;
+    if (typeof saved !== 'string' || saved.length !== w * h) return null;
+    const out = [];
+    for (const c of saved) { const t = LES_TYPE[c]; if (!t) return null; out.push(t); }
+    return out;
+  }
+
   // Temné plochy: vidno len kúsok okolo seba (sight políčok, s lampášom v ruke lamp), objekty sa za hráčom nezoslabujú
   // ani nezvýrazňujú a lampáš svieti aj cez deň. Svetlo lampášov (aj cudzích) presvetlí tmu okolo nich.
   // lampR = dosah svetla lampáša v tme (políčka, inde render3d LAMP_R), lampK = jeho sila (1 = ako v záhrade v noci)
@@ -703,7 +715,7 @@
     CHAT_MAX, chatText,
     W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
-    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, DARK, isDark, DARK_RAMP, darkAt,
+    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt,
     sellPrice, itemName, buildMap, buildMountains, buildPomedzie, buildLes, buildArea, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
   };
   root.GameData = api;

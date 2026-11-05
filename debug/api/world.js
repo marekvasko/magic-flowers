@@ -12,6 +12,7 @@ const { keyId } = require('../../debug.js');
 function areaTiles(state, area) {
   if (area === 'hory') return Ice.loadHory(state.hory);
   if (area === 'pomedzie') return Areas.loadPomedzie(state.pomedzieSeed);
+  if (area === 'les') return Areas.loadLes(state.les, state.lesSeed); // uložené rozloženie, inak zo semienka
   const base = D.buildMap(), saved = state.tiles;
   const room = {
     icehouse: state.icehouse,
@@ -32,7 +33,7 @@ module.exports = (query, tools) => {
   const id = query.get('room');
   if (!id) {
     const seed = (parseInt(query.get('seed'), 10) || 0) >>> 0;
-    const state = { tiles: null, hory: null, pomedzieSeed: seed, icehouse: { built: false, ice: 0 } };
+    const state = { tiles: null, hory: null, pomedzieSeed: seed, lesSeed: seed, les: null, icehouse: { built: false, ice: 0 } };
     return { room: null, seed, area, w, h, tick: 0, weather: 'sun', tiles: areaTiles(state, area), players: [] };
   }
   const r = tools.load(id);
@@ -46,5 +47,5 @@ module.exports = (query, tools) => {
     if (pa !== area || typeof sv.x !== 'number' || typeof sv.y !== 'number') continue;
     players.push({ id: key, name: o ? o.name : null, online: !!o, x: sv.x, y: sv.y, look: sv.look || null });
   }
-  return { room: r.id, source: r.source, seed: st.pomedzieSeed, area, w, h, tick: st.tick || 0, weather: st.weather || 'sun', tiles: areaTiles(st, area), players };
+  return { room: r.id, source: r.source, seed: area === 'les' ? st.lesSeed : st.pomedzieSeed, area, w, h, tick: st.tick || 0, weather: st.weather || 'sun', tiles: areaTiles(st, area), players };
 };

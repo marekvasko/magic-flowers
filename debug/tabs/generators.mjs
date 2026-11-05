@@ -36,7 +36,9 @@ const TILE = {
   grass: '#86c255', meadow: '#a6d46c', forest: '#5f9a46', fern: '#4b8a3a', bush: '#2f6f2a', shroom: '#c0533a', ring: '#b07fd0',
   path: '#d9b77e', gate: '#f0a030', lot: '#cfc6b4', sand: '#ecd9a0', water: '#4aa3df', rock: '#a9a39a', boulder: '#7d776f',
   cliff: '#5f5a54', scree: '#b7b1a6', snow: '#f2f6f9', glacier: '#9fd0ec', alp: '#8cc76a',
-  house: '#8b5a2b', hut: '#f0e6d0', babka: '#e07bb0', cauldron: '#2b2b33', well: '#3a6ea5', stall: '#e53935'
+  house: '#8b5a2b', hut: '#f0e6d0', babka: '#e07bb0', cauldron: '#2b2b33', well: '#3a6ea5', stall: '#e53935',
+  // Les divov
+  moss: '#3f6a33', roots: '#a88a5a', fungi: '#7a4a6a', glade: '#d8c95a', giant: '#3a2414', trunk: '#4a2e1a', log: '#6b4a2a'
 };
 const KIND = { buk: '#2f8a3a', dub: '#1d5a26', breza: '#e9e4d2', jablon: '#e0608c', smrek: '#103a22', borovica: '#a0522d' };
 
@@ -69,7 +71,7 @@ export function mount(el, ctx) {
 
   const gens = () => [
     ...W.TREE_KINDS.map(k => ({ id: 'tree-' + k, kind: k, name: (W.TREE_NAMES && W.TREE_NAMES[k]) || k, group: 'Trees', sub: Object.keys(W.TREE_PARAMS[k]).length + ' params' })),
-    ...D.AREAS.map(a => ({ id: 'area-' + a, area: a, name: D.AREA_NAMES[a] || a, group: 'Area layouts', sub: a === 'pomedzie' ? 'seeded' : 'fixed' }))
+    ...D.AREAS.map(a => ({ id: 'area-' + a, area: a, name: D.AREA_NAMES[a] || a, group: 'Area layouts', sub: a === 'pomedzie' || a === 'les' ? 'seeded' : 'fixed' }))
   ];
   const cur = () => gens().find(g => g.id === st.gen);
   function save() {
@@ -187,10 +189,10 @@ export function mount(el, ctx) {
 
   // ---------- pôdorysy plôch ----------
   function areaView(g) {
-    const seeded = g.area === 'pomedzie';
+    const seeded = g.area === 'pomedzie' || g.area === 'les';
     const seedIn = h('input', { type: 'number', class: 'gn-seed', min: 0, max: 4294967295, step: 1, value: st.seed });
     const nSel = h('select', null, [1, 2, 4, 6, 8, 12].map(n => h('option', { value: n, selected: n === st.n ? 'selected' : null }, n + (n === 1 ? ' seed' : ' seeds'))));
-    const roomSeed = ctx.snap && ctx.snap.state && Number.isInteger(ctx.snap.state.pomedzieSeed) ? ctx.snap.state.pomedzieSeed : null;
+    const sk = g.area + 'Seed', roomSeed = ctx.snap && ctx.snap.state && Number.isInteger(ctx.snap.state[sk]) ? ctx.snap.state[sk] : null;
     const tip = h('div', { class: 'gn-tip muted' }, 'Hover a plan to inspect a tile.');
     const plans = h('div', { class: 'gn-plans' });
     const legend = h('div', { class: 'gn-legend' });
@@ -200,7 +202,7 @@ export function mount(el, ctx) {
       seeded ? [h('label', null, 'First seed ', seedIn), nSel,
         h('button', { onclick: () => { seedIn.value = Math.floor(Math.random() * 4294967296); apply(); } }, 'Random seeds'),
         h('button', { onclick: () => { seedIn.value = st.seed + st.n; apply(); } }, 'Next ›'),
-        roomSeed != null ? h('button', { title: `pomedzieSeed of room ${ctx.room}`, onclick: () => { seedIn.value = roomSeed; nSel.value = 1; apply(); } }, `Room ${ctx.room}'s seed`) : null]
+        roomSeed != null ? h('button', { title: `${sk} of room ${ctx.room}`, onclick: () => { seedIn.value = roomSeed; nSel.value = 1; apply(); } }, `Room ${ctx.room}'s seed`) : null]
         : h('span', { class: 'muted' }, `${g.name} has a fixed layout (D.buildArea ignores the seed).`));
     mainEl.replaceChildren(h('h2', null, `${g.name} `, h('code', null, `D.buildArea('${g.area}'${seeded ? ', seed' : ''})`)), bar, tip, plans, legend);
 

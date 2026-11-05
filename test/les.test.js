@@ -256,3 +256,17 @@ test('server: svet z verzie 4 dostane (cez v7) Les divov (záhrada aj Les na pom
     c.ws.close();
   } finally { await stopServer(proc); fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('ladiaca stránka: Les divov zo semienka aj z uloženého rozloženia sveta', () => {
+  const world = require('../debug/api/world.js');
+  const q = o => new URLSearchParams(o);
+  const fresh = world(q({ seed: '42', area: 'les' }), { load: () => null });
+  assert.deepStrictEqual([fresh.w, fresh.h, fresh.seed], [LW, LH, 42]);
+  assert.deepStrictEqual(fresh.tiles.map(t => t.g), D.buildLes(42));
+  // svet má uložené rozloženie – to platí, nie semienko (ako v hre)
+  const saved = Areas.saveLes({ les: Areas.loadLes(null, 5) });
+  const state = { tick: 1, lesSeed: 999, les: saved, saves: {} };
+  const r = world(q({ room: 'svet', area: 'les' }), { load: id => ({ id, source: 'file', online: [], state }) });
+  assert.strictEqual(r.seed, 999);
+  assert.deepStrictEqual(r.tiles.map(t => t.g), D.buildLes(5));
+});

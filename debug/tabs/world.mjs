@@ -127,7 +127,7 @@ export function mount(el, ctx0) {
       s.onchange = () => fn(s.value);
       return s;
     };
-    const seedIn = h('input', { type: 'number', min: 0, value: P.seed, title: 'Seed of the generated areas (Les na pomedzí)' });
+    const seedIn = h('input', { type: 'number', min: 0, value: P.seed, title: 'Seed of the generated areas (Les na pomedzí, Les divov)' });
     seedIn.onchange = () => { P.seed = (parseInt(seedIn.value, 10) || 0) >>> 0; saveParams(); loadWorld(true); };
     const timeLbl = h('span', { class: 'val' }, ctx.fmt.hhmm(Math.floor(curMin())));
     const range = h('input', { type: 'range', min: 0, max: 1439, step: 5, value: Math.round(curMin()) });
