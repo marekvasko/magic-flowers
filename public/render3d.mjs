@@ -441,9 +441,9 @@ export function create(api) {
     // Čo sa nezoslabí nikdy (typy jemných modelov): všetko do výšky hráča – kamene, kry, spadnuté kmene.
     // Zoslabujú sa budovy (domček, chalúpka, trh, studňa, kotlík, ľadovňa) a stromy; obrovský strom len korunou (kmeň ostane).
     solid: ['rock', 'bush', 'log'],
-    // v tmavom lese (aj v celom Lese divov) prepíše hodnoty vyššie; fan = zoslabovať aj zem pred hráčom v smere pohľadu
-    // (vypnuté – všade sa zoslabí len to, čo zakrýva hráča; skúsiť: MF_FADE = { dark: { fan: true } })
-    dark: { min: 0.2, edge: 0.5, reach: 2, fan: false },
+    // v tmavom lese (aj v celom Lese divov): zoslabenie rovnaké ako všade (min, rýchlosť), len fan = zoslabovať aj zem
+    // pred hráčom v smere pohľadu (vypnuté – všade sa zoslabí len to, čo zakrýva hráča; skúsiť: MF_FADE = { dark: { fan: true } })
+    dark: { fan: false },
     les: { outline: 0 } // Les divov: zoslabené stromy bez obrysu, nech hráča v tme nerozptyľuje
   };
   window.MF_FADE_DEFAULTS = FADE_DEFAULTS;

@@ -70,7 +70,8 @@ export function mount(el, ctx) {
   }).catch(e => { if (!gone) el.replaceChildren(h('div', { class: 'as-err' }, 'Cannot load /shared/world3d.js: ' + e.message)); });
 
   const gens = () => [
-    ...W.TREE_KINDS.map(k => ({ id: 'tree-' + k, kind: k, name: (W.TREE_NAMES && W.TREE_NAMES[k]) || k, group: 'Trees', sub: Object.keys(W.TREE_PARAMS[k]).length + ' params' })),
+    // bežné stromy a obrovský strom Lesa divov (obor – nie je medzi TREE_KINDS, lebo v záhrade nerastie)
+    ...W.TREE_KINDS.concat(W.TREE_PARAMS.obor ? ['obor'] : []).map(k => ({ id: 'tree-' + k, kind: k, name: (W.TREE_NAMES && W.TREE_NAMES[k]) || k, group: 'Trees', sub: Object.keys(W.TREE_PARAMS[k]).length + ' params' })),
     ...D.AREAS.map(a => ({ id: 'area-' + a, area: a, name: D.AREA_NAMES[a] || a, group: 'Area layouts', sub: a === 'pomedzie' || a === 'les' ? 'seeded' : 'fixed' }))
   ];
   const cur = () => gens().find(g => g.id === st.gen);
