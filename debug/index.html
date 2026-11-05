@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Garden Debug</title>
+  <link rel="stylesheet" href="/debug/debug.css">
+</head>
+<body>
+  <header>
+    <div class="brand">🌸 Garden <span>debug</span></div>
+    <nav id="tabs"></nav>
+    <div class="tools">
+      <label title="Area shown in the World tab">Area <select id="area"></select></label>
+      <label class="auto" title="Reload the room every 5 s"><input type="checkbox" id="auto"> auto</label>
+      <button id="refresh" title="Reload rooms and the selected room">↻</button>
+    </div>
+  </header>
+  <div id="layout">
+    <aside>
+      <input id="search" type="search" placeholder="Filter rooms…" autocomplete="off">
+      <div id="roomsMeta" class="muted"></div>
+      <ul id="rooms"></ul>
+    </aside>
+    <main id="main"></main>
+  </div>
+  <script src="/shared/data.js"></script>
+  <script src="/debug/debug.js"></script>
+</body>
+</html>
