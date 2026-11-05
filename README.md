@@ -181,6 +181,7 @@ The game is 3D only, rendered with Three.js (`public/render3d.mjs`) at `/` (`/?r
   - The mirror pass is skipped while the pond is off-screen. The well is unchanged.
 - **Particles** (`public/particles3d.mjs`). They live in world space, so they move with the camera and are hidden behind buildings:
   - **Rain:** camera-facing streaks in a box around the player, slanted by the wind. Drops make small splashes on the ground and ripples on the pond.
+  - **Snow** (snowy weather, or now and then in winter): soft white flakes fall slowly in a box around the player, swaying in a light wind. Each flake lands on the ground under it, lies there for a moment and melts (on the pond it melts at once); past the edge of the island it keeps falling.
   - **Fire under the cauldron:** glowing mini-cube flames that lick around the pot, rising embers and a little smoke, plus a pulsing glow. A large point sprite has one depth, so fire particles are shifted towards the orthographic camera, which changes only their depth and not their place on screen; otherwise the ground and pot would hide them.
   - **Market lantern:** a small two-cube flame flickers inside it with a glow and an occasional spark; its light flickers as strongly as the cauldron fire.
   - **Fairies** (the fairy visit and the fairy potion): a glow with a white core, fluttering wings and a sparkle trail. At night each fairy is also a moving point light.

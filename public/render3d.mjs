@@ -1335,11 +1335,6 @@ export function create(api) {
 
     // počasie
     const ts = ppb;
-    // dážď je 3D častica (particles3d.mjs), sneh zatiaľ ostáva na prekrytí
-    if (S.weather !== 'rain' && (S.weather === 'snow' || (se === 3 && Math.sin(t * 0.1) > 0.5))) {
-      for (let i = 0; i < 70; i++) { const sx = (Art.hash(i, 1) * cw + Math.sin(t + i) * ts * 0.4) % cw, sy = (Art.hash(i, 2) * ch + t * ts * 0.9 * (0.6 + Art.hash(i, 3))) % ch; Art.circ(c, sx, sy, ts * 0.035, 'rgba(255,255,255,0.85)'); }
-    }
-
     // mená, emócie, bubliny
     const label = (o, name, e, bubble) => {
       c.globalAlpha = o.vis; // meno sa prelína s postavičkou
