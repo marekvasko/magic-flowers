@@ -975,7 +975,10 @@
     const extLink = (label, href) => h('a', { class: 'btn gray', style: 'flex:1;text-align:center;text-decoration:none', href, target: '_blank', rel: 'noopener' }, label);
     body.appendChild(h('div', { class: 'row', style: 'flex-direction:column;align-items:stretch' },
       h('b', null, '🐙 Projekt na GitHube'),
-      h('div', { style: 'display:flex;gap:6px' }, extLink('💻 GitHub', REPO), extLink('🐞 Nahlásiť chybu / nápad', REPO + '/issues/new')),
+      h('div', { style: 'display:flex;gap:6px' }, extLink('💻 GitHub', REPO)),
+      h('div', { style: 'display:flex;gap:6px' },
+        extLink('🐞 Nahlásiť chybu', REPO + '/issues/new?template=bug.yml'),
+        extLink('💡 Navrhnúť nápad', REPO + '/issues/new?template=feature.yml')),
       h('small', null, 'Našiel si chybu alebo máš nápad? Daj nám vedieť.')));
     body.appendChild(h('button', { class: 'big', style: 'margin:6px 0', onclick: () => openUI('help') }, '❓ Ako hrať'));
     body.appendChild(h('button', { class: 'btn gray', style: 'width:100%;padding:12px', onclick: () => { S.joined = false; S.ws && S.ws.close(); location.reload(); } }, 'Odísť zo záhrady'));
