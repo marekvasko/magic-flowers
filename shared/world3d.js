@@ -594,6 +594,30 @@
     return f;
   }
 
+  // Otočenie o 90° okolo zvislej osi pre ľubovoľný pôdorys (sx a sz sa vymenia); pri štvorci je to isté ako rotate90
+  function rotateY(f) {
+    const { sx, sy, sz, data } = f, out = new Uint8Array(data.length);
+    for (let j = 0; j < sx; j++) for (let y = 0; y < sy; y++) for (let i = 0; i < sz; i++) out[(j * sy + y) * sz + i] = data[((sz - 1 - i) * sy + y) * sx + j];
+    return { sx: sz, sy, sz: sx, data: out };
+  }
+  // Zoznam všetkých jemných modelov pre prehliadač modelov v /debug (#79). Hra ho nepoužíva.
+  // build(season, rot) → { sx, sy, sz, data }; stromy, kry a kamene sa otáčajú ako v hre, budovy cez rotateY.
+  const TREE_NAMES = { buk: 'Buk', dub: 'Dub', breza: 'Breza', jablon: 'Jabloň', smrek: 'Smrek', borovica: 'Borovica' };
+  const ROCK_NAMES = { balvan: 'Balvan', kopa: 'Kopa kameňov', plocha: 'Plochý kameň' };
+  const turned = (build) => (season, rot) => { let f = build(season); for (let i = 0; i < (rot || 0); i++) f = rotateY(f); return f; };
+  const FINE_MODELS = [
+    { id: 'house', name: 'Čičmanský domček', group: 'Buildings', fn: 'cicmanyHouse', tiles: [3, 2], build: turned(cicmanyHouse) },
+    { id: 'hut', name: 'Babkina chalupa', group: 'Buildings', fn: 'babkaHut', tiles: [3, 2], build: turned(babkaHut) },
+    { id: 'icehouse', name: 'Ľadovňa', group: 'Buildings', fn: 'icehouseModel', tiles: [2, 2], build: turned(icehouseModel) },
+    { id: 'stall', name: 'Trh', group: 'Objects', fn: 'marketStall', tiles: [3, 1], build: turned(marketStall) },
+    { id: 'well', name: 'Studňa', group: 'Objects', fn: 'wellModel', tiles: [1, 1], build: turned(wellModel) },
+    { id: 'cauldron', name: 'Čarovný kotlík', group: 'Objects', fn: 'cauldronModel', tiles: [1, 1], build: turned(cauldronModel) },
+    ...TREE_KINDS.map(k => ({ id: 'tree-' + k, name: TREE_NAMES[k] || k, group: 'Trees', fn: `treeModel('${k}')`, tiles: [1, 1], kind: k, build: (se, rot) => treeModel(k, se, rot || 0) })),
+    { id: 'bush', name: 'Ker', group: 'Bushes', fn: 'bushModel(berries = false)', tiles: [1, 1], build: (se, rot) => bushModel(se, rot || 0, false) },
+    { id: 'bush-berries', name: 'Ker s bobuľami', group: 'Bushes', fn: 'bushModel(berries = true)', tiles: [1, 1], build: (se, rot) => bushModel(se, rot || 0, true) },
+    ...Object.keys(ROCK_BUILD).map(k => ({ id: 'rock-' + k, name: ROCK_NAMES[k] || k, group: 'Rocks', fn: `rockModel('${k}')`, tiles: [1, 1], kind: k, build: (se, rot) => rockModel(k, se, rot || 0) }))
+  ];
+
   // Ktorý druh stromu rastie na políčku (deterministicky); pri babkinej chalúpke je ovocný sad.
   // V Lese na pomedzí ihličnanov smerom na sever pribúda (sever je tmavší a hustejší).
   function treeKind(tx, ty, area) {
@@ -795,7 +819,7 @@
 
   // farby lístia stromu v danom období (pre padajúce lístie); ihličnany a zima → null
   const leafMats = (kind, se) => (LEAVES[kind] && LEAVES[kind][se]) || null;
-  const api = { R, NX, NY, NZ, M, FINE, modelsOnRay, TREE_KINDS, TREE_PARAMS, treeParams, treeModel, treeKind, leafMats, PALETTE, EMISSIVE, colorOf, hash, buildGrid, get, surfaceY, sunDir, daylight, sunVisibility, sunHours, groundHeight, WATER_Y, waterMask, waterQuads, lilyPads, nearestWater };
+  const api = { R, NX, NY, NZ, M, FINE, FM, FINE_MODELS, TREE_NAMES, rotateY, modelsOnRay, TREE_KINDS, TREE_PARAMS, treeParams, treeModel, treeKind, leafMats, PALETTE, EMISSIVE, colorOf, hash, buildGrid, get, surfaceY, sunDir, daylight, sunVisibility, sunHours, groundHeight, WATER_Y, waterMask, waterQuads, lilyPads, nearestWater };
   root.World3D = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof self !== 'undefined' ? self : this);
