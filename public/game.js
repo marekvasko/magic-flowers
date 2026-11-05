@@ -92,7 +92,7 @@
 
   function onMsg(m) {
     // počas stmavovania pred prechodom sa správy z novej plochy odložia, kým sa svet za čiernou nevymení
-    if (S.areaFx && S.areaFx.pending && m.t !== 'area' && m.t !== 'welcome' && m.t !== 'error') { S.areaFx.queue.push(m); return; }
+    if (S.areaFx && S.areaFx.phase === 'out' && m.t !== 'area' && m.t !== 'welcome' && m.t !== 'error') { S.areaFx.queue.push(m); return; }
     switch (m.t) {
       case 'welcome':
         if (S.areaFx) endAreaFx(true); // nové pripojenie – rozbehnutý prechod už neplatí
@@ -183,24 +183,43 @@
       box.appendChild(sp);
     }
   }
+  // Priebeh prechodu (S.areaFx.phase): 'out' – stmavuje sa, 'build' – za čiernou sa stavia svet novej plochy,
+  // 'named' – meno plochy svieti AREA_HOLD ms, potom sa rozjasní (endAreaFx). Stavba 3D sveta je ťažká a na mobile
+  // na stovky ms zastaví stránku – meno sa preto ukáže až po nej a čas AREA_HOLD beží až odvtedy.
   function areaChange(m) {
     stopWalk(); S.keys = {}; S.stick.x = S.stick.y = 0;
     const fx = S.areaFx;
-    if (fx && fx.pending) { fx.msg = m; paintAreaFade(m.area); return; } // ešte stmavuje – platí posledná správa
-    if (fx) { applyArea(m); paintAreaFade(m.area); clearTimeout(fx.timer); fx.timer = setTimeout(endAreaFx, AREA_HOLD); return; } // už je čierno
+    if (fx && fx.phase === 'out') { fx.msg = m; paintAreaFade(m.area); return; } // ešte stmavuje – platí posledná správa
+    if (fx) { clearTimeout(fx.timer); applyArea(m); paintAreaFade(m.area); showAreaName(fx); return; } // už je čierno
     const el = $('areaFade');
     clearTimeout(areaHideT);
     paintAreaFade(m.area);
     el.classList.remove('hidden', 'named'); void el.offsetWidth; el.classList.add('on');
     sfx('magic');
-    const nfx = S.areaFx = { pending: true, msg: m, queue: [] };
+    const nfx = S.areaFx = { phase: 'out', msg: m, queue: [] };
     nfx.timer = setTimeout(() => {
-      nfx.pending = false;
       applyArea(nfx.msg); // svet sa prestavia za čiernou
-      el.classList.add('named');
       for (const q of nfx.queue.splice(0)) onMsg(q);
-      nfx.timer = setTimeout(endAreaFx, AREA_HOLD);
+      showAreaName(nfx);
     }, reducedMotion() ? 0 : AREA_FADE);
+  }
+  // Počká, kým 3D pohľad postaví a nakreslí svet novej plochy (najviac 4 s), potom ukáže meno a nechá ho svietiť AREA_HOLD.
+  function showAreaName(fx) {
+    fx.phase = 'build';
+    const el = $('areaFade'), t0 = performance.now(), gen = S.tilesGen, tok = fx.tok = {}; // platí len posledné čakanie
+    const live = () => S.areaFx === fx && fx.tok === tok;
+    const ready = () => !R3 || S.worldGen >= gen || performance.now() - t0 > 4000;
+    const step = () => {
+      if (!live()) return; // medzitým prechod skončil alebo prišla ďalšia plocha
+      if (!ready()) return requestAnimationFrame(step);
+      requestAnimationFrame(() => { // ešte jeden snímok, nech je postavený svet naozaj nakreslený
+        if (!live()) return;
+        fx.phase = 'named';
+        el.classList.add('named');
+        fx.timer = setTimeout(endAreaFx, AREA_HOLD);
+      });
+    };
+    requestAnimationFrame(step);
   }
   function endAreaFx(now) {
     const el = $('areaFade');

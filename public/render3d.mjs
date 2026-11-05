@@ -1207,6 +1207,7 @@ export function create(api) {
     const min = api.curMin(), se = api.season(), night = D.isNight(min);
     // prestavba sveta: nové obdobie, iná plocha (záhrada / hory) alebo nová stavba
     if (builtSeason !== se || builtGen !== S.tilesGen) { builtGen = S.tilesGen; buildMesh(se); holesSig = null; refreshGround(se, t, true); drawnSeason = se; }
+    S.worldGen = builtGen; // svet tejto verzie políčok je postavený (prechod medzi plochami čaká, kým je, a až potom ukáže meno)
     if (now - lastGround > 600) { refreshGround(se, t, false); lastGround = now; }
     lighting(min, se);
     updateShadowMap(min, se);
