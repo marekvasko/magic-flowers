@@ -692,7 +692,7 @@ void main() {
   float a = op * pow(vEdge, 1.5) * smoothstep(0.0, 0.08, vY) * (1.0 - vY);
   gl_FragColor = vec4(col * a, 1.0);
 }`;
-  const RAY_OP = 0.035; // jas stien lúčov z mapy tieňov
+  const RAY_OP = 0.12; // jas stien lúčov z mapy tieňov (na skúšanie násobok window.MF_RAY_K)
   const shaftGeo = new THREE.CylinderGeometry(0.42, 0.3, 1, 12, 1, true);
   let shafts = [];
   const UP = new THREE.Vector3(0, 1, 0);
@@ -725,7 +725,7 @@ void main() {
   // poloha a jas lúčov podľa slnka (dir), dňa (dl) a vzdialenosti od hráča
   function updateShafts(dir, dl, eyeR) {
     const rain = S.weather === 'rain' ? 0.3 : S.weather === 'snow' ? 0.5 : 1;
-    sunRays.material.uniforms.op.value = dir && dir.y > 0.05 ? RAY_OP * Math.min(1, dir.y * 3) * dl * rain : 0;
+    sunRays.material.uniforms.op.value = dir && dir.y > 0.05 ? RAY_OP * (window.MF_RAY_K || 1) * Math.min(1, dir.y * 3) * dl * rain : 0;
     for (const m of shafts) {
       const b = m.userData.base;
       if (lesSunMode()) { m.visible = false; continue; } // lúče sú z mapy tieňov (sunRays)
