@@ -27,7 +27,7 @@ function reach(tiles, w, h, start) {
 }
 
 test('plochy: každá má svoju veľkosť a mapa sedí s veľkosťou', () => {
-  assert.deepStrictEqual(D.AREAS, ['garden', 'hory', 'pomedzie']);
+  assert.deepStrictEqual(D.AREAS, ['garden', 'hory', 'pomedzie', 'les']);
   for (const area of D.AREAS) {
     const { w, h } = D.areaSize(area);
     assert.ok(w > 0 && h > 0);
@@ -59,7 +59,9 @@ test('graf prechodov: každý prechod je na okraji, vedie späť a príchod je v
   }
   // záhrada: hory na severe, Les na pomedzí na východe
   assert.deepStrictEqual(D.GATES.garden.map(g => D.gateSide('garden', g) + g.to), ['nhory', 'nhory', 'epomedzie', 'epomedzie']);
-  assert.deepStrictEqual(D.GATES.pomedzie.map(g => D.gateSide('pomedzie', g) + g.to), ['wgarden', 'wgarden']);
+  // Les na pomedzí: záhrada na západe, Les divov na severe; z Lesa divov sa ide len na juh späť
+  assert.deepStrictEqual(D.GATES.pomedzie.map(g => D.gateSide('pomedzie', g) + g.to), ['wgarden', 'wgarden', 'nles', 'nles']);
+  assert.deepStrictEqual(D.GATES.les.map(g => D.gateSide('les', g) + g.to), ['spomedzie', 'spomedzie']);
 });
 
 test('prechod záhrada ↔ Les na pomedzí: gateTarget podľa políčka', () => {
@@ -93,8 +95,9 @@ test('Les na pomedzí: každé priechodné políčko je dosiahnuteľné od oboch
   for (const seed of SEEDS) {
     const g = D.buildPomedzie(seed);
     const west = reach(g, w, h, D.GATES.pomedzie[0].y * w), north = reach(g, w, h, nx0);
-    assert.strictEqual(g[nx0], 'path', `chodník na severnom okraji (semienko ${seed})`);
-    assert.strictEqual(g[nx1], 'path');
+    assert.strictEqual(g[nx0], 'gate', `prechod do Lesa divov na severnom okraji (semienko ${seed})`);
+    assert.strictEqual(g[nx1], 'gate');
+    assert.strictEqual(g[w + nx0], 'path');
     for (let i = 0; i < g.length; i++) {
       if (D.BLOCK[g[i]]) continue;
       assert.ok(west[i] && north[i], `semienko ${seed}: políčko ${i % w},${(i / w) | 0} (${g[i]}) je odrezané`);
@@ -113,7 +116,7 @@ test('Les na pomedzí: na juhu lúka, smerom na sever hustnúci les, na severe l
     south += share(g, D.MEADOW_Y, h - 1, ['tree']);
     mid += share(g, 10, 20, ['tree']);
     north += share(g, 3, 8, ['tree']);
-    for (let y = 0; y <= 2; y++) for (let x = 0; x < w; x++) assert.ok(['tree', 'path'].includes(g[y * w + x]), `sever ${x},${y}: ${g[y * w + x]}`);
+    for (let y = 0; y <= 2; y++) for (let x = 0; x < w; x++) assert.ok(['tree', 'path', 'gate'].includes(g[y * w + x]), `sever ${x},${y}: ${g[y * w + x]}`);
     assert.ok(g.includes('fern') && g.includes('bush') && g.includes('path'), 'paprade, kry a chodníky');
     assert.ok(!g.some(t => ['grass', 'water', 'house', 'stall'].includes(t)), 'v lese sa nič nepestuje ani nekupuje');
   }
@@ -241,7 +244,7 @@ test('server: svet z verzie 3 sa prevedie (záhrada aj poloha ostanú) a hráč 
     c.ws.close();
   } finally { await stopServer(proc); }
   const saved = JSON.parse(fs.readFileSync(path.join(dir, 'room-stary.json'), 'utf8'));
-  assert.strictEqual(saved.v, 6);
+  assert.strictEqual(saved.v, 7);
   assert.strictEqual(saved.migratedFrom, 3);
   assert.ok(Number.isInteger(saved.pomedzieSeed));
   assert.strictEqual(saved.tiles[plot].s.p.sp, 'mak');

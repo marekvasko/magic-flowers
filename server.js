@@ -63,7 +63,7 @@ const server = http.createServer((req, res) => {
 // ---------- Svety (miestnosti) ----------
 // Čas je diskrétny: svet má celé počítadlo `tick` (D.TICKS_PER_DAY krokov na deň), deň a minúta sa z neho
 // len odvodzujú. Všetko, čo sa má stať v budúcnosti, je udalosť v plánovači (room.events) a ukladá sa so svetom.
-const SAVE_VERSION = 6; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole
+const SAVE_VERSION = 7; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov
 const TPD = D.TICKS_PER_DAY, MPT = D.MIN_PER_TICK;
 const DEFAULT_MODE = process.env.DEFAULT_MODE === 'paused' ? 'paused' : 'running';
 const MAX_CATCHUP_DAYS = +process.env.MAX_CATCHUP_DAYS || 30; // koľko herných dní najviac dobehneme po výpadku servera
@@ -76,7 +76,7 @@ function newWorldState() {
     v: SAVE_VERSION, tick: D.DAWN_TICK + 6, wall: Date.now(), mode: DEFAULT_MODE, daySeconds: DAY_SECONDS,
     rng: crypto.randomBytes(4).readUInt32LE(0), seq: 0, events: [],
     weather: 'sun', saves: {}, storage: {}, market: null, contracts: null, fairyNight: -1, eternal: false, scav: {},
-    icehouse: { built: false, ice: 0 }, hory: null, pomedzieSeed: Areas.newSeed(), up: { plots: 0 }
+    icehouse: { built: false, ice: 0 }, hory: null, pomedzieSeed: Areas.newSeed(), up: { plots: 0 }, lesSeed: Areas.newSeed(), les: null
   };
 }
 
@@ -116,6 +116,9 @@ function migrate(saved) {
     }
     out.up = { plots: Math.min(lvl, D.UPGRADES.plots.levels.length - 1) };
   }
+  if (from < 7) { // Les divov: nová plocha severne od Lesa na pomedzí, rozloženie zo semienka sveta (pri prvom načítaní sa uloží)
+    out.lesSeed = Areas.newSeed(); out.les = null;
+  }
   out.v = SAVE_VERSION; out.migratedFrom = saved.migratedFrom || from;
   return out;
 }
@@ -137,6 +140,8 @@ function getRoom(id) {
   room.hory = Ice.loadHory(st.hory);
   if (!Number.isInteger(room.pomedzieSeed)) room.pomedzieSeed = Areas.newSeed();
   room.pomedzie = Areas.loadPomedzie(room.pomedzieSeed);
+  if (!Number.isInteger(room.lesSeed)) room.lesSeed = Areas.newSeed();
+  room.les = Areas.loadLes(st.les, room.lesSeed);
   Ice.applyIcehouse(room);
   room.up = room.up || { plots: 0 };
   Object.defineProperty(room, 'day', { get() { return D.dayOfTick(this.tick); } });
@@ -163,8 +168,8 @@ function serialize(room) {
     v: SAVE_VERSION, tick: room.tick, wall: room.wall, mode: room.mode, daySeconds: room.daySeconds,
     rng: room.rng, seq: room.seq, events: room.events,
     weather: room.weather, saves: room.saves, storage: room.storage, storageFb: room.storageFb, market: room.market, contracts: room.contracts,
-    fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom, scav: room.scav, scavSalt: room.scavSalt, icehouse: room.icehouse, pomedzieSeed: room.pomedzieSeed, up: room.up,
-    tiles: room.tiles.map(t => t.cut ? { s: t.s, cut: 1 } : { s: t.s }), hory: Ice.saveHory(room)
+    fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom, scav: room.scav, scavSalt: room.scavSalt, icehouse: room.icehouse, pomedzieSeed: room.pomedzieSeed, up: room.up, lesSeed: room.lesSeed,
+    tiles: room.tiles.map(t => t.cut ? { s: t.s, cut: 1 } : { s: t.s }), hory: Ice.saveHory(room), les: Areas.saveLes(room)
   });
 }
 // Ladiaca stránka /debug: svety len číta (z pamäte alebo zo súboru), nič nenačíta ani neuloží
@@ -206,7 +211,7 @@ function send(ws, msg) { if (ws.readyState === 1) ws.send(JSON.stringify(msg)); 
 function broadcast(room, msg) { const s = JSON.stringify(msg); for (const p of room.players.values()) if (p.ws.readyState === 1) p.ws.send(s); }
 function toast(pl, text, kind) { send(pl.ws, { t: 'toast', text, kind: kind || 'info' }); }
 function toastAll(room, text, kind) { broadcast(room, { t: 'toast', text, kind: kind || 'info' }); }
-// Hráči sú vždy na jednej ploche (záhrada / hory / Les na pomedzí) – políčka a efekty dostanú len tí, ktorí sú na nej.
+// Hráči sú vždy na jednej ploche (záhrada / hory / Les na pomedzí / Les divov) – políčka a efekty dostanú len tí, ktorí sú na nej.
 function broadcastArea(room, area, msg) { const s = JSON.stringify(msg); for (const p of room.players.values()) if (p.area === area && p.ws.readyState === 1) p.ws.send(s); }
 function fx(room, k, x, y, extra, area) { broadcastArea(room, area || 'garden', Object.assign({ t: 'fx', k, x, y }, extra || {})); }
 // Políčka záhrady posielame cez Scav.tileView – druh divej rastliny ostane skrytý, kým nevyklíči (hory rastliny nemajú).
@@ -460,7 +465,8 @@ function act(pl, m) {
     if (t.g === 'glacier') return toast(pl, 'Na ľad potrebuješ krompáč – kúpiš ho na trhu (záložka Vylepšiť). ⛏️');
     if (item === 'hoe' || item.startsWith('seed_') || D.isWild(item) || item === 'compost') return toast(pl, area === 'hory'
       ? 'V horách je pôda kamenistá a studená. Pestuj radšej v záhrade. 🏔️'
-      : 'Les na pomedzí je divý – tu sa nepestuje. Pestuj v záhrade. 🌳');
+      : area === 'les' ? 'V Lese divov je príliš tma – nič by tu nevyrástlo. Pestuj v záhrade. 🌲'
+        : 'Les na pomedzí je divý – tu sa nepestuje. Pestuj v záhrade. 🌳');
     if (item.startsWith('po_')) {
       if (['rast', 'jar', 'hojnost'].includes(item.slice(3))) return toast(pl, 'Tento elixír pôsobí na záhony – použi ho v záhrade. 🌱');
       return usePotion(pl, item.slice(3), x, y);
@@ -652,9 +658,14 @@ function travel(pl, to) {
   send(pl.ws, areaMsg(pl));
   toast(pl, to === 'hory'
     ? '🏔️ Vystúpil(a) si do hôr. Na ľadovci pod skalami vysekáš krompáčom ľad. Chodníkom dole sa vrátiš do záhrady.'
-    : to === 'pomedzie'
-      ? '🌳 Prišiel(a) si do Lesa na pomedzí. Na juhu je lúka, na sever les hustne a stmieva sa… Na západe sa vrátiš do záhrady.'
-      : from === 'pomedzie' ? '🏡 Vrátil(a) si sa z lesa do záhrady.' : '🏡 Vrátil(a) si sa do záhrady.', 'day');
+    : to === 'les'
+      ? (pl.save.inv.lamp
+        ? '🌲 Vstúpil(a) si do Lesa divov. Je tu tma aj cez deň – vezmi do ruky lampáš. 🏮 Na juhu sa vrátiš do Lesa na pomedzí.'
+        : '🌲 Vstúpil(a) si do Lesa divov. Je tu taká tma, že vidíš len pár krokov… Lampáš kúpiš na trhu. Na juhu sa vrátiš do Lesa na pomedzí.')
+      : to === 'pomedzie'
+        ? (from === 'les' ? '🌳 Vrátil(a) si sa z Lesa divov do Lesa na pomedzí. Konečne svetlo!'
+          : '🌳 Prišiel(a) si do Lesa na pomedzí. Na juhu je lúka, na sever les hustne a stmieva sa… Na západe sa vrátiš do záhrady, na severe vedie chodník do Lesa divov.')
+        : from === 'pomedzie' ? '🏡 Vrátil(a) si sa z lesa do záhrady.' : '🏡 Vrátil(a) si sa do záhrady.', 'day');
 }
 
 function wishingWell(pl) {

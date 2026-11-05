@@ -1,14 +1,27 @@
-// Plochy sveta (záhrada, hory, Les na pomedzí): políčka každej plochy, hranice, prechody a príchodové miesta.
+// Plochy sveta (záhrada, hory, Les na pomedzí, Les divov): políčka každej plochy, hranice, prechody a príchodové miesta.
 // Čisté funkcie nad stavom sveta (room) – server ich len volá.
-// room.tiles = záhrada, room.hory = hory (ice.js), room.pomedzie = Les na pomedzí (len zo semienka room.pomedzieSeed)
+// room.tiles = záhrada, room.hory = hory (ice.js), room.pomedzie = Les na pomedzí (len zo semienka room.pomedzieSeed),
+// room.les = Les divov (rozloženie zo semienka room.lesSeed, uložené so svetom – saveLes / loadLes)
 const crypto = require('crypto');
 const D = require('./shared/data.js');
 
-function areaTiles(room, area) { return area === 'hory' ? room.hory : area === 'pomedzie' ? room.pomedzie : room.tiles; }
+const AREA_TILES = { hory: 'hory', pomedzie: 'pomedzie', les: 'les' };
+function areaTiles(room, area) { return room[AREA_TILES[area] || 'tiles']; }
 function newSeed() { return crypto.randomBytes(4).readUInt32LE(0); }
 
 // Les na pomedzí sa nemení – rozloženie je celé zo semienka sveta, uloží sa len semienko.
 function loadPomedzie(seed) { return D.buildPomedzie(seed).map(g => ({ g })); }
+
+// Les divov sa ukladá celý (jeden znak na políčko) – rozloženie sveta ostane rovnaké, aj keď sa generátor neskôr zmení.
+// Neplatné alebo chýbajúce uloženie → rozloženie zo semienka.
+const LES_CODE = { path: '.', moss: ',', fern: 'f', roots: 'r', fungi: 'h', glade: 'o', giant: 'G', trunk: 'g', tree: 'T', bush: 'b', log: 'l', gate: '#' };
+const LES_TYPE = Object.fromEntries(Object.entries(LES_CODE).map(([k, v]) => [v, k]));
+function saveLes(room) { return room.les.map(t => LES_CODE[t.g]).join(''); }
+function loadLes(saved, seed) {
+  const { w, h } = D.areaSize('les');
+  const ok = typeof saved === 'string' && saved.length === w * h && [...saved].every(c => LES_TYPE[c]);
+  return (ok ? [...saved].map(c => LES_TYPE[c]) : D.buildLes(seed)).map(g => ({ g }));
+}
 
 // Je políčko (x, y) na ploche?
 function inside(area, x, y) { const { w, h } = D.areaSize(area); return x >= 0 && y >= 0 && x < w && y < h; }
@@ -27,4 +40,4 @@ function gateTarget(tiles, area, x, y) {
   return g ? g.to : null;
 }
 
-module.exports = { areaTiles, newSeed, loadPomedzie, inside, clampPos, gateTarget };
+module.exports = { areaTiles, newSeed, loadPomedzie, LES_CODE, saveLes, loadLes, inside, clampPos, gateTarget };

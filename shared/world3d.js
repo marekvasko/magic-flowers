@@ -20,6 +20,7 @@
     LEAF_SPRING: 64, LEAF_SPRING2: 65, LEAF_SUMMER: 66, LEAF_SUMMER2: 67, LEAF_AUT_OR: 68, LEAF_AUT_RED: 69, LEAF_AUT_YEL: 70,
     LEAF_BROWN: 71, LEAF_LIME: 72, BIRCH: 73, BIRCH_MARK: 74, BARK: 75, BARK_DARK: 76, PINE_BARK: 77, NEEDLE: 78, NEEDLE2: 79,
     APPLE: 80, BLOSSOM_W: 81, BLOSSOM_P: 82, MOSS: 83, LICHEN: 84, STONE_LIGHT: 85,
+    LEAF_DARK: 86, LEAF_DARK2: 87, WOOD_END: 88, ROTWOOD: 89, // Les divov: tmavé lístie obrov, čelo a práchnivé drevo kmeňa
     INVIS: 63 // neviditeľná náhrada jemného modelu v hrubej mriežke (tieň, zatienenie, výber)
   };
   // Farby podľa ročného obdobia [jar, leto, jeseň, zima]; emis = svieti v noci
@@ -43,7 +44,9 @@
     [M.LEAF_AUT_OR]: ['#e07b24'], [M.LEAF_AUT_RED]: ['#c0392b'], [M.LEAF_AUT_YEL]: ['#e6c229'], [M.LEAF_BROWN]: ['#a0612a'], [M.LEAF_LIME]: ['#a7d65a'],
     [M.BIRCH]: ['#eeeae0'], [M.BIRCH_MARK]: ['#3a3a3a'], [M.BARK]: ['#5d4029'], [M.BARK_DARK]: ['#43301f'], [M.PINE_BARK]: ['#a0522d'],
     [M.NEEDLE]: ['#2e6b3a'], [M.NEEDLE2]: ['#24572f'], [M.APPLE]: ['#d62828'], [M.BLOSSOM_W]: ['#fbe7ef'], [M.BLOSSOM_P]: ['#f5a9c8'],
-    [M.MOSS]: ['#6f9a3c', '#5f8a34', '#7d7a36', '#6f9a3c'], [M.LICHEN]: ['#c9c27a'], [M.STONE_LIGHT]: ['#b3aea6']
+    [M.MOSS]: ['#6f9a3c', '#5f8a34', '#7d7a36', '#6f9a3c'], [M.LICHEN]: ['#c9c27a'], [M.STONE_LIGHT]: ['#b3aea6'],
+    [M.LEAF_DARK]: ['#2f5a2c', '#24482a', '#7a4a22', '#24482a'], [M.LEAF_DARK2]: ['#26502a', '#1d3d23', '#5e3a1c', '#1d3d23'],
+    [M.WOOD_END]: ['#a8865a'], [M.ROTWOOD]: ['#4a3826']
   };
   const EMISSIVE = { [M.WINDOW]: '#ffd27a', [M.BREW]: '#9dffb8', [M.LANTERN]: '#ffe9a8', [M.FIRE]: '#ff9a3a', [M.FLAME]: '#ffe07a', [M.BREW_LIGHT]: '#d8ffe4' };
   function colorOf(mat, season) { const p = PALETTE[mat] || ['#ff00ff']; return p[Math.min(season, p.length - 1)] || p[0]; }
@@ -556,6 +559,81 @@
     bushCache.set(key, f);
     return f;
   }
+  // ---- Les divov: obrovský strom (kmeň na 2 × 2 políčkach) a spadnutý kmeň ----
+  // Hrubý, mierne krivý kmeň s machom (hlavne na severnej strane a pri zemi) a lišajníkom, oporné korene do strán,
+  // hore pár hrubých konárov a nad nimi len malá tmavá koruna – v tme ju pohltí tma (render3d ju vôbec nekreslí),
+  // nesmie zakryť pohľad zhora na chodníky. 3 tvary (v), v zime holé konáre so snehom.
+  const GIANT_SY = 44, GIANT_KINDS = 3;
+  const GIANT_LEAVES = [[L.LEAF_DARK, L.LEAF_DARK2, L.LEAF_SUMMER2], [L.LEAF_DARK, L.LEAF_DARK2], [L.LEAF_DARK, L.LEAF_DARK2, L.LEAF_BROWN]];
+  function giantBuild(C, se, v) {
+    const cx = 7.5, cz = 7.5, r0 = 4.4 + v * 0.35;
+    const bark = (x, y, z) => {
+      const h = hash(x, y, z + 91 + v);
+      if ((z + 0.5 < cz - 2.5 && h < 0.6) || (y < 5 && h < 0.4)) return se === 3 && y > 30 ? M.BARK_DARK : M.MOSS;
+      return h < 0.1 ? M.LICHEN : h < 0.6 ? M.BARK_DARK : M.BARK;
+    };
+    for (let y = 0; y < 36; y++) {
+      const r = r0 * (1 - y / 110) + (y < 5 ? (5 - y) * 0.5 : 0); // dolu sa kmeň rozširuje do koreňov
+      const ox = Math.sin(y * 0.1 + v * 1.7) * 0.7, oz = Math.cos(y * 0.08 + v * 2.3) * 0.6; // mierne krivý
+      for (let z = -FM; z < 16 + FM; z++) for (let x = -FM; x < 16 + FM; x++) {
+        const d = Math.hypot(x + 0.5 - cx - ox, z + 0.5 - cz - oz);
+        if (d <= r + (hash(x, y, z + 93) - 0.5) * 0.7) C.put(x, y, z, bark(x, y, z));
+      }
+    }
+    // oporné korene: od kmeňa šikmo dolu do strán
+    const nr = 5 + v;
+    for (let i = 0; i < nr; i++) {
+      const a = i / nr * Math.PI * 2 + hash(i, v, 95) * 0.7, len = 9 + hash(i, v, 96) * 2.5;
+      for (let t = 0; t <= 1; t += 0.06) {
+        const rr = r0 - 0.5 + t * (len - r0), x = Math.round(cx + Math.cos(a) * rr - 0.5), z = Math.round(cz + Math.sin(a) * rr - 0.5);
+        const top = Math.round(5 * (1 - t) * (1 - t));
+        for (let y = 0; y <= top; y++) for (const [dx, dz] of [[0, 0], [1, 0], [0, 1]]) C.put(x + dx, y, z + dz, y === top && hash(x, y, z + 97) < 0.5 ? M.MOSS : M.BARK_DARK);
+      }
+    }
+    // hrubé konáre (2 minikocky) a na ich koncoch tmavé chumáče lístia
+    const ends = [], nb = 3 + v;
+    for (let i = 0; i < nb; i++) {
+      const a = i / nb * Math.PI * 2 + 0.6 + hash(i, v, 98) * 0.8, y0 = 25 + i * 2, R = 7 + hash(i, v, 99) * 2;
+      const e = [cx + Math.cos(a) * R, 35 + (i % 2) * 3, cz + Math.sin(a) * R];
+      for (const [dx, dy] of [[0, 0], [1, 0], [0, 1]]) C.line(Math.round(cx - 0.5) + dx, y0 + dy, Math.round(cz - 0.5), Math.round(e[0]) + dx, e[1] + dy, Math.round(e[2]), M.BARK_DARK);
+      ends.push(e);
+    }
+    if (se === 3) return snowOn(C, [M.BARK_DARK, M.BARK, M.MOSS], 0.55, 6);
+    const mat = pickOf(GIANT_LEAVES[se]);
+    for (const e of ends) blob(C, e[0], e[1] + 2, e[2], 3.6, 2.4, 3.6, mat, 0.12, 100 + v);
+    blob(C, cx, 39, cz, 5, 3, 5, mat, 0.1, 104 + v);
+  }
+  const giantCache = new Map();
+  function giantModel(season, rot, v) {
+    const key = season + '|' + rot + '|' + v;
+    if (giantCache.has(key)) return giantCache.get(key);
+    let f;
+    if (rot === 0) { const C = fineCanvas(2, 2, GIANT_SY); giantBuild(C, season, v); f = C.done(); }
+    else f = rotate90(giantModel(season, rot - 1, v));
+    giantCache.set(key, f);
+    return f;
+  }
+  // Spadnutý kmeň: leží naprieč políčkom (trochu presahuje), mach na vrchu, svetlé čelá, na niektorých huby
+  const logCache = new Map();
+  function logModel(season, rot, shrooms) {
+    const key = season + '|' + rot + '|' + (shrooms ? 1 : 0);
+    if (logCache.has(key)) return logCache.get(key);
+    let f;
+    if (rot === 0) {
+      const C = fineCanvas(1, 1, 10), cy = 2.6, cz = 3.5, r = 2.6;
+      for (let x = -3; x <= 10; x++) for (let y = 0; y < 6; y++) for (let z = -FM; z < 12; z++) {
+        const d = Math.hypot(y + 0.5 - cy, z + 0.5 - cz);
+        if (d > r + (hash(x, y, z + 111) - 0.5) * 0.5) continue;
+        const end = x === -3 || x === 10, top = y + 0.5 > cy + r * 0.45;
+        C.put(x, y, z, end ? (d < r - 1 ? M.WOOD_END : M.BARK_DARK) : top && hash(x, y, z + 113) < 0.75 ? (season === 3 ? M.SNOW : M.MOSS) : hash(x, y, z + 115) < 0.25 ? M.ROTWOOD : M.BARK_DARK);
+      }
+      if (shrooms && season !== 3) for (const [x, z] of [[1, 1], [2, 1], [6, 6], [7, 1]]) { C.put(x, 4, z, M.ORN); C.put(x, 5, z, M.FL_RED); C.put(x + 1, 5, z, M.FL_RED); }
+      f = C.done();
+    } else f = rotate90(logModel(season, rot - 1, shrooms));
+    logCache.set(key, f);
+    return f;
+  }
+
   // ---- Kamene z minikociek: 3 tvary, viac odtieňov kameňa, mach a lišajník, v zime sneh ----
   const rockMat = (x, y, z) => { const h = hash(x, y, z + 61); return h < 0.25 ? M.DARKSTONE : h < 0.45 ? M.STONE_LIGHT : M.STONE; };
   function mossTop(C, se) {
@@ -621,6 +699,10 @@
   // Ktorý druh stromu rastie na políčku (deterministicky); pri babkinej chalúpke je ovocný sad.
   // V Lese na pomedzí ihličnanov smerom na sever pribúda (sever je tmavší a hustejší).
   function treeKind(tx, ty, area) {
+    if (area === 'les') { // Les divov: hlavne smreky a staré buky a duby, žiadne brezy
+      const h = hash(tx, ty, 3);
+      return h < 0.45 ? 'smrek' : h < 0.55 ? 'borovica' : h < 0.78 ? 'buk' : 'dub';
+    }
     if (area === 'pomedzie') {
       const conifer = 0.2 + 0.55 * Math.max(0, Math.min(1, (D.MEADOW_Y - ty) / D.MEADOW_Y));
       if (hash(tx, ty, 3) < conifer) return hash(tx, ty, 11) < 0.75 ? 'smrek' : 'borovica';
@@ -667,6 +749,18 @@
       const tx = i % w, ty = (i / w) | 0, kind = ROCK_KINDS[rockN++ % ROCK_KINDS.length]; // striedame tvary, nech je vidno všetky
       const m = rockModel(kind, season, Math.floor(hash(tx, ty, 15) * 4));
       out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'rock', kind, ox: tx - FM / FINE, oy: groundHeight('boulder') / R, oz: ty - FM / FINE, tile: { x: tx, y: ty } });
+    }
+    for (let i = 0; i < tiles.length; i++) {
+      const g = tiles[i].g;
+      if (g !== 'giant' && g !== 'log') continue;
+      const tx = i % w, ty = (i / w) | 0, rot = Math.floor(hash(tx, ty, 21) * 4);
+      if (g === 'giant') {
+        const kind = Math.floor(hash(tx, ty, 23) * GIANT_KINDS), m = giantModel(season, rot, kind);
+        out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'giant', kind, ox: tx - FM / FINE, oy: groundHeight(g) / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.3 });
+      } else {
+        const m = logModel(season, rot, hash(tx, ty, 25) < 0.35);
+        out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'log', ox: tx - FM / FINE, oy: groundHeight(g) / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.3 });
+      }
     }
     for (let i = 0; i < tiles.length; i++) {
       if (tiles[i].g !== 'bush') continue;
