@@ -437,6 +437,8 @@ export function create(api) {
     // v tmavom lese (aj v celom Lese divov) prepíše hodnoty vyššie; fan = zoslabovať aj zem pred hráčom v smere pohľadu
     // (vypnuté: zoslabia sa len stromy, ktoré zakrývajú samého hráča; zapne sa cez MF_FADE = { dark: { fan: true } })
     dark: { min: 0.2, edge: 0.5, reach: 2, fan: false },
+    // obrovské stromy (Les divov) sa zoslabia, keď zakrývajú zem okolo hráča do tohto polomeru (bloky) – nielen samého hráča
+    giantRing: 2,
     les: { outline: 0 } // Les divov: zoslabené stromy bez obrysu, nech hráča v tme nerozptyľuje
   };
   window.MF_FADE_DEFAULTS = FADE_DEFAULTS;
@@ -1262,6 +1264,18 @@ void main() {
         hits.clear();
         W.modelsOnRay(grid, x, W.surfaceY(grid, tx, tz) + 0.05, z, toCam.x, toCam.y, toCam.z, 25, hits);
         for (const i of hits) lower(fineMeshes[i], vis);
+      }
+    }
+    // obrovské stromy: všetko, čo zakrýva zem okolo hráča (kruh giantRing) – ich vysoké kmene a koruny by inak zakryli výhľad
+    if (cfg.giantRing > 0 && fineMeshes.some(m => m.userData.type === 'giant')) {
+      const R = cfg.giantRing;
+      for (let dz = -R; dz <= R + 1e-6; dz += step) for (let dx = -R; dx <= R + 1e-6; dx += step) {
+        if (dx * dx + dz * dz > R * R) continue;
+        const x = px + dx, z = pz + dz, tx = Math.floor(x), tz = Math.floor(z);
+        if (tx < 0 || tz < 0 || tx >= S.W || tz >= S.H || !D.passable(S.tiles[tz * S.W + tx])) continue;
+        hits.clear();
+        W.modelsOnRay(grid, x, W.surfaceY(grid, tx, tz) + 0.05, z, toCam.x, toCam.y, toCam.z, 25, hits);
+        for (const i of hits) if (fineMeshes[i] && fineMeshes[i].userData.type === 'giant') lower(fineMeshes[i], cfg.min);
       }
     }
     for (const m of computeOccluders(meH)) lower(m, cfg.min); // objekty, za ktorými hráč stojí – všade
