@@ -1046,7 +1046,9 @@ export function create(api) {
   }
   // Obrys zoslabených objektov cez stencil buffer – v tom istom snímku, bez pomocného obrázka a bez prepínania
   // cieľa vykresľovania (to na mobilných GPU spôsobovalo blikanie celej obrazovky):
-  // 1) objekt sa označí v stencile, 2) nakreslí sa niekoľkokrát posunutý o ~1,5 px do strán len mimo označenia.
+  // 1) všetky zoslabené objekty sa označia v stencile, 2) každý sa nakreslí niekoľkokrát posunutý o ~1,5 px do strán
+  // len mimo označenia. Prekryté objekty (napr. stromy v hustom lese) tak majú jeden spoločný obrys bez hrán medzi sebou;
+  // obrys zapisuje do stencilu, takže sa ani na prekrytí nekreslí dvakrát.
   const stencilMark = new THREE.MeshBasicMaterial({
     colorWrite: false, depthWrite: false, depthTest: false,
     stencilWrite: true, stencilRef: 1, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp
@@ -1063,11 +1065,15 @@ export function create(api) {
     camRight.setFromMatrixColumn(camera.matrixWorld, 0);
     camUp.setFromMatrixColumn(camera.matrixWorld, 1);
     renderer.autoClear = false;
-    for (const m of fineMeshes) {
-      if (m.userData.fade > 0.98) continue;
-      const old = m.material, pos = m.position.clone();
+    const list = fineMeshes.filter(m => m.userData.fade <= 0.98);
+    for (const m of list) {
+      const old = m.material;
       m.material = stencilMark;
       renderer.render(m, camera);
+      m.material = old;
+    }
+    for (const m of list) {
+      const old = m.material, pos = m.position.clone();
       outlineDraw.opacity = 0.7 * (1 - m.userData.fade) / (1 - FADE_MIN);
       m.material = outlineDraw;
       for (const [dx, dy] of OUTLINE_DIRS) {
