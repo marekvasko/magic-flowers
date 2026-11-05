@@ -434,7 +434,9 @@ export function create(api) {
     speed: 4,          // rýchlosť prechodu (zmena viditeľnosti za sekundu)
     outline: 0.7,      // nepriehľadnosť obrysu
     outlineRamp: 0.15, // obrys je naplno už pri takomto zoslabení – aj slabo zoslabené objekty majú zreteľný obrys
-    dark: { min: 0.2, edge: 0.5, reach: 2 }, // v tmavom lese (aj v celom Lese divov) prepíše hodnoty vyššie a zoslabuje sa aj zem pred hráčom
+    // v tmavom lese (aj v celom Lese divov) prepíše hodnoty vyššie; fan = zoslabovať aj zem pred hráčom v smere pohľadu
+    // (vypnuté: zoslabia sa len stromy, ktoré zakrývajú samého hráča; zapne sa cez MF_FADE = { dark: { fan: true } })
+    dark: { min: 0.2, edge: 0.5, reach: 2, fan: false },
     les: { outline: 0 } // Les divov: zoslabené stromy bez obrysu, nech hráča v tme nerozptyľuje
   };
   window.MF_FADE_DEFAULTS = FADE_DEFAULTS;
@@ -1251,7 +1253,7 @@ void main() {
     if (cfg.dir === 'camera') { const hl = Math.hypot(toCam.x, toCam.z) || 1; fx = toCam.x / hl; fz = toCam.z / hl; }
     else { const a = S.me.a != null ? S.me.a : DIR_ANGLE[S.me.dir || 0]; fx = Math.cos(a); fz = Math.sin(a); }
     const px = S.me.x, pz = S.me.y, step = Math.max(0.1, cfg.step);
-    if (cfg.inDark) for (let d = 0; d <= cfg.reach + 1e-6; d += step) {
+    if (cfg.inDark && cfg.fan) for (let d = 0; d <= cfg.reach + 1e-6; d += step) {
       const hw = cfg.width + cfg.spread * d;
       const vis = cfg.min + (cfg.edge - cfg.min) * Math.max(0, Math.min(1, (d - cfg.near) / Math.max(0.01, cfg.reach - cfg.near)));
       for (let k = -hw; k <= hw + 1e-6; k += step) {
