@@ -92,6 +92,13 @@ test('Les divov: obrovské stromy na 2 × 2 políčkach, úzke chodníky, čisti
   }
 });
 
+test('Les divov: slnko len v srdci lesa a kúsok okolo', () => {
+  const z = D.sunZone('les');
+  assert.deepStrictEqual([z.cx, z.cz], [LW / 2, LH / 2]);
+  assert.ok(z.rx > D.LES_HEART.rx && z.rz > D.LES_HEART.ry && z.rx < LW / 2 && z.rz < LH / 2, 'čistina a okolie, nie celá plocha');
+  for (const a of ['garden', 'hory', 'pomedzie']) assert.strictEqual(D.sunZone(a), null, a);
+});
+
 test('Les divov: temná plocha – dohľad 3 políčka, s lampášom ďalej; inde nie', () => {
   assert.ok(D.isDark('les'));
   for (const a of ['garden', 'hory', 'pomedzie']) assert.ok(!D.isDark(a), a);

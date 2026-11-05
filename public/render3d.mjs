@@ -102,7 +102,7 @@ uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec
 uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount; uniform float opacity;
 uniform float shadowOn; uniform vec2 shadowTexel; uniform float shadowRadius;
 uniform vec3 gloom; uniform vec3 gloomFog;
-uniform float darkOn; uniform float sunMode; uniform vec3 sunFill; uniform vec4 eye; uniform vec2 eyeLit; uniform vec3 darkFog; uniform sampler2D canopy; uniform vec2 areaSize;
+uniform float darkOn; uniform float sunMode; uniform vec3 sunFill; uniform vec4 eye; uniform vec2 eyeLit; uniform vec3 darkFog; uniform sampler2D canopy; uniform vec2 areaSize; uniform vec4 sunZone;
 varying vec3 vColor; varying float vAo; varying float vEmis; varying float vTex; varying float vFacing; varying float vUp;
 varying vec2 vUv; varying vec3 vPos; varying vec4 vShadow;
 ${SHADOW_GLSL}
@@ -114,6 +114,8 @@ void main() {
   // darkOn 0–1: koľko tmy Lesa divov (pri severnom okraji Lesa na pomedzí postupne pribúda, opar Lesa na pomedzí ubúda)
   // slnko v tme: sunMode 1 = skutočný tieň (mapa tieňov cez stromy), ale svieti len na zem; 0 = škvrny z šumu (forestSun)
   float groundSun = sunMode > 0.5 && vTex > 0.5 && darkOn > 0.0 ? sunVisibility(vFacing) : 0.0;
+  // slnko len v srdci lesa a kúsok okolo (sunZone: stred a polosi elipsy; z = 0 → všade), na okraji postupne zhasne
+  if (sunZone.z > 0.0) groundSun *= 1.0 - smoothstep(0.8, 1.0, length((vPos.xz - sunZone.xy) / sunZone.zw));
   float darkSun = sunMode > 0.5 ? groundSun : forestSun();
   float sunV = darkOn >= 1.0 ? darkSun : darkOn > 0.0 ? mix(sunVisibility(vFacing), darkSun, darkOn) : sunVisibility(vFacing);
   // osvetlená zem v tme (pokus): okrem slnka aj denné svetlo záhrady (sunFill) – v slnku je zem jasná ako v záhrade
@@ -412,7 +414,7 @@ export function create(api) {
       shadowOn: { value: 0 }, shadowTexel: { value: new THREE.Vector2(1 / SHADOW_SIZE, 1 / SHADOW_SIZE) }, shadowRadius: { value: 3.5 },
       shadowNormalBias: { value: 0.03 }, gloom: { value: new THREE.Vector3() }, gloomFog: { value: new THREE.Vector3() },
       darkOn: { value: 0 }, sunMode: { value: 1 }, sunFill: { value: new THREE.Vector3() }, eye: { value: new THREE.Vector4(0, 0, 0, 3) }, eyeLit: { value: new THREE.Vector2(3, 0) },
-      darkFog: { value: new THREE.Vector3() }, canopy: { value: null }, areaSize: { value: new THREE.Vector2(S.W, S.H) }
+      darkFog: { value: new THREE.Vector3() }, canopy: { value: null }, areaSize: { value: new THREE.Vector2(S.W, S.H) }, sunZone: { value: new THREE.Vector4() }
     }
   });
   // Rovnaký shader pre objekty, ktoré práve miznú (hráč zašiel za ne): priehľadný, bez zápisu do hĺbky.
@@ -1019,7 +1021,11 @@ void main() {
   // rohy sveta (pre kameru slnka) podľa veľkosti aktuálnej plochy
   function sizeWorld() {
     worldCorners.length = 0;
-    for (const x of [0, S.W]) for (const y of [0, 7]) for (const z of [0, S.H]) worldCorners.push(new THREE.Vector3(x, y, z));
+    // v Lese divov počíta mapa tieňov len zónu slnka (srdce lesa) – vyššie stromy, preto do výšky 12
+    const zone = D.sunZone(S.area);
+    material.uniforms.sunZone.value.set(...(zone ? [zone.cx, zone.cz, zone.rx, zone.rz] : [0, 0, 0, 0]));
+    const xs = zone ? [zone.cx - zone.rx, zone.cx + zone.rx] : [0, S.W], zs = zone ? [zone.cz - zone.rz, zone.cz + zone.rz] : [0, S.H];
+    for (const x of xs) for (const y of [0, zone ? 12 : 7]) for (const z of zs) worldCorners.push(new THREE.Vector3(x, y, z));
     shadowDirty = true;
   }
   // Pokus (Les divov): slnko ako skutočný tieň stromov, len na zemi (1), alebo pôvodné škvrny zo šumu (0, MF_LES_SUN = 'dapple')
@@ -1038,7 +1044,7 @@ void main() {
     // temná plocha: so škvrnami zo šumu (MF_LES_SUN = 'dapple') mapu tieňov netreba; inak skutočný tieň stromov na zemi
     if (D.isDark(S.area) && !lesSunMode()) { u.shadowOn.value = 0; shadowDirty = true; return; }
     u.shadowOn.value = 1;
-    const center = new THREE.Vector3(S.W / 2, 3, S.H / 2);
+    const zone = D.sunZone(S.area), center = zone ? new THREE.Vector3(zone.cx, 3, zone.cz) : new THREE.Vector3(S.W / 2, 3, S.H / 2);
     lightCam.position.copy(center).addScaledVector(new THREE.Vector3(dir.x, dir.y, dir.z), 80);
     lightCam.up.set(0, 1, 0);
     lightCam.lookAt(center);
