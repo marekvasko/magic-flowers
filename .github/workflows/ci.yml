@@ -5,6 +5,8 @@
 # PR z forkov sa len otestujú – na hostiteľovi sa z nich nič nespúšťa.
 # Ak GitHub udalosť nedoručí (výpadok), dev sa dá znova nasadiť cez „Run workflow“ na vetve dev
 # a staré PR náhľady upratuje job „Upratanie PR náhľadov“ (po každom nasadení dev, denne, ručne).
+# Na stránke Deployments ostáva aktívny len aktuálny deployment – staršie a zatvorené PR dostanú
+# stav „inactive“ (scripts/deployments.sh), história sa nemaže.
 name: CI
 
 on:
@@ -48,7 +50,7 @@ jobs:
       - name: Testy (node:test)
         run: npm test
       - name: Kontrola skriptov
-        run: bash -n scripts/deploy.sh
+        run: bash -n scripts/deploy.sh scripts/deployments.sh
 
   image:
     name: Docker image
@@ -119,6 +121,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      deployments: write
     environment:
       name: preview
       url: https://pr-${{ github.event.number }}.zahrada.spis-ai.com/
@@ -132,16 +135,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - run: scripts/deploy.sh up pr-${{ github.event.number }} ${{ env.IMAGE }}:sha-${{ github.sha }}
+      - name: Deaktivovať staršie deploymenty náhľadu
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: scripts/deployments.sh supersede preview "$HEAD_REF"
 
   remove-preview:
     name: Zrušenie PR náhľadu
     if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, magicflowers]
+    permissions:
+      contents: read
+      deployments: write
     concurrency:
       group: deploy-pr-${{ github.event.number }}
     steps:
       - uses: actions/checkout@v7
       - run: scripts/deploy.sh down pr-${{ github.event.number }}
+      - name: Deaktivovať deploymenty náhľadu
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: scripts/deployments.sh retire preview "$HEAD_REF"
 
   deploy-dev:
     name: Nasadenie dev (staging)
@@ -151,6 +169,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      deployments: write
     environment:
       name: dev
       url: https://dev.zahrada.spis-ai.com/
@@ -164,11 +183,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - run: scripts/deploy.sh up dev ${{ env.IMAGE }}:sha-${{ github.sha }}
+      - name: Deaktivovať staršie deploymenty dev
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/deployments.sh supersede dev
 
   prune-previews:
     name: Upratanie PR náhľadov
     needs: deploy-dev
-    # Po nasadení dev (zlúčenie PR), denne a ručne – zmaže náhľady PR, ktoré už nie sú otvorené.
+    # Po nasadení dev (zlúčenie PR), denne a ručne – zmaže náhľady PR, ktoré už nie sú otvorené,
+    # a deaktivuje ich GitHub deploymenty (aj staršie nasadenia dev a produkcie).
     if: >-
       always() && !cancelled() && github.repository == 'marekvasko/magic-flowers' &&
       (needs.deploy-dev.result == 'success' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
@@ -176,6 +201,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      deployments: write
     concurrency:
       group: prune-previews
     steps:
@@ -186,6 +212,13 @@ jobs:
         run: |
           open=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 500 --json number --jq '.[].number')
           scripts/deploy.sh prune $open
+      - name: Deaktivovať deploymenty zatvorených PR a staršie nasadenia
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          refs=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 500 --json headRefName,isCrossRepository --jq '.[] | select(.isCrossRepository | not) | .headRefName')
+          scripts/deployments.sh prune $refs
 
   deploy-prod:
     name: Nasadenie produkcie (release)
@@ -195,6 +228,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      deployments: write
     environment:
       name: production
       url: https://zahrada.spis-ai.com/
@@ -212,3 +246,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - run: scripts/deploy.sh up prod ${{ env.IMAGE }}:sha-${{ github.sha }}
+      - name: Deaktivovať staršie deploymenty produkcie
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/deployments.sh supersede production

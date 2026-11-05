@@ -33,6 +33,8 @@ The container joins the external `web` network and Traefik exposes it on the `we
 - `dev` is staging at `https://dev.zahrada.spis-ai.com/`;
 - releases (`v*` tags on `main`) go to production at `https://zahrada.spis-ai.com/`.
 
+On the GitHub Deployments page only the deployment that is currently running stays active: each new deploy marks the older deployments of its environment (or of its PR) `inactive`, and closing a PR marks all its preview deployments `inactive` (`scripts/deployments.sh`; history is kept, nothing is deleted).
+
 The branching model, worktrees and the release procedure are described in [AGENTS.md](AGENTS.md).
 
 ## Time and world settings
