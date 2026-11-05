@@ -364,19 +364,22 @@ export function create(api) {
   const depthOnlyMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: 'void main() { gl_FragColor = vec4(0.0); }', uniforms: material.uniforms, transparent: true, depthWrite: true, colorWrite: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 });
   // svet v zrkadle pod hladinou: rovnaký shader, stačia 4 vzorky tieňa
   const reflMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { SHADOW_TAPS: 4 }, uniforms: material.uniforms });
-  // Zoslabovanie objektov pred hráčom (smerom ku kamere): pri hráčovi najviac, ďalej menej, za hranicou nič.
+  // Zoslabovanie objektov tak, aby bolo vidno zem v smere pohľadu: vejár bodov na zemi pred hráčom (do reach blokov,
+  // rozširuje sa) – z každého bodu sa vedie lúč ku kamere a objekty, ktoré ho zakrývajú, sa zoslabia: pri hráčovi najviac,
+  // ďalej menej. Objekty vedľa a za touto zemou nič nezakrývajú, ostanú plné. Obrys majú všetky zoslabené.
   // Ladí sa za behu v konzole: window.MF_FADE = { reach: 5, edge: 0.7 } prepíše len uvedené hodnoty
   // (predvolené sú v window.MF_FADE_DEFAULTS); window.MF_NOFADE = true zoslabovanie vypne.
   const FADE_DEFAULTS = {
-    min: 0.3,          // viditeľnosť objektu pri hráčovi a objektu, ktorý hráča priamo zakrýva (0 = neviditeľný, 1 = plný)
-    edge: 0.8,         // viditeľnosť objektu na konci oblasti (vo vzdialenosti reach)
+    dir: 'facing',     // smer pohľadu: 'facing' = kam sa pozerá postavička, 'camera' = smerom ku kamere (dolu na obrazovke)
+    min: 0.3,          // viditeľnosť objektu, ktorý zakrýva zem pri hráčovi alebo samého hráča (0 = neviditeľný, 1 = plný)
+    edge: 0.8,         // viditeľnosť objektu, ktorý zakrýva zem na konci vejára (vo vzdialenosti reach)
     near: 1.5,         // do tejto vzdialenosti od hráča (bloky) je zoslabenie najväčšie (min)
-    reach: 4,          // ako ďaleko od hráča smerom ku kamere sa ešte zoslabuje (bloky)
-    width: 1.2,        // polovičná šírka oblasti pri hráčovi (bloky, naprieč smerom pohľadu)
-    spread: 0.5,       // o koľko sa oblasť rozšíri na každý blok smerom ku kamere
-    ahead: 0.3,        // o koľko (bloky) musí byť stred objektu bližšie ku kamere než hráč – objekty vedľa hráča a za ním sa nezoslabia
-    ray: true,         // objekt priamo na lúči hráč → kamera zoslabiť naplno, aj keď je ďalej než reach (vysoké stromy)
-    hold: 400,         // ms – ako dlho ostane objekt zoslabený, keď už do oblasti nepatrí (na hrane nebliká)
+    reach: 4,          // ako ďaleko pred hráčom má byť zem vidno (bloky)
+    width: 1,          // polovičná šírka vejára pri hráčovi (bloky)
+    spread: 0.5,       // o koľko sa vejár rozšíri na každý blok pred hráčom
+    step: 0.5,         // hustota bodov na zemi (bloky medzi bodmi)
+    ray: true,         // objekt, ktorý zakrýva samého hráča, zoslabiť naplno (aj mimo vejára, napr. vysoký strom)
+    hold: 400,         // ms – ako dlho ostane objekt zoslabený, keď už nič nezakrýva (pri otáčaní nebliká)
     speed: 4,          // rýchlosť prechodu (zmena viditeľnosti za sekundu)
     outline: 0.7,      // nepriehľadnosť obrysu
     outlineRamp: 0.15  // obrys je naplno už pri takomto zoslabení – aj slabo zoslabené objekty majú zreteľný obrys
@@ -1036,26 +1039,29 @@ export function create(api) {
     for (const i of idx) if (fineMeshes[i]) set.add(fineMeshes[i]);
     return set;
   }
-  // Ktoré objekty zoslabiť a nakoľko (mesh → viditeľnosť). Oblasť nie je okolo hráča, ale len pred ním smerom
-  // ku kamere: klin, ktorý sa od hráča rozširuje (width + spread × vzdialenosť) a končí po reach blokoch.
-  // Či je objekt v kline, rozhoduje stred jeho pôdorysu (koruna stromu vedľa hráča siaha k nemu, ale strom je vedľa,
-  // nie pred ním); nakoľko sa zoslabí, rozhoduje najbližší bod pôdorysu (dlhá budova sa zoslabí aj pri rohu).
+  // Ktoré objekty zoslabiť a nakoľko (mesh → viditeľnosť): tie, ktoré kamere zakrývajú zem vo vejári pred hráčom.
+  // Body na zemi sú len na priechodných políčkach (zem pod kmeňom stromu či pod budovou nie je cesta).
   function fadeTargets(cfg, meH) {
     const out = new Map();
-    if (window.MF_NOFADE) return out;
-    const toCam = camera.position.clone().sub(camTarget), hl = Math.hypot(toCam.x, toCam.z) || 1;
-    const dx = toCam.x / hl, dz = toCam.z / hl, px = S.me.x, pz = S.me.y;
-    for (const m of fineMeshes) {
-      const b = m.userData.box;
-      const cx = (b.min.x + b.max.x) / 2 - px, cz = (b.min.z + b.max.z) / 2 - pz;
-      const along = cx * dx + cz * dz, across = Math.abs(cx * dz - cz * dx);
-      if (along < cfg.ahead || across > cfg.width + cfg.spread * along) continue;
-      const dist = Math.hypot(Math.min(b.max.x, Math.max(b.min.x, px)) - px, Math.min(b.max.z, Math.max(b.min.z, pz)) - pz);
-      if (dist > cfg.reach) continue;
-      const k = Math.max(0, Math.min(1, (dist - cfg.near) / Math.max(0.01, cfg.reach - cfg.near)));
-      out.set(m, cfg.min + (cfg.edge - cfg.min) * k);
+    if (window.MF_NOFADE || !grid) return out;
+    const toCam = camera.position.clone().sub(camTarget).normalize(), hits = new Set();
+    const lower = (m, v) => { if (m && !(out.get(m) <= v)) out.set(m, v); };
+    let fx, fz;
+    if (cfg.dir === 'camera') { const hl = Math.hypot(toCam.x, toCam.z) || 1; fx = toCam.x / hl; fz = toCam.z / hl; }
+    else { const a = S.me.a != null ? S.me.a : DIR_ANGLE[S.me.dir || 0]; fx = Math.cos(a); fz = Math.sin(a); }
+    const px = S.me.x, pz = S.me.y, step = Math.max(0.1, cfg.step);
+    for (let d = 0; d <= cfg.reach + 1e-6; d += step) {
+      const hw = cfg.width + cfg.spread * d;
+      const vis = cfg.min + (cfg.edge - cfg.min) * Math.max(0, Math.min(1, (d - cfg.near) / Math.max(0.01, cfg.reach - cfg.near)));
+      for (let k = -hw; k <= hw + 1e-6; k += step) {
+        const x = px + fx * d - fz * k, z = pz + fz * d + fx * k, tx = Math.floor(x), tz = Math.floor(z);
+        if (tx < 0 || tz < 0 || tx >= S.W || tz >= S.H || !D.passable(S.tiles[tz * S.W + tx])) continue;
+        hits.clear();
+        W.modelsOnRay(grid, x, W.surfaceY(grid, tx, tz) + 0.05, z, toCam.x, toCam.y, toCam.z, 25, hits);
+        for (const i of hits) lower(fineMeshes[i], vis);
+      }
     }
-    if (cfg.ray) for (const m of computeOccluders(meH)) out.set(m, cfg.min); // tie hráča naozaj zakrývajú
+    if (cfg.ray) for (const m of computeOccluders(meH)) lower(m, cfg.min); // tie zakrývajú samého hráča
     return out;
   }
   function updateFades(dt, meH) {
