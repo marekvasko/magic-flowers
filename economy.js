@@ -432,6 +432,19 @@ function canCap(sv) { return D.UPGRADES.can.levels[(sv.up && sv.up.can) || 0].v;
 function plotLimit(room) { return D.UPGRADES.plots.levels[(room.up && room.up.plots) || 0].v; }
 function plotsUsed(room) { let n = 0; for (const t of room.tiles) if (t.s) n++; return n; }
 
+// Najbližší sviatok, ktorý ešte nezačal (#86): začiatok podľa naplánovanej udalosti festStart,
+// inak vypočítaný z definície sviatku (ohlásenie festAnnounce nesie len id).
+function upcomingFestival(room) {
+  let best = null;
+  for (const f of D.FESTIVALS) {
+    const ev = (room.events || []).find(e => e.type === 'festStart' && e.data && e.data.id === f.id);
+    const start = ev ? ev.at : E.nextEvery(room.tick + 1, YEAR_DAYS * TPD, festStartTick(f));
+    if (!best || start < best.start) best = { id: f.id, name: f.name, icon: f.icon, mult: f.mult, len: f.len, start, end: start + f.len * TPD, announce: start - 2 * TPD };
+  }
+  if (best) best.announced = room.tick >= best.announce;
+  return best;
+}
+
 // ---------- Pohľad pre klienta ----------
 function marketView(room) {
   const m = room.market, seeds = {}, flowers = {};
@@ -439,16 +452,9 @@ function marketView(room) {
     seeds[sp] = { p: seedPrice(room, sp), st: m.seeds[sp].stock, h: m.hist['seed_' + sp] || [] };
     flowers[sp] = { p: flowerPrice(room, sp), st: m.flowers[sp].stock, h: m.hist['fl_' + sp] || [] };
   }
-  const nextFest = room.events.filter(e => e.type === 'festAnnounce' || e.type === 'festStart').sort((a, b) => a.at - b.at)[0];
-  let upcoming = null;
-  if (nextFest) {
-    const f = D.FESTIVALS.find(x => x.id === nextFest.data.id);
-    const start = nextFest.type === 'festStart' ? nextFest.at : nextFest.data.start;
-    upcoming = { name: f.name, icon: f.icon, start, mult: f.mult };
-  }
   return {
     t: 'market', seeds, flowers, compost: { p: compostPrice(room), st: m.compost.stock, h: m.hist.compost || [] },
-    festival: m.festival, upcoming, news: m.news
+    festival: m.festival, upcoming: upcomingFestival(room), news: m.news
   };
 }
 function boardView(room) { return { t: 'board', list: room.contracts.list }; }
@@ -465,7 +471,7 @@ function startCapital(env) {
 
 module.exports = {
   startCapital, setHooks, initEconomy, onDawn, HANDLERS, PERIODIC, buy, sell, sellQuote, buyQuote, seedPrice, flowerPrice, compostPrice,
-  seedPriceParts, flowerPriceParts, compostPriceParts, festStartTick,
+  seedPriceParts, flowerPriceParts, compostPriceParts, festStartTick, upcomingFestival,
   takeContract, deliverContract, upgrade, canCap, plotLimit, plotsUsed, maxActive, marketView, boardView, phase, PLANTABLE,
   PRICING, SEED_TARGET, COMPOST_TARGET, HIST_LEN, SEED_CAP, COMPOST_CAP, YEAR_DAYS
 };
