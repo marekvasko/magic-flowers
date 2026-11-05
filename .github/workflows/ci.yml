@@ -135,6 +135,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - run: scripts/deploy.sh up pr-${{ github.event.number }} ${{ env.IMAGE }}:sha-${{ github.sha }}
+        env:
+          DEBUG_TOKEN: ${{ secrets.DEBUG_TOKEN }}
       - name: Deaktivovať staršie deploymenty náhľadu
         continue-on-error: true
         env:
@@ -183,6 +185,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - run: scripts/deploy.sh up dev ${{ env.IMAGE }}:sha-${{ github.sha }}
+        env:
+          DEBUG_TOKEN: ${{ secrets.DEBUG_TOKEN }}
       - name: Deaktivovať staršie deploymenty dev
         continue-on-error: true
         env:
@@ -246,6 +250,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - run: scripts/deploy.sh up prod ${{ env.IMAGE }}:sha-${{ github.sha }}
+        env:
+          DEBUG_TOKEN: ${{ secrets.DEBUG_TOKEN }}
       - name: Deaktivovať staršie deploymenty produkcie
         continue-on-error: true
         env:
