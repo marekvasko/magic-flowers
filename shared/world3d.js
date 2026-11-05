@@ -3,6 +3,7 @@
 (function (root) {
   const D = root.GameData || (typeof require !== 'undefined' ? require('./data.js') : null);
   const R = 2;                   // podkocky na blok
+  // rozmery mriežky záhrady; každá mriežka (plocha) má vlastné g.NX, g.NZ podľa veľkosti plochy
   const NX = D.W * R, NZ = D.H * R, NY = 12;
 
   // ---- Materiály (id < 16 = terén, ich vrchná plocha nesie textúru zeme) ----
@@ -72,11 +73,11 @@
     return M.DIRT;
   }
 
-  // Mriežka: materiál na každú podkocku. x ∈ [0,NX), y ∈ [0,NY), z ∈ [0,NZ)
-  function makeGrid() { return { NX, NY, NZ, R, m: new Uint8Array(NX * NY * NZ), heights: new Uint8Array(D.W * D.H) }; }
-  const idx = (x, y, z) => (z * NY + y) * NX + x;
-  function get(g, x, y, z) { return (x < 0 || y < 0 || z < 0 || x >= NX || y >= NY || z >= NZ) ? 0 : g.m[idx(x, y, z)]; }
-  function set(g, x, y, z, v) { if (x < 0 || y < 0 || z < 0 || x >= NX || y >= NY || z >= NZ) return; g.m[idx(x, y, z)] = v; }
+  // Mriežka plochy w × h políčok: materiál na každú podkocku. x ∈ [0,NX), y ∈ [0,NY), z ∈ [0,NZ)
+  function makeGrid(w, h) { const nx = w * R, nz = h * R; return { W: w, H: h, NX: nx, NY, NZ: nz, R, m: new Uint8Array(nx * NY * nz), heights: new Uint8Array(w * h) }; }
+  const idx = (g, x, y, z) => (z * NY + y) * g.NX + x;
+  function get(g, x, y, z) { return (x < 0 || y < 0 || z < 0 || x >= g.NX || y >= NY || z >= g.NZ) ? 0 : g.m[idx(g, x, y, z)]; }
+  function set(g, x, y, z, v) { if (x < 0 || y < 0 || z < 0 || x >= g.NX || y >= NY || z >= g.NZ) return; g.m[idx(g, x, y, z)] = v; }
   function box(g, x0, y0, z0, x1, y1, z1, v) { for (let z = z0; z <= z1; z++) for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set(g, x, y, z, v); }
 
   // ---- Generované modely ----
@@ -90,14 +91,6 @@
     let za = z0 - 1, zb = z1 + 1, y = base + wh;
     while (za <= zb) { box(g, x0 - 1, y, za, x1 + 1, y, zb, roof); za++; zb--; y++; }
     return y;
-  }
-  function stamp(g, tiles, season) {
-    const done = {};
-    for (let ty = 0; ty < D.H; ty++) for (let tx = 0; tx < D.W; tx++) {
-      const t = tiles[ty * D.W + tx].g;
-      // stromy aj balvany sú jemné modely (treeModel, rockModel)
-      // chalupa, domček, trh, studňa a kotlík sú jemné modely z minikociek (fineModels)
-    }
   }
 
   // ---- Jemné modely z minikociek: 1 blok = FINE × FINE × FINE ----
@@ -491,6 +484,33 @@
     treeCache.set(key, f);
     return f;
   }
+  // Ker (Les na pomedzí): nízka hustá guľa lístia na pár konárikoch, niektoré s bobuľami; v zime holé prútie so snehom
+  const BUSH_LEAVES = [[L.LEAF_SPRING, L.LEAF_SPRING2], [L.LEAF_SUMMER, L.LEAF_SUMMER2], [L.LEAF_AUT_RED, L.LEAF_AUT_OR, L.LEAF_BROWN]];
+  const bushCache = new Map();
+  function bushModel(season, rot, berries) {
+    const key = season + '|' + rot + '|' + (berries ? 1 : 0);
+    if (bushCache.has(key)) return bushCache.get(key);
+    let f;
+    if (rot === 0) {
+      const C = fineCanvas(1, 1, 12);
+      for (const [dx, dz] of [[-2, -1], [2, 1], [0, 2], [1, -2]]) C.line(Math.round(CX), 0, Math.round(CZ), Math.round(CX + dx), 4, Math.round(CZ + dz), M.BARK_DARK);
+      if (season === 3) snowOn(C, [M.BARK_DARK], 0.7, 2);
+      else {
+        const mat = pickOf(BUSH_LEAVES[season]);
+        blob(C, CX, 3.6, CZ, 4.6, 3.4, 4.6, mat, 0.04, 81);
+        blob(C, CX + 1.5, 5.2, CZ - 1, 2.6, 2.2, 2.6, mat, 0.06, 82);
+        if (berries && season >= 1) for (let z = -FM; z < 12; z++) for (let y = 1; y < 10; y++) for (let x = -FM; x < 12; x++) {
+          const m = C.getf(x, y, z);
+          if (!m || m === M.BARK_DARK) continue;
+          const exposed = !C.getf(x + 1, y, z) || !C.getf(x - 1, y, z) || !C.getf(x, y, z + 1) || !C.getf(x, y, z - 1) || !C.getf(x, y + 1, z);
+          if (exposed && hash(x, y, z + 83) < 0.07) C.put(x, y, z, season === 1 ? M.FL_BLUE : M.APPLE); // čučoriedky v lete, šípky na jeseň
+        }
+      }
+      f = C.done();
+    } else f = rotate90(bushModel(season, rot - 1, berries));
+    bushCache.set(key, f);
+    return f;
+  }
   // ---- Kamene z minikociek: 3 tvary, viac odtieňov kameňa, mach a lišajník, v zime sneh ----
   const rockMat = (x, y, z) => { const h = hash(x, y, z + 61); return h < 0.25 ? M.DARKSTONE : h < 0.45 ? M.STONE_LIGHT : M.STONE; };
   function mossTop(C, se) {
@@ -530,9 +550,15 @@
   }
 
   // Ktorý druh stromu rastie na políčku (deterministicky); pri babkinej chalúpke je ovocný sad.
-  function treeKind(tx, ty) {
-    if (tx >= 13 && ty <= 7) return 'jablon';
-    if (hash(tx, ty, 3) > 0.55) return hash(tx, ty, 11) < 0.7 ? 'smrek' : 'borovica';
+  // V Lese na pomedzí ihličnanov smerom na sever pribúda (sever je tmavší a hustejší).
+  function treeKind(tx, ty, area) {
+    if (area === 'pomedzie') {
+      const conifer = 0.2 + 0.55 * Math.max(0, Math.min(1, (D.MEADOW_Y - ty) / D.MEADOW_Y));
+      if (hash(tx, ty, 3) < conifer) return hash(tx, ty, 11) < 0.75 ? 'smrek' : 'borovica';
+    } else {
+      if (tx >= 13 && ty <= 7) return 'jablon';
+      if (hash(tx, ty, 3) > 0.55) return hash(tx, ty, 11) < 0.7 ? 'smrek' : 'borovica';
+    }
     const h = hash(tx, ty, 12);
     return h < 0.34 ? 'buk' : h < 0.67 ? 'dub' : 'breza';
   }
@@ -547,12 +573,12 @@
     { g: 'cauldron', build: cauldronModel, tile: [0, 0] },
     { g: 'icehouse', build: icehouseModel, tile: [0, 1] }
   ];
-  function fineModels(tiles, season) {
+  function fineModels(tiles, season, w, area) {
     const out = [];
     for (const ft of FINE_TYPES) {
       const i = tiles.findIndex(t => t.g === ft.g);
       if (i < 0) continue;
-      const tx = i % D.W, ty = (i / D.W) | 0;
+      const tx = i % w, ty = (i / w) | 0;
       const m = ft.build(season);
       out.push(Object.assign(m, { type: ft.g, ox: tx - FM / FINE, oy: groundHeight('grass') / R, oz: ty - FM / FINE, tile: { x: tx + ft.tile[0], y: ty + ft.tile[1] } }));
     }
@@ -560,7 +586,7 @@
       const g = tiles[i].g;
       if (g !== 'tree' && g !== 'spruce') continue;
       // v horách rastú len ihličnany
-      const tx = i % D.W, ty = (i / D.W) | 0, kind = g === 'spruce' ? (hash(tx, ty, 11) < 0.75 ? 'smrek' : 'borovica') : treeKind(tx, ty);
+      const tx = i % w, ty = (i / w) | 0, kind = g === 'spruce' ? (hash(tx, ty, 11) < 0.75 ? 'smrek' : 'borovica') : treeKind(tx, ty, area);
       const m = treeModel(kind, season, Math.floor(hash(tx, ty, 13) * 4));
       // dáta modelu sú zdieľané medzi rovnakými stromami – vlastný je len obal s pozíciou
       out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'tree', kind, ox: tx - FM / FINE, oy: groundHeight(g) / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.25 });
@@ -569,9 +595,14 @@
     let rockN = 0;
     for (let i = 0; i < tiles.length; i++) {
       if (tiles[i].g !== 'boulder') continue;
-      const tx = i % D.W, ty = (i / D.W) | 0, kind = ROCK_KINDS[rockN++ % ROCK_KINDS.length]; // striedame tvary, nech je vidno všetky
+      const tx = i % w, ty = (i / w) | 0, kind = ROCK_KINDS[rockN++ % ROCK_KINDS.length]; // striedame tvary, nech je vidno všetky
       const m = rockModel(kind, season, Math.floor(hash(tx, ty, 15) * 4));
       out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'rock', kind, ox: tx - FM / FINE, oy: groundHeight('boulder') / R, oz: ty - FM / FINE, tile: { x: tx, y: ty } });
+    }
+    for (let i = 0; i < tiles.length; i++) {
+      if (tiles[i].g !== 'bush') continue;
+      const tx = i % w, ty = (i / w) | 0, m = bushModel(season, Math.floor(hash(tx, ty, 17) * 4), hash(tx, ty, 19) < 0.4);
+      out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'bush', ox: tx - FM / FINE, oy: groundHeight('bush') / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.3 });
     }
     return out;
   }
@@ -588,22 +619,24 @@
       }
       const x = cx0 + cx, y = cy0 + cy, z = cz0 + cz;
       // vlastníka zapíšeme pre každú podkocku s aspoň jednou minikockou (aj riedke koruny), náhradu len pre plné
-      if (n && x >= 0 && y >= 0 && z >= 0 && x < NX && y < NY && z < NZ) g.owner[idx(x, y, z)] = index;
+      if (n && x >= 0 && y >= 0 && z >= 0 && x < g.NX && y < NY && z < g.NZ) g.owner[idx(g, x, y, z)] = index;
       if (n >= k * k * k * (fm.invis || 0.4)) set(g, x, y, z, M.INVIS);
     }
   }
 
-  // Celý svet z mapy (typy zeme) – deterministický, závisí len od mapy a ročného obdobia.
-  function buildGrid(tiles, season) {
-    const g = makeGrid();
-    for (let ty = 0; ty < D.H; ty++) for (let tx = 0; tx < D.W; tx++) {
-      const gt = tiles[ty * D.W + tx].g, h = tileHeight(gt, tx, ty);
-      g.heights[ty * D.W + tx] = h;
-      for (let y = 0; y < h; y++) for (let z = ty * R; z <= ty * R + 1; z++) for (let x = tx * R; x <= tx * R + 1; x++) set(g, x, y, z, y === h - 1 ? topMaterial(gt) : subMaterial(gt, x, y, z));
+  // Celý svet z mapy (typy zeme) – deterministický, závisí len od mapy, ročného obdobia a plochy.
+  // w = šírka plochy v políčkach (výška = tiles.length / w), area = ktorá plocha (druhy stromov)
+  function buildGrid(tiles, season, w, area) {
+    w = w || D.W;
+    const h = tiles.length / w, g = makeGrid(w, h);
+    g.area = area || 'garden';
+    for (let ty = 0; ty < h; ty++) for (let tx = 0; tx < w; tx++) {
+      const gt = tiles[ty * w + tx].g, th = tileHeight(gt, tx, ty);
+      g.heights[ty * w + tx] = th;
+      for (let y = 0; y < th; y++) for (let z = ty * R; z <= ty * R + 1; z++) for (let x = tx * R; x <= tx * R + 1; x++) set(g, x, y, z, y === th - 1 ? topMaterial(gt) : subMaterial(gt, x, y, z));
     }
-    stamp(g, tiles, season);
-    g.fine = fineModels(tiles, season);
-    g.owner = new Int16Array(NX * NY * NZ).fill(-1);
+    g.fine = fineModels(tiles, season, w, g.area);
+    g.owner = new Int16Array(g.NX * NY * g.NZ).fill(-1);
     g.fine.forEach((fm, i) => stampInvisible(g, fm, i));
     return g;
   }
@@ -613,14 +646,14 @@
     for (let s = 0.15; s < maxDist; s += 0.1) {
       const x = Math.floor((px + dx * s) * R), y = Math.floor((py + dy * s) * R), z = Math.floor((pz + dz * s) * R);
       if (y >= NY) break;
-      if (x < 0 || y < 0 || z < 0 || x >= NX || z >= NZ) continue;
-      const o = g.owner[idx(x, y, z)];
+      if (x < 0 || y < 0 || z < 0 || x >= g.NX || z >= g.NZ) continue;
+      const o = g.owner[idx(g, x, y, z)];
       if (o >= 0) out.add(o);
     }
     return out;
   }
   // vrch políčka; voda má hladinu vyššie než svoje podkocky (dno je pod hladinou)
-  function surfaceY(g, tx, ty) { const h = g.heights[ty * D.W + tx] || 2; return h === groundHeight('water') ? WATER_Y : h / R; }
+  function surfaceY(g, tx, ty) { const h = g.heights[ty * g.W + tx] || 2; return h === groundHeight('water') ? WATER_Y : h / R; }
 
   // ---- Slnko ----
   const MAX_ELEV = [50, 62, 40, 22]; // najvyššia výška slnka v stupňoch podľa obdobia
@@ -679,32 +712,36 @@
 
   // ---- Voda (jazierko): hladina, hĺbka k brehu, lekná, najbližší bod vody ----
   const WATER_Y = groundHeight('grass') / R - 1 / 8;  // hladina je 1/8 bloku pod okolitou zemou (podkocky vody sú dno)
-  const isWater = (tiles, x, y) => x >= 0 && y >= 0 && x < D.W && y < D.H && tiles[y * D.W + x].g === 'water';
+  // w = šírka plochy v políčkach (predvolene záhrada); výška = tiles.length / w
+  const isWater = (tiles, x, y, w) => x >= 0 && y >= 0 && x < w && y < tiles.length / w && tiles[y * w + x].g === 'water';
   // Maska vody pre shader (1 = voda) – z nej sa v každom pixeli hladiny počíta vzdialenosť k brehu
   function waterMask(tiles) {
-    const m = new Uint8Array(D.W * D.H);
+    const m = new Uint8Array(tiles.length);
     for (let i = 0; i < tiles.length; i++) m[i] = tiles[i].g === 'water' ? 255 : 0;
     return m;
   }
   // Štvorce hladiny: jeden na každé políčko vody
-  function waterQuads(tiles) {
+  function waterQuads(tiles, w) {
+    w = w || D.W;
     const out = [];
-    for (let y = 0; y < D.H; y++) for (let x = 0; x < D.W; x++) if (isWater(tiles, x, y)) out.push({ x, y });
+    for (let y = 0; y < tiles.length / w; y++) for (let x = 0; x < w; x++) if (isWater(tiles, x, y, w)) out.push({ x, y });
     return out;
   }
   // Lekná – rovnaké políčka ako lekná v textúre zeme z art.js (hash < 0,12), v zime nie sú
-  function lilyPads(tiles, season) {
+  function lilyPads(tiles, season, w) {
     if (season === 3) return [];
+    w = w || D.W;
     const out = [];
-    for (let y = 0; y < D.H; y++) for (let x = 0; x < D.W; x++) if (isWater(tiles, x, y) && hash(x, y) < 0.12) out.push({ x, y });
+    for (let y = 0; y < tiles.length / w; y++) for (let x = 0; x < w; x++) if (isWater(tiles, x, y, w) && hash(x, y) < 0.12) out.push({ x, y });
     return out;
   }
   // Najbližší bod hladiny k bodu (px, pz) do vzdialenosti maxD, inak null
-  function nearestWater(tiles, px, pz, maxD) {
+  function nearestWater(tiles, px, pz, maxD, w) {
+    w = w || D.W;
     let best = null, bd = maxD;
     const tx = Math.floor(px), tz = Math.floor(pz), r = Math.ceil(maxD);
     for (let y = tz - r; y <= tz + r; y++) for (let x = tx - r; x <= tx + r; x++) {
-      if (!isWater(tiles, x, y)) continue;
+      if (!isWater(tiles, x, y, w)) continue;
       const qx = Math.min(x + 1, Math.max(x, px)), qz = Math.min(y + 1, Math.max(y, pz)), d = Math.hypot(qx - px, qz - pz);
       if (d <= bd) { bd = d; best = { x: qx, z: qz, d }; }
     }

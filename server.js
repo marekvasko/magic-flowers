@@ -10,6 +10,7 @@ const Econ = require('./economy.js');
 const I = require('./items.js');
 const Scav = require('./scavenge.js');
 const Ice = require('./ice.js');
+const Areas = require('./areas.js');
 const P = require('./presence.js');
 
 const PORT = +process.env.PORT || 3000;
@@ -60,7 +61,7 @@ const server = http.createServer((req, res) => {
 // ---------- Svety (miestnosti) ----------
 // Čas je diskrétny: svet má celé počítadlo `tick` (D.TICKS_PER_DAY krokov na deň), deň a minúta sa z neho
 // len odvodzujú. Všetko, čo sa má stať v budúcnosti, je udalosť v plánovači (room.events) a ukladá sa so svetom.
-const SAVE_VERSION = 3; // 3: hory, ľad a ľadovňa
+const SAVE_VERSION = 4; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí
 const TPD = D.TICKS_PER_DAY, MPT = D.MIN_PER_TICK;
 const DEFAULT_MODE = process.env.DEFAULT_MODE === 'paused' ? 'paused' : 'running';
 const MAX_CATCHUP_DAYS = +process.env.MAX_CATCHUP_DAYS || 30; // koľko herných dní najviac dobehneme po výpadku servera
@@ -73,7 +74,7 @@ function newWorldState() {
     v: SAVE_VERSION, tick: D.DAWN_TICK + 6, wall: Date.now(), mode: DEFAULT_MODE, daySeconds: DAY_SECONDS,
     rng: crypto.randomBytes(4).readUInt32LE(0), seq: 0, events: [],
     weather: 'sun', saves: {}, storage: {}, market: null, contracts: null, fairyNight: -1, eternal: false, scav: {},
-    icehouse: { built: false, ice: 0 }, hory: null
+    icehouse: { built: false, ice: 0 }, hory: null, pomedzieSeed: Areas.newSeed()
   };
 }
 
@@ -92,6 +93,9 @@ function migrate(saved) {
   }
   if (from < 3) { // hory a ľadovňa: nová plocha s plným ľadovcom, ľadovňa ešte nepostavená
     out.icehouse = { built: false, ice: 0 }; out.hory = null;
+  }
+  if (from < 4) { // Les na pomedzí: nová plocha, rozloženie zo semienka sveta (záhrada ani polohy hráčov sa nemenia)
+    out.pomedzieSeed = Areas.newSeed();
   }
   out.v = SAVE_VERSION; out.migratedFrom = saved.migratedFrom || from;
   return out;
@@ -112,6 +116,8 @@ function getRoom(id) {
     return t;
   });
   room.hory = Ice.loadHory(st.hory);
+  if (!Number.isInteger(room.pomedzieSeed)) room.pomedzieSeed = Areas.newSeed();
+  room.pomedzie = Areas.loadPomedzie(room.pomedzieSeed);
   Ice.applyIcehouse(room);
   Object.defineProperty(room, 'day', { get() { return D.dayOfTick(this.tick); } });
   Object.defineProperty(room, 'min', { get() { return D.minOfTick(this.tick); } });
@@ -138,7 +144,7 @@ function serialize(room) {
     v: SAVE_VERSION, tick: room.tick, wall: room.wall, mode: room.mode, daySeconds: room.daySeconds,
     rng: room.rng, seq: room.seq, events: room.events,
     weather: room.weather, saves: room.saves, storage: room.storage, storageFb: room.storageFb, market: room.market, contracts: room.contracts,
-    fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom, scav: room.scav, scavSalt: room.scavSalt, icehouse: room.icehouse,
+    fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom, scav: room.scav, scavSalt: room.scavSalt, icehouse: room.icehouse, pomedzieSeed: room.pomedzieSeed,
     tiles: room.tiles.map(t => t.cut ? { s: t.s, cut: 1 } : { s: t.s }), hory: Ice.saveHory(room)
   });
 }
@@ -179,14 +185,14 @@ function send(ws, msg) { if (ws.readyState === 1) ws.send(JSON.stringify(msg)); 
 function broadcast(room, msg) { const s = JSON.stringify(msg); for (const p of room.players.values()) if (p.ws.readyState === 1) p.ws.send(s); }
 function toast(pl, text, kind) { send(pl.ws, { t: 'toast', text, kind: kind || 'info' }); }
 function toastAll(room, text, kind) { broadcast(room, { t: 'toast', text, kind: kind || 'info' }); }
-// Hráči sú vždy na jednej ploche (záhrada / hory) – políčka a efekty dostanú len tí, ktorí sú na nej.
+// Hráči sú vždy na jednej ploche (záhrada / hory / Les na pomedzí) – políčka a efekty dostanú len tí, ktorí sú na nej.
 function broadcastArea(room, area, msg) { const s = JSON.stringify(msg); for (const p of room.players.values()) if (p.area === area && p.ws.readyState === 1) p.ws.send(s); }
 function fx(room, k, x, y, extra, area) { broadcastArea(room, area || 'garden', Object.assign({ t: 'fx', k, x, y }, extra || {})); }
 // Políčka záhrady posielame cez Scav.tileView – druh divej rastliny ostane skrytý, kým nevyklíči (hory rastliny nemajú).
 function tileView(area, t) { return area === 'garden' ? Scav.tileView(t) : t; }
-function tilesView(room, area) { area = area || 'garden'; return Ice.areaTiles(room, area).map(t => tileView(area, t)); }
+function tilesView(room, area) { area = area || 'garden'; return Areas.areaTiles(room, area).map(t => tileView(area, t)); }
 function tilesMsg(room, area) { area = area || 'garden'; broadcastArea(room, area, { t: 'tiles', tiles: tilesView(room, area) }); }
-function tileMsg(room, i, area) { area = area || 'garden'; room.dirty = true; broadcastArea(room, area, { t: 'tile', i, v: tileView(area, Ice.areaTiles(room, area)[i]) }); }
+function tileMsg(room, i, area) { area = area || 'garden'; room.dirty = true; broadcastArea(room, area, { t: 'tile', i, v: tileView(area, Areas.areaTiles(room, area)[i]) }); }
 function plotsUsed(room, key) { let n = 0; for (const t of room.tiles) if (t.s && t.s.o === key) n++; return n; }
 function sendMe(pl) {
   const sv = pl.save;
@@ -384,11 +390,11 @@ function eachAround(room, x, y, r, fn) {
 function act(pl, m) {
   const room = pl.room, sv = pl.save;
   const x = m.x | 0, y = m.y | 0, item = String(m.item || '');
-  if (x < 0 || y < 0 || x >= D.W || y >= D.H) return;
+  const area = pl.area, tiles = Areas.areaTiles(room, area);
+  if (!Areas.inside(area, x, y)) return;
   if (Math.hypot(pl.x - (x + 0.5), pl.y - (y + 0.5)) > 2.4) return toast(pl, 'Si príliš ďaleko.');
   if (item && !sv.inv[item]) return;
-  const area = pl.area, tiles = Ice.areaTiles(room, area);
-  const i = y * D.W + x, t = tiles[i];
+  const i = y * D.areaSize(area).w + x, t = tiles[i];
   if (pl.scav) {
     if (searchesWith(item) && pl.scav.i === i) return toast(pl, 'Ešte stále hľadáš… 🔍');
     stopScavenge(pl, 'Prestal(a) si hľadať.');
@@ -425,7 +431,9 @@ function act(pl, m) {
   if (area !== 'garden') {
     if (t.g === 'water' && item === 'can') { sv.water = Econ.canCap(sv); sendMe(pl); fx(room, 'splash', x + 0.5, y + 0.5, null, area); return; }
     if (t.g === 'glacier') return toast(pl, 'Na ľad potrebuješ krompáč – kúpiš ho na trhu (záložka Vylepšiť). ⛏️');
-    if (item === 'hoe' || item.startsWith('seed_') || D.isWild(item) || item === 'compost') return toast(pl, 'V horách je pôda kamenistá a studená. Pestuj radšej v záhrade. 🏔️');
+    if (item === 'hoe' || item.startsWith('seed_') || D.isWild(item) || item === 'compost') return toast(pl, area === 'hory'
+      ? 'V horách je pôda kamenistá a studená. Pestuj radšej v záhrade. 🏔️'
+      : 'Les na pomedzí je divý – tu sa nepestuje. Pestuj v záhrade. 🌳');
     if (item.startsWith('po_')) {
       if (['rast', 'jar', 'hojnost'].includes(item.slice(3))) return toast(pl, 'Tento elixír pôsobí na záhony – použi ho v záhrade. 🌱');
       return usePotion(pl, item.slice(3), x, y);
@@ -601,22 +609,27 @@ function fillIcehouse(pl, n) {
   room.dirty = true; sendMe(pl); broadcast(room, roomInfo(room));
 }
 
-// Prechod medzi záhradou a horami: hráč dostane políčka novej plochy a príchodové miesto.
+// Prechod do inej plochy: hráč dostane políčka novej plochy (aj jej veľkosť) a príchodové miesto.
 // seq rozlíši staré správy o pohybe, ktoré klient poslal ešte z predchádzajúcej plochy.
 function areaMsg(pl) {
-  return { t: 'area', area: pl.area, seq: pl.areaSeq, tiles: tilesView(pl.room, pl.area), x: pl.x, y: pl.y };
+  const { w, h } = D.areaSize(pl.area);
+  return { t: 'area', area: pl.area, seq: pl.areaSeq, w, h, tiles: tilesView(pl.room, pl.area), x: pl.x, y: pl.y };
 }
 function travel(pl, to) {
+  const a = D.arrival(pl.area, to);
+  if (!a) return;
   if (pl.scav) stopScavenge(pl);
+  const from = pl.area;
   pl.area = pl.save.area = to;
-  const a = D.ARRIVE[to];
   pl.x = pl.save.x = a.x; pl.y = pl.save.y = a.y;
   pl.areaSeq++;
   pl.emote = null;
   send(pl.ws, areaMsg(pl));
   toast(pl, to === 'hory'
     ? '🏔️ Vystúpil(a) si do hôr. Na ľadovci pod skalami vysekáš krompáčom ľad. Chodníkom dole sa vrátiš do záhrady.'
-    : '🏡 Vrátil(a) si sa do záhrady.', 'day');
+    : to === 'pomedzie'
+      ? '🌳 Prišiel(a) si do Lesa na pomedzí. Na juhu je lúka, na sever les hustne a stmieva sa… Na západe sa vrátiš do záhrady.'
+      : from === 'pomedzie' ? '🏡 Vrátil(a) si sa z lesa do záhrady.' : '🏡 Vrátil(a) si sa do záhrady.', 'day');
 }
 
 function wishingWell(pl) {
@@ -694,10 +707,11 @@ wss.on('connection', ws => {
       const look = m.look && typeof m.look === 'object' ? { shirt: String(m.look.shirt || '#4a90d9').slice(0, 9), hair: String(m.look.hair || '#5b3a1a').slice(0, 9), hat: !!m.look.hat } : sv.look;
       sv.look = look;
       const area = D.AREAS.includes(sv.area) ? sv.area : 'garden';
-      pl = { id: nextId++, key, name, ws, room, save: sv, area, areaSeq: 0, x: sv.x || D.SPAWN.x, y: sv.y || D.SPAWN.y, dir: 0, emote: null, emoteAt: 0, look };
+      const pos = Areas.clampPos(area, sv.x || D.SPAWN.x, sv.y || D.SPAWN.y);
+      pl = { id: nextId++, key, name, ws, room, save: sv, area, areaSeq: 0, x: pos.x, y: pos.y, dir: 0, emote: null, emoteAt: 0, look };
       room.players.set(pl.id, pl);
       send(ws, {
-        t: 'welcome', id: pl.id, room: roomId, W: D.W, H: D.H, tiles: tilesView(room, area), area, seq: pl.areaSeq, x: pl.x, y: pl.y
+        t: 'welcome', id: pl.id, room: roomId, w: D.areaSize(area).w, h: D.areaSize(area).h, tiles: tilesView(room, area), area, seq: pl.areaSeq, x: pl.x, y: pl.y
       });
       send(ws, timeMsg(room));
       send(ws, Econ.marketView(room));
@@ -705,7 +719,7 @@ wss.on('connection', ws => {
       sendMe(pl);
       broadcast(room, roomInfo(room));
       broadcast(room, sleepMsg(room));
-      if (!quick) toastAll(room, area === 'hory' ? `${name} prišiel(a) – je v horách 🏔️` : `${name} prišiel(a) do záhrady 🌼`);
+      if (!quick) toastAll(room, area === 'garden' ? `${name} prišiel(a) do záhrady 🌼` : `${name} prišiel(a) – je ${D.AREA_IN[area]} ${D.AREA_FX[area].icon}`);
       const days = quick ? 0 : P.awayDays(sv.lastTick, room.tick, TPD);
       if (days) {
         toast(pl, `Kým si bol(a) preč, ubehlo ${days} ${days === 1 ? 'deň' : days < 5 ? 'dni' : 'dní'}. Pozri sa, čo sa v záhrade zmenilo. 🌱`, 'day');
@@ -720,15 +734,15 @@ wss.on('connection', ws => {
         if (pl.sleep) break; // spiaci hráč leží v posteli
         if ((m.ar | 0) !== pl.areaSeq) break; // pohyb ešte z predchádzajúcej plochy
         if (typeof m.x === 'number' && typeof m.y === 'number' && isFinite(m.x) && isFinite(m.y)) {
-          pl.x = Math.max(0.2, Math.min(D.W - 0.2, m.x));
-          pl.y = Math.max(0.2, Math.min(D.H - 0.2, m.y));
+          const pos = Areas.clampPos(pl.area, m.x, m.y); // z plochy sa vyjsť nedá – len cez prechod
+          pl.x = pos.x; pl.y = pos.y;
           pl.dir = m.dir | 0;
           if (typeof m.a === 'number' && isFinite(m.a)) pl.a = +m.a.toFixed(3); // presný smer pohľadu (3D: 8 smerov)
           pl.cr = !!m.cr; // plazí sa
           pl.lp = !!m.lp && !!sv.inv.lamp; // drží lampáš (svieti)
           sv.x = pl.x; sv.y = pl.y;
           if (pl.scav && Math.hypot(pl.x - pl.scav.px, pl.y - pl.scav.py) > 0.35) stopScavenge(pl, 'Pohol(a) si sa skôr, než si dohľadal(a).');
-          const to = Ice.gateTarget(Ice.areaTiles(room, pl.area), pl.area, pl.x, pl.y);
+          const to = Areas.gateTarget(Areas.areaTiles(room, pl.area), pl.area, pl.x, pl.y);
           if (to) travel(pl, to);
         }
         break;

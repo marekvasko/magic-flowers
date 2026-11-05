@@ -299,8 +299,10 @@ const Art = (() => {
   const GRASS = ['#86c95b', '#74b84a', '#aab24e', '#e7edf0'];
   const FOREST = ['#5f9a46', '#4f8a3c', '#8a8a3f', '#cfd8dc'];
   const ALP = ['#8cc76a', '#7fbb5c', '#b0a95a', '#eef3f6'];
+  const MEADOW = ['#8ccf5e', '#86c255', '#b5b553', '#e9eff2'];
 
-  function ground(c, g, x, y, s, se, t, tx, ty) {
+  // gate = { side: 'n'|'s'|'w'|'e', icon } – na ktorú stranu prechod vedie a ikona cieľovej plochy (inak podľa riadku)
+  function ground(c, g, x, y, s, se, t, tx, ty, gate) {
     const h = hash(tx, ty);
     let base;
     switch (g) {
@@ -308,7 +310,8 @@ const Art = (() => {
       case 'sand': base = se === 3 ? '#efece0' : '#ecd9a0'; break;
       case 'rock': case 'boulder': base = se === 3 ? '#d8dcde' : '#a9a39a'; break;
       case 'water': base = se === 3 ? '#a9d4ec' : '#4aa3df'; break;
-      case 'forest': case 'ring': case 'shroom': case 'tree': base = FOREST[se]; break;
+      case 'forest': case 'ring': case 'shroom': case 'tree': case 'fern': case 'bush': base = FOREST[se]; break;
+      case 'meadow': base = MEADOW[se]; break;
       case 'alp': case 'spruce': base = ALP[se]; break;
       case 'scree': base = se === 3 ? '#e3e7ea' : '#b7b1a6'; break;
       case 'snow': base = se === 3 ? '#f7fbfd' : '#eaf1f5'; break;
@@ -343,17 +346,21 @@ const Art = (() => {
       }
       return;
     }
-    if (g === 'gate') { // chodník na okraji mapy so šípkami a smerovníkom
-      const up = ty === 0;
+    if (g === 'gate') { // chodník na okraji mapy so šípkami (smerom von) a smerovníkom s ikonou cieľa
+      const side = gate ? gate.side : ty === 0 ? 'n' : 's', icon = gate ? gate.icon : ty === 0 ? '⛰️' : '🏡';
+      const vert = side === 'n' || side === 's', sg = side === 'n' || side === 'w' ? -1 : 1;
       c.strokeStyle = 'rgba(110,80,40,0.55)'; c.lineWidth = Math.max(1, s * 0.06);
       for (let i = 0; i < 2; i++) {
-        const cy = y + s * (0.35 + i * 0.3), d = (up ? -1 : 1) * s * 0.1;
-        c.beginPath(); c.moveTo(x + s * 0.3, cy - d); c.lineTo(x + s * 0.5, cy + d); c.lineTo(x + s * 0.7, cy - d); c.stroke();
+        const k = s * (0.35 + i * 0.3), d = sg * s * 0.1;
+        c.beginPath();
+        if (vert) { c.moveTo(x + s * 0.3, y + k - d); c.lineTo(x + s * 0.5, y + k + d); c.lineTo(x + s * 0.7, y + k - d); }
+        else { c.moveTo(x + k - d, y + s * 0.3); c.lineTo(x + k + d, y + s * 0.5); c.lineTo(x + k - d, y + s * 0.7); }
+        c.stroke();
       }
-      if (tx % 2 === 0) {
+      if ((vert ? tx : ty) % 2 === 0) {
         c.fillStyle = '#6d4c2f'; c.fillRect(x + s * 0.08, y + s * 0.15, s * 0.06, s * 0.7);
         c.fillStyle = '#c9a77a'; c.fillRect(x - s * 0.02, y + s * 0.12, s * 0.3, s * 0.2);
-        c.font = (s * 0.17 | 0) + 'px serif'; c.textAlign = 'center'; c.fillStyle = '#000'; c.fillText(up ? '⛰️' : '🏡', x + s * 0.13, y + s * 0.28);
+        c.font = (s * 0.17 | 0) + 'px serif'; c.textAlign = 'center'; c.fillStyle = '#000'; c.fillText(icon, x + s * 0.13, y + s * 0.28);
       }
       return;
     }
@@ -378,6 +385,34 @@ const Art = (() => {
     if (g === 'rock' || g === 'boulder') {
       for (let i = 0; i < 3; i++) ell(c, x + hash(tx, ty, i) * s, y + hash(tx, ty, i + 5) * s, s * 0.07, s * 0.05, 0, 'rgba(80,75,70,0.35)');
       if (h < 0.15 && se !== 3) { circ(c, x + s * 0.3, y + s * 0.6, s * 0.05, '#c8e6c9'); }
+      return;
+    }
+    if (g === 'meadow') { // lúka: hustejšia tráva a veľa poľných kvetov (v zime sneh)
+      if (se === 3) { if (h > 0.6) circ(c, x + hash(tx, ty, 3) * s, y + hash(tx, ty, 4) * s, s * 0.05, '#fff'); return; }
+      c.strokeStyle = 'rgba(30,90,20,0.35)'; c.lineWidth = Math.max(1, s * 0.025);
+      for (let i = 0; i < 5; i++) {
+        const gx = x + hash(tx, ty, i) * s, gy = y + hash(tx, ty, i + 9) * s;
+        c.beginPath(); c.moveTo(gx, gy); c.lineTo(gx - s * 0.03, gy - s * 0.1); c.moveTo(gx, gy); c.lineTo(gx + s * 0.04, gy - s * 0.09); c.stroke();
+      }
+      // kvety podľa obdobia: jar biele a žlté, leto maky, nevädze a margaréty, jeseň fialové astry
+      const cols = [['#fff', '#ffe14d', '#fff', '#b39ddb'], ['#e8261f', '#3f6fd8', '#fff', '#ffe14d'], ['#8a63d2', '#d58cd6', '#ffcc33', '#fff']][se];
+      const n = h > 0.5 ? 3 : h > 0.2 ? 2 : 1;
+      for (let i = 0; i < n; i++) circ(c, x + (0.12 + 0.76 * hash(tx, ty, 30 + i)) * s, y + (0.12 + 0.76 * hash(tx, ty, 40 + i)) * s, s * 0.045, cols[(hash(tx, ty, 50 + i) * 4) | 0]);
+      if (se === 2 && h > 0.7) ell(c, x + hash(tx, ty, 7) * s, y + hash(tx, ty, 8) * s, s * 0.06, s * 0.035, h * 6, '#d9822b');
+      return;
+    }
+    if (g === 'fern' && se !== 3) { // papraď: niekoľko zelených vejárov (na jeseň hrdzavé)
+      c.strokeStyle = se === 2 ? '#a0612a' : se === 0 ? '#6fae3c' : '#3f7f2e'; c.lineWidth = Math.max(1, s * 0.035);
+      const cx = x + s * (0.35 + 0.3 * hash(tx, ty, 60)), cy = y + s * (0.55 + 0.25 * hash(tx, ty, 61));
+      for (let i = 0; i < 5; i++) {
+        const a = -Math.PI / 2 + (i - 2) * 0.55 + (hash(tx, ty, 62 + i) - 0.5) * 0.3, L = s * (0.28 + 0.12 * hash(tx, ty, 70 + i));
+        const ex = cx + Math.cos(a) * L, ey = cy + Math.sin(a) * L;
+        c.beginPath(); c.moveTo(cx, cy); c.quadraticCurveTo(cx + Math.cos(a) * L * 0.6, cy + Math.sin(a) * L * 0.4, ex, ey); c.stroke();
+        for (let k = 1; k < 4; k++) { // lístky po oboch stranách
+          const px = cx + (ex - cx) * k / 4, py = cy + (ey - cy) * k / 4, ln = s * 0.07 * (1 - k / 5);
+          c.beginPath(); c.moveTo(px - Math.sin(a) * ln, py + Math.cos(a) * ln); c.lineTo(px + Math.sin(a) * ln, py - Math.cos(a) * ln); c.stroke();
+        }
+      }
       return;
     }
     // tráva / les

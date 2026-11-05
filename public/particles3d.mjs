@@ -112,7 +112,7 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
     const sig = (S.tilesGen || 0) + ':' + S.tiles.length + ':' + S.tiles.reduce((n, t) => n + (FLY_HOME[t.g] ? 1 : 0), 0);
     if (sig === homesSig) return;
     homesSig = sig; homes = [];
-    S.tiles.forEach((t, i) => { if (FLY_HOME[t.g]) homes.push({ x: i % D.W + 0.5, z: ((i / D.W) | 0) + 0.5, water: t.g === 'water' }); });
+    S.tiles.forEach((t, i) => { if (FLY_HOME[t.g]) homes.push({ x: i % S.W + 0.5, z: ((i / S.W) | 0) + 0.5, water: t.g === 'water' }); });
   }
   const FLAME_HOT = [1, 0.95, 0.62], FLAME_MID = [1, 0.55, 0.14], FLAME_END = [0.75, 0.16, 0.05];
   const RAIN_COL = [0.72, 0.82, 0.98], SMOKE_COL = [0.55, 0.55, 0.58], SPLASH_COL = [0.75, 0.86, 1];
@@ -120,8 +120,8 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
   const colOf = c => { let v = fairyCol.get(c); if (!v) { v = hex(c); fairyCol.set(c, v); } return v; };
 
   const camRight = new THREE.Vector3();
-  const tileAt = (x, z) => { const tx = Math.floor(x), tz = Math.floor(z); return tx >= 0 && tz >= 0 && tx < D.W && tz < D.H ? tz * D.W + tx : -1; };
-  const groundAt = (grid, x, z) => { const i = tileAt(x, z); return i < 0 || !grid ? 0 : W.surfaceY(grid, i % D.W, (i / D.W) | 0); };
+  const tileAt = (x, z) => { const tx = Math.floor(x), tz = Math.floor(z); return tx >= 0 && tz >= 0 && tx < S.W && tz < S.H ? tz * S.W + tx : -1; };
+  const groundAt = (grid, x, z) => { const i = tileAt(x, z); return i < 0 || !grid ? 0 : W.surfaceY(grid, i % S.W, (i / S.W) | 0); };
 
   // poloha víly (obieha okolo stredu z S.fx, len v teréne a s výškou)
   function fairyPos(grid, p, t) {
@@ -333,7 +333,7 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
     // ---- hľadanie semienok: zo stredu hľadaného políčka jemne odletuje hlinka a tráva sprava doľava (na obrazovke) ----
     const diggers = [S.mySi].concat([...S.others.values()].map(o => o.si)).filter(si => si != null && si >= 0);
     for (const si of diggers) {
-      const x = si % D.W + 0.5, z = ((si / D.W) | 0) + 0.5;
+      const x = si % S.W + 0.5, z = ((si / S.W) | 0) + 0.5;
       if (!near(x, z) || Math.random() >= dt * 12 * q) continue;
       const v = rnd(0.4, 1);
       digs.push({ x, z, y: groundAt(grid, x, z) + 0.03, vx: -camRight.x * v + rnd(-0.1, 0.1), vz: -camRight.z * v + rnd(-0.1, 0.1), vy: rnd(0.5, 0.9), life: 0, rest: -1, c: pick(DIG_COLS), s: rnd(0.03, 0.045) });
