@@ -1257,7 +1257,7 @@
       // ťažký ľad v náručí spomaľuje
       const sp = 3.8 * dt * (me.crawl ? CRAWL_SPEED : 1) * Math.max(0.4, 1 - D.ICE_SLOW * (S.inv.ice || 0));
       const ox = me.x, oy = me.y;
-      const rx = 0.26, ry = 0.16;
+      const { rx, ry } = D.BODY;
       // hráč stojí na najvyššom políčku pod sebou – kým celkom nezíde z ľadu, nezasekne sa o jeho hranu
       const corners = (x, y) => [[x - rx, y - ry], [x + rx, y - ry], [x - rx, y + ry], [x + rx, y + ry]];
       let here = tileAt(Math.floor(me.x), Math.floor(me.y));
