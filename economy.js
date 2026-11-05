@@ -384,20 +384,27 @@ function deliverContract(room, key, id) {
 }
 
 // ---------- Vylepšenia ----------
+// Spoločné vylepšenia (shared – povolenie na pole) patria záhrade (room.up), platí ich hráč, ktorý ich kúpi.
+function upgradeLevels(room, sv, kind) {
+  if (D.UPGRADES[kind].shared) return (room.up = room.up || { plots: 0 });
+  return (sv.up = sv.up || { can: 0, composter: 0 });
+}
 function upgrade(room, sv, kind) {
   const u = D.UPGRADES[kind];
   if (!u) return 'Neznáme vylepšenie.';
-  sv.up = sv.up || { can: 0, plots: 0, composter: 0 };
-  const next = u.levels[(sv.up[kind] || 0) + 1];
-  if (!next) return 'Už máš najvyššiu úroveň.';
+  const up = upgradeLevels(room, sv, kind);
+  const next = u.levels[(up[kind] || 0) + 1];
+  if (!next) return u.shared ? 'Záhrada už má najvyššiu úroveň.' : 'Už máš najvyššiu úroveň.';
   if (D.repLevel(sv.rep || 0) < next.rep) return `Potrebuješ reputáciu úrovne ${next.rep}.`;
   if (sv.coins < next.price) return 'Nemáš dosť mincí. 🪙';
   sv.coins -= next.price;
-  sv.up[kind] = (sv.up[kind] || 0) + 1;
+  up[kind] = (up[kind] || 0) + 1;
   return null;
 }
 function canCap(sv) { return D.UPGRADES.can.levels[(sv.up && sv.up.can) || 0].v; }
-function plotLimit(sv) { return D.UPGRADES.plots.levels[(sv.up && sv.up.plots) || 0].v; }
+// Povolenie na pole celej záhrady a koľko z neho je obrobené (záhony všetkých hráčov)
+function plotLimit(room) { return D.UPGRADES.plots.levels[(room.up && room.up.plots) || 0].v; }
+function plotsUsed(room) { let n = 0; for (const t of room.tiles) if (t.s) n++; return n; }
 
 // ---------- Pohľad pre klienta ----------
 function marketView(room) {
@@ -432,5 +439,5 @@ function startCapital(env) {
 
 module.exports = {
   startCapital, setHooks, initEconomy, onDawn, HANDLERS, PERIODIC, buy, sell, sellQuote, buyQuote, seedPrice, flowerPrice,
-  takeContract, deliverContract, upgrade, canCap, plotLimit, maxActive, marketView, boardView, phase, PLANTABLE
+  takeContract, deliverContract, upgrade, canCap, plotLimit, plotsUsed, maxActive, marketView, boardView, phase, PLANTABLE
 };

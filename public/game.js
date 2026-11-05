@@ -118,6 +118,7 @@
         S.eternal = m.eternal; S.storageFb = m.storageFb || {}; S.storageTick = m.tick; S.names = m.names; S.mode = m.mode; S.daySeconds = m.daySeconds; S.storage = m.storage || {};
         if (S.modal && S.modal.refresh) S.modal.refresh();
         break;
+      case 'plots': S.plotsUsed = m.used; S.plotLimit = m.limit; updateHud(); if (S.modal && S.modal.refresh) S.modal.refresh(); break; // spoločné povolenie na pole
       case 'market': S.market = m; if (S.modal && S.modal.refresh) S.modal.refresh(); break;
       case 'board': S.board = m.list; if (S.modal && S.modal.refresh) S.modal.refresh(); break;
       case 'tile': S.tiles[m.i] = m.v; break;
@@ -670,7 +671,7 @@
     let txt = D.itemName(S.sel);
     if (!S.sel) txt = 'Prázdna ruka · hľadaj v tráve divé semienka 🔍';
     if (S.sel === 'can') txt += ` · ${S.water}/${S.canCap} 💧`;
-    if (S.sel === 'hoe') txt += ` · pole ${S.plotsUsed}/${S.plotLimit >= 999 ? '∞' : S.plotLimit}`;
+    if (S.sel === 'hoe') txt += ` · pole záhrady ${S.plotsUsed}/${S.plotLimit}`;
     if (S.sel.startsWith('seed_')) {
       const sp = D.SPECIES[S.sel.slice(5)];
       txt += ' · ' + sp.seasons.map(s => D.SEASON_ICONS[s]).join('') + ' · ' + ({ sun: '☀️', shade: '🌳', any: '⛅' })[sp.light] + (sp.soil ? ' · ' + ({ sand: 'piesok', rich: 'kompost', rock: 'skalka' })[sp.soil] : '');
@@ -860,11 +861,11 @@
           h('small', null, `Naraz môžeš mať ${S.maxActive} ${S.maxActive === 1 ? 'zákazku' : 'zákazky'}. Veľké zákazky sa objavujú od úrovne 2, plesnivec od úrovne 2.`)));
         for (const kind in D.UPGRADES) {
           const u = D.UPGRADES[kind], cur = (S.up && S.up[kind]) || 0, nx = u.levels[cur + 1];
-          const info = h('div', { class: 'info' }, h('b', null, `${u.icon} ${u.name}`), h('small', null, `teraz: ${u.levels[cur].v === 999 ? 'neobmedzene' : u.levels[cur].v} ${u.unit}` + (kind === 'plots' ? ` (využité ${S.plotsUsed})` : '')));
+          const info = h('div', { class: 'info' }, h('b', null, `${u.icon} ${u.name}`), h('small', null, `teraz: ${u.levels[cur].v} ${u.unit}` + (u.shared ? ` pre celú záhradu (obrobené ${S.plotsUsed})` : '')));
           let btn;
           if (!nx) btn = h('button', { class: 'btn gray', disabled: 'disabled' }, 'Max');
           else {
-            info.appendChild(h('small', null, `ďalej: ${nx.v === 999 ? 'neobmedzene' : nx.v} ${u.unit}` + (nx.rep ? ` · treba ⭐${nx.rep}` : '')));
+            info.appendChild(h('small', null, `ďalej: ${nx.v} ${u.unit}` + (u.shared ? ' pre všetkých' : '') + (nx.rep ? ` · treba ⭐${nx.rep}` : '')));
             btn = h('button', { class: 'btn', onclick: () => send({ t: 'upgrade', kind }) }, nx.price + '🪙');
             if (S.coins < nx.price || lvl < nx.rep) btn.disabled = true;
           }
@@ -1138,7 +1139,7 @@
       <p>☀️🌳 Každý kvet má svoje nároky: <b>ročné obdobie, svetlo, pôdu a vodu</b> – nájdeš ich v 📖 Herbári. Spokojná rastlina dá až 3 kvety, kompost pridá ešte jeden.</p>
       <p>🛏️ <b>Spánok:</b> od 18:00 si môžeš ísť ľahnúť do domčeka. Keď spia všetci v záhrade, noc rýchlo prebehne až do 6:00 (ale prídeš o nočné čary).</p>
       <p>🌙 Nový deň začína o 6:00 – vtedy rastliny porastú. Každé obdobie trvá ${D.DAYS_PER_SEASON} dni. V zime prežijú len zimné kvety!</p>
-      <p>🪙 <b>Začínaš chudobne:</b> pár semienok, malá krhla a povolenie na 8 políčok. Väčšiu krhlu, pole a kompostér kúpiš na trhu (Vylepšiť).</p>
+      <p>🪙 <b>Začínaš chudobne:</b> pár semienok a malá krhla. Povolenie na pole je spoločné pre celú záhradu – obrobené políčka všetkých hráčov sa rátajú spolu (najviac 96 políčok); prázdne políčko môže motykou zarovnať ktokoľvek. Väčšiu krhlu a kompostér si kúpiš na trhu (Vylepšiť), väčšie pole tam kúpi ktokoľvek pre všetkých.</p>
       <p>🛒 <b>Trh žije:</b> semienok je obmedzene a v sezóne zdražejú – kupuj ich vopred, keď veľkoobchodník privezie tovar na ďalšie obdobie. Výkupná cena kvetov klesá, keď ich je na trhu veľa, a rastie počas sviatkov (ohlásené 2 dni vopred). Na trhu obchoduje aj záhradník Jano, špekulant Fero a kvetinárka Zuzka – sleduj Správy.</p>
       <p>📋 <b>Zákazky</b> nájdeš na nástenke pri 👵 babke. Zarezervuj si ich, termín platí; odovzdávať môžeš aj po častiach. Za splnenie dostaneš peniaze a ⭐ reputáciu, za nesplnenie reputáciu stratíš. ⚗️ V babkinom <b>kotlíku</b> sa z troch kvetov varia elixíry.</p>
       <p>🥀 <b>Kvety vädnú:</b> odrezaný kvet vydrží len pár dní (mak 2, tulipán 4, chryzantéma 7…) a s vekom klesá jeho výkupná cena. Rozkvitnutá rastlina na poli po čase odkvitne. V chladnom sklade vädnú kvety 2× pomalšie, zvädnuté sa dajú skompostovať.</p>
