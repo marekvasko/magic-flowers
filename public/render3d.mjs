@@ -62,7 +62,7 @@ float gloomAt(float z) {
 // okolo hráča (eye = bod oka, w = dohľad) slabé svetlo a za dohľadom tma (darkFog). Miesta osvetlené lampášom (aj cudzím)
 // ostanú vidno. Stromy sa kreslia celé (aj koruny v tme); čo zakrýva hráča alebo zem pred ním, sa zoslabí ako v tmavom lese.
 // Slnko na zemi v Lese divov tlmené (1 = jas ako v záhrade); viditeľnosť za dohľadom ostáva plná
-const LES_SUN_K = 0.5;
+const LES_SUN_K = 0.3;
 const DARK_GLSL = `
 #define LES_SUN_K ${LES_SUN_K.toFixed(2)}
 float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
