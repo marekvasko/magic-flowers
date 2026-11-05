@@ -529,6 +529,9 @@
   const LES_GLADES = 6; // počet čistín
   const LES_GIANT = 0.25; // podiel voľných štvorcov 2 × 2, na ktorých rastie obor (inak bežné stromy)
   const LES_DECOR = ['moss', 'fern', 'roots', 'fungi']; // priechodná zem medzi stromami
+  // Srdce lesa: v strede plochy veľká čistina (polosi rx × ry políčok), okolo nej riedky les, ktorý smerom von hustne
+  // (do vzdialenosti ring × polosi; v nej menej stromov a široké chodníky ostanú široké)
+  const LES_HEART = { rx: 6, ry: 8, ring: 2.2 };
   function buildLes(seed) {
     const w = LES_W, h = LES_H;
     const g = new Array(w * h).fill(null); // null = zatiaľ hustý les
@@ -579,7 +582,7 @@
     const glades = [];
     for (let k = 0; k < 400 && glades.length < LES_GLADES; k++) {
       const c = ri(0, cw * chh - 1), cx = c % cw, cy = (c / cw) | 0;
-      if (cy >= chh - 3 || glades.some(o => Math.hypot(o.cx - cx, o.cy - cy) < 4)) continue;
+      if (cy >= chh - 3 || Math.hypot((cx * LES_CELL + 2 - (w - 1) / 2) / LES_HEART.rx, (cy * LES_CELL + 2 - (h - 1) / 2) / LES_HEART.ry) < LES_HEART.ring + 0.3 || glades.some(o => Math.hypot(o.cx - cx, o.cy - cy) < 4)) continue;
       glades.push({ cx, cy });
       const n = node[c], rx = ri(2, 3) + 0.4, ry = ri(2, 3) + 0.4;
       for (let y = n.y - 4; y <= n.y + 4; y++) for (let x = n.x - 4; x <= n.x + 4; x++) {
@@ -587,12 +590,20 @@
         if (d <= 1 + (rnd() - 0.5) * 0.4 && x >= 1 && y >= 1 && x <= w - 2 && y <= h - 2) { g[y * w + x] = 'glade'; glade[y * w + x] = 1; }
       }
     }
+    // Srdce lesa v strede: veľká čistina, okolo nej riedky les (sparse 0–1: ako veľmi je les ešte riedky)
+    const hx = (w - 1) / 2, hy = (h - 1) / 2, sparse = new Float32Array(w * h);
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x, d = Math.hypot((x - hx) / LES_HEART.rx, (y - hy) / LES_HEART.ry) + (rnd() - 0.5) * 0.15;
+      if (d <= 1) { g[i] = 'glade'; glade[i] = 1; }
+      else if (d < LES_HEART.ring) sparse[i] = 1 - (d - 1) / (LES_HEART.ring - 1);
+    }
     // Obrovské stromy: na voľnom štvorci 2 × 2 v hustom lese zhruba každý druhý raz obor, inak tam rastú bežné stromy (sem-tam ker)
     const spots = [];
     for (let y = 0; y < h - 1; y++) for (let x = 0; x < w - 1; x++) spots.push(y * w + x);
     for (const i of shuffle(spots)) {
       const x = i % w, y = (i / w) | 0;
       if (at(x, y) || at(x + 1, y) || at(x, y + 1) || at(x + 1, y + 1)) continue;
+      if (rnd() < sparse[i] * 0.8) continue; // v riedkom lese okolo srdca menej stromov
       if (rnd() < LES_GIANT) { g[i] = 'giant'; g[i + 1] = g[i + w] = g[i + w + 1] = 'trunk'; }
       else for (const j of [i, i + 1, i + w, i + w + 1]) g[j] = rnd() < 0.15 ? 'bush' : 'tree';
     }
@@ -601,7 +612,7 @@
       if (g[i] === 'path') { const r = rnd(); if (r < 0.1) g[i] = 'roots'; else if (r < 0.18) g[i] = 'moss'; continue; }
       if (g[i] === 'glade') { const r = rnd(); if (r < 0.14) g[i] = 'fern'; else if (r < 0.2) g[i] = 'fungi'; continue; }
       if (g[i]) continue;
-      const r = rnd();
+      const r = rnd() + sparse[i] * 0.5; // v riedkom lese viac priechodnej zeme
       g[i] = r < 0.42 ? 'tree' : r < 0.6 ? 'bush' : r < 0.68 ? 'log' : LES_DECOR[ri(0, LES_DECOR.length - 1)];
     }
     for (const gt of GATES.les) g[gt.y * w + gt.x] = 'gate';
@@ -612,7 +623,7 @@
       if (y * w + x === ai) continue;
       let all = true, gl = false;
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const i = (y + dy) * w + x + dx; all = all && !BLOCK[g[i]]; gl = gl || glade[i]; }
-      if (all && !gl) g[y * w + x] = 'bush';
+      if (all && !gl && rnd() >= sparse[y * w + x] * 1.5) g[y * w + x] = 'bush';
     }
     // Každé priechodné políčko musí byť dosiahnuteľné od vstupu – uzavreté kúty zarastú stromami
     const reach = new Uint8Array(w * h), q = [GATES.les[0].y * w + GATES.les[0].x];
@@ -722,7 +733,7 @@
     CHAT_MAX, chatText,
     W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
-    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt, viewDiagAt,
+    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_HEART, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt, viewDiagAt,
     sellPrice, itemName, buildMap, buildMountains, buildPomedzie, buildLes, buildArea, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
   };
   root.GameData = api;

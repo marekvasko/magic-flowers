@@ -62,7 +62,7 @@ test('Les divov: každý chodník aj čistina sú dosiahnuteľné od vstupu (100
   }
 });
 
-test('Les divov: obrovské stromy na 2 × 2 políčkach, úzke chodníky, čistiny a ozdoby', () => {
+test('Les divov: obrovské stromy na 2 × 2 políčkach, úzke chodníky, čistiny a ozdoby, srdce lesa', () => {
   for (const seed of SEEDS.slice(0, 40)) {
     const g = D.buildLes(seed), at = (x, y) => x >= 0 && y >= 0 && x < LW && y < LH ? g[y * LW + x] : null;
     let giants = 0;
@@ -78,10 +78,14 @@ test('Les divov: obrovské stromy na 2 × 2 políčkach, úzke chodníky, čisti
       let open = true, glade = false;
       for (let dy = 0; dy < 3; dy++) for (let dx = 0; dx < 3; dx++) { const t = at(x + dx, y + dy); if (D.BLOCK[t]) open = false; if (t === 'glade' || t === 'fern' || t === 'fungi') glade = true; }
       const a = D.arrival('pomedzie', 'les'), atArrival = x + 1 === Math.floor(a.x) && y + 1 === Math.floor(a.y); // pri vstupe môže byť rázcestie
-      if (open && !atArrival) assert.ok(glade, `semienko ${seed}: široké miesto ${x},${y} mimo čistiny`);
+      const H = D.LES_HEART, heart = Math.hypot((x + 1 - (LW - 1) / 2) / H.rx, (y + 1 - (LH - 1) / 2) / H.ry) < H.ring + 0.1; // riedky les okolo srdca
+      if (open && !atArrival && !heart) assert.ok(glade, `semienko ${seed}: široké miesto ${x},${y} mimo čistiny`);
     }
     const share = t => g.filter(v => v === t).length / g.length;
     assert.ok(share('glade') > 0.015, 'čistiny');
+    // srdce lesa: stred plochy je veľká čistina
+    const mid = at(Math.floor((LW - 1) / 2), Math.floor((LH - 1) / 2));
+    assert.ok(['glade', 'fern', 'fungi'].includes(mid), 'srdce lesa ' + mid);
     for (const t of ['path', 'moss', 'fern', 'roots', 'fungi', 'log', 'tree', 'bush']) assert.ok(g.includes(t), t);
     assert.ok(share('path') < 0.35 && share('path') > 0.15, 'chodníky ' + share('path').toFixed(2));
     assert.ok(!g.some(t => ['grass', 'water', 'house', 'stall', 'meadow'].includes(t)), 'v Lese divov sa nič nepestuje ani nekupuje');
