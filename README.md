@@ -212,6 +212,8 @@ A maintainer page (in English) for looking at worlds without playing: a rooms li
 - `GET /api/debug/rooms` lists all worlds (saved files and rooms in memory, who's online). `GET /api/debug/room?id=…` returns a snapshot: a loaded room is serialized from memory; an unloaded one is only parsed from `data/room-<id>.json` (and run through `migrate()` on the copy). It's never loaded into the server, advanced or saved.
 - **Player save keys never leave the server.** They're a player's identity (whoever has one can play as that player), so the API replaces them with short hashes (`p-…`).
 - Files: `debug.js` (server side), `debug/` (page; not under `public/`, served only through `/debug/…`).
+- **Adding a tab:** create `debug/tabs/<id>.mjs` exporting `mount(el, ctx)` → `{ update?(ctx), unmount?() }` and list the tab in `TABS` in `debug/debug.js` (until the module exists, the tab shows its description). `ctx` has the selected `room`, `area`, room snapshot `snap`, `api(path)`, `param` / `setParam` (kept in the URL hash), `setArea`, the `h` element helper, `D` (`shared/data.js`) and formatters.
+- **Adding server data for a tab:** create `debug/api/<name>.js` exporting `(query, tools) => object`; it answers `GET /api/debug/<name>`. `tools.load(id)` gives a copy of a world's state (never the live room); player keys are stripped from the response automatically.
 - Locally: `PORT=8099 DATA_DIR=/tmp/mf npm start`, then open `http://localhost:8099/debug`.
 
 ## Contributing

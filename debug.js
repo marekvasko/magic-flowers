@@ -61,21 +61,44 @@ function create(ctx) {
     };
   }
 
-  // Snímka sveta: z pamäte, ak je načítaný; inak len prečítaný súbor (migrate na kópii). Kľúče hráčov sú nahradené.
-  function roomSnapshot(id) {
+  // Kópia stavu sveta: z pamäte, ak je načítaný (rovnaký serialize ako pri ukladaní); inak len prečítaný súbor
+  // (migrate na kópii). Svet v serveri sa nikdy nedostane von – rozšírenia dostanú len túto kópiu.
+  function loadState(id) {
+    if (!ROOM_RE.test(id)) return null;
     const room = ctx.rooms.get(id);
-    let text, file = null;
-    if (room) text = ctx.serialize(room);
-    else {
-      try { text = fs.readFileSync(roomFile(id), 'utf8'); } catch (e) { return null; }
-      const st = fs.statSync(roomFile(id));
-      file = { size: st.size, saved: st.mtimeMs };
-      text = JSON.stringify(ctx.migrate(JSON.parse(text)));
-    }
-    const state = JSON.parse(text);
-    text = JSON.stringify({ id, source: room ? 'memory' : 'file', file, online: room ? online(room) : [], reconciler: reconcilerView(state), state });
-    for (const k of Object.keys(state.saves || {})) text = text.split(JSON.stringify(k)).join(JSON.stringify(keyId(k)));
+    if (room) return { id, source: 'memory', file: null, online: online(room), state: JSON.parse(ctx.serialize(room)) };
+    let text;
+    try { text = fs.readFileSync(roomFile(id), 'utf8'); } catch (e) { return null; }
+    const st = fs.statSync(roomFile(id));
+    return { id, source: 'file', file: { size: st.size, saved: st.mtimeMs }, online: [], state: ctx.migrate(JSON.parse(text)) };
+  }
+  // Kľúče hráčov (z načítaných svetov) nahradí v celej odpovedi odtlačkom
+  function redact(obj, keys) {
+    let text = JSON.stringify(obj);
+    for (const k of keys) text = text.split(JSON.stringify(k)).join(JSON.stringify(keyId(k)));
     return JSON.parse(text);
+  }
+  function roomSnapshot(id) {
+    const r = loadState(id);
+    if (!r) return null;
+    return redact(Object.assign({}, r, { reconciler: reconcilerView(r.state) }), Object.keys(r.state.saves || {}));
+  }
+
+  // Rozšírenia API pre záložky: debug/api/<name>.js exportuje (query, tools) → objekt na odpoveď (null = 404).
+  //   tools.load(id) → { id, source, file, online, state } kópia sveta (alebo null), tools.rooms() → zoznam svetov,
+  //   tools.sim → špecifikácia simulácie. Kľúče hráčov z načítaných svetov sa z odpovede odstránia samy.
+  function extension(res, name, query) {
+    if (!/^[a-z][a-z0-9-]{0,30}$/.test(name)) return notFound(res);
+    const file = path.join(ctx.debugDir, 'api', name + '.js');
+    if (!fs.existsSync(file)) return notFound(res);
+    const keys = new Set();
+    const tools = {
+      ROOM_RE, rooms: listRooms, sim: ctx.sim && ctx.sim(),
+      load: id => { const r = loadState(String(id || '')); if (r) for (const k of Object.keys(r.state.saves || {})) keys.add(k); return r; }
+    };
+    let body;
+    try { body = require(file)(query, tools); } catch (e) { console.error('[debug]', name, e); return json(res, 500, { error: e.message }); }
+    return body == null ? json(res, 404, { error: 'not found' }) : json(res, 200, redact(body, keys));
   }
 
   function serveFile(res, rel) {
@@ -102,7 +125,7 @@ function create(ctx) {
       const snap = roomSnapshot(id);
       return snap ? json(res, 200, snap) : json(res, 404, { error: 'no such room' });
     }
-    if (url.startsWith('/api/debug/')) return notFound(res);
+    if (url.startsWith('/api/debug/')) return extension(res, url.slice(11), query);
     if (url === '/debug' || url === '/debug/') return serveFile(res, 'index.html');
     let rel;
     try { rel = decodeURIComponent(url.slice(7)); } catch (e) { return notFound(res); }
