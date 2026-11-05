@@ -11,6 +11,7 @@ const I = require('./items.js');
 const Scav = require('./scavenge.js');
 const Ice = require('./ice.js');
 const Areas = require('./areas.js');
+const Spiders = require('./spiders.js');
 const P = require('./presence.js');
 const Debug = require('./debug.js');
 
@@ -63,7 +64,7 @@ const server = http.createServer((req, res) => {
 // ---------- Svety (miestnosti) ----------
 // Čas je diskrétny: svet má celé počítadlo `tick` (D.TICKS_PER_DAY krokov na deň), deň a minúta sa z neho
 // len odvodzujú. Všetko, čo sa má stať v budúcnosti, je udalosť v plánovači (room.events) a ukladá sa so svetom.
-const SAVE_VERSION = 7; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov
+const SAVE_VERSION = 8; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov; 8: pavúky a pavučiny
 const TPD = D.TICKS_PER_DAY, MPT = D.MIN_PER_TICK;
 const DEFAULT_MODE = process.env.DEFAULT_MODE === 'paused' ? 'paused' : 'running';
 const MAX_CATCHUP_DAYS = +process.env.MAX_CATCHUP_DAYS || 30; // koľko herných dní najviac dobehneme po výpadku servera
@@ -76,7 +77,7 @@ function newWorldState() {
     v: SAVE_VERSION, tick: D.DAWN_TICK + 6, wall: Date.now(), mode: DEFAULT_MODE, daySeconds: DAY_SECONDS,
     rng: crypto.randomBytes(4).readUInt32LE(0), seq: 0, events: [],
     weather: 'sun', saves: {}, storage: {}, market: null, contracts: null, fairyNight: -1, eternal: false, scav: {},
-    icehouse: { built: false, ice: 0 }, hory: null, pomedzieSeed: Areas.newSeed(), up: { plots: 0 }, lesSeed: Areas.newSeed(), les: null
+    icehouse: { built: false, ice: 0 }, hory: null, pomedzieSeed: Areas.newSeed(), up: { plots: 0 }, lesSeed: Areas.newSeed(), les: null, spid: null
   };
 }
 
@@ -119,6 +120,9 @@ function migrate(saved) {
   if (from < 7) { // Les divov: nová plocha severne od Lesa na pomedzí, rozloženie zo semienka sveta (pri prvom načítaní sa uloží)
     out.lesSeed = Areas.newSeed(); out.les = null;
   }
+  if (from < 8) { // pavúky: pavučiny v Lese divov a kúty krížiaka sa utkajú pri načítaní (spiders.js load)
+    out.spid = null;
+  }
   out.v = SAVE_VERSION; out.migratedFrom = saved.migratedFrom || from;
   return out;
 }
@@ -143,6 +147,7 @@ function getRoom(id) {
   if (!Number.isInteger(room.lesSeed)) room.lesSeed = Areas.newSeed();
   room.les = Areas.loadLes(st.les, room.lesSeed);
   Ice.applyIcehouse(room);
+  Spiders.load(room, st.spid); // pavučiny a kúty (bez uloženia sa utkajú nové); pavúky začínajú doma
   room.up = room.up || { plots: 0 };
   Object.defineProperty(room, 'day', { get() { return D.dayOfTick(this.tick); } });
   Object.defineProperty(room, 'min', { get() { return D.minOfTick(this.tick); } });
@@ -169,7 +174,7 @@ function serialize(room) {
     rng: room.rng, seq: room.seq, events: room.events,
     weather: room.weather, saves: room.saves, storage: room.storage, storageFb: room.storageFb, market: room.market, contracts: room.contracts,
     fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom, scav: room.scav, scavSalt: room.scavSalt, icehouse: room.icehouse, pomedzieSeed: room.pomedzieSeed, up: room.up, lesSeed: room.lesSeed,
-    tiles: room.tiles.map(t => t.cut ? { s: t.s, cut: 1 } : { s: t.s }), hory: Ice.saveHory(room), les: Areas.saveLes(room)
+    tiles: room.tiles.map(t => t.cut ? { s: t.s, cut: 1 } : { s: t.s }), hory: Ice.saveHory(room), les: Areas.saveLes(room), spid: Spiders.save(room)
   });
 }
 // Ladiaca stránka /debug: svety len číta (z pamäte alebo zo súboru), nič nenačíta ani neuloží
@@ -303,8 +308,10 @@ function dawn(room) {
   for (const t of room.tiles) if (t.s) t.s.w = room.weather === 'rain' ? 1 : 0;
   const iceAreas = Ice.dawnIce(room, se, room.weather); // otvory vo vode zamrznú, ľadovec sa topí, v daždi/snehu dorastie
   Econ.onDawn(room);
+  const webs = Spiders.balance(room); // počet pavučín podľa obdobia
   room.dirty = true;
   if (!room.players.size) return;
+  if (webs) broadcastArea(room, 'les', Spiders.websView(room));
   tilesMsg(room, 'garden');
   if (iceAreas.includes('hory')) tilesMsg(room, 'hory');
   broadcast(room, roomInfo(room));
@@ -338,7 +345,9 @@ const HANDLERS = {
     if (Ice.meltHourly(room, season(room))) toastAll(room, '💧 Ľad v ľadovni sa roztopil. Sklad už nechladí tak dobre – doplň ľad z hôr alebo v zime z jazierka. 🧊');
     if (room.icehouse.ice !== had) { info = true; room.dirty = true; }
     if (info) broadcast(room, roomInfo(room));
+    Spiders.hourlyCorners(room); // krížiak sa občas vydá utkať pavučinu do kúta
   },
+  weave(room, d) { Spiders.onWeave(room, d); }, // majiteľ znova utká roztrhnutú pavučinu
   scavDone(room, d) {
     const pl = playerByKey(room, d.key);
     if (pl && pl.scav && pl.scav.n === d.n) finishScavenge(pl);
@@ -350,6 +359,7 @@ const HANDLERS = {
 };
 
 Object.assign(HANDLERS, Econ.HANDLERS);
+Spiders.setHooks({ toast, sendMe, send(pl, msg) { send(pl.ws, msg); }, broadcastArea });
 // Periodické udalosti plánuje engine sám (E.reconcile): ráno o 6:00 a každú celú hodinu, plus ekonomika.
 const PERIODIC = [
   { key: 'dawn', type: 'dawn', next: E.daily(D.DAWN_TICK) },
@@ -430,6 +440,7 @@ function act(pl, m) {
     if (searchesWith(item) && pl.scav.i === i) return toast(pl, 'Ešte stále hľadáš… 🔍');
     stopScavenge(pl, 'Prestal(a) si hľadať.');
   }
+  if (pl.pull) return toast(pl, 'Ešte ťaháš hodváb… 🕸️');
 
   // Iný hráč – darovanie
   const other = playerAt(room, pl, x, y);
@@ -449,6 +460,16 @@ function act(pl, m) {
     toast(other, `${pl.name} ti daroval(a): ${D.itemName(item)} 🎁`, 'gift');
     fx(room, 'gift', other.x, other.y, null, area);
     sendMe(pl); sendMe(other); return;
+  }
+
+  // Pavučiny: v Lese divov sa z nich ťahá hodváb (nie s lampášom v ruke), kútovú pavučinu krížiaka stačí odstrániť
+  if (area === 'les') {
+    const wb = Spiders.webAt(room, i);
+    if (wb) { const err = Spiders.startPull(room, pl, wb, Date.now()); return err ? toast(pl, err) : undefined; }
+  }
+  if (D.CORNER_AREAS.includes(area) && Spiders.clearCorner(room, area, i)) {
+    fx(room, 'cobweb', x + 0.5, y + 0.5, null, area);
+    return toast(pl, '🧹 Odstránil(a) si pavučinu z kúta. Krížiak zutekal – nič sa z nej nedá získať.');
   }
 
   // Ľad: krompáčom na ľadovci alebo (v zime) na zamrznutej vode
@@ -654,7 +675,9 @@ function travel(pl, to) {
   pl.x = pl.save.x = a.x; pl.y = pl.save.y = a.y;
   pl.areaSeq++;
   pl.emote = null;
+  Spiders.stopPull(pl);
   send(pl.ws, areaMsg(pl));
+  for (const v of Spiders.areaViews(pl.room, to)) send(pl.ws, v);
   toast(pl, to === 'hory'
     ? '🏔️ Vystúpil(a) si do hôr. Na ľadovci pod skalami vysekáš krompáčom ľad. Chodníkom dole sa vrátiš do záhrady.'
     : to === 'les'
@@ -748,6 +771,7 @@ wss.on('connection', ws => {
       send(ws, {
         t: 'welcome', id: pl.id, room: roomId, w: D.areaSize(area).w, h: D.areaSize(area).h, tiles: tilesView(room, area), area, seq: pl.areaSeq, x: pl.x, y: pl.y
       });
+      for (const v of Spiders.areaViews(room, area)) send(ws, v);
       send(ws, timeMsg(room));
       send(ws, Econ.marketView(room));
       send(ws, Econ.boardView(room));
@@ -777,6 +801,8 @@ wss.on('connection', ws => {
           pl.lp = !!m.lp && !!sv.inv.lamp; // drží lampáš (svieti)
           sv.x = pl.x; sv.y = pl.y;
           if (pl.scav && Math.hypot(pl.x - pl.scav.px, pl.y - pl.scav.py) > 0.35) stopScavenge(pl, 'Pohol(a) si sa skôr, než si dohľadal(a).');
+          if (pl.pull && (Math.hypot(pl.x - pl.pull.px, pl.y - pl.pull.py) > 0.35 || pl.lp)) { Spiders.stopPull(pl); toast(pl, 'Prestal(a) si ťahať hodváb.'); }
+          Spiders.checkWalk(room, pl, Date.now()); // vbehol do pavučiny?
           const to = Areas.gateTarget(Areas.areaTiles(room, pl.area), pl.area, pl.x, pl.y);
           if (to) travel(pl, to);
         }
@@ -928,6 +954,7 @@ wss.on('connection', ws => {
         const err = Ice.buildIcehouse(room, sv);
         if (err) return toast(pl, err);
         tilesMsg(room, 'garden');
+        Spiders.pruneCorners(room); broadcastArea(room, 'garden', Spiders.cornerView(room, 'garden')); // kúty sa zmenili
         broadcast(room, roomInfo(room));
         toastAll(room, `🧊 ${pl.name} postavil(a) pri domčeku ľadovňu! Naplň ju ľadom – kým v nej je, kvety v sklade vädnú 4× pomalšie.`, 'gift');
         room.dirty = true; sendMe(pl);
@@ -969,14 +996,22 @@ setInterval(() => {
     flushEconomy(room);
   }
 }, 100);
-// Pozície hráčov 10× za sekundu
+// Pozície hráčov (a pavúkov) 10× za sekundu
+let lastSim = Date.now();
 setInterval(() => {
-  const now = Date.now();
+  const now = Date.now(), dt = Math.min(0.3, (now - lastSim) / 1000);
+  lastSim = now;
   for (const room of rooms.values()) {
     if (!room.players.size) continue;
+    Spiders.update(room, now, dt); Spiders.updateKriziak(room, now, dt);
+    for (const area of D.AREAS) {
+      const list = Spiders.entities(room, area), key = area + 'Sp';
+      if (list.length || room[key]) broadcastArea(room, area, { t: 'sp', list });
+      room[key] = list.length > 0;
+    }
     const list = [...room.players.values()].map(p => ({
       id: p.id, name: p.name, x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, a: p.a, look: p.look, cr: p.cr ? 1 : 0, lp: p.lp ? 1 : 0, j: p.jn | 0, si: p.scav ? p.scav.i : -1, area: p.area,
-      e: p.sleep ? 'sleep' : p.scav ? 'search' : p.emote && now - p.emoteAt < 6000 ? p.emote : null
+      e: p.sleep ? 'sleep' : p.scav ? 'search' : p.pull ? 'pull' : p.emote && now - p.emoteAt < 6000 ? p.emote : null
     }));
     for (const area of D.AREAS) broadcastArea(room, area, { t: 'pl', list: list.filter(p => p.area === area) });
   }

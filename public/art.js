@@ -537,6 +537,11 @@ const Art = (() => {
       c.beginPath(); c.moveTo(36, 60); c.quadraticCurveTo(38, 36, 50, 42); c.stroke();
       ell(c, 46, 34, 9, 6, 0.6, '#8d6a44'); ell(c, 51, 46, 7, 5, 0.9, '#a07a4a');
       leaf(c, 27, 48, 12, Math.PI + 0.9, '#8a7a45');
+    } else if (id === 'silk') { // klbko pavúčieho hodvábu
+      web(c, 64, 64, 3, 7, 0.55);
+      ell(c, 32, 40, 15, 13, 0, '#e9eef2'); ell(c, 28, 36, 8, 6, -0.4, '#ffffff');
+      c.strokeStyle = '#b7c3cc'; c.lineWidth = 1.5;
+      for (let i = 0; i < 5; i++) { c.beginPath(); c.ellipse(32, 40, 15 - i * 2, 6 + i * 1.5, 0.6 + i * 0.5, 0, TAU); c.stroke(); }
     } else if (/^wild_[0-3]$/.test(id)) { // divé semienko: hrsť semien v tráve s otáznikom
       for (let i = 0; i < 7; i++) leaf(c, 10 + i * 7, 58, 14 + (i % 3) * 4, -Math.PI / 2 + (i - 3) * 0.12, i % 2 ? '#7cb342' : '#558b2f');
       ell(c, 30, 40, 7, 4, 0.5, '#8d6e3f'); ell(c, 38, 44, 6, 3.5, -0.4, '#a1824a'); ell(c, 26, 47, 5, 3, 0.2, '#7a5a30');
@@ -571,6 +576,76 @@ const Art = (() => {
     }
     iconCache[id] = cv.toDataURL();
     return iconCache[id];
+  }
+
+  // ---- Pavúky a pavučiny (#57) ----
+  // Pavúk spredu-zhora (ako ho vidí izometrická kamera): kind 'v' vlčiak (hnedosivý, chlpatý), 'p' stará pradlena
+  // (veľká, tmavá so svetlou kresbou), 'k' krížiak (malý s krížom). phase = krok nôh. (x, y) = stred pod bruchom.
+  function spider(c, kind, x, y, s, phase) {
+    const P = {
+      v: { body: '#5a4a3c', dark: '#3a2f26', leg: '#4a3c30', mark: '#8a7660', eye: '#ffcf6a' },
+      p: { body: '#2a2230', dark: '#17121c', leg: '#231c29', mark: '#c9b8d8', eye: '#ff6a4a' },
+      k: { body: '#a0682e', dark: '#6e4519', leg: '#7a5226', mark: '#fff4dc', eye: '#222' }
+    }[kind] || {};
+    const r = s * 0.22;
+    c.lineCap = 'round'; c.lineJoin = 'round';
+    // nohy: 4 páry, kolená hore, končeky na zemi; pri chôdzi sa striedajú
+    for (let side = -1; side <= 1; side += 2) for (let k = 0; k < 4; k++) {
+      const sw = Math.sin(phase + k * 1.6 + (side > 0 ? Math.PI : 0)) * s * 0.05;
+      const bx = x + side * r * 0.5, by = y - r * 0.9 + (k - 1.5) * r * 0.22;
+      const kx = x + side * (r * 1.25 + k * r * 0.12), ky = y - r * 1.9 + k * r * 0.3 + sw * 0.5;
+      const fx = x + side * (r * 1.6 + k * r * 0.35) + sw, fy = y - (k === 3 ? 0 : r * 0.1 * (2 - k));
+      c.strokeStyle = P.leg; c.lineWidth = Math.max(1, s * (kind === 'p' ? 0.034 : 0.028));
+      c.beginPath(); c.moveTo(bx, by); c.lineTo(kx, ky); c.lineTo(fx, fy); c.stroke();
+    }
+    // zadoček a hlavohruď
+    ell(c, x, y - r * 1.25, r * 1.05, r * 0.85, 0, P.body);
+    ell(c, x, y - r * 1.45, r * 0.75, r * 0.5, 0, shade(P.body, 0.12));
+    if (kind === 'k') { c.fillStyle = P.mark; c.fillRect(x - r * 0.08, y - r * 1.85, r * 0.16, r * 0.9); c.fillRect(x - r * 0.4, y - r * 1.5, r * 0.8, r * 0.14); }
+    else if (kind === 'p') { for (let i = 0; i < 3; i++) ell(c, x, y - r * (1.75 - i * 0.28), r * (0.36 - i * 0.07), r * 0.08, 0, P.mark); }
+    else { for (let i = -1; i <= 1; i += 2) ell(c, x + i * r * 0.35, y - r * 1.35, r * 0.12, r * 0.5, i * 0.2, P.mark); }
+    ell(c, x, y - r * 0.55, r * 0.55, r * 0.42, 0, P.dark);
+    // oči (vlčiak a pradlena majú veľké, v tme sa lesknú)
+    const er = r * (kind === 'k' ? 0.08 : 0.12);
+    for (let i = -1; i <= 1; i += 2) { circ(c, x + i * r * 0.2, y - r * 0.62, er, P.eye); circ(c, x + i * r * 0.2 - er * 0.3, y - r * 0.66, er * 0.35, '#fff'); }
+  }
+  // Pavučina do obdĺžnika w × h: lúče z mierne posunutého stredu a špirála; silk 1–3 = koľko z nej ešte ostalo
+  // (vyťahaná je rozpadnutá). k = semienko tvaru, a = krytie.
+  function web(c, w, h, silk, k, a) {
+    const cx = w * (0.45 + hash(k, 1) * 0.1), cy = h * (0.42 + hash(k, 2) * 0.1);
+    const rays = 12, R = Math.hypot(w, h) * 0.6;
+    c.save();
+    c.beginPath(); c.rect(1, 1, w - 2, h - 2); c.clip();
+    c.strokeStyle = `rgba(236,243,248,${a == null ? 0.95 : a})`; c.lineWidth = Math.max(1.5, Math.min(w, h) / 50);
+    const keep = i => silk >= 3 || hash(k, i + 10) < (silk === 2 ? 0.75 : 0.45);
+    for (let i = 0; i < rays; i++) {
+      if (!keep(i)) continue;
+      const ang = i / rays * TAU + hash(k, i) * 0.2;
+      c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx + Math.cos(ang) * R, cy + Math.sin(ang) * R); c.stroke();
+    }
+    const turns = silk >= 3 ? 9 : silk === 2 ? 6 : 3;
+    c.beginPath();
+    for (let t = 0; t < turns * rays; t++) {
+      const i = t % rays, ang = i / rays * TAU + hash(k, i) * 0.2, rr = (t / rays + 0.6) / (turns + 0.6) * Math.min(w, h) * 0.62;
+      const px = cx + Math.cos(ang) * rr, py = cy + Math.sin(ang) * rr;
+      if (!keep(i) || !keep((i + rays - 1) % rays)) { c.moveTo(px, py); continue; }
+      if (t) c.lineTo(px, py); else c.moveTo(px, py);
+    }
+    c.stroke();
+    c.strokeStyle = 'rgba(232,240,246,0.7)'; c.strokeRect(1, 1, w - 2, h - 2); // nosné vlákna k oporám
+    c.restore();
+  }
+  // Pavučina v kúte: vejár z rohu (vľavo dolu = hrana steny pri zemi) a v nej malý krížiak (sit = sedí v nej)
+  function cornerWeb(c, s, sit) {
+    c.strokeStyle = 'rgba(236,240,244,0.85)'; c.lineWidth = Math.max(1, s / 64);
+    const ox = 2, oy = s - 2;
+    for (let i = 0; i <= 5; i++) { const a = -i / 5 * Math.PI / 2; c.beginPath(); c.moveTo(ox, oy); c.lineTo(ox + Math.cos(a) * s, oy + Math.sin(a) * s); c.stroke(); }
+    for (let r = 1; r <= 4; r++) {
+      c.beginPath();
+      for (let i = 0; i <= 5; i++) { const a = -i / 5 * Math.PI / 2, rr = r / 4.4 * s * (0.92 + 0.08 * Math.sin(i * 2 + r)); i ? c.lineTo(ox + Math.cos(a) * rr, oy + Math.sin(a) * rr) : c.moveTo(ox + Math.cos(a) * rr, oy + Math.sin(a) * rr); }
+      c.stroke();
+    }
+    if (sit) spider(c, 'k', s * 0.36, s * 0.66, s * 0.36, 0);
   }
 
   // Bublina chatu nad hráčom: zalomí slová do max. 4 riadkov (šírka ~4,5 políčka), zvyšok skončí „…“.
@@ -608,6 +683,6 @@ const Art = (() => {
     c.textBaseline = 'alphabetic';
   }
 
-  return { plant, char, ground, soil, shroom, icon, hash, circ, bubble };
+  return { plant, char, ground, soil, shroom, icon, hash, circ, bubble, spider, web, cornerWeb };
 })();
 window.Art = Art; // pre 3D modul (render3d.mjs)
