@@ -761,9 +761,8 @@
   };
   const WEB = {
     silk: 3,                    // hodvábu v jednej pavučine
-    span: 2, glade: 3,          // najdlhšia pavučina medzi dvoma oporami (na čistine dlhšia)
     notice: [0.2, 0.5, 1],      // šanca, že si majiteľ všimne 1., 2. a 3. (posledné, roztrhne) potiahnutie
-    pullMs: 1000, stick: 0.3, stickMs: 1500, alert: 4, glint: 4.5,
+    pullMs: 1000, stick: 0.3, stickMs: 1500, alert: 4,  // rozpätie, veľkosť a vzhľad pavučiny: shared/webs.js (WEB_PARAMS)
     reweave: TICKS_PER_DAY,     // roztrhnutú pavučinu majiteľ utká znova o deň (inde vo svojom území)
     count: { vlciak: [2, 2, 3, 1], pradlena: [3, 3, 5, 1] } // pavučín na pavúka: jar, leto, jeseň, zima
   };

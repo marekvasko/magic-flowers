@@ -1,10 +1,12 @@
 // Záložka Generators v /debug (#79): procedurálne generátory a ich parametre.
 //  - stromy: posuvník pre každý parameter z World3D.TREE_PARAMS, živý 3D náhľad, porovnanie predvolený vs. upravený,
 //    reset, náhodné semienko a „Copy parameters“ (JSON len so zmenenými hodnotami pre treeModel(kind, season, rot, over));
-//  - plochy: D.buildArea(area, seed) ako pôdorysy pre viac semienok vedľa seba.
+//  - plochy: D.buildArea(area, seed) ako pôdorysy pre viac semienok vedľa seba;
+//  - pavučiny (cobwebs.mjs): parametre Webs.WEB_PARAMS, 3D náhľad so shaderom z hry a miesta v Lese divov.
 // Úpravy žijú len v tejto stránke (a v adrese), hru nikdy nemenia.
 import { createViewer, loadWorld3D, injectCss, modelStats } from '/debug/tabs/modelview.mjs';
 import { CSS as ASSETS_CSS, SEASONS, ROTS, seg } from '/debug/tabs/assets.mjs';
+import { webView, CSS as WEB_CSS } from '/debug/tabs/cobwebs.mjs';
 
 const CSS = `
 .gn-params { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
@@ -46,11 +48,14 @@ export function mount(el, ctx) {
   const { h, D } = ctx;
   injectCss('tab-assets-css', ASSETS_CSS);
   injectCss('tab-generators-css', CSS);
+  injectCss('tab-cobwebs-css', WEB_CSS);
   document.body.classList.add('dbg-wide');
   let W = null, viewer = null, gone = false, raf = 0;
   const intP = (k, def, max) => { const v = parseInt(ctx.param(k), 10); return Number.isInteger(v) && v >= 0 && v <= max ? v : def; };
-  let over = {};
+  let over = {}, webOver = {};
   try { const o = JSON.parse(ctx.param('tp') || '{}'); if (o && typeof o === 'object') over = o; } catch (e) { /* zlá adresa */ }
+  try { const o = JSON.parse(ctx.param('wp') || '{}'); if (o && typeof o === 'object') webOver = o; } catch (e) { /* zlá adresa */ }
+  let webV = null;
   const st = {
     gen: ctx.param('gen') || 'tree-buk',
     season: intP('season', 1, 3), rot: intP('rot', 0, 3), cmp: ctx.param('cmp') !== '0',
@@ -61,7 +66,7 @@ export function mount(el, ctx) {
   root.append(listEl, mainEl);
   el.replaceChildren(h('div', { class: 'muted', style: 'padding:20px' }, 'Loading generators…'));
 
-  loadWorld3D().then(w => {
+  Promise.all([loadWorld3D(), window.Webs ? null : new Promise((res, rej) => { const s = document.createElement('script'); s.src = '/shared/webs.js'; s.onload = res; s.onerror = () => rej(new Error('webs.js')); document.head.appendChild(s); })]).then(([w]) => {
     if (gone) return;
     W = w;
     if (!gens().some(g => g.id === st.gen)) st.gen = 'tree-buk';
@@ -72,13 +77,15 @@ export function mount(el, ctx) {
   const gens = () => [
     // bežné stromy a obrovský strom Lesa divov (obor – nie je medzi TREE_KINDS, lebo v záhrade nerastie)
     ...W.TREE_KINDS.concat(W.TREE_PARAMS.obor ? ['obor'] : []).map(k => ({ id: 'tree-' + k, kind: k, name: (W.TREE_NAMES && W.TREE_NAMES[k]) || k, group: 'Trees', sub: Object.keys(W.TREE_PARAMS[k]).length + ' params' })),
-    ...D.AREAS.map(a => ({ id: 'area-' + a, area: a, name: D.AREA_NAMES[a] || a, group: 'Area layouts', sub: a === 'pomedzie' || a === 'les' ? 'seeded' : 'fixed' }))
+    ...D.AREAS.map(a => ({ id: 'area-' + a, area: a, name: D.AREA_NAMES[a] || a, group: 'Area layouts', sub: a === 'pomedzie' || a === 'les' ? 'seeded' : 'fixed' })),
+    { id: 'web', web: true, name: 'Cobweb (Les divov)', group: 'Cobwebs', sub: Object.keys(window.Webs.WEB_PARAMS).length + ' params' }
   ];
   const cur = () => gens().find(g => g.id === st.gen);
   function save() {
     ctx.setParam('gen', st.gen);
     const g = cur();
-    if (g && g.kind) {
+    if (g && g.web) ctx.setParam('wp', Object.keys(webChanged()).length ? JSON.stringify(webChanged()) : null);
+    else if (g && g.kind) {
       ctx.setParam('season', st.season); ctx.setParam('rot', st.rot); ctx.setParam('cmp', st.cmp ? null : 0);
       ctx.setParam('tp', Object.keys(changed()).length ? JSON.stringify(changed()) : null);
     } else { ctx.setParam('aseed', st.seed); ctx.setParam('n', st.n); }
@@ -97,7 +104,7 @@ export function mount(el, ctx) {
   }
   function select(id) {
     if (id === st.gen) return listEl.classList.remove('open');
-    st.gen = id; over = {};
+    st.gen = id; over = {}; webOver = {};
     listEl.classList.remove('open');
     save(); renderList(); show();
   }
@@ -105,8 +112,11 @@ export function mount(el, ctx) {
   function show() {
     const g = cur();
     if (viewer) { viewer.dispose(); viewer = null; }
-    if (g.kind) treeView(g); else areaView(g);
+    if (webV) { webV.dispose(); webV = null; }
+    if (g.web) webV = webView({ h, D, ctx, mainEl, over: () => webOver, setOver: o => { webOver = o; }, save, seg, isGone: () => gone });
+    else if (g.kind) treeView(g); else areaView(g);
   }
+  function webChanged() { const p = window.Webs.webParams(webOver), out = {}; for (const [k, d] of Object.entries(window.Webs.WEB_PARAMS)) if (p[k] !== d.def) out[k] = p[k]; return out; }
 
   // ---------- stromy ----------
   // zmenené hodnoty (orezané na rozsah a krok ako v treeParams), len tie, ktoré sa líšia od predvolených
@@ -259,6 +269,8 @@ export function mount(el, ctx) {
       if (raf) cancelAnimationFrame(raf);
       if (viewer) viewer.dispose();
       viewer = null;
+      if (webV) webV.dispose();
+      webV = null;
       document.body.classList.remove('dbg-wide');
     }
   };

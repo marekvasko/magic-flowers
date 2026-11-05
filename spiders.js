@@ -8,6 +8,8 @@
 const D = require('./shared/data.js');
 const E = require('./engine.js');
 const { areaTiles } = require('./areas.js');
+const Webs = require('./shared/webs.js');
+const { analyze, cornerSpots, bfs } = Webs;
 
 const SP = D.SPIDERS, WEB = D.WEB, V = SP.vlciak, PR = SP.pradlena, KZ = SP.kriziak;
 const LW = D.LES_W, LH = D.LES_H;
@@ -16,122 +18,6 @@ const NEAR8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, 
 
 let io = { toast() {}, sendMe() {}, send() {}, broadcastArea() {} };
 function setHooks(h) { io = Object.assign({}, io, h); }
-
-// ---------- Rozbor lesa: nory, čistina pradleny, územia a miesta na pavučiny ----------
-// BFS po priechodných políčkach od starts (najviac max krokov, ok(i) = smie sa vstúpiť). Vráti vzdialenosti (-1 = nedosiahnuté)
-// a pri viacerých štartoch aj, od ktorého štartu (src) je políčko najbližšie.
-function bfs(w, h, starts, ok, max) {
-  const dist = new Int16Array(w * h).fill(-1), src = new Int16Array(w * h).fill(-1), q = [];
-  starts.forEach((i, k) => { if (dist[i] < 0) { dist[i] = 0; src[i] = k; q.push(i); } });
-  for (let qi = 0; qi < q.length; qi++) {
-    const i = q[qi], x = i % w, y = (i / w) | 0;
-    if (max != null && dist[i] >= max) continue;
-    for (const [dx, dy] of DIRS) {
-      const nx = x + dx, ny = y + dy, n = ny * w + nx;
-      if (nx < 0 || ny < 0 || nx >= w || ny >= h || dist[n] >= 0 || !ok(n)) continue;
-      dist[n] = dist[i] + 1; src[n] = src[i]; q.push(n);
-    }
-  }
-  return { dist, src };
-}
-
-function analyze(les, seed) {
-  const w = LW, h = LH, N = w * h, g = i => les[i].g;
-  const pass = i => !D.BLOCK[g(i)];
-  const ent = bfs(w, h, les.map((t, i) => t.g === 'gate' ? i : -1).filter(i => i >= 0), pass).dist;
-  const hx = (w - 1) / 2, hy = (h - 1) / 2, H = D.LES_HEART;
-  const heart = i => Math.hypot((i % w - hx) / (H.rx + SP.heart), (((i / w) | 0) - hy) / (H.ry + SP.heart)) <= 1;
-  const nobody = new Uint8Array(N);
-  for (let i = 0; i < N; i++) if ((ent[i] >= 0 && ent[i] <= SP.entrance) || heart(i)) nobody[i] = 1;
-  const owner = new Int16Array(N).fill(-1);
-  const homes = [];
-
-  // Stará pradlena: čistina (súvislé políčka 'glade' mimo srdca lesa) najďalej od vstupu; jej územie je čistina a 2 políčka okolo
-  const comp = new Int32Array(N).fill(-1), comps = [];
-  for (let i = 0; i < N; i++) {
-    if (g(i) !== 'glade' || comp[i] >= 0) continue;
-    const list = [i]; comp[i] = comps.length;
-    for (let k = 0; k < list.length; k++) {
-      const j = list[k], x = j % w, y = (j / w) | 0;
-      for (const [dx, dy] of DIRS) {
-        const nx = x + dx, ny = y + dy, n = ny * w + nx;
-        if (nx < 0 || ny < 0 || nx >= w || ny >= h || comp[n] >= 0 || g(n) !== 'glade') continue;
-        comp[n] = comps.length; list.push(n);
-      }
-    }
-    comps.push(list);
-  }
-  let lairComp = null, best = -1;
-  for (const c of comps) {
-    if (c.length < 6 || c.some(i => nobody[i] || ent[i] < 0)) continue;
-    const d = Math.min(...c.map(i => ent[i]));
-    if (d > best) { best = d; lairComp = c; }
-  }
-  const pradTiles = new Set();
-  let lair = null;
-  if (lairComp) {
-    const cx = lairComp.reduce((s, i) => s + i % w, 0) / lairComp.length, cy = lairComp.reduce((s, i) => s + ((i / w) | 0), 0) / lairComp.length;
-    lair = lairComp.reduce((a, i) => Math.hypot(i % w - cx, ((i / w) | 0) - cy) < Math.hypot(a % w - cx, ((a / w) | 0) - cy) ? i : a);
-    for (const i of lairComp) {
-      pradTiles.add(i);
-      const x = i % w, y = (i / w) | 0;
-      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const n = (y + dy) * w + x + dx; if (x + dx >= 0 && y + dy >= 0 && x + dx < w && y + dy < h && pass(n) && !nobody[n]) pradTiles.add(n); }
-    }
-  }
-
-  // Nory vlčiakov: pri kmeni vedľa chodníka, ďaleko od vstupu, od pradleny aj od seba (podľa semienka lesa – stále rovnaké)
-  const rnd = D.mulberry32(((seed >>> 0) ^ 0x51ed27) >>> 0);
-  const cand = [];
-  for (let i = 0; i < N; i++) {
-    if (!['path', 'moss', 'roots'].includes(g(i)) || nobody[i] || pradTiles.has(i) || ent[i] < SP.entrance + 6) continue;
-    const x = i % w, y = (i / w) | 0;
-    if (lair != null && Math.hypot(x - lair % w, y - ((lair / w) | 0)) < V.reach) continue;
-    if (!DIRS.some(([dx, dy]) => { const t = les[(y + dy) * w + x + dx]; return t && ['tree', 'giant', 'trunk'].includes(t.g); })) continue;
-    cand.push(i);
-  }
-  for (let k = cand.length - 1; k > 0; k--) { const j = Math.floor(rnd() * (k + 1)); [cand[k], cand[j]] = [cand[j], cand[k]]; }
-  const burrows = [];
-  for (const i of cand) {
-    if (burrows.length >= V.n) break;
-    if (burrows.some(b => Math.hypot(b % w - i % w, ((b / w) | 0) - ((i / w) | 0)) < V.gap)) continue;
-    burrows.push(i);
-  }
-  // Územia vlčiakov: najbližšia nora (po chodníkoch) do V.reach krokov; ničie miesta a územie pradleny vynecháme
-  const terr = bfs(w, h, burrows, n => pass(n) && !nobody[n] && !pradTiles.has(n), V.reach);
-  for (let i = 0; i < N; i++) if (terr.src[i] >= 0) owner[i] = terr.src[i];
-  burrows.forEach(i => homes.push({ k: 'v', i, x: i % w, y: (i / w) | 0 }));
-  if (lair != null) {
-    const o = homes.length;
-    for (const i of pradTiles) owner[i] = o;
-    homes.push({ k: 'p', i: lair, x: lair % w, y: (lair / w) | 0 });
-  }
-
-  // Miesta na pavučiny: rad priechodných políčok jedného majiteľa medzi dvoma oporami (kmeň, strom, ker, spadnutý kmeň)
-  const webable = i => pass(i) && g(i) !== 'gate' && !nobody[i];
-  const cands = homes.map(() => []);
-  for (let i = 0; i < N; i++) {
-    const o = owner[i];
-    if (o < 0 || !webable(i)) continue;
-    const x = i % w, y = (i / w) | 0;
-    for (const ax of [0, 1]) {
-      const [sx, sy] = ax ? [0, 1] : [1, 0];
-      const bx = x - sx, by = y - sy;
-      if (bx < 0 || by < 0 || !D.WEB_ANCHOR[g(by * w + bx)]) continue;
-      const tiles = [];
-      for (let n = 1; n <= WEB.glade; n++) {
-        const tx = x + sx * (n - 1), ty = y + sy * (n - 1), ti = ty * w + tx;
-        if (tx >= w || ty >= h || !webable(ti) || owner[ti] !== o) break;
-        tiles.push(ti);
-        const ex = x + sx * n, ey = y + sy * n;
-        if (ex >= w || ey >= h) break;
-        if (!D.WEB_ANCHOR[g(ey * w + ex)]) continue;
-        if (n <= WEB.span || tiles.some(j => g(j) === 'glade')) cands[o].push({ x, y, ax, n, o, tiles: tiles.slice() });
-        break;
-      }
-    }
-  }
-  return { owner, homes, cands, nobody, ent };
-}
 
 // ---------- Pavučiny ----------
 function forest(room) {
@@ -186,27 +72,6 @@ function onWeave(room, d) {
 }
 
 // ---------- Kúty pre krížiaka (záhrada, hory) ----------
-// Kút: priechodné políčko P pri konci steny (budova, balvan, skala) – stena je vedľa P v smere d a v smere e (kolmo)
-// sa už končí. Pavučina visí na hrane steny pri zemi. Kľúč kúta: "i:d:e" (indexy smerov v DIRS).
-function cornerSpots(tiles, w, h) {
-  const at = (x, y) => x >= 0 && y >= 0 && x < w && y < h ? tiles[y * w + x] : null;
-  const wall = t => t && D.CORNER_WALL[t.g];
-  const open = t => t && D.passable(t) && t.g !== 'gate' && t.g !== 'glacier';
-  const out = [];
-  for (let i = 0; i < tiles.length; i++) {
-    if (!open(tiles[i])) continue;
-    const x = i % w, y = (i / w) | 0;
-    DIRS.forEach(([dx, dy], di) => {
-      if (!wall(at(x + dx, y + dy))) return;
-      DIRS.forEach(([ex, ey], ei) => {
-        if (ex * dx + ey * dy !== 0) return; // len kolmo na stenu
-        if (wall(at(x + dx + ex, y + dy + ey)) || !open(at(x + ex, y + ey))) return;
-        out.push({ k: `${i}:${di}:${ei}`, i, x, y, dx, dy, ex, ey });
-      });
-    });
-  }
-  return out;
-}
 const spotCache = new WeakMap();
 function spots(room, area) {
   const tiles = areaTiles(room, area);
