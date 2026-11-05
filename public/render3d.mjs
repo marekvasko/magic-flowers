@@ -15,6 +15,7 @@ const MAX_LIGHTS = 16;
 const FL_FIRE = 0.16, FL_LANTERN = 0.08, FL_WINDOW = 0.035, FL_SOFT = 0.03;
 const LAMP_R = 6.5; // dosah svetla lampáša v ruke (políčka)
 const LAMP_COL = [1, 0.78, 0.45]; // farba (a sila) svetla lampášov
+const TRUNK_KEEP_R = 0.8; // polomer kmeňa obrovského stromu (bloky), ktorý sa pri zoslabení nezoslabuje
 const LAMP_DUSK = 0.8; // lampáš (aj okná, oheň…) horí, keď je svetla menej než toto (deň × stmavnutie lesa)
 // plynulý „plameňový“ šum zo súčtu sínusov s nesúdeliteľnými frekvenciami
 function flicker(t, seed, amt) {
@@ -95,7 +96,7 @@ precision highp float;
 #endif
 uniform sampler2D map; uniform sampler2D shadowMap;
 uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec3 emisColor;
-uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount; uniform float opacity; uniform float keepBelow;
+uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount; uniform float opacity; uniform float keepBelow; uniform vec3 trunkKeep;
 uniform float shadowOn; uniform vec2 shadowTexel; uniform float shadowRadius;
 uniform vec3 gloom; uniform vec3 gloomFog;
 uniform float darkOn; uniform vec4 eye; uniform vec2 eyeLit; uniform vec3 darkFog; uniform sampler2D canopy; uniform vec2 areaSize;
@@ -128,7 +129,9 @@ void main() {
   col = mix(col, darkFog, fogK);
   col = max(col, base * emisColor * vEmis); // svietiace veci (okná, oheň, živica) vidno aj v tme za dohľadom
   // zoslabený objekt: časť do výšky hráča (pne, kmene na zemi, kry) ostane plná, priehľadné je len to nad ňou
-  gl_FragColor = vec4(col, vPos.y < keepBelow ? 1.0 : opacity);
+  // kmeň obrovského stromu (trunkKeep = stred x, z a polomer) ostane plný v celej výške – zoslabí sa len koruna a konáre
+  bool keep = vPos.y < keepBelow || (trunkKeep.z > 0.0 && distance(vPos.xz, trunkKeep.xy) < trunkKeep.z);
+  gl_FragColor = vec4(col, keep ? 1.0 : opacity);
 }`;
 
 // ---------- Shader vody: odraz zo zrkadlovej kamery, Fresnel, odlesk slnka, hĺbka k brehu ----------
@@ -399,7 +402,7 @@ export function create(api) {
       lights: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4()) }, lightCount: { value: 0 }, opacity: { value: 1 },
       shadowMap: { value: null }, shadowMatrix: { value: new THREE.Matrix4() }, sunDir: { value: new THREE.Vector3(0, 1, 0) },
       shadowOn: { value: 0 }, shadowTexel: { value: new THREE.Vector2(1 / SHADOW_SIZE, 1 / SHADOW_SIZE) }, shadowRadius: { value: 3.5 },
-      shadowNormalBias: { value: 0.03 }, gloom: { value: new THREE.Vector3() }, gloomFog: { value: new THREE.Vector3() }, keepBelow: { value: -1e9 },
+      shadowNormalBias: { value: 0.03 }, gloom: { value: new THREE.Vector3() }, gloomFog: { value: new THREE.Vector3() }, keepBelow: { value: -1e9 }, trunkKeep: { value: new THREE.Vector3() },
       darkOn: { value: 0 }, eye: { value: new THREE.Vector4(0, 0, 0, 3) }, eyeLit: { value: new THREE.Vector2(3, 0) },
       darkFog: { value: new THREE.Vector3() }, canopy: { value: null }, areaSize: { value: new THREE.Vector2(S.W, S.H) }
     }
@@ -408,7 +411,7 @@ export function create(api) {
   // Uniformy zdieľa s hlavným materiálom; priehľadnosť sa nastaví pre každý objekt tesne pred vykreslením.
   // Svetlo zdieľajú (rovnaké objekty uniform), ale priehľadnosť má každý materiál vlastnú – hlavný materiál ostáva úplne nepriehľadný.
   // priesvitná plocha: stačia 4 vzorky tieňa (pri ~30 % priehľadnosti rozdiel nevidno)
-  const fadeMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { SHADOW_TAPS: 4 }, uniforms: { ...material.uniforms, opacity: { value: 1 } }, transparent: true, depthWrite: false });
+  const fadeMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { SHADOW_TAPS: 4 }, uniforms: { ...material.uniforms, opacity: { value: 1 }, trunkKeep: { value: new THREE.Vector3() } }, transparent: true, depthWrite: false });
   // hĺbkový prechod tým istým shaderom (rovnaký výpočet hĺbky → žiadne bodkovanie)
   // malý posun dozadu, aby predná plocha zoslabeného objektu vždy spoľahlivo prešla testom hĺbky (žiadne kmitanie na mobiloch)
   // hĺbkový prechod: rovnaký vertex shader (rovnaká hĺbka – bez bodkovania), ale prázdny fragment shader
@@ -553,7 +556,9 @@ export function create(api) {
     depthTwin.renderOrder = 1; depthTwin.visible = false; depthTwin.layers.set(1); // do mapy tieňov nepatrí
     scene.add(depthTwin);
     fmesh.userData.depthTwin = depthTwin;
-    fmesh.onBeforeRender = () => { if (fmesh.material === fadeMaterial) { fadeMaterial.uniforms.opacity.value = fmesh.userData.fade; fadeMaterial.uniformsNeedUpdate = true; } };
+    // obrovský strom: stred kmeňa (stred modelu 2 × 2 políčka) a jeho polomer – kmeň sa nezoslabuje
+    const trunk = f.type === 'giant' ? new THREE.Vector3(f.ox + f.sx / W.FINE / 2, f.oz + f.sz / W.FINE / 2, TRUNK_KEEP_R) : new THREE.Vector3();
+    fmesh.onBeforeRender = () => { if (fmesh.material === fadeMaterial) { fadeMaterial.uniforms.opacity.value = fmesh.userData.fade; fadeMaterial.uniforms.trunkKeep.value.copy(trunk); fadeMaterial.uniformsNeedUpdate = true; } };
     fmesh.userData.tile = f.tile;
     fmesh.userData.type = f.type;
     scene.add(fmesh);
