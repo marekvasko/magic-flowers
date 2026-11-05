@@ -881,9 +881,10 @@
     body.appendChild(h('h3', { style: 'margin:10px 0 6px' }, `📋 Moje zákazky (${mine.length}/${S.maxActive})`));
     if (!mine.length) body.appendChild(h('small', null, 'Zatiaľ nemáš žiadnu. Zarezervuj si nejakú z nástenky.'));
     for (const c of mine) {
-      const have = S.inv['fl_' + c.sp] || 0;
-      const b = h('button', { class: 'btn alt', onclick: () => send({ t: 'cdeliver', id: c.id }) }, `Odovzdať (${have})`);
-      if (!have) b.disabled = true;
+      // odovzdá sa len toľko, koľko zákazke ešte chýba
+      const k = Math.min(S.inv['fl_' + c.sp] || 0, c.n - c.got);
+      const b = h('button', { class: 'btn alt', onclick: () => send({ t: 'cdeliver', id: c.id }) }, `Odovzdať (${k})`);
+      if (k <= 0) b.disabled = true;
       body.appendChild(card(c, [b]));
     }
     body.appendChild(h('h3', { style: 'margin:14px 0 6px' }, '📌 Nástenka'));
