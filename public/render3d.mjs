@@ -1082,7 +1082,10 @@ void main() {
   // Na hranách osvetlených škvŕn (svetlo / tieň) postavíme pruhy smerom k slnku: steny lúča od miesta, kde tieň
   // dopadá na zem, po hranu koruny (či kmeňa), ktorá ho vrhá – dĺžku berieme z mapy tieňov (vzdialenosť tieniaceho
   // povrchu od zeme pozdĺž lúča, kanál G masky). Aditívne, na okraji zóny slabnú.
+  // Lúč vidno len tam, kde je malá škvrna svetla obklopená tieňom (svetlo cez medzeru v korunách). Veľká slnečná plocha
+  // (čistina) lúče nemá – vzduch nad ňou je svietený všade a tieň stromu na nej by inak vyzeral ako svetelná stena.
   const RAY_RES = 2, RAY_MAX = 32; // vzoriek na políčko; najdlhší lúč (bloky), zároveň mierka kanála G
+  const RAY_PATCH = 6; // najväčšia škvrna svetla (políčka²), z ktorej ešte idú lúče
   const rayMaskMat = new THREE.ShaderMaterial({
     uniforms: { shadowMap: material.uniforms.shadowMap, shadowMatrix: material.uniforms.shadowMatrix, box: { value: new THREE.Vector4() }, gy: { value: 1 }, depthRange: { value: 1 } },
     vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
@@ -1132,7 +1135,23 @@ void main() {
     renderer.render(rayMaskScene, camera);
     renderer.readRenderTargetPixels(rayMaskRT, 0, 0, nx, nz, buf);
     renderer.setRenderTarget(null);
-    const lit = (i, j) => i >= 0 && j >= 0 && i < nx && j < nz && buf[(j * nx + i) * 4] > 127;
+    const sun = (i, j) => i >= 0 && j >= 0 && i < nx && j < nz && buf[(j * nx + i) * 4] > 127;
+    // súvislé škvrny svetla; lúče len z malých
+    const patch = new Int32Array(nx * nz).fill(-1), small = [];
+    for (let s0 = 0; s0 < nx * nz; s0++) {
+      if (patch[s0] >= 0 || !sun(s0 % nx, (s0 / nx) | 0)) continue;
+      const id = small.length, q = [s0];
+      patch[s0] = id;
+      for (let k = 0; k < q.length; k++) {
+        const qi = q[k] % nx, qj = (q[k] / nx) | 0;
+        for (const [a, b] of [[qi + 1, qj], [qi - 1, qj], [qi, qj + 1], [qi, qj - 1]]) {
+          if (!sun(a, b) || patch[b * nx + a] >= 0) continue;
+          patch[b * nx + a] = id; q.push(b * nx + a);
+        }
+      }
+      small.push(q.length <= RAY_PATCH * RAY_RES * RAY_RES);
+    }
+    const lit = (i, j) => sun(i, j) && small[patch[j * nx + i]];
     // vzdialenosť od zeme po to, čo tieň vrhá (len v tieni; mimo masky nič)
     const casterAt = (i, j) => i >= 0 && j >= 0 && i < nx && j < nz ? buf[(j * nx + i) * 4 + 1] / 255 * RAY_MAX : 0;
     // váha okraja zóny – rovnaká ako stmavnutie slnka v shaderi
