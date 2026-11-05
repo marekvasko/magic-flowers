@@ -1,7 +1,7 @@
 # Hlavičky polí (label) číta .github/workflows/triage.yml – nepremenovávať bez úpravy workflow.
 name: 💬 Discussion
 description: An idea or an open question to talk through before it becomes a bug or a feature.
-labels: ["type: discussion"]
+labels: ["discussion"]
 body:
   - type: markdown
     attributes:
@@ -13,6 +13,21 @@ body:
     attributes:
       label: Topic
       description: What should be discussed or decided?
+    validations:
+      required: true
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      description: Which parts of the game or the repo is it about? (pick all that apply)
+      multiple: true
+      options:
+        - gameplay — game rules / economy / flowers / magic
+        - logic — server / engine / saves / game state
+        - ui — controls / menus / overlay / texts
+        - graphics — 3D view / models / particles
+        - infra — CI/CD / Docker / deploys
+        - docs — README / AGENTS.md / CONTRIBUTING.md
     validations:
       required: true
   - type: textarea

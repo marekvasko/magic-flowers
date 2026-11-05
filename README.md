@@ -192,7 +192,7 @@ To run the published image instead of building locally, set `image: ghcr.io/mare
 
 Bugs, ideas and questions go to [GitHub issues](https://github.com/marekvasko/magic-flowers/issues/new/choose) (🐞 Bug, ✨ Feature or 💬 Discussion). How issues, labels, priority/size and pull requests work is described in [`CONTRIBUTING.md`](CONTRIBUTING.md); coding agents also follow [`AGENTS.md`](AGENTS.md).
 
-- `.github/workflows/triage.yml` turns the form's priority / size / area answers into labels and flags issues without exactly one `type:` label with `status: needs triage`.
+- `.github/workflows/triage.yml` turns the form's category / priority / size answers into labels and marks issues without exactly one kind (`bug` / `feature` / `discussion`) or without a category with `triage`.
 - `.github/workflows/pr-check.yml` checks that a PR links its issue and comes from an `issue/<n>-…` branch into `dev`.
 - `scripts/labels.sh` syncs the label set (`DRY_RUN=1` to preview).
 

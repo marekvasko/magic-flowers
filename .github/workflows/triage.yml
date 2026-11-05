@@ -1,7 +1,8 @@
 # Automatické triedenie issues (CONTRIBUTING.md):
-#   - odpovede z formulára (Priority, Size, Area) → štítky priority: / size: / area:
-#     (len ak issue taký štítok ešte nemá, aby sa neprepísalo rozhodnutie maintainera)
-#   - issue musí mať práve jeden štítok type: … – inak dostane „status: needs triage“
+#   - odpovede z formulára (Category, Priority, Size) → štítky kategórie / priority / veľkosti
+#     (len ak issue zo skupiny ešte nemá žiadny štítok, aby sa neprepísalo rozhodnutie maintainera)
+#   - issue musí mať práve jeden druh (bug / feature / discussion) a aspoň jednu kategóriu,
+#     inak dostane štítok „triage“
 # Beží na GitHub runneri, bez checkoutu; telo issue ide cez env, nikdy nie priamo do shellu.
 name: Triedenie issues
 
@@ -27,38 +28,34 @@ jobs:
       ACTION: ${{ github.event.action }}
       BODY: ${{ github.event.issue.body }}
     steps:
-      - name: Štítky z formulára a kontrola typu
+      - name: Štítky z formulára a kontrola druhu a kategórie
         run: |
           set -euo pipefail
+          KINDS='bug|feature|discussion'
+          CATEGORIES='gameplay|logic|ui|graphics|infra|docs'
+          PRIORITIES='critical|high|medium|low'
+          SIZES='XS|S|M|L|XL'
           # aktuálne štítky (nie snímka z udalosti – štítky sa medzitým mohli zmeniť)
-          LABELS="$(gh issue view "$NUMBER" --json labels -q '[.labels[].name]')"
-          labels() { jq -r '.[]' <<<"$LABELS"; }
-          has_prefix() { labels | grep -q "^$1"; }
-          # prvý neprázdny riadok pod „### <nadpis>“ z formulára
-          answer() { awk -v h="### $1" '$0==h{f=1;next} f&&/^### /{exit} f&&NF{print;exit}' <<<"$BODY" | tr -d '\r'; }
+          LABELS="$(gh issue view "$NUMBER" --json labels -q '.labels[].name')"
+          count() { grep -cxE "$1" <<<"$LABELS" || true; }
+          # odpoveď pod „### <nadpis>“ z formulára; viac volieb je oddelených „, “ → prvé slovo každej
+          answer() {
+            awk -v h="### $1" '$0==h{f=1;next} f&&/^### /{exit} f&&NF{print;exit}' <<<"$BODY" | tr -d '\r' \
+              | sed 's/, /\n/g' | awk '{print $1}' | grep -xE "$2" || true
+          }
           add=()
+          [ "$(count "$CATEGORIES")" -gt 0 ] || while read -r c; do [ -n "$c" ] && add+=("$c"); done <<<"$(answer Category "$CATEGORIES")"
+          [ "$(count "$PRIORITIES")" -gt 0 ] || { p="$(answer Priority "$PRIORITIES" | head -1)"; [ -n "$p" ] && add+=("$p"); }
+          [ "$(count "$SIZES")" -gt 0 ] || { s="$(answer Size "$SIZES" | head -1)"; [ -n "$s" ] && add+=("$s"); }
 
-          if ! has_prefix 'priority: '; then
-            p="$(answer Priority | grep -oE '^(critical|high|medium|low)\b' || true)"
-            [ -n "$p" ] && add+=("priority: $p")
-          fi
-          if ! has_prefix 'size: '; then
-            s="$(answer Size | grep -oE '^(XS|S|M|L|XL)\b' || true)"
-            [ -n "$s" ] && add+=("size: $s")
-          fi
-          if ! has_prefix 'area: '; then
-            for a in $(answer Area | tr ',' '\n' | tr -d ' ' | grep -xE 'gameplay|ui|3d|server|ci-cd|docs' || true); do
-              add+=("area: $a")
-            done
-          fi
-
-          types="$(labels | grep -c '^type: ' || true)"
-          if [ "$types" -eq 1 ]; then
-            labels | grep -qx 'status: needs triage' && gh issue edit "$NUMBER" --remove-label 'status: needs triage'
-          elif ! labels | grep -qx 'status: needs triage'; then
-            add+=('status: needs triage')
+          kinds="$(count "$KINDS")"
+          categories=$(( $(count "$CATEGORIES") + $(printf '%s\n' "${add[@]}" | grep -cxE "$CATEGORIES" || true) ))
+          if [ "$kinds" -eq 1 ] && [ "$categories" -gt 0 ]; then
+            if grep -qx triage <<<"$LABELS"; then gh issue edit "$NUMBER" --remove-label triage; fi
+          elif ! grep -qx triage <<<"$LABELS"; then
+            add+=(triage)
             if [ "$ACTION" = opened ]; then
-              gh issue comment "$NUMBER" --body "This issue needs exactly one type label: \`type: bug\`, \`type: feature\` or \`type: discussion\` (it has $types). Please use one of the [issue forms](https://github.com/$GH_REPO/issues/new/choose) or follow [CONTRIBUTING.md](https://github.com/$GH_REPO/blob/dev/CONTRIBUTING.md#reporting-issues)."
+              gh issue comment "$NUMBER" --body "This issue needs exactly one kind label (\`bug\`, \`feature\` or \`discussion\`; it has $kinds) and at least one category label (\`gameplay\`, \`logic\`, \`ui\`, \`graphics\`, \`infra\`, \`docs\`; it has $categories). Please use one of the [issue forms](https://github.com/$GH_REPO/issues/new/choose) or follow [CONTRIBUTING.md](https://github.com/$GH_REPO/blob/dev/CONTRIBUTING.md#reporting-issues)."
             fi
           fi
 

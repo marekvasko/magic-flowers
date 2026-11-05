@@ -1,7 +1,7 @@
 # Hlavičky polí (label) číta .github/workflows/triage.yml – nepremenovávať bez úpravy workflow.
 name: 🐞 Bug
 description: Something in the game or the infrastructure doesn't work as it should.
-labels: ["type: bug", "status: needs refinement"]
+labels: ["bug"]
 body:
   - type: markdown
     attributes:
@@ -48,19 +48,20 @@ body:
       label: Device and browser
       placeholder: e.g. Android 15, Chrome 140 / iPhone 16, Safari
   - type: dropdown
-    id: area
+    id: category
     attributes:
-      label: Area
-      description: Which part of the project is affected? (pick all that apply)
+      label: Category
+      description: Where is the problem? (pick all that apply)
       multiple: true
       options:
-        - gameplay
-        - ui
-        - 3d
-        - server
-        - ci-cd
-        - docs
-        - not sure
+        - gameplay — game rules / economy / flowers / magic
+        - logic — server / engine / saves / game state
+        - ui — controls / menus / overlay / texts
+        - graphics — 3D view / models / particles
+        - infra — CI/CD / Docker / deploys
+        - docs — README / AGENTS.md / CONTRIBUTING.md
+    validations:
+      required: true
   - type: dropdown
     id: priority
     attributes:

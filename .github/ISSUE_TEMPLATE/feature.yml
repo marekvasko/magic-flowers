@@ -1,7 +1,7 @@
 # Hlavičky polí (label) číta .github/workflows/triage.yml – nepremenovávať bez úpravy workflow.
 name: ✨ Feature
 description: A new feature or an improvement of the game, the repo or the infrastructure.
-labels: ["type: feature", "status: needs refinement"]
+labels: ["feature"]
 body:
   - type: markdown
     attributes:
@@ -42,19 +42,20 @@ body:
     validations:
       required: true
   - type: dropdown
-    id: area
+    id: category
     attributes:
-      label: Area
-      description: Which parts of the project does it touch? (pick all that apply)
+      label: Category
+      description: Which parts of the game or the repo does it touch? (pick all that apply)
       multiple: true
       options:
-        - gameplay
-        - ui
-        - 3d
-        - server
-        - ci-cd
-        - docs
-        - not sure
+        - gameplay — game rules / economy / flowers / magic
+        - logic — server / engine / saves / game state
+        - ui — controls / menus / overlay / texts
+        - graphics — 3D view / models / particles
+        - infra — CI/CD / Docker / deploys
+        - docs — README / AGENTS.md / CONTRIBUTING.md
+    validations:
+      required: true
   - type: dropdown
     id: size
     attributes:

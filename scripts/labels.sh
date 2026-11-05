@@ -1,51 +1,44 @@
 #!/usr/bin/env bash
 # Synchronizácia štítkov (labels) repozitára podľa CONTRIBUTING.md.
-# Idempotentné: chýbajúce štítky vytvorí, existujúcim nastaví farbu a popis,
-# staré názvy premenuje (priradenia k issues/PR sa zachovajú). Nič nemaže.
+# Idempotentné: chýbajúce štítky vytvorí, existujúcim nastaví farbu a popis.
+# Nič nepremenuje ani nemaže (staré „enhancement“, „question“, „documentation“ ostávajú).
 #   scripts/labels.sh            # aktuálny repozitár (gh repo view)
 #   REPO=owner/name scripts/labels.sh
 #   DRY_RUN=1 scripts/labels.sh  # len vypíše, čo by urobil
 set -euo pipefail
 
 REPO="${REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
-run() { if [ -n "${DRY_RUN:-}" ]; then echo "DRY_RUN: $*"; else "$@"; fi; }
-
-# premenovanie starých štítkov: starý|nový
-RENAMES=(
-  "bug|type: bug"
-  "enhancement|type: feature"
-  "question|type: discussion"
-  "documentation|area: docs"
-)
+run() { if [ -n "${DRY_RUN:-}" ]; then echo "DRY_RUN: $*" >&2; else "$@"; fi; }
 
 # názov|farba|popis
 LABELS=(
-  "type: bug|d73a4a|Something isn't working"
-  "type: feature|a2eeef|New feature or improvement"
-  "type: discussion|d876e3|Open question or idea to discuss before deciding"
+  # druh (práve jeden, pridá ho šablóna)
+  "bug|d73a4a|Something isn't working"
+  "feature|a2eeef|New feature or improvement"
+  "discussion|d876e3|Open question or idea to discuss before deciding"
 
-  "priority: critical|b60205|Breaks the game or players' gardens; fix now"
-  "priority: high|d93f0b|Important; next in line"
-  "priority: medium|fbca04|Normal priority"
-  "priority: low|c2e0c6|Nice to have"
+  # kategória (aspoň jedna, povinná vo formulári)
+  "gameplay|0e8a16|Game rules, economy, flowers, magic"
+  "logic|006b75|Server, engine, saves, game state"
+  "ui|1d76db|Controls, menus, overlay, texts"
+  "graphics|5319e7|3D view, models, particles"
+  "infra|000000|CI/CD, Docker, deploys"
+  "docs|0075ca|README, AGENTS.md, CONTRIBUTING.md"
 
-  "size: XS|ededed|Trivial, under an hour"
-  "size: S|d4c5f9|Small, a few hours"
-  "size: M|bfa8f0|About a day"
-  "size: L|9e7fe0|Several days"
-  "size: XL|7b52d1|Too big; split into smaller issues"
+  # priorita
+  "critical|b60205|Priority: breaks the game or players' gardens; fix now"
+  "high|d93f0b|Priority: important; next in line"
+  "medium|fbca04|Priority: normal"
+  "low|c2e0c6|Priority: nice to have"
 
-  "area: gameplay|0e8a16|Game rules, economy, flowers, magic"
-  "area: ui|1d76db|Controls, menus, overlay, texts"
-  "area: 3d|5319e7|Three.js rendering and world"
-  "area: server|006b75|Server, engine, persistence, saves"
-  "area: ci-cd|000000|Workflows, Docker, deploys"
-  "area: docs|0075ca|README, AGENTS.md, CONTRIBUTING.md"
+  # veľkosť
+  "XS|ededed|Size: trivial, under an hour"
+  "S|d4c5f9|Size: a few hours"
+  "M|bfa8f0|Size: about a day"
+  "L|9e7fe0|Size: several days"
+  "XL|7b52d1|Size: too big; split into smaller issues"
 
-  "status: needs triage|e99695|Missing type or required info"
-  "status: needs refinement|f9d0c4|Scope must be agreed with the maintainer"
-  "status: ready|0e8a16|Refined; ready to implement"
-  "status: blocked|b60205|Waiting on something else"
+  "triage|e99695|Missing kind or category; fix the labels"
 
   "good first issue|7057ff|Good for newcomers"
   "help wanted|008672|Extra attention is needed"
@@ -54,18 +47,6 @@ LABELS=(
   "invalid|e4e669|This doesn't seem right"
   "wontfix|ffffff|This will not be worked on"
 )
-
-existing="$(gh label list --repo "$REPO" --limit 500 --json name -q '.[].name')"
-has() { grep -Fxq -- "$1" <<<"$existing"; }
-
-for r in "${RENAMES[@]}"; do
-  old="${r%%|*}" new="${r#*|}"
-  if has "$old" && ! has "$new"; then
-    echo "premenovanie: $old → $new"
-    run gh label edit "$old" --repo "$REPO" --name "$new"
-    existing+=$'\n'"$new"
-  fi
-done
 
 for l in "${LABELS[@]}"; do
   IFS='|' read -r name color desc <<<"$l"
