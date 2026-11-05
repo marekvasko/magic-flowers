@@ -63,7 +63,7 @@ const server = http.createServer((req, res) => {
 // ---------- Svety (miestnosti) ----------
 // Čas je diskrétny: svet má celé počítadlo `tick` (D.TICKS_PER_DAY krokov na deň), deň a minúta sa z neho
 // len odvodzujú. Všetko, čo sa má stať v budúcnosti, je udalosť v plánovači (room.events) a ukladá sa so svetom.
-const SAVE_VERSION = 5; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické)
+const SAVE_VERSION = 6; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole
 const TPD = D.TICKS_PER_DAY, MPT = D.MIN_PER_TICK;
 const DEFAULT_MODE = process.env.DEFAULT_MODE === 'paused' ? 'paused' : 'running';
 const MAX_CATCHUP_DAYS = +process.env.MAX_CATCHUP_DAYS || 30; // koľko herných dní najviac dobehneme po výpadku servera
@@ -76,7 +76,7 @@ function newWorldState() {
     v: SAVE_VERSION, tick: D.DAWN_TICK + 6, wall: Date.now(), mode: DEFAULT_MODE, daySeconds: DAY_SECONDS,
     rng: crypto.randomBytes(4).readUInt32LE(0), seq: 0, events: [],
     weather: 'sun', saves: {}, storage: {}, market: null, contracts: null, fairyNight: -1, eternal: false, scav: {},
-    icehouse: { built: false, ice: 0 }, hory: null, pomedzieSeed: Areas.newSeed()
+    icehouse: { built: false, ice: 0 }, hory: null, pomedzieSeed: Areas.newSeed(), up: { plots: 0 }
   };
 }
 
@@ -108,6 +108,14 @@ function migrate(saved) {
       else if (e.type === 'vilyEnd' || e.type === 'scavDone') e.key = e.type + ':' + d.key;
     }
   }
+  if (from < 6) { // spoločné povolenie na pole: záhrada dostane najvyššiu úroveň, akú mal niektorý hráč
+    let lvl = 0;
+    for (const sv of Object.values(out.saves || {})) {
+      lvl = Math.max(lvl, sv.up ? sv.up.plots || 0 : 2); // hráči zo starších verzií bez vylepšení dostávali úroveň 2
+      if (sv.up) delete sv.up.plots;
+    }
+    out.up = { plots: Math.min(lvl, D.UPGRADES.plots.levels.length - 1) };
+  }
   out.v = SAVE_VERSION; out.migratedFrom = saved.migratedFrom || from;
   return out;
 }
@@ -130,6 +138,7 @@ function getRoom(id) {
   if (!Number.isInteger(room.pomedzieSeed)) room.pomedzieSeed = Areas.newSeed();
   room.pomedzie = Areas.loadPomedzie(room.pomedzieSeed);
   Ice.applyIcehouse(room);
+  room.up = room.up || { plots: 0 };
   Object.defineProperty(room, 'day', { get() { return D.dayOfTick(this.tick); } });
   Object.defineProperty(room, 'min', { get() { return D.minOfTick(this.tick); } });
   room.daySeconds = DAY_SECONDS;
@@ -154,7 +163,7 @@ function serialize(room) {
     v: SAVE_VERSION, tick: room.tick, wall: room.wall, mode: room.mode, daySeconds: room.daySeconds,
     rng: room.rng, seq: room.seq, events: room.events,
     weather: room.weather, saves: room.saves, storage: room.storage, storageFb: room.storageFb, market: room.market, contracts: room.contracts,
-    fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom, scav: room.scav, scavSalt: room.scavSalt, icehouse: room.icehouse, pomedzieSeed: room.pomedzieSeed,
+    fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom, scav: room.scav, scavSalt: room.scavSalt, icehouse: room.icehouse, pomedzieSeed: room.pomedzieSeed, up: room.up,
     tiles: room.tiles.map(t => t.cut ? { s: t.s, cut: 1 } : { s: t.s }), hory: Ice.saveHory(room)
   });
 }
@@ -174,19 +183,19 @@ function saveRoom(room, sync) {
 function season(room) { return D.seasonOf(room.day); }
 function hour(room) { return room.min / 60; }
 
-// Nový hráč začína chudobne: pár semienok sezónneho kvetu, malá krhla a povolenie na pár políčok.
+// Nový hráč začína chudobne: pár semienok sezónneho kvetu a malá krhla (povolenie na pole je spoločné pre záhradu).
 function newSave(room) {
   const se = season(room);
   const sp = Econ.PLANTABLE.filter(k => !D.SPECIES[k].strict && D.SPECIES[k].seasons.includes(se))
     .sort((a, b) => D.SPECIES[a].seed - D.SPECIES[b].seed)[0];
   return {
     coins: START.coins, water: 5, inv: { hoe: 1, can: 1, ['seed_' + sp]: 4 },
-    recipes: [], seen: [sp], vily: 0, look: null, talked: false, rep: START.rep, up: { can: 0, plots: 0, composter: 0 }
+    recipes: [], seen: [sp], vily: 0, look: null, talked: false, rep: START.rep, up: { can: 0, composter: 0 }
   };
 }
-// Hráči zo starších verzií hry: nezoberieme im to, čo mali (krhla na 20 a neobmedzené pole).
+// Hráči zo starších verzií hry: nezoberieme im to, čo mali (krhla na 25; pole prešlo na záhradu v migrate).
 function migrateSave(sv, room) {
-  if (!sv.up) sv.up = { can: 2, plots: 2, composter: 0 };
+  if (!sv.up) sv.up = { can: 2, composter: 0 };
   if (sv.rep == null) sv.rep = 0;
   sv.water = Math.min(sv.water || 0, Econ.canCap(sv));
   I.syncAll(I.playerC(sv), room.tick); // kvety bez várok dostanú vek 0 (čerstvo odrezané)
@@ -205,12 +214,15 @@ function tileView(area, t) { return area === 'garden' ? Scav.tileView(t) : t; }
 function tilesView(room, area) { area = area || 'garden'; return Areas.areaTiles(room, area).map(t => tileView(area, t)); }
 function tilesMsg(room, area) { area = area || 'garden'; broadcastArea(room, area, { t: 'tiles', tiles: tilesView(room, area) }); }
 function tileMsg(room, i, area) { area = area || 'garden'; room.dirty = true; broadcastArea(room, area, { t: 'tile', i, v: tileView(area, Areas.areaTiles(room, area)[i]) }); }
-function plotsUsed(room, key) { let n = 0; for (const t of room.tiles) if (t.s && t.s.o === key) n++; return n; }
+// Spoločné povolenie na pole: koľko políčok je v záhrade obrobených a koľko ich povolenie dovoľuje
+function plotsMsg(room) { return { t: 'plots', used: Econ.plotsUsed(room), limit: Econ.plotLimit(room) }; }
+// Úrovne vylepšení pre klienta: vlastné hráča a spoločné záhrady
+function upView(room, sv) { return Object.assign({}, sv.up, room.up); }
 function sendMe(pl) {
   const sv = pl.save;
   send(pl.ws, {
     t: 'me', coins: sv.coins, water: sv.water, inv: sv.inv, recipes: sv.recipes, seen: sv.seen, vily: sv.vily > pl.room.tick,
-    rep: sv.rep, up: sv.up, canCap: Econ.canCap(sv), plotLimit: Econ.plotLimit(sv), plotsUsed: plotsUsed(pl.room, pl.key), maxActive: Econ.maxActive(sv),
+    rep: sv.rep, up: upView(pl.room, sv), canCap: Econ.canCap(sv), plotLimit: Econ.plotLimit(pl.room), plotsUsed: Econ.plotsUsed(pl.room), maxActive: Econ.maxActive(sv),
     fb: I.batchesView(I.playerC(sv), pl.room.tick), tick: pl.room.tick
   });
   pl.room.dirty = true;
@@ -487,13 +499,13 @@ function act(pl, m) {
     if (p && p.d) { t.s.p = null; tileMsg(room, i); return; }
     if (!t.s && D.TILLABLE[t.g]) {
       if (t.g === 'ring') return;
-      const lim = Econ.plotLimit(sv);
-      if (plotsUsed(room, pl.key) >= lim) return toast(pl, `Máš povolenie len na ${lim} políčok. Väčšie pole kúpiš na trhu (záložka Vylepšiť), alebo zarovnaj prázdne políčko motykou.`);
+      const lim = Econ.plotLimit(room);
+      if (Econ.plotsUsed(room) >= lim) return toast(pl, `Spoločné povolenie záhrady je na ${lim} políčok a všetky sú obrobené. Väčšie pole môže pre všetkých kúpiť ktokoľvek na trhu (záložka Vylepšiť), alebo zarovnaj svoje prázdne políčko motykou.`);
       t.s = { k: D.TILLABLE[t.g], w: room.weather === 'rain' ? 1 : 0, r: 0, p: null, o: pl.key };
-      tileMsg(room, i); sendMe(pl); fx(room, 'dirt', x + 0.5, y + 0.5); return;
+      tileMsg(room, i); broadcast(room, plotsMsg(room)); fx(room, 'dirt', x + 0.5, y + 0.5); return;
     }
-    if (t.s && !t.s.p && (!t.s.o || t.s.o === pl.key)) { // zarovnať prázdne políčko – uvoľní miesto v povolení
-      t.s = null; Scav.empty(room, i); tileMsg(room, i); sendMe(pl); return; // čerstvo zarovnaná zem semienka nemá
+    if (t.s && !t.s.p && (!t.s.o || t.s.o === pl.key)) { // zarovnať prázdne políčko – uvoľní miesto v spoločnom povolení
+      t.s = null; Scav.empty(room, i); tileMsg(room, i); broadcast(room, plotsMsg(room)); return; // čerstvo zarovnaná zem semienka nemá
     }
     if (t.g === 'ring' || t.g === 'shroom') return toast(pl, 'Kruh z húb radšej nechaj tak… niekto tu v noci tancuje. 🍄');
     return;
@@ -798,6 +810,13 @@ wss.on('connection', ws => {
         const err = Econ.upgrade(room, sv, String(m.kind));
         if (err) return toast(pl, err);
         const u = D.UPGRADES[m.kind];
+        if (u.shared) { // spoločné povolenie na pole – platí pre všetkých v záhrade
+          toastAll(room, `${u.icon} ${pl.name} kúpil(a) pre celú záhradu ${u.name}: ${u.levels[room.up[m.kind]].v} ${u.unit} pre všetkých!`, 'gift');
+          room.dirty = true;
+          for (const p of room.players.values()) sendMe(p);
+          broadcast(room, plotsMsg(room));
+          break;
+        }
         toast(pl, `${u.icon} ${u.name}: úroveň ${sv.up[m.kind]} (${u.levels[sv.up[m.kind]].v} ${u.unit})`, 'gift');
         room.dirty = true; sendMe(pl);
         break;
