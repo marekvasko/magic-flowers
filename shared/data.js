@@ -5,9 +5,10 @@
   // má vždy presne VIEW_DIAG blokov – na mobile na výšku aj na počítači na šírku, hráč je v strede.
   // Rozmery výrezu v blokoch pre obrazovku pxW × pxH vráti viewSize (3D kamera).
   const VIEW_DIAG = 22;
-  function viewSize(pxW, pxH) {
-    const d = Math.hypot(pxW, pxH) || 1;
-    return { w: VIEW_DIAG * pxW / d, h: VIEW_DIAG * pxH / d };
+  // diag = iná uhlopriečka (napr. bližší pohľad v Lese divov), inak VIEW_DIAG
+  function viewSize(pxW, pxH, diag) {
+    const d = Math.hypot(pxW, pxH) || 1, v = diag || VIEW_DIAG;
+    return { w: v * pxW / d, h: v * pxH / d };
   }
   const DAYS_PER_SEASON = 4;
   // Diskrétny čas: deň má vždy presne TICKS_PER_DAY krokov, jeden krok = MIN_PER_TICK herných minút.
@@ -273,28 +274,35 @@
   const RING = { x0: 2, y0: 2, x1: 4, y1: 4 };
   // ---- Plochy a prechody medzi nimi ----
   // Každá plocha má vlastnú veľkosť (políčka w × h). Hráč je vždy na jednej ploche.
-  const AREAS = ['garden', 'hory', 'pomedzie'];
-  const AREA_SIZE = { garden: { w: W, h: H }, hory: { w: W, h: H }, pomedzie: { w: W, h: H } };
+  const AREAS = ['garden', 'hory', 'pomedzie', 'les'];
+  // Les divov je dvakrát väčší ako záhrada v každom smere
+  const LES_W = 2 * W, LES_H = 2 * H;
+  const AREA_SIZE = { garden: { w: W, h: H }, hory: { w: W, h: H }, pomedzie: { w: W, h: H }, les: { w: LES_W, h: LES_H } };
   function areaSize(area) { return AREA_SIZE[area] || AREA_SIZE.garden; }
-  const AREA_NAMES = { garden: 'Záhrada', hory: 'Hory', pomedzie: 'Les na pomedzí' };
-  const AREA_IN = { garden: 'v záhrade', hory: 'v horách', pomedzie: 'v Lese na pomedzí' };
+  const AREA_NAMES = { garden: 'Záhrada', hory: 'Hory', pomedzie: 'Les na pomedzí', les: 'Les divov' };
+  const AREA_IN = { garden: 'v záhrade', hory: 'v horách', pomedzie: 'v Lese na pomedzí', les: 'v Lese divov' };
   // prechod medzi plochami (stmavnutie s menom): ikona, farba žiary na okrajoch a ozdoby po okrajoch – nová plocha pridá záznam
   const AREA_FX = {
     garden: { icon: '🌸', glow: '#7fa86a', deco: ['🌸', '🌼', '🌷', '🌿', '🦋', '🍃'] },
     hory: { icon: '🏔️', glow: '#9bb4c8', deco: ['❄️', '🌲', '⛰️', '🪨', '🦅', '❄️'] },
     pomedzie: { icon: '🌳', glow: '#5f8a4a', deco: ['🌳', '🌾', '🦋', '🍃', '🌲', '🌿'] },
+    les: { icon: '🌲', glow: '#2f4a3a', deco: ['🌲', '🍄', '🌿', '🦉', '🪵', '🍂'] },
   };
   // Prechody: políčka 'gate' na okraji plochy, každé vedie do svojej cieľovej plochy (to).
-  // Záhrada: na severe hory, na východe Les na pomedzí. Z Lesa na pomedzí na severe raz povedie cesta do Lesa divov.
+  // Záhrada: na severe hory, na východe Les na pomedzí. Z Lesa na pomedzí na severe vedie chodník do Lesa divov.
+  const POMEDZIE_NORTH = [9, 10]; // stĺpce chodníka na severnom okraji Lesa na pomedzí (prechod do Lesa divov)
+  const LES_SOUTH = [19, 20];     // stĺpce prechodu na južnom okraji Lesa divov (späť do Lesa na pomedzí)
   const GATES = {
     garden: [{ x: 16, y: 0, to: 'hory' }, { x: 17, y: 0, to: 'hory' }, { x: W - 1, y: 25, to: 'pomedzie' }, { x: W - 1, y: 26, to: 'pomedzie' }],
     hory: [{ x: 9, y: H - 1, to: 'garden' }, { x: 10, y: H - 1, to: 'garden' }],
-    pomedzie: [{ x: 0, y: 25, to: 'garden' }, { x: 0, y: 26, to: 'garden' }]
+    pomedzie: [{ x: 0, y: 25, to: 'garden' }, { x: 0, y: 26, to: 'garden' }, ...POMEDZIE_NORTH.map(x => ({ x, y: 0, to: 'les' }))],
+    les: LES_SOUTH.map(x => ({ x, y: LES_H - 1, to: 'pomedzie' }))
   };
   // Príchodové miesto pre každý prechod (odkiaľ > kam): voľné políčko hneď vedľa prechodu v cieľovej ploche
   const ARRIVE = {
     'garden>hory': { x: 10, y: H - 2.4 }, 'hory>garden': { x: 17, y: 1.6 },
-    'garden>pomedzie': { x: 1.6, y: 26 }, 'pomedzie>garden': { x: W - 1.6, y: 26 }
+    'garden>pomedzie': { x: 1.6, y: 26 }, 'pomedzie>garden': { x: W - 1.6, y: 26 },
+    'pomedzie>les': { x: LES_SOUTH[1], y: LES_H - 2.4 }, 'les>pomedzie': { x: POMEDZIE_NORTH[1], y: 1.6 }
   };
   function arrival(from, to) { return ARRIVE[from + '>' + to] || null; }
   // Prechod na políčku (x, y) plochy area, alebo null
@@ -329,8 +337,8 @@
     }
     return dist.map(d => Math.min(GLACIER_TOP, 2 * d));
   }
-  // seed: Les na pomedzí má rozloženie podľa semienka sveta (pre záhradu a hory sa ignoruje)
-  function buildArea(area, seed) { return area === 'hory' ? buildMountains() : area === 'pomedzie' ? buildPomedzie(seed) : buildMap(); }
+  // seed: Les na pomedzí a Les divov majú rozloženie podľa semienka sveta (pre záhradu a hory sa ignoruje)
+  function buildArea(area, seed) { return area === 'hory' ? buildMountains() : area === 'pomedzie' ? buildPomedzie(seed) : area === 'les' ? buildLes(seed) : buildMap(); }
   const SPAWN = { x: 10.5, y: 30.5 };
   const BABKA = { x: 15, y: 5 };
 
@@ -437,9 +445,8 @@
 
   // ---- Les na pomedzí: plocha medzi záhradou a Lesom divov (rovnaká veľkosť ako záhrada) ----
   // Na juhu lúka s poľnými kvetmi a pár stromami, v strede mierny les s krami, papraďou a chodníčkami,
-  // smerom na sever les hustne, až na severe ostane len chodník k okraju (tam raz bude prechod do Lesa divov).
+  // smerom na sever les hustne, až na severe ostane len chodník k okraju (tam je prechod do Lesa divov).
   // Rozloženie je podľa semienka sveta: každý svet má svoj les, ale stále ten istý.
-  const POMEDZIE_NORTH = [9, 10]; // stĺpce chodníka na severnom okraji (budúci prechod do Lesa divov)
   const MEADOW_Y = 24;            // od tohto riadku na juh je lúka
   function buildPomedzie(seed) {
     const { w, h } = AREA_SIZE.pomedzie;
@@ -513,7 +520,164 @@
     return g;
   }
 
-  const BLOCK = { tree: 1, water: 1, hut: 1, babka: 1, cauldron: 1, stall: 1, well: 1, boulder: 1, house: 1, cliff: 1, glacier: 1, spruce: 1, icehouse: 1, bush: 1 };
+  // ---- Les divov: veľký temný les severne od Lesa na pomedzí (2× záhrada v každom smere) ----
+  // Bludisko úzkych chodníkov (1–2 políčka) medzi obrovskými stromami (kmeň na 2 × 2 políčkach: 'giant' v ľavom hornom
+  // rohu, 'trunk' na ostatných troch), medzi nimi menšie stromy, kry a spadnuté kmene, zopár čistín ('glade').
+  // Zem: tmavý mach, korene, paprade a huby (len ozdoba). Každé priechodné políčko je dosiahnuteľné od vstupu na juhu.
+  // Rozloženie je podľa semienka sveta; uloží sa so svetom (areas.js), takže ho nezmení ani neskoršia úprava generátora.
+  const LES_CELL = 4;  // bunka bludiska (políčka): v každej je uzol chodníka, chodníky spájajú uzly susedných buniek
+  const LES_GLADES = 6; // počet čistín
+  const LES_GIANT = 0.25; // podiel voľných štvorcov 2 × 2, na ktorých rastie obor (inak bežné stromy)
+  const LES_DECOR = ['moss', 'fern', 'roots', 'fungi']; // priechodná zem medzi stromami
+  // Srdce lesa: v strede plochy veľká čistina (polosi rx × ry políčok), okolo nej riedky les, ktorý smerom von hustne
+  // (do vzdialenosti ring × polosi; v nej menej stromov a široké chodníky ostanú široké)
+  // sun = o koľko políčok za okraj čistiny ešte dopadá slnko (inde v Lese divov je zem bez slnka, mapa tieňov len tu)
+  const LES_HEART = { rx: 6, ry: 8, ring: 2.2, sun: 4 };
+  // Kde v ploche svieti slnko (svetové súradnice: stred cx, cz a polosi rx, rz elipsy), null = všade
+  function sunZone(area) {
+    if (area !== 'les') return null;
+    const { w, h } = AREA_SIZE.les;
+    return { cx: w / 2, cz: h / 2, rx: LES_HEART.rx + LES_HEART.sun, rz: LES_HEART.ry + LES_HEART.sun };
+  }
+  function buildLes(seed) {
+    const w = LES_W, h = LES_H;
+    const g = new Array(w * h).fill(null); // null = zatiaľ hustý les
+    const inside = (x, y) => x >= 0 && y >= 0 && x < w && y < h;
+    const at = (x, y) => inside(x, y) ? g[y * w + x] : 'edge';
+    const rnd = mulberry32(((seed >>> 0) ^ 0x6d2b79f5) >>> 0);
+    const ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
+    const glade = new Uint8Array(w * h); // políčka čistín (aj tie, na ktorých neskôr rastie papraď či huby)
+    const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+    // chodník sa nikdy nedotkne okraja plochy (okrem prechodu)
+    // lane = druhý pruh širokého chodníka (neprepíše stred iného chodníka)
+    const main = new Uint8Array(w * h);
+    const carve = (x, y, v, lane) => {
+      if (x < 1 || y < 1 || x > w - 2 || y > h - 2) return;
+      const i = y * w + x;
+      if (!lane) main[i] = 1;
+      if (g[i] !== 'glade' && !(lane && main[i])) g[i] = v || 'path';
+    };
+    const cw = Math.floor(w / LES_CELL), chh = Math.floor(h / LES_CELL);
+    const node = [];
+    for (let cy = 0; cy < chh; cy++) for (let cx = 0; cx < cw; cx++) node.push({ x: cx * LES_CELL + 1 + ri(0, 1), y: cy * LES_CELL + 1 + ri(0, 1) });
+    // chodník medzi dvoma uzlami: najprv vodorovne, potom zvisle (alebo naopak); niekde široký 2 políčka
+    const link = (a, b, narrow) => {
+      const wide = !narrow && rnd() < 0.3, lane = rnd() < 0.5 ? 'path' : 'moss';
+      let x = a.x, y = a.y;
+      const step = (dx, dy) => { x += dx; y += dy; carve(x, y); if (wide) carve(x + (dy ? 1 : 0), y + (dx ? 1 : 0), lane, true); };
+      carve(x, y);
+      if (rnd() < 0.5) { while (x !== b.x) step(Math.sign(b.x - x), 0); while (y !== b.y) step(0, Math.sign(b.y - y)); }
+      else { while (y !== b.y) step(0, Math.sign(b.y - y)); while (x !== b.x) step(Math.sign(b.x - x), 0); }
+    };
+    // Bludisko: náhodná prehľadávacia kostra buniek od vstupu (všetko je spojené), k tomu pár slučiek
+    const start = (chh - 1) * cw + Math.floor(LES_SOUTH[1] / LES_CELL);
+    const seen = new Uint8Array(cw * chh), linked = new Set(), stack = [start];
+    const nbs = c => [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [c % cw + dx, ((c / cw) | 0) + dy]).filter(([x, y]) => x >= 0 && y >= 0 && x < cw && y < chh).map(([x, y]) => y * cw + x);
+    const key = (a, b) => Math.min(a, b) + ':' + Math.max(a, b);
+    seen[start] = 1;
+    while (stack.length) {
+      const c = stack[stack.length - 1], open = shuffle(nbs(c).filter(n => !seen[n]));
+      if (!open.length) { stack.pop(); continue; }
+      const n = open[0];
+      seen[n] = 1; linked.add(key(c, n)); link(node[c], node[n]); stack.push(n);
+    }
+    for (let c = 0; c < cw * chh; c++) for (const n of nbs(c)) if (n > c && !linked.has(key(c, n)) && rnd() < 0.1) { linked.add(key(c, n)); link(node[c], node[n]); }
+    // Vstup: od prechodu na juhu rovno k uzlu prvej bunky, pri príchode trochu voľného miesta
+    for (let y = h - 2; y >= h - 4; y--) for (const x of LES_SOUTH) carve(x, y, 'path', x !== LES_SOUTH[1]);
+    link({ x: LES_SOUTH[1], y: h - 4 }, node[start], true);
+    // Čistiny: ďaleko od vstupu aj od seba, okrúhle, okolo uzla bunky
+    const glades = [];
+    for (let k = 0; k < 400 && glades.length < LES_GLADES; k++) {
+      const c = ri(0, cw * chh - 1), cx = c % cw, cy = (c / cw) | 0;
+      if (cy >= chh - 3 || Math.hypot((cx * LES_CELL + 2 - (w - 1) / 2) / LES_HEART.rx, (cy * LES_CELL + 2 - (h - 1) / 2) / LES_HEART.ry) < LES_HEART.ring + 0.3 || glades.some(o => Math.hypot(o.cx - cx, o.cy - cy) < 4)) continue;
+      glades.push({ cx, cy });
+      const n = node[c], rx = ri(2, 3) + 0.4, ry = ri(2, 3) + 0.4;
+      for (let y = n.y - 4; y <= n.y + 4; y++) for (let x = n.x - 4; x <= n.x + 4; x++) {
+        const d = ((x - n.x) / rx) ** 2 + ((y - n.y) / ry) ** 2;
+        if (d <= 1 + (rnd() - 0.5) * 0.4 && x >= 1 && y >= 1 && x <= w - 2 && y <= h - 2) { g[y * w + x] = 'glade'; glade[y * w + x] = 1; }
+      }
+    }
+    // Srdce lesa v strede: veľká čistina, okolo nej riedky les (sparse 0–1: ako veľmi je les ešte riedky)
+    const hx = (w - 1) / 2, hy = (h - 1) / 2, sparse = new Float32Array(w * h);
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x, d = Math.hypot((x - hx) / LES_HEART.rx, (y - hy) / LES_HEART.ry) + (rnd() - 0.5) * 0.15;
+      if (d <= 1) { g[i] = 'glade'; glade[i] = 1; }
+      else if (d < LES_HEART.ring) sparse[i] = 1 - (d - 1) / (LES_HEART.ring - 1);
+    }
+    // Obrovské stromy: na voľnom štvorci 2 × 2 v hustom lese zhruba každý druhý raz obor, inak tam rastú bežné stromy (sem-tam ker)
+    const spots = [];
+    for (let y = 0; y < h - 1; y++) for (let x = 0; x < w - 1; x++) spots.push(y * w + x);
+    for (const i of shuffle(spots)) {
+      const x = i % w, y = (i / w) | 0;
+      if (at(x, y) || at(x + 1, y) || at(x, y + 1) || at(x + 1, y + 1)) continue;
+      if (rnd() < sparse[i] * 0.8) continue; // v riedkom lese okolo srdca menej stromov
+      if (rnd() < LES_GIANT) { g[i] = 'giant'; g[i + 1] = g[i + w] = g[i + w + 1] = 'trunk'; }
+      else for (const j of [i, i + 1, i + w, i + w + 1]) g[j] = rnd() < 0.15 ? 'bush' : 'tree';
+    }
+    // Zvyšok hustého lesa: menšie stromy, kry, spadnuté kmene, inde priechodná zem (mach, papraď, korene, huby)
+    for (let i = 0; i < g.length; i++) {
+      if (g[i] === 'path') { const r = rnd(); if (r < 0.1) g[i] = 'roots'; else if (r < 0.18) g[i] = 'moss'; continue; }
+      if (g[i] === 'glade') { const r = rnd(); if (r < 0.14) g[i] = 'fern'; else if (r < 0.2) g[i] = 'fungi'; continue; }
+      if (g[i]) continue;
+      const r = rnd() + sparse[i] * 0.5; // v riedkom lese viac priechodnej zeme
+      g[i] = r < 0.42 ? 'tree' : r < 0.6 ? 'bush' : r < 0.68 ? 'log' : LES_DECOR[ri(0, LES_DECOR.length - 1)];
+    }
+    for (const gt of GATES.les) g[gt.y * w + gt.x] = 'gate';
+    // Chodníky ostanú úzke (1–2 políčka): kde je mimo čistiny voľné miesto 3 × 3, jeho stred zarastie krom.
+    // Nič sa tým neodreže – okolo stredu ostane voľný kruh ôsmich políčok. Príchodové miesto ostane voľné.
+    const arrive = ARRIVE['pomedzie>les'], ai = Math.floor(arrive.y) * w + Math.floor(arrive.x);
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+      if (y * w + x === ai) continue;
+      let all = true, gl = false;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const i = (y + dy) * w + x + dx; all = all && !BLOCK[g[i]]; gl = gl || glade[i]; }
+      if (all && !gl && rnd() >= sparse[y * w + x] * 1.5) g[y * w + x] = 'bush';
+    }
+    // Každé priechodné políčko musí byť dosiahnuteľné od vstupu – uzavreté kúty zarastú stromami
+    const reach = new Uint8Array(w * h), q = [GATES.les[0].y * w + GATES.les[0].x];
+    reach[q[0]] = 1;
+    for (let k = 0; k < q.length; k++) {
+      const i = q[k], qx = i % w, qy = (i / w) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = qx + dx, ny = qy + dy, n = ny * w + nx;
+        if (!inside(nx, ny) || reach[n] || BLOCK[g[n]]) continue;
+        reach[n] = 1; q.push(n);
+      }
+    }
+    for (let i = 0; i < g.length; i++) if (!reach[i] && !BLOCK[g[i]]) g[i] = 'tree';
+    return g;
+  }
+
+  // Uloženie rozloženia Lesa divov: jeden znak na políčko (areas.js saveLes/loadLes, ladiaca stránka)
+  const LES_CODE = { path: '.', moss: ',', fern: 'f', roots: 'r', fungi: 'h', glade: 'o', giant: 'G', trunk: 'g', tree: 'T', bush: 'b', log: 'l', gate: '#' };
+  const LES_TYPE = Object.fromEntries(Object.entries(LES_CODE).map(([k, v]) => [v, k]));
+  // Uložený reťazec → typy políčok, alebo null, ak uloženie nesedí (zlá dĺžka, neznámy znak)
+  function decodeLes(saved) {
+    const { w, h } = AREA_SIZE.les;
+    if (typeof saved !== 'string' || saved.length !== w * h) return null;
+    const out = [];
+    for (const c of saved) { const t = LES_TYPE[c]; if (!t) return null; out.push(t); }
+    return out;
+  }
+
+  // Temné plochy: vidno len kúsok okolo seba (sight políčok, s lampášom v ruke lamp), objekty sa za hráčom nezoslabujú
+  // ani nezvýrazňujú a lampáš svieti aj cez deň. Svetlo lampášov (aj cudzích) presvetlí tmu okolo nich.
+  // lampR = dosah svetla lampáša v tme (políčka, inde render3d LAMP_R), lampK = jeho sila (1 = ako v záhrade v noci)
+  // viewDiag = uhlopriečka výrezu v blokoch (pohľad bližšie na hráča, inak VIEW_DIAG)
+  const DARK = { les: { sight: 3, lamp: 3.5, lampR: 3.5, lampK: 0.6, viewDiag: 17.5 } };
+  // Uhlopriečka výrezu na ploche area, keď hráč stojí na riadku y: v Lese divov bližšie, cestou k nemu postupne
+  function viewDiagAt(area, y) { return VIEW_DIAG + (DARK.les.viewDiag - VIEW_DIAG) * darkAt(area, y); }
+
+  function isDark(area) { return !!DARK[area]; }
+  // Postupný prechod do tmy Lesa divov: v Lese na pomedzí sa od riadku from (0) po riadok to (1) pridáva svetlo a dohľad
+  // Lesa divov, takže pri prechode na severnom okraji vyzerá les rovnako ako Les divov. V Lese divov všade 1.
+  const DARK_RAMP = { pomedzie: { from: 10, to: 2 } };
+  function darkAt(area, y) {
+    if (DARK[area]) return 1;
+    const r = DARK_RAMP[area];
+    return r ? Math.max(0, Math.min(1, (r.from - y) / (r.from - r.to))) : 0;
+  }
+
+  const BLOCK = { tree: 1, water: 1, hut: 1, babka: 1, cauldron: 1, stall: 1, well: 1, boulder: 1, house: 1, cliff: 1, glacier: 1, spruce: 1, icehouse: 1, bush: 1, giant: 1, trunk: 1, log: 1 };
   // Výška terénu v podkockách (pol bloku) podľa typu zeme – zdieľa ju 3D svet (world3d.js) aj chôdza
   // (hory: sutina a sneh vyššie, ľadovec ešte vyššie, skalné steny najvyššie; v záhrade skalka nad trávou).
   const TERRAIN_H = { water: 1, rock: 3, boulder: 3, scree: 3, snow: 3, glacier: 3, cliff: 8 };
@@ -576,8 +740,8 @@
     CHAT_MAX, chatText,
     W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
-    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y,
-    sellPrice, itemName, buildMap, buildMountains, buildPomedzie, buildArea, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
+    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_HEART, sunZone, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt, viewDiagAt,
+    sellPrice, itemName, buildMap, buildMountains, buildPomedzie, buildLes, buildArea, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
   };
   root.GameData = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

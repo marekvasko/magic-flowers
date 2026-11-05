@@ -300,6 +300,8 @@ const Art = (() => {
   const FOREST = ['#5f9a46', '#4f8a3c', '#8a8a3f', '#cfd8dc'];
   const ALP = ['#8cc76a', '#7fbb5c', '#b0a95a', '#eef3f6'];
   const MEADOW = ['#8ccf5e', '#86c255', '#b5b553', '#e9eff2'];
+  const MOSS = ['#4f7a3a', '#466f35', '#6b6634', '#cdd6d9']; // Les divov: tmavý mach pod stromami (v zime len poprašok snehu)
+  const GLADE = ['#7cb557', '#6ea64b', '#a39d4a', '#e3eaee']; // čistina v Lese divov
 
   // gate = { side: 'n'|'s'|'w'|'e', icon } – na ktorú stranu prechod vedie a ikona cieľovej plochy (inak podľa riadku)
   function ground(c, g, x, y, s, se, t, tx, ty, gate) {
@@ -312,6 +314,9 @@ const Art = (() => {
       case 'water': base = se === 3 ? '#a9d4ec' : '#4aa3df'; break;
       case 'forest': case 'ring': case 'shroom': case 'tree': case 'fern': case 'bush': base = FOREST[se]; break;
       case 'meadow': base = MEADOW[se]; break;
+      case 'moss': case 'fungi': case 'giant': case 'trunk': case 'log': base = MOSS[se]; break;
+      case 'roots': base = se === 3 ? '#d6d2c4' : '#b99a68'; break; // korene cez chodník
+      case 'glade': base = GLADE[se]; break;
       case 'alp': case 'spruce': base = ALP[se]; break;
       case 'scree': base = se === 3 ? '#e3e7ea' : '#b7b1a6'; break;
       case 'snow': base = se === 3 ? '#f7fbfd' : '#eaf1f5'; break;
@@ -399,6 +404,45 @@ const Art = (() => {
       const n = h > 0.5 ? 3 : h > 0.2 ? 2 : 1;
       for (let i = 0; i < n; i++) circ(c, x + (0.12 + 0.76 * hash(tx, ty, 30 + i)) * s, y + (0.12 + 0.76 * hash(tx, ty, 40 + i)) * s, s * 0.045, cols[(hash(tx, ty, 50 + i) * 4) | 0]);
       if (se === 2 && h > 0.7) ell(c, x + hash(tx, ty, 7) * s, y + hash(tx, ty, 8) * s, s * 0.06, s * 0.035, h * 6, '#d9822b');
+      return;
+    }
+    if (g === 'moss' || g === 'giant' || g === 'trunk' || g === 'log' || g === 'fungi') { // Les divov: mach, lístie, huby
+      if (se === 3) { for (let i = 0; i < 3; i++) circ(c, x + hash(tx, ty, i) * s, y + hash(tx, ty, i + 5) * s, s * 0.06, 'rgba(255,255,255,0.55)'); }
+      else {
+        for (let i = 0; i < 4; i++) ell(c, x + hash(tx, ty, i) * s, y + hash(tx, ty, i + 5) * s, s * 0.12, s * 0.08, hash(tx, ty, i + 2) * 3, hash(tx, ty, i + 11) < 0.5 ? 'rgba(20,50,15,0.35)' : 'rgba(140,170,70,0.25)');
+        if (h > 0.55) ell(c, x + hash(tx, ty, 7) * s, y + hash(tx, ty, 8) * s, s * 0.07, s * 0.04, h * 6, se === 2 ? '#b0662a' : '#6b5a33'); // spadnutý list
+      }
+      if (g === 'fungi') { // huby: hnedé a červené klobúčiky (muchotrávka s bodkami)
+        const n = 2 + ((h * 3) | 0);
+        for (let i = 0; i < n; i++) {
+          const mx = x + (0.15 + 0.7 * hash(tx, ty, 80 + i)) * s, my = y + (0.2 + 0.65 * hash(tx, ty, 90 + i)) * s, r = s * (0.06 + 0.04 * hash(tx, ty, 95 + i));
+          c.fillStyle = '#efe6d0'; c.fillRect(mx - r * 0.25, my, r * 0.5, r * 0.9);
+          const red = hash(tx, ty, 99 + i) < 0.4;
+          ell(c, mx, my, r, r * 0.6, 0, red ? '#c62828' : '#8a5a2e');
+          if (red) { circ(c, mx - r * 0.35, my - r * 0.15, r * 0.14, '#fff'); circ(c, mx + r * 0.3, my - r * 0.2, r * 0.12, '#fff'); }
+        }
+      }
+      return;
+    }
+    if (g === 'roots') { // korene, ktoré sa plazia cez chodník
+      for (let i = 0; i < 3; i++) circ(c, x + hash(tx, ty, i) * s, y + hash(tx, ty, i + 5) * s, s * 0.03, 'rgba(90,60,30,0.3)');
+      c.strokeStyle = se === 3 ? '#7d6a55' : '#5a3d24'; c.lineCap = 'round';
+      for (let i = 0; i < 2; i++) {
+        const y0 = y + s * (0.2 + 0.6 * hash(tx, ty, 20 + i)), y1 = y + s * (0.2 + 0.6 * hash(tx, ty, 22 + i));
+        c.lineWidth = Math.max(1.5, s * (0.07 - i * 0.025));
+        c.beginPath(); c.moveTo(x - 1, y0); c.bezierCurveTo(x + s * 0.35, y0 - s * 0.15, x + s * 0.6, y1 + s * 0.15, x + s + 1, y1); c.stroke();
+      }
+      c.lineCap = 'butt';
+      return;
+    }
+    if (g === 'glade') { // čistina: krátka lesná tráva a sem-tam kvietok (sem preniká slnko)
+      if (se === 3) { if (h > 0.6) circ(c, x + hash(tx, ty, 3) * s, y + hash(tx, ty, 4) * s, s * 0.05, '#fff'); return; }
+      c.strokeStyle = 'rgba(30,80,20,0.35)'; c.lineWidth = Math.max(1, s * 0.025);
+      for (let i = 0; i < 4; i++) {
+        const gx = x + hash(tx, ty, i) * s, gy = y + hash(tx, ty, i + 9) * s;
+        c.beginPath(); c.moveTo(gx, gy); c.lineTo(gx - s * 0.03, gy - s * 0.09); c.moveTo(gx, gy); c.lineTo(gx + s * 0.04, gy - s * 0.08); c.stroke();
+      }
+      if (h > 0.75) circ(c, x + hash(tx, ty, 31) * s, y + hash(tx, ty, 41) * s, s * 0.04, se === 2 ? '#b39ddb' : '#fff'); // veternica, na jeseň astra
       return;
     }
     if (g === 'fern' && se !== 3) { // papraď: niekoľko zelených vejárov (na jeseň hrdzavé)

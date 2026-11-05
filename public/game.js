@@ -599,6 +599,7 @@
     return null;
   }
 
+  const SEEN_WALK = 0.9; // v tme sa ťuknutím chodí len tam, kde je políčko viditeľné aspoň takto (0–1)
   function tapWorld(cx, cy) {
     if (S.asleep || S.areaFx) return;
     if (!R3) return;
@@ -614,6 +615,11 @@
       if (!a.info || (inReach(tgt.x, tgt.y) && a.l !== 'Ľadovec')) return; // na ľadovec sa dá aj vyjsť
     }
     const cx0 = tgt.x + 0.5, cy0 = tgt.y + 0.5;
+    // v tme (Les divov) vedie ťuknutie len na miesto, ktoré hráč naozaj vidí (nezahalené tmou – aj vďaka cudziemu lampášu),
+    // a nie okľukou ďaleko; či je v ceste strom, sa nerieši
+    const dark = D.isDark(S.area);
+    if (dark && R3.seenAt(cx0, cy0) < SEEN_WALK) return;
+    const dist = Math.hypot(cx0 - S.me.x, cy0 - S.me.y);
     const walkable = D.passable(tileAt(tgt.x, tgt.y));
     let path;
     if (a && !GROUND[a.l] && !a.info) {
@@ -625,7 +631,7 @@
       // (na privysoký ľad sa nevylezie – vtedy čo najbližšie k nemu)
       path = (walkable && findPath((x, y) => x === tgt.x && y === tgt.y)) || findPath((x, y) => Math.hypot(x + 0.5 - cx0, y + 0.5 - cy0) <= 1.45);
     }
-    if (!path) return;
+    if (!path || (dark && path.length > 2 * dist + 3)) return;
     if (path.length > 1 && Math.hypot(path[0].x - S.me.x, path[0].y - S.me.y) < 0.6) path.shift();
     S.path = path; S.stuckT = 0;
   }

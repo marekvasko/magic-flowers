@@ -19,7 +19,7 @@ test('hory majú rovnakú veľkosť ako záhrada, prechody a príchody sedia', (
   assert.strictEqual(h.length, D.W * D.H);
   for (const area of D.AREAS) {
     const tiles = D.buildArea(area, 1);
-    for (const { x, y } of D.GATES[area]) assert.strictEqual(tiles[y * D.W + x], 'gate', `${area} ${x},${y}`);
+    for (const { x, y } of D.GATES[area]) assert.strictEqual(tiles[y * D.areaSize(area).w + x], 'gate', `${area} ${x},${y}`);
   }
   assert.ok(h.includes('glacier') && h.includes('water'));
   assert.strictEqual(g.filter(t => t === 'lot').length, 4);

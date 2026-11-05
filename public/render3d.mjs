@@ -14,6 +14,11 @@ const MAX_LIGHTS = 16;
 // blčanie svetiel (pomerná zmena dosahu): oheň, lampáš, okno, ostatné (hráči, kvety, víly)
 const FL_FIRE = 0.16, FL_LANTERN = 0.08, FL_WINDOW = 0.035, FL_SOFT = 0.03;
 const LAMP_R = 6.5; // dosah svetla lampáša v ruke (políčka)
+const LAMP_COL = [1, 0.78, 0.45]; // farba (a sila) svetla lampášov
+// Obrovský strom (Les divov) sa kreslí ako dve samostatné siete: kmeň s koreňmi (minikocky do polomeru TRUNK_KEEP_R od osi
+// a všetko do výšky CROWN_FROM nad zemou) je vždy plný, koruna (konáre a lístie nad tým) je zoslabená stále – inak by sa
+// vzdialené koruny zjavovali a mizli ako diery v mape. Každá časť má všetky svoje steny, aj tie, ktoré inak zakrýva druhá.
+const TRUNK_KEEP_R = 0.8, CROWN_FROM = 3;
 const LAMP_DUSK = 0.8; // lampáš (aj okná, oheň…) horí, keď je svetla menej než toto (deň × stmavnutie lesa)
 // plynulý „plameňový“ šum zo súčtu sínusov s nesúdeliteľnými frekvenciami
 function flicker(t, seed, amt) {
@@ -53,6 +58,26 @@ float gloomAt(float z) {
   if (gloom.y <= 0.0) return 0.0;
   return gloom.y * pow(clamp((gloom.x - z) / gloom.x, 0.0, 1.0), gloom.z);
 }`;
+// Temná plocha (Les divov, D.DARK): slnko len v škvrnách cez koruny a na čistinách (canopy = otvorenosť korún podľa políčka),
+// okolo hráča (eye = bod oka, w = dohľad) slabé svetlo a za dohľadom tma (darkFog). Miesta osvetlené lampášom (aj cudzím)
+// ostanú vidno. Stromy sa kreslia celé (aj koruny v tme); čo zakrýva hráča alebo zem pred ním, sa zoslabí ako v tmavom lese.
+// Slnko na zemi v Lese divov tlmené (1 = jas ako v záhrade); viditeľnosť za dohľadom ostáva plná
+const LES_SUN_K = 0.3;
+const DARK_GLSL = `
+#define LES_SUN_K ${LES_SUN_K.toFixed(2)}
+float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+float forestSun() {
+  if (vFacing <= 0.02) return 0.0;
+  vec2 p = floor(vPos.xz * 8.0) / 8.0; // po pixeloch ako textúra zeme
+  float n = vnoise(p * 1.3) * 0.6 + vnoise(p * 3.1 + 17.0) * 0.4;
+  float spots = smoothstep(0.7, 0.76, n) * step(0.5, vUp);
+  float open = texture2D(canopy, vPos.xz / areaSize).r;
+  return max(spots * 0.8, open * (0.5 + 0.5 * spots));
+}`;
 
 const VERT = `
 attribute vec3 color;
@@ -60,12 +85,12 @@ attribute float ao;
 attribute float emis;
 attribute float tex;
 uniform mat4 shadowMatrix; uniform vec3 sunDir; uniform float shadowNormalBias;
-varying vec3 vColor; varying float vAo; varying float vEmis; varying float vTex; varying float vFacing;
+varying vec3 vColor; varying float vAo; varying float vEmis; varying float vTex; varying float vFacing; varying float vUp;
 varying vec2 vUv; varying vec3 vPos; varying vec4 vShadow;
 void main() {
   vec4 wp = modelMatrix * vec4(position, 1.0);
   vColor = color; vAo = ao; vEmis = emis; vTex = tex; vUv = uv; vPos = wp.xyz;
-  vFacing = dot(normal, sunDir);
+  vFacing = dot(normal, sunDir); vUp = normal.y;
   // bod do mapy tieňov mierne posunutý po normále (proti „tieňovým pruhom“ na povrchu)
   vShadow = shadowMatrix * vec4(wp.xyz + normal * shadowNormalBias, 1.0);
   gl_Position = projectionMatrix * viewMatrix * wp;
@@ -80,22 +105,45 @@ uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec
 uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount; uniform float opacity;
 uniform float shadowOn; uniform vec2 shadowTexel; uniform float shadowRadius;
 uniform vec3 gloom; uniform vec3 gloomFog;
-varying vec3 vColor; varying float vAo; varying float vEmis; varying float vTex; varying float vFacing;
+uniform float darkOn; uniform float sunMode; uniform vec3 sunFill; uniform vec4 eye; uniform vec2 eyeLit; uniform vec3 darkFog; uniform sampler2D canopy; uniform vec2 areaSize; uniform vec4 sunZone;
+varying vec3 vColor; varying float vAo; varying float vEmis; varying float vTex; varying float vFacing; varying float vUp;
 varying vec2 vUv; varying vec3 vPos; varying vec4 vShadow;
 ${SHADOW_GLSL}
 ${GLOOM_GLSL}
+${DARK_GLSL}
 void main() {
   vec3 base = vTex > 0.5 ? texture2D(map, vUv).rgb * vColor : vColor;
   float gm = gloomAt(vPos.z);
-  vec3 light = (ambient + sunColor * sunVisibility(vFacing)) * (1.0 - gm);
+  // darkOn 0–1: koľko tmy Lesa divov (pri severnom okraji Lesa na pomedzí postupne pribúda, opar Lesa na pomedzí ubúda)
+  // slnko v tme: sunMode 1 = skutočný tieň (mapa tieňov cez stromy), ale svieti len na zem; 0 = škvrny z šumu (forestSun)
+  float groundSun = sunMode > 0.5 && vTex > 0.5 && darkOn > 0.0 ? sunVisibility(vFacing) : 0.0;
+  // slnko len v srdci lesa a kúsok okolo (sunZone: stred a polosi elipsy; z = 0 → všade), na okraji postupne zhasne
+  if (sunZone.z > 0.0) groundSun *= 1.0 - smoothstep(0.8, 1.0, length((vPos.xz - sunZone.xy) / sunZone.zw));
+  float darkSun = sunMode > 0.5 ? groundSun * LES_SUN_K : forestSun();
+  float sunV = darkOn >= 1.0 ? darkSun : darkOn > 0.0 ? mix(sunVisibility(vFacing), darkSun, darkOn) : sunVisibility(vFacing);
+  // osvetlená zem v tme (pokus): okrem slnka aj denné svetlo záhrady (sunFill) – v slnku je zem jasná ako v záhrade
+  vec3 light = (ambient + sunColor * sunV + sunFill * groundSun * LES_SUN_K) * (1.0 - gm * (1.0 - darkOn));
+  // Svetlo lampášov (aj slabé svetlo okolo hráča) je guľa okolo zdroja – na vrchy obrovských stromov nedosiahne.
+  // Dohľad v tme (kde začína tma) sa však meria po zemi: vrchy kmeňov pri hráčovi sú tmavé drevo, nie čierne diery.
+  float lamp = 0.0;
   for (int i = 0; i < ${MAX_LIGHTS}; i++) {
     if (i >= lightCount) break;
     float d = distance(vPos, lights[i].xyz);
-    light += lampColor * (1.0 - smoothstep(0.0, lights[i].w, d));
+    lamp += 1.0 - smoothstep(0.0, lights[i].w, d);
+  }
+  light += lampColor * lamp;
+  float fogK = 0.0;
+  if (darkOn > 0.0) {
+    float d = mix(distance(vPos, eye.xyz), distance(vPos.xz, eye.xz), darkOn);
+    light += vec3(0.8, 0.85, 1.0) * eyeLit.y * darkOn * (1.0 - smoothstep(0.0, eyeLit.x, distance(vPos, eye.xyz))); // slabé svetlo okolo hráča
+    fogK = darkOn * smoothstep(eye.w * 0.6, eye.w * 1.15, d) * (1.0 - clamp(lamp * 1.6, 0.0, 1.0));
+    fogK *= 1.0 - groundSun; // zem v slnku vidno aj za dohľadom (pokus)
   }
   vec3 col = base * vAo * light;
-  col = mix(col, gloomFog, gm * 0.3); // v hustom lese visí opar
-  col = max(col, base * emisColor * vEmis);
+  col = mix(col, gloomFog, gm * 0.3 * (1.0 - darkOn)); // v hustom lese visí opar
+  col = mix(col, darkFog, fogK);
+  col = max(col, base * emisColor * vEmis); // svietiace veci (okná, oheň, živica) vidno aj v tme za dohľadom
+  // zoslabený objekt: časť do výšky hráča (pne, kmene na zemi, kry) ostane plná, priehľadné je len to nad ňou
   gl_FragColor = vec4(col, opacity);
 }`;
 
@@ -286,6 +334,7 @@ void main() {
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const mix3 = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const hex = h => { const n = parseInt(h.slice(1), 16); return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; };
 const toLin = c => c; // pracujeme priamo v sRGB ako kresby z art.js (bez prevodu farieb)
 THREE.ColorManagement.enabled = false;
@@ -362,11 +411,13 @@ export function create(api) {
     vertexShader: VERT, fragmentShader: FRAG,
     uniforms: {
       map: { value: groundTex }, ambient: { value: new THREE.Vector3() }, sunColor: { value: new THREE.Vector3() },
-      lampColor: { value: new THREE.Vector3(...toLin([1, 0.78, 0.45])) }, emisColor: { value: new THREE.Vector3(1, 1, 1) },
+      lampColor: { value: new THREE.Vector3(...LAMP_COL) }, emisColor: { value: new THREE.Vector3(1, 1, 1) },
       lights: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4()) }, lightCount: { value: 0 }, opacity: { value: 1 },
       shadowMap: { value: null }, shadowMatrix: { value: new THREE.Matrix4() }, sunDir: { value: new THREE.Vector3(0, 1, 0) },
       shadowOn: { value: 0 }, shadowTexel: { value: new THREE.Vector2(1 / SHADOW_SIZE, 1 / SHADOW_SIZE) }, shadowRadius: { value: 3.5 },
-      shadowNormalBias: { value: 0.03 }, gloom: { value: new THREE.Vector3() }, gloomFog: { value: new THREE.Vector3() }
+      shadowNormalBias: { value: 0.03 }, gloom: { value: new THREE.Vector3() }, gloomFog: { value: new THREE.Vector3() },
+      darkOn: { value: 0 }, sunMode: { value: 1 }, sunFill: { value: new THREE.Vector3() }, eye: { value: new THREE.Vector4(0, 0, 0, 3) }, eyeLit: { value: new THREE.Vector2(3, 0) },
+      darkFog: { value: new THREE.Vector3() }, canopy: { value: null }, areaSize: { value: new THREE.Vector2(S.W, S.H) }, sunZone: { value: new THREE.Vector4() }
     }
   });
   // Rovnaký shader pre objekty, ktoré práve miznú (hráč zašiel za ne): priehľadný, bez zápisu do hĺbky.
@@ -400,13 +451,21 @@ export function create(api) {
     speed: 4,          // rýchlosť prechodu (zmena viditeľnosti za sekundu)
     outline: 0.7,      // nepriehľadnosť obrysu
     outlineRamp: 0.15, // obrys je naplno už pri takomto zoslabení – aj slabo zoslabené objekty majú zreteľný obrys
-    dark: { min: 0.2, edge: 0.5, reach: 2 } // v tmavom lese prepíše hodnoty vyššie a zoslabuje sa aj zem pred hráčom
+    // Čo sa nezoslabí nikdy (typy jemných modelov): všetko do výšky hráča – kamene, kry, spadnuté kmene.
+    // Zoslabujú sa budovy (domček, chalúpka, trh, studňa, kotlík, ľadovňa) a stromy; obrovský strom len korunou (kmeň ostane).
+    solid: ['rock', 'bush', 'log'],
+    // v tmavom lese (aj v celom Lese divov): zoslabenie rovnaké ako všade (min, rýchlosť), len fan = zoslabovať aj zem
+    // pred hráčom v smere pohľadu (vypnuté – všade sa zoslabí len to, čo zakrýva hráča; skúsiť: MF_FADE = { dark: { fan: true } })
+    dark: { fan: false },
+    les: { outline: 0 } // Les divov: zoslabené stromy bez obrysu, nech hráča v tme nerozptyľuje
   };
   window.MF_FADE_DEFAULTS = FADE_DEFAULTS;
   function fadeCfg() {
     const u = window.MF_FADE || {}, c = Object.assign({}, FADE_DEFAULTS, u);
-    c.inDark = D.gloomAt(S.area, S.me.y) >= c.darkFrom;
+    c.inDark = D.isDark(S.area) || D.gloomAt(S.area, S.me.y) >= c.darkFrom;
     if (c.inDark) Object.assign(c, FADE_DEFAULTS.dark, u.dark || {});
+    if (D.isDark(S.area)) Object.assign(c, FADE_DEFAULTS.les, u.les || {});
+    else c.outline *= 1 - D.darkAt(S.area, S.me.y); // cestou do Lesa divov obrys postupne mizne
     return c;
   }
   let mesh = null, grid = null, builtSeason = -1, builtGen = -1;
@@ -476,8 +535,12 @@ export function create(api) {
     if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); }
     mesh = new THREE.Mesh(geo, material);
     scene.add(mesh);
-    for (const fm of fineMeshes) { scene.remove(fm); scene.remove(fm.userData.depthTwin); fm.geometry.dispose(); }
+    for (const fm of fineMeshes) { scene.remove(fm); scene.remove(fm.userData.depthTwin); if (fm.userData.solidPart) scene.remove(fm.userData.solidPart); }
+    for (const geo of fineGeos.values()) geo.dispose();
+    fineGeos.clear();
     fineMeshes = grid.fine.map(f => buildFine(f, se));
+    buildCanopy();
+    buildShafts();
     buildWater(se);
     buildGlacier();
     shadowDirty = true;
@@ -485,8 +548,59 @@ export function create(api) {
   }
 
   // ---------- Jemné modely z minikociek (1 blok = 8×8×8) ----------
+  // Rovnaké modely (strom rovnakého druhu a natočenia…) zdieľajú jednu geometriu, každý má vlastnú polohu –
+  // v Lese divov sú ich stovky a stavba aj pamäť by inak rástli s počtom stromov.
   let fineMeshes = [];
+  const fineGeos = new Map(); // dáta modelu → geometria (v súradniciach modelu)
+  // Obrovský strom rozdelený na kmeň (plný) a korunu (stále zoslabená) – dáta oboch častí, každé vo vlastnom modeli
+  function giantParts(f) {
+    const { sx, sy, sz, data } = f, F = W.FINE, R2 = (TRUNK_KEEP_R * F) ** 2, top = CROWN_FROM * F;
+    const trunk = new Uint8Array(data.length), crown = new Uint8Array(data.length);
+    for (let z = 0; z < sz; z++) for (let y = 0; y < sy; y++) for (let x = 0; x < sx; x++) {
+      const i = (z * sy + y) * sx + x, m = data[i];
+      if (!m) continue;
+      const keep = y + 0.5 < top || (x + 0.5 - sx / 2) ** 2 + (z + 0.5 - sz / 2) ** 2 < R2;
+      (keep ? trunk : crown)[i] = m;
+    }
+    return { trunk: { sx, sy, sz, data: trunk }, crown: { sx, sy, sz, data: crown } };
+  }
+  const giantSplit = new Map(); // dáta modelu obra → { trunk, crown }
   function buildFine(f, se) {
+    let solidPart = null;
+    if (f.type === 'giant') {
+      let parts = giantSplit.get(f.data);
+      if (!parts) { parts = giantParts(f); giantSplit.set(f.data, parts); }
+      // kmeň: obyčajná plná sieť (nezoslabuje sa), ťuká sa naň ako na políčko stromu
+      let tg = fineGeos.get(parts.trunk.data);
+      if (!tg) { tg = fineGeometry(parts.trunk, se); fineGeos.set(parts.trunk.data, tg); }
+      solidPart = new THREE.Mesh(tg, material);
+      solidPart.position.set(f.ox, f.oy, f.oz);
+      solidPart.userData.tile = f.tile;
+      scene.add(solidPart);
+      f = Object.assign({}, f, { data: parts.crown.data }); // ďalej sa stavia (a zoslabuje) len koruna
+    }
+    let geo = fineGeos.get(f.data);
+    if (!geo) { geo = fineGeometry(f, se); fineGeos.set(f.data, geo); }
+    const fmesh = new THREE.Mesh(geo, material);
+    fmesh.userData.solidPart = solidPart;
+    fmesh.position.set(f.ox, f.oy, f.oz);
+    fmesh.updateMatrixWorld();
+    fmesh.userData.box = geo.boundingBox.clone().translate(fmesh.position); // vo svete (poradie zoslabených, lístie)
+    fmesh.userData.fade = f.type === 'giant' ? fadeCfg().min : 1; // koruna obra je zoslabená od začiatku
+    // pri zoslabení: najprv len hĺbka (aby bolo vidno iba prednú plochu modelu), potom model priehľadne
+    fmesh.renderOrder = 2;
+    const depthTwin = new THREE.Mesh(geo, depthOnlyMaterial);
+    depthTwin.position.copy(fmesh.position);
+    depthTwin.renderOrder = 1; depthTwin.visible = false; depthTwin.layers.set(1); // do mapy tieňov nepatrí
+    scene.add(depthTwin);
+    fmesh.userData.depthTwin = depthTwin;
+    fmesh.onBeforeRender = () => { if (fmesh.material === fadeMaterial) { fadeMaterial.uniforms.opacity.value = fmesh.userData.fade; fadeMaterial.uniformsNeedUpdate = true; } };
+    fmesh.userData.tile = f.tile;
+    fmesh.userData.type = f.type;
+    scene.add(fmesh);
+    return fmesh;
+  }
+  function fineGeometry(f, se) {
     const F = W.FINE, { sx, sy, sz, data } = f;
     const get = (x, y, z) => (y < 0 ? 1 : (x < 0 || z < 0 || x >= sx || y >= sy || z >= sz) ? 0 : data[(z * sy + y) * sx + x]); // pod modelom je zem
     const P = [], C = [], A = [], E = [], T = [], U = [], N = [], I = [];
@@ -515,7 +629,7 @@ export function create(api) {
           const o1 = get(...s1) ? 1 : 0, o2 = get(...s2) ? 1 : 0, oc = get(...cc) ? 1 : 0;
           const ao = o1 && o2 ? 0 : 3 - (o1 + o2 + oc);
           aoV.push(ao);
-          P.push(f.ox + p[0] / F, f.oy + p[1] / F, f.oz + p[2] / F);
+          P.push(p[0] / F, p[1] / F, p[2] / F);
           C.push(mc[0] * shade, mc[1] * shade, mc[2] * shade);
           A.push(AO_CURVE[ao]); E.push(em); T.push(0); U.push(0, 0); N.push(n[0], n[1], n[2]);
         }
@@ -535,19 +649,97 @@ export function create(api) {
     geo.setIndex(I);
     geo.computeBoundingSphere();
     geo.computeBoundingBox();
-    const fmesh = new THREE.Mesh(geo, material);
-    fmesh.userData.box = geo.boundingBox;
-    fmesh.userData.fade = 1;
-    // pri zoslabení: najprv len hĺbka (aby bolo vidno iba prednú plochu modelu), potom model priehľadne
-    fmesh.renderOrder = 2;
-    const depthTwin = new THREE.Mesh(geo, depthOnlyMaterial);
-    depthTwin.renderOrder = 1; depthTwin.visible = false; depthTwin.layers.set(1); // do mapy tieňov nepatrí
-    scene.add(depthTwin);
-    fmesh.userData.depthTwin = depthTwin;
-    fmesh.onBeforeRender = () => { if (fmesh.material === fadeMaterial) { fadeMaterial.uniforms.opacity.value = fmesh.userData.fade; fadeMaterial.uniformsNeedUpdate = true; } };
-    fmesh.userData.tile = f.tile;
-    scene.add(fmesh);
-    return fmesh;
+    return geo;
+  }
+
+  // ---------- Les divov: otvorenosť korún (slnko na čistinách) a lúče slnka ----------
+  // canopy: 1 = otvorené nebo (čistina), na susedných políčkach polovica, inde zavreté koruny; lineárne filtrovaná textúra
+  const noCanopy = new THREE.DataTexture(new Uint8Array(1), 1, 1, THREE.RedFormat, THREE.UnsignedByteType);
+  noCanopy.needsUpdate = true;
+  material.uniforms.canopy.value = noCanopy;
+  let canopyTex = null;
+  function buildCanopy() {
+    if (canopyTex) { canopyTex.dispose(); canopyTex = null; }
+    material.uniforms.canopy.value = noCanopy;
+    material.uniforms.areaSize.value.set(S.W, S.H);
+    if (!D.isDark(S.area)) return;
+    const a = new Uint8Array(S.W * S.H), open = (x, y) => x >= 0 && y >= 0 && x < S.W && y < S.H && S.tiles[y * S.W + x].g === 'glade';
+    for (let y = 0; y < S.H; y++) for (let x = 0; x < S.W; x++) {
+      if (open(x, y)) { a[y * S.W + x] = 255; continue; }
+      let n = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (open(x + dx, y + dy)) n++;
+      a[y * S.W + x] = Math.min(140, n * 40);
+    }
+    canopyTex = new THREE.DataTexture(a, S.W, S.H, THREE.RedFormat, THREE.UnsignedByteType);
+    canopyTex.flipY = false; canopyTex.magFilter = canopyTex.minFilter = THREE.LinearFilter; // riadok = z, stĺpec = x
+    canopyTex.needsUpdate = true;
+    material.uniforms.canopy.value = canopyTex;
+  }
+  // Lúče slnka: priesvitné valce od zeme smerom k slnku (aditívne), cez deň na čistinách a sem-tam nad chodníkom.
+  // Na nízkej kvalite častíc len jeden nad každou čistinou. Svietia len do kúsku za dohľad hráča.
+  const SHAFT_VERT = `
+varying float vY; varying float vEdge;
+void main() {
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vec3 n = normalize(mat3(modelMatrix) * normal), v = normalize(cameraPosition - wp.xyz);
+  vY = uv.y; vEdge = abs(dot(n, v));
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}`;
+  const SHAFT_FRAG = `
+uniform float op; uniform vec3 col;
+varying float vY; varying float vEdge;
+void main() {
+  float a = op * pow(vEdge, 1.5) * smoothstep(0.0, 0.08, vY) * (1.0 - vY);
+  gl_FragColor = vec4(col * a, 1.0);
+}`;
+  const RAY_OP = 0.12; // jas stien lúčov z mapy tieňov (na skúšanie násobok window.MF_RAY_K)
+  const shaftGeo = new THREE.CylinderGeometry(0.42, 0.3, 1, 12, 1, true);
+  let shafts = [];
+  const UP = new THREE.Vector3(0, 1, 0);
+  function buildShafts() {
+    for (const m of shafts) { scene.remove(m); m.material.dispose(); }
+    shafts = [];
+    if (!D.isDark(S.area)) return;
+    const high = particles.quality === 'high', seenGlade = new Set();
+    for (let i = 0; i < S.tiles.length; i++) {
+      const g = S.tiles[i].g, x = i % S.W, y = (i / S.W) | 0;
+      if (!D.passable(S.tiles[i]) || g === 'gate') continue;
+      let want = false;
+      if (g === 'glade') {
+        // jeden lúč na čistinu (prvé políčko, na ktoré narazíme), na vysokej kvalite ešte zopár ďalších
+        const nearSeen = [...seenGlade].some(j => Math.hypot(j % S.W - x, ((j / S.W) | 0) - y) < 3.5);
+        want = !nearSeen || (high && W.hash(x, y, 141) < 0.12);
+        if (!nearSeen) seenGlade.add(i);
+      } else if (high) want = W.hash(x, y, 143) < 0.03;
+      if (!want) continue;
+      const m = new THREE.Mesh(shaftGeo, new THREE.ShaderMaterial({
+        vertexShader: SHAFT_VERT, fragmentShader: SHAFT_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+        uniforms: { op: { value: 0 }, col: { value: new THREE.Vector3(1, 0.93, 0.7) } }
+      }));
+      m.userData.base = { x: x + 0.3 + 0.4 * W.hash(x, y, 145), z: y + 0.3 + 0.4 * W.hash(x, y, 147), k: g === 'glade' ? 1 : 0.6 };
+      m.layers.set(1); m.renderOrder = 5e5; m.frustumCulled = false; m.visible = false; // po zoslabených objektoch
+      scene.add(m);
+      shafts.push(m);
+    }
+  }
+  // poloha a jas lúčov podľa slnka (dir), dňa (dl) a vzdialenosti od hráča
+  function updateShafts(dir, dl, eyeR) {
+    const rain = S.weather === 'rain' ? 0.3 : S.weather === 'snow' ? 0.5 : 1;
+    sunRays.material.uniforms.op.value = dir && dir.y > 0.05 ? RAY_OP * (window.MF_RAY_K || 1) * Math.min(1, dir.y * 3) * dl * rain : 0;
+    for (const m of shafts) {
+      const b = m.userData.base;
+      if (lesSunMode()) { m.visible = false; continue; } // lúče sú z mapy tieňov (sunRays)
+      if (!dir || dir.y < 0.08 || dl <= 0) { m.visible = false; continue; }
+      const dist = Math.hypot(b.x - S.me.x, b.z - S.me.y), near = 1 - smooth(eyeR * 0.6, eyeR + 2, dist);
+      const op = 0.13 * b.k * Math.min(1, dir.y * 3) * dl * rain * near;
+      m.visible = op > 0.004;
+      if (!m.visible) continue;
+      const L = Math.min(9, 4.5 / dir.y), d = v3.set(dir.x, dir.y, dir.z);
+      m.quaternion.setFromUnitVectors(UP, d);
+      m.scale.set(1, L, 1);
+      m.position.set(b.x + d.x * L / 2, W.surfaceY(grid, Math.floor(b.x), Math.floor(b.z)) + d.y * L / 2, b.z + d.z * L / 2);
+      m.material.uniforms.op.value = op;
+    }
   }
 
 
@@ -835,21 +1027,31 @@ export function create(api) {
   // rohy sveta (pre kameru slnka) podľa veľkosti aktuálnej plochy
   function sizeWorld() {
     worldCorners.length = 0;
-    for (const x of [0, S.W]) for (const y of [0, 7]) for (const z of [0, S.H]) worldCorners.push(new THREE.Vector3(x, y, z));
+    // v Lese divov počíta mapa tieňov len zónu slnka (srdce lesa) – vyššie stromy, preto do výšky 12
+    const zone = D.sunZone(S.area);
+    material.uniforms.sunZone.value.set(...(zone ? [zone.cx, zone.cz, zone.rx, zone.rz] : [0, 0, 0, 0]));
+    const xs = zone ? [zone.cx - zone.rx, zone.cx + zone.rx] : [0, S.W], zs = zone ? [zone.cz - zone.rz, zone.cz + zone.rz] : [0, S.H];
+    for (const x of xs) for (const y of [0, zone ? 12 : 7]) for (const z of zs) worldCorners.push(new THREE.Vector3(x, y, z));
     shadowDirty = true;
   }
+  // Pokus (Les divov): slnko ako skutočný tieň stromov, len na zemi (1), alebo pôvodné škvrny zo šumu (0, MF_LES_SUN = 'dapple')
+  const lesSunMode = () => window.MF_LES_SUN === 'dapple' ? 0 : 1;
   let shadowDirty = true, lastShadowKey = '';
   function updateShadowMap(min, se) {
     const u = material.uniforms;
     const stepMin = Math.floor(min / D.MIN_PER_TICK) * D.MIN_PER_TICK; // slnko z aktuálneho herného kroku
-    const key = se + ':' + stepMin + (layerOn('shadows') ? '' : ':off');
+    const key = se + ':' + stepMin + (layerOn('shadows') ? '' : ':off') + ':' + lesSunMode();
     if (!shadowDirty && key === lastShadowKey) return;
     shadowDirty = false; lastShadowKey = key;
+    clearSunRays();
     const dir = W.sunDir(stepMin, se);
     if (!dir || !layerOn('shadows')) { u.shadowOn.value = 0; return; }
-    u.shadowOn.value = 1;
     u.sunDir.value.set(dir.x, dir.y, dir.z); // rovnaké slnko ako mapa – odvrátené steny sedia s tieňom
-    const center = new THREE.Vector3(S.W / 2, 3, S.H / 2);
+    // temná plocha: slnko len v škvrnách cez koruny (shader), mapa tieňov netreba – stovky stromov by ju aj tak rozmazali
+    // temná plocha: so škvrnami zo šumu (MF_LES_SUN = 'dapple') mapu tieňov netreba; inak skutočný tieň stromov na zemi
+    if (D.isDark(S.area) && !lesSunMode()) { u.shadowOn.value = 0; shadowDirty = true; return; }
+    u.shadowOn.value = 1;
+    const zone = D.sunZone(S.area), center = zone ? new THREE.Vector3(zone.cx, 3, zone.cz) : new THREE.Vector3(S.W / 2, 3, S.H / 2);
     lightCam.position.copy(center).addScaledVector(new THREE.Vector3(dir.x, dir.y, dir.z), 80);
     lightCam.up.set(0, 1, 0);
     lightCam.lookAt(center);
@@ -872,6 +1074,131 @@ export function create(api) {
     renderer.setRenderTarget(null);
     renderer.setClearColor(oldClear, oldAlpha);
     scene.overrideMaterial = oldOverride;
+    if (zone && D.isDark(S.area)) buildSunRays(zone, dir);
+  }
+
+  // ---------- Lúče slnka z mapy tieňov (Les divov, MF_LES_SUN ≠ 'dapple') ----------
+  // Mapu tieňov premietneme na zem zóny slnka do malej masky (RAY_RES vzoriek na políčko) a prečítame ju späť.
+  // Na hranách osvetlených škvŕn (svetlo / tieň) postavíme pruhy smerom k slnku: steny lúča od miesta, kde tieň
+  // dopadá na zem, po hranu koruny (či kmeňa), ktorá ho vrhá – dĺžku berieme z mapy tieňov (vzdialenosť tieniaceho
+  // povrchu od zeme pozdĺž lúča, kanál G masky). Aditívne, na okraji zóny slabnú.
+  // Lúč vidno len tam, kde je malá škvrna svetla obklopená tieňom (svetlo cez medzeru v korunách). Veľká slnečná plocha
+  // (čistina) lúče nemá – vzduch nad ňou je svietený všade a tieň stromu na nej by inak vyzeral ako svetelná stena.
+  const RAY_RES = 2, RAY_MAX = 32; // vzoriek na políčko; najdlhší lúč (bloky), zároveň mierka kanála G
+  const RAY_PATCH = 6; // najväčšia škvrna svetla (políčka²), z ktorej ešte idú lúče
+  const rayMaskMat = new THREE.ShaderMaterial({
+    uniforms: { shadowMap: material.uniforms.shadowMap, shadowMatrix: material.uniforms.shadowMatrix, box: { value: new THREE.Vector4() }, gy: { value: 1 }, depthRange: { value: 1 } },
+    vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+    fragmentShader: `uniform sampler2D shadowMap; uniform mat4 shadowMatrix; uniform vec4 box; uniform float gy; uniform float depthRange; varying vec2 vUv;
+void main() {
+  vec4 s = shadowMatrix * vec4(mix(box.x, box.z, vUv.x), gy + 0.05, mix(box.y, box.w, vUv.y), 1.0);
+  vec3 sc = s.xyz / s.w * 0.5 + 0.5;
+  float d = texture2D(shadowMap, sc.xy).r;
+  // R = slnko, G = ako ďaleko pozdĺž lúča k slnku je to, čo zem zatieňuje (mapa tieňov je ortografická – hĺbka je lineárna)
+  gl_FragColor = vec4(sc.z - 0.0008 <= d ? 1.0 : 0.0, clamp((sc.z - d) * depthRange / ${RAY_MAX.toFixed(1)}, 0.0, 1.0), 0.0, 1.0);
+}`, depthTest: false, depthWrite: false
+  });
+  const rayMaskScene = new THREE.Scene(), rayMaskQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), rayMaskMat);
+  rayMaskQuad.frustumCulled = false; rayMaskScene.add(rayMaskQuad);
+  let rayMaskRT = null;
+  const RAY_VERT = `
+attribute float rayY; attribute float rayW;
+varying float vY; varying float vW;
+void main() { vY = rayY; vW = rayW; gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0); }`;
+  const RAY_FRAG = `
+uniform float op; uniform vec3 col;
+varying float vY; varying float vW;
+void main() {
+  // vY 0 = zem, 1 = hrana, ktorá tieň vrhá: najjasnejší pri zemi, smerom hore plynulo slabne až do straty
+  float a = op * 1.5 * vW * pow(1.0 - vY, 2.2);
+  gl_FragColor = vec4(col * a, 1.0);
+}`;
+  const sunRays = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.ShaderMaterial({
+    vertexShader: RAY_VERT, fragmentShader: RAY_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+    uniforms: { op: { value: 0 }, col: { value: new THREE.Vector3(1, 0.93, 0.7) } }
+  }));
+  sunRays.layers.set(1); sunRays.renderOrder = 5e5; sunRays.frustumCulled = false; sunRays.visible = false;
+  scene.add(sunRays);
+  function clearSunRays() { sunRays.visible = false; }
+  function buildSunRays(zone, dir) {
+    const x0 = zone.cx - zone.rx, z0 = zone.cz - zone.rz, nx = Math.round(zone.rx * 2 * RAY_RES), nz = Math.round(zone.rz * 2 * RAY_RES), c = 1 / RAY_RES;
+    if (!rayMaskRT || rayMaskRT.width !== nx || rayMaskRT.height !== nz) {
+      if (rayMaskRT) rayMaskRT.dispose();
+      rayMaskRT = new THREE.WebGLRenderTarget(nx, nz, { depthBuffer: false });
+    }
+    const gy = W.surfaceY(grid, Math.floor(zone.cx), Math.floor(zone.cz));
+    rayMaskMat.uniforms.box.value.set(x0, z0, x0 + nx * c, z0 + nz * c);
+    rayMaskMat.uniforms.gy.value = gy;
+    rayMaskMat.uniforms.depthRange.value = lightCam.far - lightCam.near;
+    const buf = new Uint8Array(nx * nz * 4);
+    renderer.setRenderTarget(rayMaskRT);
+    renderer.render(rayMaskScene, camera);
+    renderer.readRenderTargetPixels(rayMaskRT, 0, 0, nx, nz, buf);
+    renderer.setRenderTarget(null);
+    const sun = (i, j) => i >= 0 && j >= 0 && i < nx && j < nz && buf[(j * nx + i) * 4] > 127;
+    // súvislé škvrny svetla; lúče len z malých
+    const patch = new Int32Array(nx * nz).fill(-1), small = [];
+    for (let s0 = 0; s0 < nx * nz; s0++) {
+      if (patch[s0] >= 0 || !sun(s0 % nx, (s0 / nx) | 0)) continue;
+      const id = small.length, q = [s0];
+      patch[s0] = id;
+      for (let k = 0; k < q.length; k++) {
+        const qi = q[k] % nx, qj = (q[k] / nx) | 0;
+        for (const [a, b] of [[qi + 1, qj], [qi - 1, qj], [qi, qj + 1], [qi, qj - 1]]) {
+          if (!sun(a, b) || patch[b * nx + a] >= 0) continue;
+          patch[b * nx + a] = id; q.push(b * nx + a);
+        }
+      }
+      small.push(q.length <= RAY_PATCH * RAY_RES * RAY_RES);
+    }
+    const lit = (i, j) => sun(i, j) && small[patch[j * nx + i]];
+    // špička tieňa: úzky koniec tieňa vybiehajúci do slnka (tieň s najviac 3 tienistými susedmi z 8) – lúč od nej ide
+    // po vrchol stromu, ktorý ju vrhá (posledný lúč, čo ho ešte obíde)
+    const inMask = (i, j) => i >= 0 && j >= 0 && i < nx && j < nz;
+    const tip = (i, j) => {
+      if (!inMask(i, j) || sun(i, j)) return false;
+      let n = 0;
+      for (let b = -1; b <= 1; b++) for (let a = -1; a <= 1; a++) if ((a || b) && inMask(i + a, j + b) && !sun(i + a, j + b)) n++;
+      return n <= 3;
+    };
+    // hrana medzi bunkami (ai, aj) a (bi, bj) má lúč: svetlo / tieň a buď malá škvrna svetla, alebo špička tieňa
+    const ray = (ai, aj, bi, bj) => sun(ai, aj) !== sun(bi, bj) && (lit(ai, aj) || lit(bi, bj) || tip(ai, aj) || tip(bi, bj));
+    // vzdialenosť od zeme po to, čo tieň vrhá (len v tieni; mimo masky nič)
+    const casterAt = (i, j) => i >= 0 && j >= 0 && i < nx && j < nz ? buf[(j * nx + i) * 4 + 1] / 255 * RAY_MAX : 0;
+    // váha okraja zóny – rovnaká ako stmavnutie slnka v shaderi
+    const zw = (x, z) => 1 - smooth(0.8, 1, Math.hypot((x - zone.cx) / zone.rx, (z - zone.cz) / zone.rz));
+    const P = [], Y = [], Wt = [];
+    const quad = (ax, az, bx, bz, L) => {
+      const wa = zw(ax, az), wb = zw(bx, bz);
+      if ((wa < 0.01 && wb < 0.01) || L < 0.4) return;
+      L *= 0.95; // končí tesne pred tým, čo tieň vrhá (cez neho neprejde; hĺbkový test lúč za ním skryje)
+      const dx = dir.x * L, dy = dir.y * L, dz = dir.z * L;
+      P.push(ax, gy, az, bx, gy, bz, bx + dx, gy + dy, bz + dz, ax, gy, az, bx + dx, gy + dy, bz + dz, ax + dx, gy + dy, az + dz);
+      Y.push(0, 0, 1, 0, 1, 1); Wt.push(wa, wb, wb, wa, wb, wa);
+    };
+    // hrany medzi svetlom a tieňom, zlúčené do úsekov najviac jedného políčka (váha okraja sa medzi koncami len lineárne mieša);
+    // dĺžka lúča = vzdialenosť tieniacej hrany nad tienistou stranou (úsek sa rozdelí, keď sa výrazne zmení)
+    for (let i = 0; i <= nx; i++) for (let j = 0; j < nz;) {
+      if (!ray(i - 1, j, i, j)) { j++; continue; }
+      const k = sun(i, j), sh = k ? i - 1 : i, L0 = casterAt(sh, j), j0 = j;
+      let sum = 0;
+      while (j < nz && j - j0 < RAY_RES && ray(i - 1, j, i, j) && sun(i, j) === k && Math.abs(casterAt(sh, j) - L0) < 1) sum += casterAt(sh, j++);
+      quad(x0 + i * c, z0 + j0 * c, x0 + i * c, z0 + j * c, sum / (j - j0));
+    }
+    for (let j = 0; j <= nz; j++) for (let i = 0; i < nx;) {
+      if (!ray(i, j - 1, i, j)) { i++; continue; }
+      const k = sun(i, j), sh = k ? j - 1 : j, L0 = casterAt(i, sh), i0 = i;
+      let sum = 0;
+      while (i < nx && i - i0 < RAY_RES && ray(i, j - 1, i, j) && sun(i, j) === k && Math.abs(casterAt(i, sh) - L0) < 1) sum += casterAt(i++, sh);
+      quad(x0 + i0 * c, z0 + j * c, x0 + i * c, z0 + j * c, sum / (i - i0));
+    }
+    sunRays.geometry.dispose();
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+    geo.setAttribute('rayY', new THREE.Float32BufferAttribute(Y, 1));
+    geo.setAttribute('rayW', new THREE.Float32BufferAttribute(Wt, 1));
+    sunRays.geometry = geo;
+    sunRays.visible = P.length > 0;
   }
 
   // ---------- Sprity: kvety, huby, babka, hráči ----------
@@ -939,7 +1266,7 @@ export function create(api) {
     const sp = makeSprite(0.96, 1.28); sp.material.map = tex;
     // „röntgen“: polopriehľadná silueta postavičky viditeľná aj cez budovy a stromy
     const ghost = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.35, depthTest: false, depthWrite: false }));
-    ghost.center.copy(sp.center); ghost.scale.copy(sp.scale); ghost.renderOrder = 10; ghost.layers.set(1);
+    ghost.center.copy(sp.center); ghost.scale.copy(sp.scale); ghost.renderOrder = 1e6; ghost.layers.set(1); // až po všetkých zoslabených objektoch (aj stále zoslabených korunách obrov)
     scene.add(ghost);
     const shadow = blobShadow(); shadow.material = shadowMat.clone(); // vlastný materiál – tieň sa prelína s postavičkou
     // vis: viditeľnosť 0–1; iní hráči sa pri príchode/odchode z plochy plynulo objavia a zmiznú
@@ -1013,7 +1340,10 @@ export function create(api) {
   const SUN_DAY = toLin([0.55, 0.52, 0.44]), SUN_LOW = toLin([0.62, 0.38, 0.2]);
   const SKY_DAY = [0.62, 0.82, 0.96], SKY_NIGHT = [0.05, 0.07, 0.16], SKY_DUSK = [0.98, 0.62, 0.42];
   const GLOOM_FOG = [0.16, 0.24, 0.2]; // tmavozelený opar hustého lesa
-  let curAmb = DAY_AMB, curSun = SUN_DAY, curSunDir = null;
+  // Les divov: tma za dohľadom (aj pozadie) – cez deň temne zelená, v noci takmer čierna; okolie a slnko len zlomok
+  const DARK_DAY = [0.03, 0.05, 0.04], DARK_NIGHT = [0.008, 0.011, 0.02];
+  const DARK_AMB = 0.12, DARK_AMB_NIGHT = 0.08, DARK_SUN = 0.65, EYE_LIT = [0.24, 0.16]; // slabé svetlo okolo hráča: deň, noc
+  let curAmb = DAY_AMB, curSun = SUN_DAY, curSunDir = null, curDark = null;
   function lighting(min, se) {
     const dl = W.daylight(min), dir = W.sunDir(min, se);
     curSunDir = dir;
@@ -1030,7 +1360,29 @@ export function create(api) {
     material.uniforms.gloom.value.set(G ? G.from : 1, G ? G.max : 0, G ? G.pow : 1);
     const fog = GLOOM_FOG.map(v => v * (0.35 + 0.65 * dl));
     material.uniforms.gloomFog.value.set(...fog);
-    const sky = mix3(mix3(mix3(SKY_NIGHT, SKY_DAY, dl), SKY_DUSK, dusk * 0.6), fog, gm);
+    let sky = mix3(mix3(mix3(SKY_NIGHT, SKY_DAY, dl), SKY_DUSK, dusk * 0.6), fog, gm);
+    // Les divov (k = 1) a cesta k nemu na severe Lesa na pomedzí (k 0 → 1): málo svetla, slnko len cez koruny, za dohľadom tma (aj obloha)
+    const k = D.darkAt(S.area, S.me.y), dark = D.DARK.les;
+    material.uniforms.darkOn.value = k;
+    material.uniforms.sunMode.value = lesSunMode();
+    if (k > 0) material.uniforms.emisColor.value.set(1, 0.95, 0.8); // v Lese divov svieti živica aj cez deň
+    material.uniforms.lampColor.value.set(...LAMP_COL.map(v => v * lerp(1, dark.lampK, k)));
+    curDark = null;
+    const gardenAmb = curAmb;
+    material.uniforms.sunFill.value.set(0, 0, 0);
+    if (k > 0) {
+      curAmb = mix3(curAmb, mix3(NIGHT_AMB.map(v => v * DARK_AMB_NIGHT), DAY_AMB.map(v => v * DARK_AMB), dl), k);
+      // skutočný tieň na zemi (pokus): slnko v plnej sile ako v záhrade; škvrny zo šumu slabšie (DARK_SUN)
+      curSun = curSun.map(v => v * lerp(1, lesSunMode() ? 1 : DARK_SUN, k));
+      if (lesSunMode()) material.uniforms.sunFill.value.set(...gardenAmb.map((v, i) => Math.max(0, v - curAmb[i]))); // zem v slnku ako v záhrade
+      material.uniforms.ambient.value.set(...curAmb);
+      material.uniforms.sunColor.value.set(...curSun);
+      const night = mix3(DARK_NIGHT, DARK_DAY, dl);
+      sky = mix3(sky, night, k);
+      material.uniforms.darkFog.value.set(...night);
+      material.uniforms.eyeLit.value.set(dark.sight * 1.2, lerp(EYE_LIT[1], EYE_LIT[0], dl));
+      curDark = { k, eyeLit: material.uniforms.eyeLit.value, eye: material.uniforms.eye.value };
+    }
     renderer.setClearColor(new THREE.Color(sky[0], sky[1], sky[2]));
     waterMaterial.uniforms.skyColor.value.set(sky[0], sky[1], sky[2]);
     waterMaterial.uniforms.ice.value = se === 3 ? 1 : 0;
@@ -1038,16 +1390,32 @@ export function create(api) {
     return dl;
   }
   // svetlo v bode pre sprity (CPU verzia shaderu)
-  function lightAt(x, y, z, lights, n) {
-    const vis = curSunDir ? W.sunVisibility(grid, x, y + 0.3, z, curSunDir, 3) : 0, k = 1 - D.gloomAt(S.area, z);
+  // V temnej ploche navyše: slnko len na čistinách, slabé svetlo okolo hráča a za dohľadom tma; vis = nakoľko ho vidno (0–1).
+  function lightAt(x, y, z, lights, n, out) {
+    const cd = curDark;
+    const dk = cd ? cd.k : 0;
+    const vis = !curSunDir ? 0 : lerp(dk < 1 ? W.sunVisibility(grid, x, y + 0.3, z, curSunDir, 3) : 0, 0.5 * canopyAt(x, z), dk), k = 1 - D.gloomAt(S.area, z) * (1 - dk);
     let r = (curAmb[0] + curSun[0] * vis) * k, g = (curAmb[1] + curSun[1] * vis) * k, b = (curAmb[2] + curSun[2] * vis) * k;
     const lc = material.uniforms.lampColor.value;
+    let lamp = 0;
     for (let i = 0; i < n; i++) {
-      const L = lights[i], d = Math.hypot(L.x - x, L.y - y, L.z - z);
+      const L = lights[i], d = Math.hypot(L.x - x, L.y - y, L.z - z); // guľa okolo lampáša (ako shader)
       const f = 1 - Math.min(1, Math.max(0, d / L.w)); const s = f * f * (3 - 2 * f);
-      r += lc.x * s; g += lc.y * s; b += lc.z * s;
+      r += lc.x * s; g += lc.y * s; b += lc.z * s; lamp += s;
     }
+    let seen = 1;
+    if (cd) {
+      const d3 = Math.hypot(cd.eye.x - x, cd.eye.y - y, cd.eye.z - z), d = lerp(d3, Math.hypot(cd.eye.x - x, cd.eye.z - z), dk), e = dk * cd.eyeLit.y * (1 - smooth(0, cd.eyeLit.x, d3));
+      r += 0.8 * e; g += 0.85 * e; b += e;
+      seen = 1 - dk * smooth(cd.eye.w * 0.6, cd.eye.w * 1.15, d) * (1 - Math.min(1, lamp * 1.6));
+      r *= seen; g *= seen; b *= seen; // do tmy (tá je takmer čierna)
+    }
+    if (out) out.seen = seen;
     return [Math.min(1.4, r), Math.min(1.4, g), Math.min(1.4, b)];
+  }
+  function canopyAt(x, z) {
+    const tx = Math.floor(x), tz = Math.floor(z), t = tx >= 0 && tz >= 0 && tx < S.W && tz < S.H ? S.tiles[tz * S.W + tx] : null;
+    return t && t.g === 'glade' ? 1 : 0;
   }
 
   // ---------- Kamera ----------
@@ -1068,12 +1436,13 @@ export function create(api) {
     const out = new Map();
     if (window.MF_NOFADE || !grid) return out;
     const toCam = camera.position.clone().sub(camTarget).normalize(), hits = new Set();
-    const lower = (m, v) => { if (m && !(out.get(m) <= v)) out.set(m, v); };
+    const solid = cfg.solid || [];
+    const lower = (m, v) => { if (m && !solid.includes(m.userData.type) && !(out.get(m) <= v)) out.set(m, v); };
     let fx, fz;
     if (cfg.dir === 'camera') { const hl = Math.hypot(toCam.x, toCam.z) || 1; fx = toCam.x / hl; fz = toCam.z / hl; }
     else { const a = S.me.a != null ? S.me.a : DIR_ANGLE[S.me.dir || 0]; fx = Math.cos(a); fz = Math.sin(a); }
     const px = S.me.x, pz = S.me.y, step = Math.max(0.1, cfg.step);
-    if (cfg.inDark) for (let d = 0; d <= cfg.reach + 1e-6; d += step) {
+    if (cfg.inDark && cfg.fan) for (let d = 0; d <= cfg.reach + 1e-6; d += step) {
       const hw = cfg.width + cfg.spread * d;
       const vis = cfg.min + (cfg.edge - cfg.min) * Math.max(0, Math.min(1, (d - cfg.near) / Math.max(0.01, cfg.reach - cfg.near)));
       for (let k = -hw; k <= hw + 1e-6; k += step) {
@@ -1097,13 +1466,14 @@ export function create(api) {
     const fadingList = [];
     for (const m of fineMeshes) {
       // zoslabený ostane ešte chvíľu po tom, čo z oblasti vypadol – na hrane oblasti tak nebliká
-      const target = now < (m.userData.wantUntil || 0) ? m.userData.want : 1;
+      // koruna obrovského stromu je zoslabená stále (kmeň ostáva plný v shaderi), ostatné len keď zakrývajú hráča
+      const target = m.userData.type === 'giant' ? cfg.min : now < (m.userData.wantUntil || 0) ? m.userData.want : 1;
       // priblíž sa k cieľu najviac o dt × speed – keď je cieľ dosiahnutý, hodnota ostane stáť (žiadne kmitanie)
       const step = dt * cfg.speed, cur = m.userData.fade;
       const f = m.userData.fade = Math.abs(target - cur) <= step ? target : cur + Math.sign(target - cur) * step;
       const fading = f < 0.98;
       m.material = fading ? fadeMaterial : material;
-      m.userData.depthTwin.visible = fading;
+      m.userData.depthTwin.visible = fading && m.visible;
       if (fading) { any = true; fadingList.push(m); }
     }
     // Zoslabené objekty kreslíme odzadu dopredu a každý celý naraz (najprv jeho hĺbka, potom priesvitná plocha).
@@ -1115,6 +1485,17 @@ export function create(api) {
       fadingList.forEach((m, i) => { m.userData.depthTwin.renderOrder = 2 + i * 2; m.renderOrder = 3 + i * 2; });
     }
     return any;
+  }
+  // Je postavička celá za stromom (z pohľadu kamery)? Lúče od nôh, pása aj hlavy ku kamere narazia na model.
+  function hiddenByTree(o) {
+    const toCam = camera.position.clone().sub(camTarget).normalize(), hit = new Set();
+    for (const yOff of [0.15, 0.6, 1.1]) {
+      hit.clear();
+      W.modelsOnRay(grid, o.sp.position.x, o.sp.position.y + yOff, o.sp.position.z, toCam.x, toCam.y, toCam.z, 6, hit);
+      // cez zoslabený strom vidno; obor je dolu (kmeň, korene – kam lúče od postavy siahajú) vždy plný
+      if (![...hit].some(i => fineMeshes[i] && fineMeshes[i].visible && (fineMeshes[i].userData.fade > 0.5 || fineMeshes[i].userData.type === 'giant'))) return false;
+    }
+    return true;
   }
   // Obrys zoslabených objektov cez stencil buffer – v tom istom snímku, bez pomocného obrázka a bez prepínania
   // cieľa vykresľovania (to na mobilných GPU spôsobovalo blikanie celej obrazovky):
@@ -1133,6 +1514,7 @@ export function create(api) {
   const camRight = new THREE.Vector3(), camUp = new THREE.Vector3();
   function drawOutlines() {
     const cfg = fadeCfg();
+    if (cfg.outline <= 0) return; // obrys vypnutý (Les divov, alebo MF_FADE = { outline: 0 })
     const cssW = api.glCanvas.getBoundingClientRect().width || 1;
     const px = (camera.right - camera.left) / cssW * 1.5; // ~1,5 CSS px vo svetových jednotkách
     camRight.setFromMatrixColumn(camera.matrixWorld, 0);
@@ -1160,12 +1542,13 @@ export function create(api) {
     renderer.autoClear = true;
   }
 
+  let viewDiag = D.VIEW_DIAG;
   function resize() {
     const r = api.glCanvas.getBoundingClientRect();
     renderer.setSize(r.width, r.height, false);
-    // uhlopriečka zobrazovacej plochy má vždy D.VIEW_DIAG blokov, hráč v strede
-    viewW = D.viewSize(r.width, r.height).w;
-    const vh = D.viewSize(r.width, r.height).h;
+    // uhlopriečka zobrazovacej plochy má vždy viewDiag blokov (D.VIEW_DIAG, v Lese divov menej), hráč v strede
+    viewW = D.viewSize(r.width, r.height, viewDiag).w;
+    const vh = D.viewSize(r.width, r.height, viewDiag).h;
     viewTop = vh / 2;
     camera.left = -viewW / 2; camera.right = viewW / 2; camera.top = viewTop; camera.bottom = viewTop - vh;
     camera.updateProjectionMatrix();
@@ -1201,7 +1584,10 @@ export function create(api) {
     // kvety a huby sa nevyberajú podľa obrázka – platí len políčko zeme pod nimi
     // vlastná postavička je pre ťuknutie priehľadná – zakrýva políčko za sebou, to hráč myslí
     const sprites = [...[...chars.entries()].filter(([id, o]) => o.alive && id !== 'me').map(([, o]) => o.sp), babka && babka.sp].filter(Boolean);
-    const hits = ray.intersectObjects(sprites.concat(mesh ? [mesh] : [], glacierMesh ? [glacierMesh] : [], waterMesh ? [waterMesh] : [], fineMeshes.filter(m => m.userData.fade > 0.5)), false);
+    // Les divov (temná plocha): ťuknutie prechádza cez všetky objekty (stromy, kmene, kry…) na zem pod prstom –
+    // ťukať sa bude len na vyslovene hracie objekty (a na hráčov), premietnutie na stromy by prekáželo
+    const objects = D.isDark(S.area) ? [] : fineMeshes.filter(m => m.visible && m.userData.fade > 0.5).concat(fineMeshes.map(m => m.userData.solidPart).filter(Boolean));
+    const hits = ray.intersectObjects(sprites.concat(mesh ? [mesh] : [], glacierMesh ? [glacierMesh] : [], waterMesh ? [waterMesh] : [], objects), false);
     for (const h of hits) {
       if (h.object.isSprite || h.object.userData.tile) return Object.assign({}, h.object.userData.tile);
       const q = h.point.clone().addScaledVector(h.face.normal, -0.01);
@@ -1230,6 +1616,9 @@ export function create(api) {
     if (builtSeason !== se || builtGen !== S.tilesGen) { builtGen = S.tilesGen; buildMesh(se); holesSig = null; refreshGround(se, t, true); drawnSeason = se; }
     S.worldGen = builtGen; // svet tejto verzie políčok je postavený (prechod medzi plochami čaká, kým je, a až potom ukáže meno)
     if (now - lastGround > 600) { refreshGround(se, t, false); lastGround = now; }
+    // v Lese divov (a cestou k nemu) je pohľad bližšie na hráča
+    const vd = D.viewDiagAt(S.area, S.me.y);
+    if (Math.abs(vd - viewDiag) > 0.01) { viewDiag = vd; resize(); }
     lighting(min, se);
     let tp = statsOn ? performance.now() : 0;
     updateShadowMap(min, se);
@@ -1240,14 +1629,17 @@ export function create(api) {
     // každé svetlo blčí ako plameň: oheň najviac, lampáše menej, okná a ostatné len jemne
     const lights = [];
     // v tmavom lese je šero aj cez deň – lampáše svietia podľa svetla tam, kde stojí hráč
-    const dl = W.daylight(min) * (1 - D.gloomAt(S.area, S.me.y));
+    // v Lese divov (temná plocha) je tma aj cez deň – lampáš svieti vždy
+    const dark = D.DARK[S.area], kd = D.darkAt(S.area, S.me.y), DL = D.DARK.les;
+    const dl = W.daylight(min) * (1 - D.gloomAt(S.area, S.me.y)) * (1 - kd);
     const lampState = dl < LAMP_DUSK ? 'lit' : 'on'; // lampáš v ruke horí, len keď je šero
     if (dl < LAMP_DUSK && layerOn('lights')) {
       const A = api.S.anchors;
       const add = (x, y, z, r, fl) => { if (lights.length < MAX_LIGHTS) lights.push(new THREE.Vector4(x, y, z, r * flicker(t, x * 7.1 + z * 3.3, fl || FL_SOFT))); };
       // hráč svieti, len keď drží lampáš (svetlo pri ruke, blčí ako plameň); bez lampáša je potme
-      if (S.sel === 'lamp') add(S.me.x, 1.1, S.me.y, LAMP_R, FL_LANTERN);
-      for (const o of S.others.values()) if (o.lp) add(o.x, 1.1, o.y, LAMP_R, FL_LANTERN);
+      const lampR = lerp(LAMP_R, DL.lampR, kd); // v Lese divov (a cestou k nemu) lampáš svieti slabšie a na kratšiu vzdialenosť
+      if (S.sel === 'lamp') add(S.me.x, 1.1, S.me.y, lampR, FL_LANTERN);
+      for (const o of S.others.values()) if (o.lp) add(o.x, 1.1, o.y, lampR, FL_LANTERN);
       if (A.hut) { add(A.hut.x + 0.5, 2.05, A.hut.y + 2.2, 2.2, FL_WINDOW); add(A.hut.x + 2.4, 2.05, A.hut.y + 2.2, 2.2, FL_WINDOW); }
       if (A.house) { add(A.house.x + 0.62, 2.2, A.house.y + 2.3, 2.2, FL_WINDOW); add(A.house.x + 2.37, 2.2, A.house.y + 2.3, 2.2, FL_WINDOW); add(A.house.x + 2.06, 2.4, A.house.y + 2.06, 1.8, FL_LANTERN); }
       if (A.cauldron) add(A.cauldron.x + 0.5, 1.3, A.cauldron.y + 0.5, 2.6, FL_FIRE);   // oheň pod kotlíkom
@@ -1262,6 +1654,10 @@ export function create(api) {
     lights.forEach((l, i) => lu[i].copy(l));
     material.uniforms.lightCount.value = lights.length;
     lastLights = lights;
+    // temná plocha: oko hráča (odkiaľ vidí) a dohľad – s lampášom v ruke ďalej
+    const eyeR = kd > 0 ? (S.sel === 'lamp' ? DL.lamp : DL.sight) : 0;
+    if (kd > 0) material.uniforms.eye.value.set(S.me.x, groundY(S.me.x, S.me.y) + 0.9, S.me.y, eyeR);
+    if (dark) updateShafts(curSunDir, W.daylight(min), eyeR);
 
     // sprity
     syncPlants(night);
@@ -1283,7 +1679,13 @@ export function create(api) {
       // po vlastnom prechode do inej plochy hráči zo starej plochy hneď zmiznú (je to za čiernou clonou)
       if (!o.alive && (o.vis <= 0 || o.seenArea !== S.area || id === 'babka' || id === 'me')) { removeChar(id, o); continue; }
       if (o.vis < 1 || !o.alive) setCharVis(o, Math.max(0, Math.min(1, o.vis + (o.alive ? dt : -dt) / CHAR_FADE)));
-      o.sp.material.color.setRGB(...lightAt(o.sp.position.x, o.sp.position.y, o.sp.position.z, lights, lights.length));
+      const lo = {};
+      o.sp.material.color.setRGB(...lightAt(o.sp.position.x, o.sp.position.y, o.sp.position.z, lights, lights.length, lo));
+      // v tme: kto je za dohľadom (a nesvieti mu lampáš), toho nevidno; cez stromy presvitá len vlastná postavička
+      o.seen = id === 'me' ? 1 : lo.seen;
+      if (dark && id !== 'me' && o.seen > 0.02 && hiddenByTree(o)) o.seen = 0; // za kmeňom nevidno ani meno
+      o.sp.visible = o.shadow.visible = o.seen > 0.02;
+      o.ghost.visible = !dark || id === 'me';
     }
     void meO;
 
@@ -1313,10 +1715,11 @@ export function create(api) {
     };
     if (S.tapMark) {
       const age = (performance.now() - S.tapMark.t) / 600;
-      if (age < 1) ring(S.tapMark.x, S.tapMark.y, S.tapMark.act ? `rgba(255,230,90,${1 - age})` : `rgba(255,255,255,${0.8 - age * 0.8})`, 0.5 + age * 0.4);
+      // v temnej ploche sa nič nezvýrazňuje (ani to, na čo sa dá ťuknúť)
+      if (age < 1) ring(S.tapMark.x, S.tapMark.y, S.tapMark.act && !D.isDark(S.area) ? `rgba(255,230,90,${1 - age})` : `rgba(255,255,255,${0.8 - age * 0.8})`, 0.5 + age * 0.4);
       else S.tapMark = null;
     }
-    if (S.kbd) { const f = api.frontTile(); if (f.x >= 0 && f.y >= 0 && f.x < S.W && f.y < S.H) ring(f.x, f.y, api.ctxAction(f.x, f.y) ? 'rgba(255,230,90,0.8)' : 'rgba(255,255,255,0.3)', 0.9); }
+    if (S.kbd) { const f = api.frontTile(); if (f.x >= 0 && f.y >= 0 && f.x < S.W && f.y < S.H) ring(f.x, f.y, api.ctxAction(f.x, f.y) && !D.isDark(S.area) ? 'rgba(255,230,90,0.8)' : 'rgba(255,255,255,0.3)', 0.9); }
 
     // efekty (častice z S.fx sa hýbu po rovine sveta – ukotvíme ich do bodu vo svete)
     for (const p of S.fx) {
@@ -1337,7 +1740,8 @@ export function create(api) {
     const ts = ppb;
     // mená, emócie, bubliny
     const label = (o, name, e, bubble) => {
-      c.globalAlpha = o.vis; // meno sa prelína s postavičkou
+      c.globalAlpha = o.vis * (o.seen == null ? 1 : o.seen); // meno sa prelína s postavičkou (v tme zmizne s ňou)
+      if (c.globalAlpha < 0.02) return;
       const P = project(o.sp.position.x, o.sp.position.y + 1.35, o.sp.position.z);
       c.font = 'bold ' + (ts * 0.24 | 0) + 'px system-ui, sans-serif'; c.textAlign = 'center';
       const w = c.measureText(name).width + ts * 0.2;
@@ -1401,7 +1805,14 @@ export function create(api) {
   resize();
   // ladenie: priehľadnosť jemných modelov (1 = plne viditeľný)
   const debugFades = () => fineMeshes.map(m => ({ type: grid.fine[fineMeshes.indexOf(m)].type, fade: +m.userData.fade.toFixed(2), want: fadeWant.has(m) ? +fadeWant.get(m).toFixed(2) : null }));
-  return { frame, resize, pick, screenToWorld, rotate, sunHoursAt, dir8, debugFades, ripple, setWaterQuality, get waterQuality() { return waterQuality; }, setParticleQuality: particles.setQuality, get particleQuality() { return particles.quality; }, setStats, stats, get yaw() { return yaw; }, debugView, invalidateShadows, dispose };
+  // Nakoľko je bod (x, z) na zemi vidno (0 = tma, 1 = celý) – v temnej ploche podľa dohľadu a svetla lampášov, inde 1
+  function seenAt(x, z) {
+    if (!curDark || !grid) return 1;
+    const o = {};
+    lightAt(x, groundY(x, z), z, lastLights, lastLights.length, o);
+    return o.seen;
+  }
+  return { frame, resize, pick, seenAt, screenToWorld, rotate, sunHoursAt, dir8, debugFades, ripple, setWaterQuality, get waterQuality() { return waterQuality; }, setParticleQuality: particles.setQuality, get particleQuality() { return particles.quality; }, setStats, stats, get yaw() { return yaw; }, debugView, invalidateShadows, dispose };
 }
 
 window.Render3D = { create };
