@@ -49,9 +49,8 @@
 
   function hash(x, y, k) { let h = (x * 374761393 + y * 668265263 + (k || 0) * 2147483647) | 0; h = (h ^ (h >>> 13)) * 1274126177; return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
 
-  // Výška terénu v podkockách pre typ zeme (hory: sutina a sneh vyššie, ľadovec ešte vyššie, skalné steny najvyššie)
-  const HEIGHT = { water: 1, rock: 3, boulder: 3, scree: 3, snow: 3, glacier: 3, cliff: 8 }; // ľad ľadovca nad zemou kreslí render3d (po 1/4 bloku)
-  function groundHeight(g) { return HEIGHT[g] || 2; }
+  // Výška terénu v podkockách pre typ zeme (D.TERRAIN_H); ľad ľadovca nad zemou kreslí render3d (po 1/4 bloku)
+  const groundHeight = D.terrainH;
   // skalné steny majú rôznu výšku podľa políčka (zubaté hrebene)
   function tileHeight(g, tx, ty) { return g === 'cliff' ? 7 + Math.floor(hash(tx, ty, 5) * 4) : groundHeight(g); }
   function topMaterial(g) {

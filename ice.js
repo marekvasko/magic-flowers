@@ -75,7 +75,7 @@ function lowestNeighbour(tiles, i) {
     const nx = x + dx, ny = y + dy;
     if (nx < 0 || ny < 0 || nx >= D.W || ny >= D.H) continue;
     const t = tiles[ny * D.W + nx];
-    if (D.passable(t)) m = Math.min(m, D.iceLevel(t));
+    if (D.passable(t)) m = Math.min(m, D.level(t));
   }
   return m;
 }
@@ -90,7 +90,7 @@ function growGlacier(room, n) {
     for (const i of list) {
       if (k >= n) break;
       const t = room.hory[i];
-      if (t.ice < LEVELS[i] && !occ.has(i) && t.ice + 1 <= lowestNeighbour(room.hory, i) + D.GLACIER_STEP) { t.ice++; k++; any = true; }
+      if (t.ice < LEVELS[i] && !occ.has(i) && D.level(t) + 1 <= lowestNeighbour(room.hory, i) + D.GLACIER_STEP) { t.ice++; k++; any = true; }
     }
   }
   return k;

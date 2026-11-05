@@ -1062,7 +1062,7 @@
       <p>📋 <b>Zákazky</b> nájdeš na nástenke pri 👵 babke. Zarezervuj si ich, termín platí; odovzdávať môžeš aj po častiach. Za splnenie dostaneš peniaze a ⭐ reputáciu, za nesplnenie reputáciu stratíš. ⚗️ V babkinom <b>kotlíku</b> sa z troch kvetov varia elixíry.</p>
       <p>🥀 <b>Kvety vädnú:</b> odrezaný kvet vydrží len pár dní (mak 2, tulipán 4, chryzantéma 7…) a s vekom klesá jeho výkupná cena. Rozkvitnutá rastlina na poli po čase odkvitne. V chladnom sklade vädnú kvety 2× pomalšie, zvädnuté sa dajú skompostovať.</p>
       <p>📦 V <b>domčeku</b> je spoločný sklad pre celú záhradu – peniaze má každý svoje.</p>
-      <p>🏔️ <b>Hory:</b> chodník na severovýchodnom okraji záhrady (za babkinou chalúpkou) vedie do hôr. Na ľadovci pod skalami vysekáš <b>krompáčom</b> ⛏️ ľad – každé ťuknutie zoberie vrchnú vrstvu. Po ľadovci sa dá chodiť: vyjdeš o pol bloku, so skokom o celý blok, a kde stojíš, tam ľad nedorastie. Plazením cez schod nezídeš ani nevyjdeš – nespadneš z hrany. Ľadu je málo: ľadovec sám nedorastá, len keď prší alebo sneží, a v teple sa topí od okrajov. Kto ho vykope priveľa, nechá ostatných bez ľadu. V zime vysekáš ľad aj na zamrznutom jazierku (z každého políčka raz za deň).</p>
+      <p>🏔️ <b>Hory:</b> chodník na severovýchodnom okraji záhrady (za babkinou chalúpkou) vedie do hôr. Na ľadovci pod skalami vysekáš <b>krompáčom</b> ⛏️ ľad – každé ťuknutie zoberie vrchnú vrstvu. Po ľadovci sa dá chodiť: vyjdeš o pol bloku, so skokom o celý blok, a kde stojíš, tam ľad nedorastie. Plazením cez žiadny schod (ľad, skalka…) nezídeš ani nevyjdeš – nespadneš z hrany. Ľadu je málo: ľadovec sám nedorastá, len keď prší alebo sneží, a v teple sa topí od okrajov. Kto ho vykope priveľa, nechá ostatných bez ľadu. V zime vysekáš ľad aj na zamrznutom jazierku (z každého políčka raz za deň).</p>
       <p>🧊 Uneseš najviac ${D.ICE_CARRY} kusov ľadu, ťahá ťa dolu (chodíš pomalšie) a do pol dňa sa ti v batohu roztopí – ponáhľaj sa s ním do ľadovne. V lete ho trh dobre vykúpi, v zime takmer vôbec.</p>
       <p>🧊 <b>Ľadovňa</b> pri domčeku (kúpi ju ktokoľvek na trhu v záložke Vylepšiť) drží ${D.ICEHOUSE.cap} blokov ľadu. Kým je v nej ľad, kvety v sklade vädnú 4× pomalšie. Ľad sa topí – v lete rýchlo, v zime vôbec – tak ho dopĺňaj.</p>
       <p>⚙️ V menu sa dá nastaviť, či svet <b>beží ďalej aj bez hráčov</b>, a ako dlho trvá herný deň.</p>
@@ -1177,14 +1177,14 @@
       for (const [cx, cy] of corners(me.x, me.y)) {
         const t = tileAt(Math.floor(cx), Math.floor(cy));
         overlap.add(Math.floor(cy) * W + Math.floor(cx));
-        if (D.passable(t) && D.iceLevel(t) > D.iceLevel(here)) here = t;
+        if (D.passable(t) && D.level(t) > D.level(here)) here = t;
       }
       const lift = Math.floor((me.jz || 0) * D.GLACIER_LAYERS);
       // plazenie: meria sa od políčka pod stredom postavy a stred nesmie prejsť na inú výšku
       // (inak by sa dalo vyliezť, keď sa už rohom dotýka vyššieho ľadu)
       const mid = tileAt(Math.floor(me.x), Math.floor(me.y)), from = me.crawl ? mid : here;
       const free = (x, y) => corners(x, y).every(([cx, cy]) => !solid(cx, cy, from, lift, me.crawl, overlap))
-        && (!me.crawl || D.iceLevel(tileAt(Math.floor(x), Math.floor(y))) === D.iceLevel(mid));
+        && (!me.crawl || D.level(tileAt(Math.floor(x), Math.floor(y))) === D.level(mid));
       const nx = me.x + vx * sp;
       if (free(nx, me.y)) me.x = nx;
       const ny = me.y + vy * sp;

@@ -215,7 +215,9 @@ test('po ľadovci sa chodí: hore najviac pol bloku (skokom blok), dolu hocikoľ
   assert.ok(!D.canStep(ice(0), { g: 'cliff' }));
   assert.ok(D.canStep(ice(2), ice(2), 0, true), 'plazením po rovine áno');
   assert.ok(!D.canStep(snow, ice(1), 0, true) && !D.canStep(ice(2), snow, 0, true), 'plazením cez schod ani hore, ani dolu');
-  assert.ok(D.canStep(snow, { g: 'rock' }, 0, true), 'mimo ľadovca plazenie nič nemení');
+  assert.ok(D.canStep({ g: 'grass' }, { g: 'rock' }), 'na skalku sa vyjde (pol bloku)');
+  assert.ok(!D.canStep({ g: 'grass' }, { g: 'rock' }, 0, true) && !D.canStep({ g: 'rock' }, { g: 'path' }, 0, true), 'plazením ani na skalku, ani z nej');
+  assert.ok(D.canStep(snow, { g: 'rock' }, 0, true), 'po rovine sa plazí aj mimo ľadovca');
   // plný ľadovec je schodisko: z okraja hôr sa dá dôjsť na každé jeho políčko
   const r = room(), tiles = r.hory, start = tiles.findIndex((t, i) => t.g === 'snow' && tiles[i + D.W] && tiles[i + D.W].g === 'glacier');
   const seen = new Set([start]), q = [start];
@@ -238,7 +240,7 @@ test('ľad nedorastá pod hráčom a nikdy nie viac ako pol bloku nad suseda', (
   r.players = new Map([[1, { area: 'hory', x: top % D.W + 0.5, y: ((top / D.W) | 0) + 0.5 }], [2, { area: 'garden', x: 0.5, y: 0.5 }]]);
   for (let d = 0; d < 30; d++) {
     Ice.growGlacier(r, D.GLACIER_GROW.snow);
-    r.hory.forEach((t, i) => { if (t.g === 'glacier') assert.ok(D.iceLevel(t) <= Ice.LEVELS[i]); });
+    r.hory.forEach((t, i) => { if (t.g === 'glacier') assert.ok(t.ice <= Ice.LEVELS[i]); });
     // nikto nezostane zamurovaný: z každého políčka sa dá vyjsť na suseda
     r.hory.forEach((t, i) => {
       if (t.g !== 'glacier') return;
