@@ -1433,7 +1433,10 @@ void main() {
     // kvety a huby sa nevyberajú podľa obrázka – platí len políčko zeme pod nimi
     // vlastná postavička je pre ťuknutie priehľadná – zakrýva políčko za sebou, to hráč myslí
     const sprites = [...[...chars.entries()].filter(([id, o]) => o.alive && id !== 'me').map(([, o]) => o.sp), babka && babka.sp].filter(Boolean);
-    const hits = ray.intersectObjects(sprites.concat(mesh ? [mesh] : [], glacierMesh ? [glacierMesh] : [], waterMesh ? [waterMesh] : [], fineMeshes.filter(m => m.visible && m.userData.fade > 0.5), fineMeshes.map(m => m.userData.solidPart).filter(Boolean)), false);
+    // Les divov (temná plocha): ťuknutie prechádza cez všetky objekty (stromy, kmene, kry…) na zem pod prstom –
+    // ťukať sa bude len na vyslovene hracie objekty (a na hráčov), premietnutie na stromy by prekáželo
+    const objects = D.isDark(S.area) ? [] : fineMeshes.filter(m => m.visible && m.userData.fade > 0.5).concat(fineMeshes.map(m => m.userData.solidPart).filter(Boolean));
+    const hits = ray.intersectObjects(sprites.concat(mesh ? [mesh] : [], glacierMesh ? [glacierMesh] : [], waterMesh ? [waterMesh] : [], objects), false);
     for (const h of hits) {
       if (h.object.isSprite || h.object.userData.tile) return Object.assign({}, h.object.userData.tile);
       const q = h.point.clone().addScaledVector(h.face.normal, -0.01);
