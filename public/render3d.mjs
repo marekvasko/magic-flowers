@@ -102,7 +102,7 @@ uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec
 uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount; uniform float opacity;
 uniform float shadowOn; uniform vec2 shadowTexel; uniform float shadowRadius;
 uniform vec3 gloom; uniform vec3 gloomFog;
-uniform float darkOn; uniform float sunMode; uniform vec4 eye; uniform vec2 eyeLit; uniform vec3 darkFog; uniform sampler2D canopy; uniform vec2 areaSize;
+uniform float darkOn; uniform float sunMode; uniform vec3 sunFill; uniform vec4 eye; uniform vec2 eyeLit; uniform vec3 darkFog; uniform sampler2D canopy; uniform vec2 areaSize;
 varying vec3 vColor; varying float vAo; varying float vEmis; varying float vTex; varying float vFacing; varying float vUp;
 varying vec2 vUv; varying vec3 vPos; varying vec4 vShadow;
 ${SHADOW_GLSL}
@@ -113,9 +113,11 @@ void main() {
   float gm = gloomAt(vPos.z);
   // darkOn 0–1: koľko tmy Lesa divov (pri severnom okraji Lesa na pomedzí postupne pribúda, opar Lesa na pomedzí ubúda)
   // slnko v tme: sunMode 1 = skutočný tieň (mapa tieňov cez stromy), ale svieti len na zem; 0 = škvrny z šumu (forestSun)
-  float darkSun = sunMode > 0.5 ? (vTex > 0.5 ? sunVisibility(vFacing) : 0.0) : forestSun();
+  float groundSun = sunMode > 0.5 && vTex > 0.5 && darkOn > 0.0 ? sunVisibility(vFacing) : 0.0;
+  float darkSun = sunMode > 0.5 ? groundSun : forestSun();
   float sunV = darkOn >= 1.0 ? darkSun : darkOn > 0.0 ? mix(sunVisibility(vFacing), darkSun, darkOn) : sunVisibility(vFacing);
-  vec3 light = (ambient + sunColor * sunV) * (1.0 - gm * (1.0 - darkOn));
+  // osvetlená zem v tme (pokus): okrem slnka aj denné svetlo záhrady (sunFill) – v slnku je zem jasná ako v záhrade
+  vec3 light = (ambient + sunColor * sunV + sunFill * groundSun) * (1.0 - gm * (1.0 - darkOn));
   // Svetlo lampášov (aj slabé svetlo okolo hráča) je guľa okolo zdroja – na vrchy obrovských stromov nedosiahne.
   // Dohľad v tme (kde začína tma) sa však meria po zemi: vrchy kmeňov pri hráčovi sú tmavé drevo, nie čierne diery.
   float lamp = 0.0;
@@ -408,7 +410,7 @@ export function create(api) {
       shadowMap: { value: null }, shadowMatrix: { value: new THREE.Matrix4() }, sunDir: { value: new THREE.Vector3(0, 1, 0) },
       shadowOn: { value: 0 }, shadowTexel: { value: new THREE.Vector2(1 / SHADOW_SIZE, 1 / SHADOW_SIZE) }, shadowRadius: { value: 3.5 },
       shadowNormalBias: { value: 0.03 }, gloom: { value: new THREE.Vector3() }, gloomFog: { value: new THREE.Vector3() },
-      darkOn: { value: 0 }, sunMode: { value: 1 }, eye: { value: new THREE.Vector4(0, 0, 0, 3) }, eyeLit: { value: new THREE.Vector2(3, 0) },
+      darkOn: { value: 0 }, sunMode: { value: 1 }, sunFill: { value: new THREE.Vector3() }, eye: { value: new THREE.Vector4(0, 0, 0, 3) }, eyeLit: { value: new THREE.Vector2(3, 0) },
       darkFog: { value: new THREE.Vector3() }, canopy: { value: null }, areaSize: { value: new THREE.Vector2(S.W, S.H) }
     }
   });
@@ -1227,9 +1229,13 @@ void main() {
     if (k > 0) material.uniforms.emisColor.value.set(1, 0.95, 0.8); // v Lese divov svieti živica aj cez deň
     material.uniforms.lampColor.value.set(...LAMP_COL.map(v => v * lerp(1, dark.lampK, k)));
     curDark = null;
+    const gardenAmb = curAmb;
+    material.uniforms.sunFill.value.set(0, 0, 0);
     if (k > 0) {
       curAmb = mix3(curAmb, mix3(NIGHT_AMB.map(v => v * DARK_AMB_NIGHT), DAY_AMB.map(v => v * DARK_AMB), dl), k);
-      curSun = curSun.map(v => v * lerp(1, DARK_SUN, k));
+      // skutočný tieň na zemi (pokus): slnko v plnej sile ako v záhrade; škvrny zo šumu slabšie (DARK_SUN)
+      curSun = curSun.map(v => v * lerp(1, lesSunMode() ? 1 : DARK_SUN, k));
+      if (lesSunMode()) material.uniforms.sunFill.value.set(...gardenAmb.map((v, i) => Math.max(0, v - curAmb[i]))); // zem v slnku ako v záhrade
       material.uniforms.ambient.value.set(...curAmb);
       material.uniforms.sunColor.value.set(...curSun);
       const night = mix3(DARK_NIGHT, DARK_DAY, dl);
