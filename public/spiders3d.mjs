@@ -25,18 +25,21 @@ void main() {
 export const WEB_FRAG = (MAX) => `
 precision highp float;
 #define TAU 6.28318530718
-uniform vec2 uSize; uniform vec2 uCenter; uniform float uSeed; uniform float uKeep; uniform vec3 uView;
-uniform vec4 uMode; // x výplň (0 špirála, 1 kruhy), y kútová, z počet lúčov, w rozostup závitov
+uniform vec2 uSize; uniform float uSeed; uniform float uKeep; uniform vec3 uView;
+uniform vec4 uMode; // x výplň (0 špirála, 1 kruhy), y kútová (spleť), z počet lúčov, w rozostup závitov
 uniform vec4 uA;    // ohnutie lúčov, jeho frekvencia, zvlnenie závitov, jeho frekvencia
 uniform vec4 uB;    // stred, voľná zóna, polomer, šum okraja
 uniform vec4 uC;    // hrúbka vlákna, lesk, dúha, priehľadnosť v šere
-uniform vec4 uD;    // šum rozostupu, prehnutie nosných vlákien, kotviace vlákna na stranu
+uniform vec4 uD;    // šum rozostupu, prehnutie nosných vlákien, závoj kútovej pavučiny
+uniform vec4 uE;    // rozptyl počtu lúčov, počet stredov, kotviace vlákna na ľavom a pravom kmeni
+uniform vec4 uHX; uniform vec4 uHY; // stredy (najviac 4)
 uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 sunDir; uniform vec3 lampColor;
 uniform vec4 lights[${MAX}]; uniform int lightCount;
 uniform float darkOn; uniform vec4 eye; uniform vec2 eyeLit;
 varying vec2 vP; varying vec3 vPos; varying vec3 vAx; varying vec3 vAy;
-float h11(float n) { return fract(sin(n * 127.1 + uSeed * 311.7) * 43758.5453); }
-float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7)) + uSeed * 17.13) * 43758.5453); }
+float gSeed;
+float h11(float n) { return fract(sin(n * 127.1 + gSeed * 311.7) * 43758.5453); }
+float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7)) + gSeed * 17.13) * 43758.5453); }
 // Perlinov (gradientový) šum
 vec2 grad(vec2 i) { float a = TAU * h21(i); return vec2(cos(a), sin(a)); }
 float perlin(vec2 p) {
@@ -51,53 +54,107 @@ float thread(float d, float w) {
   return (1.0 - smoothstep(ww * 0.5, ww * 0.5 + fw, d)) * min(1.0, w / ww * 1.8);
 }
 float segDist(vec2 p, vec2 a, vec2 b) { vec2 ab = b - a; float t = clamp(dot(p - a, ab) / dot(ab, ab), 0.0, 1.0); return length(p - a - ab * t); }
-void main() {
-  vec2 q = vP - uCenter;
+vec2 hub(int i) { return vec2(uHX[i], uHY[i]); }
+
+// Kútová pavučina (krížiak, zaprášený kút): šikmá plocha od steny (hore, y = výška) k zemi (dole) pri päte steny;
+// x = šírka je koniec steny. Pavučina je trojuholníková blana vtlačená do kúta pri konci steny: veľa krátkych vlákien
+// krížom-krážom, pár dlhých nosných a zaprášený závoj (Perlinov šum), najhustejší pri samom kúte.
+float tangle(vec2 p, out vec2 tl, out float veil) {
+  vec2 S = uSize, q = p / S; float m = 0.0, w = uC.x * 0.55; tl = vec2(0.0, 1.0);
+  float tri = q.x + q.y; // trojuholník pri konci steny: q.x + q.y ≥ 1
+  if (tri < 0.85) { veil = 0.0; return 0.0; }
+  for (int i = 0; i < 36; i++) { // krátke vlákna krížom-krážom
+    float fi = float(i);
+    vec2 u = vec2(h11(fi), h11(fi + 7.0)); if (u.x + u.y < 1.0) u = 1.0 - u; // náhodný bod v trojuholníku
+    float an = h11(fi + 13.0) * TAU, ln = (0.12 + 0.3 * h11(fi + 19.0)) * S.x;
+    vec2 a = u * S, b = a + vec2(cos(an), sin(an)) * ln;
+    float t = thread(segDist(p, a, b), w) * (0.4 + 0.5 * h11(fi + 23.0));
+    if (t > m) { m = t; tl = normalize(b - a); }
+  }
+  for (int i = 0; i < 7; i++) { // nosné: z konca steny (x = šírka) na stenu (y = výška), mierne prehnuté
+    float fi = float(i) + 90.0;
+    vec2 a = vec2(S.x, h11(fi) * S.y), b = vec2((0.05 + 0.9 * h11(fi + 5.0)) * S.x, S.y);
+    vec2 c = mix(a, b, 0.5) - vec2(0.06, 0.06) * S * h11(fi + 9.0);
+    float t = thread(min(segDist(p, a, c), segDist(p, c, b)), w * 1.2);
+    if (t > m) { m = t; tl = normalize(b - a); }
+  }
+  m *= smoothstep(0.85, 1.0, tri);
+  float n = perlin(p * 14.0 + gSeed) * 0.6 + perlin(p * 37.0) * 0.4;
+  veil = uD.z * smoothstep(0.9, 1.45, tri) * smoothstep(-0.3, 0.3, n);
+  return m;
+}
+
+// Kruhová (orb) pavučina okolo stredu c (jeden z viacerých stredov veľkej pavučiny)
+float orb(vec2 p, vec2 c, float cellW, bool inside, out vec2 tl) {
+  vec2 q = p - c;
   float r = length(q), a = atan(q.y, q.x);
-  bool corner = uMode.y > 0.5; // kútová pavučina: vejár zo stredu v rohu (štvrť kruhu)
-  float rays = uMode.z, span = corner ? TAU * 0.25 : TAU, W = uC.x;
-  float bend = perlin(vec2(r * uA.y, uSeed * 7.1)) * uA.x / max(r * 2.0, 0.6); // lúče sa jemne vlnia
+  float rays = uMode.z + floor(h11(5.0) * (uE.x + 1.0)), W = uC.x;
+  float bend = perlin(vec2(r * uA.y, gSeed * 7.1)) * uA.x / max(r * 2.0, 0.6);
   float ab = a + bend;
-  float k = floor(ab / (span / rays) + 0.5);
-  float ar = k * span / rays + (h11(k) - 0.5) * (span / rays) * 0.35;
+  float k = floor(ab / (TAU / rays) + 0.5);
+  float ar = k * TAU / rays + (h11(k) - 0.5) * (TAU / rays) * 0.35;
   float dt = ab - ar;
-  float rMax = (corner ? 0.95 : uB.z * min(uSize.x, uSize.y) + 0.12 * max(uSize.x - uSize.y, 0.0)) * (1.0 + uB.w * perlin(vec2(a * 1.3, uSeed * 3.7)));
-  // nosné vlákna hore a dole: medzi kmeňmi (x = 0 a x = šírka), prehnuté
-  float s = clamp(vP.x / uSize.x, 0.0, 1.0), sagK = uD.y * 4.0 * s * (1.0 - s);
-  float yTop = uSize.y * 0.96 - sagK, yBot = uSize.y * 0.06 + sagK * 0.5;
-  bool inside = corner || (vP.y < yTop && vP.y > yBot);
+  float rMax = (uB.z * min(cellW, uSize.y) + 0.12 * max(cellW - uSize.y, 0.0)) * (1.0 + uB.w * perlin(vec2(a * 1.3, gSeed * 3.7)));
   float mR = inside && r > uB.x * 0.5 && h11(k + 40.0) < uKeep + 0.15 ? thread(r * abs(sin(dt)), W) : 0.0;
-  float mF = 0.0, mM = 0.0; vec2 tM = vec2(1.0, 0.0);
-  if (!corner) {
+  float rp = r * cos(dt) * (1.0 + uA.z * perlin(vec2(ab * uA.w, r * 6.0)));
+  float pitch = uMode.w * (1.0 + (h11(9.0) - 0.5) * 0.3) * (1.0 + uD.x * perlin(vec2(r * 3.0, gSeed)));
+  float t = uMode.x < 0.5 ? (rp - uB.y) / pitch - (a + 3.14159265) / TAU : (rp - uB.y) / pitch; // špirála / kruhy
+  float dS = abs(fract(t + 0.5) - 0.5) * pitch;
+  float mS = inside && rp > uB.y && r < rMax && h21(vec2(floor(t + 0.5), k)) < uKeep ? thread(dS, W) : 0.0;
+  float mH = r < uB.x ? thread(abs(fract(r / (pitch * 0.3) + 0.5) - 0.5) * pitch * 0.3, W) : 0.0;
+  tl = mR >= mS ? vec2(cos(ar), sin(ar)) : vec2(-sin(ar), cos(ar));
+  return max(max(mR, mS), mH);
+}
+
+void main() {
+  gSeed = uSeed;
+  vec2 tl = vec2(1.0, 0.0);
+  float mask = 0.0, veil = 0.0, W = uC.x;
+  if (uMode.y > 0.5) {
+    mask = tangle(vP, tl, veil);
+  } else {
+    float nH = uE.y;
+    // najbližší stred (každý stred je samostatná kruhová pavučina, susedné zdieľajú deliace vlákno)
+    float d1 = 1e9, d2 = 1e9; int bi = 0; vec2 c1 = hub(0), c2 = hub(0);
+    for (int i = 0; i < 4; i++) {
+      if (float(i) >= nH) break;
+      vec2 ci = hub(i); float d = distance(vP, ci);
+      if (d < d1) { d2 = d1; c2 = c1; d1 = d; c1 = ci; bi = i; } else if (d < d2) { d2 = d; c2 = ci; }
+    }
+    // nosné vlákna hore a dole: medzi kmeňmi (x = 0 a x = šírka), prehnuté
+    float s = clamp(vP.x / uSize.x, 0.0, 1.0), sagK = uD.y * 4.0 * s * (1.0 - s);
+    float yTop = uSize.y * 0.96 - sagK, yBot = uSize.y * 0.06 + sagK * 0.5;
+    bool inside = vP.y < yTop && vP.y > yBot;
     float kf = step(0.5, h21(floor(vP * 2.0)) + uKeep);
-    mF = max(thread(abs(vP.y - yTop), W * 1.3), thread(abs(vP.y - yBot), W)) * kf;
-    // kotviace vlákna: z bodov na oboch kmeňoch k okraju pavučiny
-    for (int i = 0; i < 6; i++) {
-      if (float(i) >= uD.z) break;
-      for (int sd = 0; sd < 2; sd++) {
-        float fy = (float(i) + 0.5 + (h11(float(i * 2 + sd) + 9.0) - 0.5) * 0.6) / uD.z;
+    float mF = max(thread(abs(vP.y - yTop), W * 1.3), thread(abs(vP.y - yBot), W)) * kf;
+    if (mF > mask) { mask = mF; tl = vec2(1.0, 0.0); }
+    // deliace vlákno medzi susednými stredmi (vzdialenosť k osi úsečky medzi nimi)
+    if (nH > 1.5 && inside) {
+      float mB = thread((d2 * d2 - d1 * d1) / (2.0 * max(distance(c1, c2), 1e-3)), W) * kf;
+      if (mB > mask) { mask = mB; vec2 n = normalize(c2 - c1); tl = vec2(-n.y, n.x); }
+    }
+    gSeed = uSeed + float(bi) * 13.7;
+    vec2 to;
+    float mO = orb(vP, c1, uSize.x / nH, inside, to);
+    if (mO > mask) { mask = mO; tl = to; }
+    // kotviace vlákna: náhodne veľa z bodov na ľavom a pravom kmeni k okraju krajného stredu
+    gSeed = uSeed;
+    for (int sd = 0; sd < 2; sd++) {
+      float cnt = sd == 0 ? uE.z : uE.w;
+      vec2 c = sd == 0 ? hub(0) : hub(int(nH) - 1);
+      float rim = uB.z * min(uSize.x / nH, uSize.y) * 0.92;
+      for (int i = 0; i < 6; i++) {
+        if (float(i) >= cnt) break;
+        float fi = float(i * 2 + sd);
+        float fy = (float(i) + 0.5 + (h11(fi + 9.0) - 0.5) * 0.8) / cnt;
         vec2 A = vec2(sd == 0 ? 0.0 : uSize.x, mix(yBot, yTop, fy));
-        vec2 dir = normalize(A - uCenter), B = uCenter + dir * rMax * 0.92;
-        float d = segDist(vP, A, B);
-        if (h11(float(i * 2 + sd) + 70.0) < uKeep + 0.2) { float m = thread(d, W); if (m > mM) { mM = m; tM = normalize(B - A); } }
+        vec2 B = c + normalize(A - c + vec2(0.0, (h11(fi + 3.0) - 0.5) * 0.4)) * rim;
+        float m = thread(segDist(vP, A, B), W);
+        if (m > mask) { mask = m; tl = normalize(B - A); }
       }
     }
   }
-  // výplň: závity sú medzi lúčmi rovné (polomer premietnutý na os lúča), zvlnené šumom
-  float rp = r * cos(dt) * (1.0 + uA.z * perlin(vec2(ab * uA.w, r * 6.0)));
-  float pitch = uMode.w * (1.0 + uD.x * perlin(vec2(r * 3.0, uSeed)));
-  float free = uB.y, hub = uB.x;
-  float t = uMode.x < 0.5 ? (rp - free) / pitch - (corner ? ab / span : (a + 3.14159265) / TAU) : (rp - free) / pitch; // špirála / kruhy
-  float dS = abs(fract(t + 0.5) - 0.5) * pitch;
-  float seg = h21(vec2(floor(t + 0.5), k));
-  float mS = inside && rp > free && r < rMax && seg < uKeep ? thread(dS, W) : 0.0;
-  // hustý stred
-  float mH = !corner && r < hub ? thread(abs(fract(r / (pitch * 0.3) + 0.5) - 0.5) * pitch * 0.3, W) : 0.0;
-  float mask = max(max(max(mR, mF), max(mS, mH)), mM);
-  if (corner) mask *= step(0.0, ab) * step(ab, span + 0.05) * step(r, 1.0);
-  if (mask < 0.003) discard;
-  // smer vlákna vo svete: lúč ide od stredu, závit kolmo naň, nosné vlákno vodorovne, kotviace k okraju
-  vec2 tl = mM >= mask - 1e-4 ? tM : mF >= mask - 1e-4 ? vec2(1.0, 0.0) : mR >= mS ? vec2(cos(ar), sin(ar)) : vec2(-sin(ar), cos(ar));
+  if (max(mask, veil) < 0.003) discard;
   vec3 T = normalize(vAx * tl.x + vAy * tl.y), V = normalize(uView);
   // rozptyl a odlesk na vlákne (Kajiya–Kay)
   float lamp = 0.0, spec = 0.0, diff = 0.0;
@@ -116,35 +173,50 @@ void main() {
   col += silk * vec3(0.8, 0.85, 1.0) * eyeLit.y * darkOn * (1.0 - smoothstep(0.0, eyeLit.x, distance(vPos, eye.xyz)));
   vec3 iri = (1.0 - uC.z) + uC.z * cos(vec3(0.0, 2.1, 4.2) + dot(T, V) * 6.0 + uSeed); // jemná dúha v odlesku
   col += (lampColor * spec * 2.2 + sunColor * sunK * pow(sqrt(max(0.0, 1.0 - sh * sh)), uC.y) * 1.5) * iri;
+  // závoj kútovej pavučiny: zaprášený, rozptyľuje svetlo zo všetkých strán
+  vec3 dust = vec3(0.78, 0.76, 0.72) * (ambient + sunColor * sunK * 0.6 + lampColor * lamp * 0.6);
   // tma Lesa divov: za dohľadom vlákna zmiznú, lampášom osvetlené ostanú
   float fogK = 0.0;
   if (darkOn > 0.0) fogK = darkOn * smoothstep(eye.w * 0.6, eye.w * 1.15, distance(vPos.xz, eye.xz)) * (1.0 - clamp(lamp * 1.6 + spec * 4.0, 0.0, 1.0));
   float lum = dot(col, vec3(0.3, 0.55, 0.15));
-  float alpha = mask * clamp(uC.w + lum * 1.3, 0.0, 1.0) * (1.0 - fogK);
-  gl_FragColor = vec4(min(col, vec3(1.6)), alpha);
+  float aT = mask * clamp(uC.w + lum * 1.3, 0.0, 1.0);
+  float alpha = (aT + veil * (1.0 - aT)) * (1.0 - fogK);
+  gl_FragColor = vec4(min(mix(dust, col, aT / max(alpha / max(1.0 - fogK, 1e-3), 1e-3)), vec3(1.6)), alpha);
 }`;
 // Materiál jednej pavučiny: P = Webs.webParams(...), opts = { w, h, seed, keep (0–1 koľko vlákien ostalo), corner }.
+// Veľká pavučina má náhodne veľa stredov (1 … P.hubs, na každý aspoň P.hubSpan políčka šírky) a na každom kmeni
+// náhodne veľa kotviacich vlákien (P.moorMin … P.moor).
 // world = uniformy svetla (svet v hre, vlastné v ladiacej stránke), view = { value: Vector3 } smer ku kamere.
 export function webMaterial(THREE, world, view, P, opts, maxLights) {
   const { w, h, corner } = opts, seed = (opts.seed + P.seed * 101) % 997;
   const hs = n => { const x = Math.sin(seed * 12.9898 + n * 78.233) * 43758.5453; return x - Math.floor(x); };
   const fill = P.fill === 2 ? (hs(3) < 0.5 ? 0 : 1) : P.fill;
-  const cj = P.centerJitter;
-  return new THREE.ShaderMaterial({
+  const cj = P.centerJitter, room = Math.max(1, Math.min(P.hubs, Math.floor(w / P.hubSpan)));
+  const nH = corner ? 1 : 1 + Math.floor(hs(6) * room);
+  const hx = [0, 0, 0, 0], hy = [0, 0, 0, 0];
+  for (let i = 0; i < nH; i++) {
+    hx[i] = w * (i + 0.5 + (hs(10 + i) - 0.5) * 2 * cj * (nH > 1 ? 0.8 : 1)) / nH;
+    hy[i] = h * (0.5 + (hs(20 + i) - 0.5) * 2 * cj * (nH > 1 ? 1.5 : 1));
+  }
+  const moorN = k => P.moorMin + Math.floor(hs(k) * (Math.max(P.moor, P.moorMin) - P.moorMin + 1));
+  const mat = new THREE.ShaderMaterial({
     vertexShader: WEB_VERT, fragmentShader: WEB_FRAG(maxLights), transparent: true, depthWrite: false, side: THREE.DoubleSide,
     uniforms: {
       ambient: world.ambient, sunColor: world.sunColor, sunDir: world.sunDir, lampColor: world.lampColor, lights: world.lights, lightCount: world.lightCount,
       darkOn: world.darkOn, eye: world.eye, eyeLit: world.eyeLit, uView: view,
       uSize: { value: new THREE.Vector2(w, h) },
-      uCenter: { value: corner ? new THREE.Vector2(0, 0) : new THREE.Vector2(w * (0.5 + (hs(1) - 0.5) * 2 * cj), h * (0.5 + (hs(2) - 0.5) * 2 * cj)) },
       uSeed: { value: seed % 97 }, uKeep: { value: opts.keep == null ? 1 : opts.keep },
-      uMode: { value: new THREE.Vector4(fill, corner ? 1 : 0, corner ? 6 : P.rays + Math.floor(hs(4) * (P.raysVar + 1)), (corner ? 1.6 : 1) * P.pitch * (1 + (hs(5) - 0.5) * P.pitchVar)) },
+      uMode: { value: new THREE.Vector4(fill, corner ? 1 : 0, P.rays, P.pitch * (1 + (hs(5) - 0.5) * P.pitchVar)) },
       uA: { value: new THREE.Vector4(P.bend, P.bendFreq, P.wobble, P.wobbleFreq) },
-      uB: { value: new THREE.Vector4(corner ? 0 : P.hub, corner ? 0.06 : P.free, P.radius, P.edgeNoise) },
-      uC: { value: new THREE.Vector4(P.width * (corner ? 1.3 : 1), P.glint, P.iri, P.alpha) },
-      uD: { value: new THREE.Vector4(P.pitchNoise, P.sag, P.moor, 0) }
+      uB: { value: new THREE.Vector4(P.hub, P.free, P.radius, P.edgeNoise) },
+      uC: { value: new THREE.Vector4(P.width * (corner ? 1.2 : 1), P.glint, P.iri, P.alpha) },
+      uD: { value: new THREE.Vector4(P.pitchNoise, P.sag, corner ? P.veil : 0, 0) },
+      uE: { value: new THREE.Vector4(P.raysVar, nH, moorN(7), moorN(8)) },
+      uHX: { value: new THREE.Vector4(...hx) }, uHY: { value: new THREE.Vector4(...hy) }
     }
   });
+  mat.userData.info = { hubs: nH, moor: [mat.uniforms.uE.value.z, mat.uniforms.uE.value.w], fill };
+  return mat;
 }
 
 export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, world, maxLights }) {
@@ -192,18 +264,23 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
   function buildCorners() {
     for (const m of cornerMeshes) drop(m);
     cornerMeshes.length = 0;
-    const s = 0.55;
+    // šikmo v kúte medzi pätou steny a zemou, pri konci steny: hore sa drží steny, dole zeme
+    const L = 0.7, up = 0.42, out = 0.4;
     for (const k of S.corner) {
-      const bx = k.x + 0.5 + k.dx * 0.5 + k.ex * 0.47, bz = k.y + 0.5 + k.dy * 0.5 + k.ey * 0.47, gy = groundY(k.x, k.y);
-      const m = webPlane(s, s, k.x * 31 + k.y * 7 + k.dx * 3 + k.ey, 1, true);
-      m.position.set(bx - k.dx * s / 2, gy + s / 2, bz - k.dy * s / 2);
-      const rot = k.ex !== 0; // normála pavučiny je v smere e (pozdĺž steny)
-      if (rot) m.rotation.y = Math.PI / 2;
-      if ((rot ? -k.dy : k.dx) > 0) m.scale.x = -1; // stred vejára (roh plochy vľavo dolu) k stene
+      const gy = groundY(k.x, k.y);
+      const fx = k.x + 0.5 + k.dx * 0.5, fz = k.y + 0.5 + k.dy * 0.5; // stred päty steny na hranici políčok
+      const ex = fx + k.ex * 0.5, ez = fz + k.ey * 0.5;                 // koniec steny
+      const top = new THREE.Vector3(ex - k.ex * L / 2, gy + up, ez - k.ey * L / 2);
+      const bot = new THREE.Vector3(top.x - k.dx * out, gy + 0.01, top.z - k.dy * out);
+      const X = new THREE.Vector3(k.ex, 0, k.ey), Y = top.clone().sub(bot), len = Y.length();
+      Y.normalize();
+      const m = webPlane(L, len, k.x * 31 + k.y * 7 + k.dx * 3 + k.ey, 1, true);
+      m.matrixAutoUpdate = false;
+      m.matrix.makeBasis(X, Y, X.clone().cross(Y)).setPosition(top.clone().add(bot).multiplyScalar(0.5));
       cornerMeshes.push(m);
       // krížiak sedí v pavučine
       const sp = makeSprite(0.26, 0.13); sp.material.map = frameTex('k', 0); sp.layers.set(1);
-      sp.position.set(bx - k.dx * 0.16, gy + 0.2, bz - k.dy * 0.16);
+      sp.position.set(top.x * 0.7 + bot.x * 0.3 + k.ex * 0.2, gy + up * 0.55, top.z * 0.7 + bot.z * 0.3 + k.ey * 0.2);
       cornerMeshes.push(sp);
     }
   }
