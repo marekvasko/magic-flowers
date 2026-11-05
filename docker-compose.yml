@@ -11,6 +11,10 @@ services:
     image: ${IMAGE:-magicflowers:latest}
     container_name: ${NAME:-magicflowers}
     restart: unless-stopped
+    environment:
+      # štartovné mince a úroveň reputácie nového hráča – nastavuje ich deploy.sh len pre dev a PR náhľady
+      START_COINS: ${START_COINS:-}
+      START_REP: ${START_REP:-}
     volumes:
       - magicflowers-data:/app/data
     networks:

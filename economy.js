@@ -422,7 +422,17 @@ function marketView(room) {
 }
 function boardView(room) { return { t: 'board', list: room.contracts.list }; }
 
+// Počiatočné mince a reputácia nového hráča. V testovacích prostrediach (PR náhľady, dev) ich nastaví
+// scripts/deploy.sh cez START_COINS a START_REP (úroveň reputácie); v produkcii platí chudobný začiatok.
+function startCapital(env) {
+  const coins = Number.parseInt(env.START_COINS, 10), lvl = Number.parseInt(env.START_REP, 10);
+  return {
+    coins: coins >= 0 ? coins : 30,
+    rep: lvl > 0 ? D.REP_LEVELS[Math.min(lvl, D.REP_LEVELS.length - 1)] : 0
+  };
+}
+
 module.exports = {
-  setHooks, initEconomy, onDawn, HANDLERS, buy, sell, sellQuote, buyQuote, seedPrice, flowerPrice,
+  startCapital, setHooks, initEconomy, onDawn, HANDLERS, buy, sell, sellQuote, buyQuote, seedPrice, flowerPrice,
   takeContract, deliverContract, upgrade, canCap, plotLimit, maxActive, marketView, boardView, phase, PLANTABLE
 };

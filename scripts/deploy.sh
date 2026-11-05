@@ -37,6 +37,8 @@ case "$env" in
 esac
 
 export NAME=$name DOMAIN=$domain
+# Testovacie prostredia: nový hráč začína s 5000 🪙 a reputáciou úrovne 3. Produkcia má chudobný začiatok.
+if [[ "$env" == prod ]]; then export START_COINS= START_REP=; else export START_COINS=5000 START_REP=3; fi
 dc() { docker compose -p "$project" -f docker-compose.yml "$@"; }
 
 if [[ "$action" == down ]]; then

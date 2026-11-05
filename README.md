@@ -52,7 +52,7 @@ The branching model, worktrees and the release procedure are described in [AGENT
 
 All of it lives in `economy.js` and runs on the event scheduler; its state (`room.market`, `room.contracts`) is saved with the world.
 
-- **Poor start:** 30 coins, 4 seeds of the cheapest in-season flower, a watering can for 5 pours, a permit for 8 plots. Players from older versions keep what they had (can 25, 28 plots).
+- **Poor start:** 30 coins, 4 seeds of the cheapest in-season flower, a watering can for 5 pours, a permit for 8 plots. Players from older versions keep what they had (can 25, 28 plots). In PR previews and dev, `scripts/deploy.sh` sets `START_COINS=5000` and `START_REP=3` (reputation level), so new players there can test everything right away; production keeps the poor start.
 - **Upgrades** (Market → Upgrade): bigger watering can, bigger field, composter (compost every morning). Higher tiers need reputation. The same tab sells the **pickaxe** (60 coins, once per player) and the shared **icehouse** building (400 coins, reputation 1, see *Ice* below).
 - **Living market:** limited seed stock; seed price depends on stock and season (in season they are expensive and scarce). The flower buy-back price drops as the market fills up, recovers overnight, is higher off-season and during festivals. Prices are recorded every morning and shown as small charts.
 - **Wholesaler** delivers every 2 days at 7:00 – mostly seeds for the *next* season.

@@ -15,6 +15,7 @@ const PORT = +process.env.PORT || 3000;
 // Dĺžka herného dňa je napevno D.BASE_DAY_SECONDS (20 min); DAY_SECONDS v prostredí slúži len na testovanie.
 const DAY_SECONDS = +process.env.DAY_SECONDS || D.BASE_DAY_SECONDS;
 const MAX_PLAYERS = 4;
+const START = Econ.startCapital(process.env); // mince a reputácia nového hráča (v testovacích prostrediach viac)
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const SHARED_DIR = path.join(__dirname, 'shared');
@@ -158,8 +159,8 @@ function newSave(room) {
   const sp = Econ.PLANTABLE.filter(k => !D.SPECIES[k].strict && D.SPECIES[k].seasons.includes(se))
     .sort((a, b) => D.SPECIES[a].seed - D.SPECIES[b].seed)[0];
   return {
-    coins: 30, water: 5, inv: { hoe: 1, can: 1, ['seed_' + sp]: 4 },
-    recipes: [], seen: [sp], vily: 0, look: null, talked: false, rep: 0, up: { can: 0, plots: 0, composter: 0 }
+    coins: START.coins, water: 5, inv: { hoe: 1, can: 1, ['seed_' + sp]: 4 },
+    recipes: [], seen: [sp], vily: 0, look: null, talked: false, rep: START.rep, up: { can: 0, plots: 0, composter: 0 }
   };
 }
 // Hráči zo starších verzií hry: nezoberieme im to, čo mali (krhla na 20 a neobmedzené pole).
