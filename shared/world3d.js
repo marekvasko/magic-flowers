@@ -381,67 +381,105 @@
     }
     return ends;
   }
+  // Parametre stromov: každé číslo tvaru má meno, predvolenú hodnotu a rozsah (pre editor generátorov v /debug, #64).
+  // S predvolenými hodnotami vyjde strom presne taký ako predtým (test/trees.test.js to stráži).
+  const P = (def, min, max, step) => ({ def, min, max, step });
+  const COMMON = { seed: P(0, 0, 999, 1) }; // posun semienka všetkých náhodných častí
+  const TREE_PARAMS = {
+    buk: { trunkH: P(14, 4, 30, 1), branchY: P(10, 2, 30, 1), branches: P(5, 0, 12, 1), branchR: P(4.5, 1, 8, 0.1), branchTop: P(17, 4, 36, 1),
+      leaderTop: P(23, 4, 40, 1), crownY: P(21, 6, 38, 0.5), crownR: P(6.5, 1, 9, 0.1), crownH: P(5.5, 1, 9, 0.1), clumpLift: P(2, 0, 6, 0.5),
+      clumpR: P(3.4, 0, 6, 0.1), clumpH: P(3, 0, 6, 0.1), holes: P(0.05, 0, 0.6, 0.01), clumpHoles: P(0.08, 0, 0.6, 0.01), rough: P(0.45, 0, 1.5, 0.05), snow: P(0.6, 0, 1, 0.05) },
+    dub: { trunkH: P(11, 4, 30, 1), flareH: P(2, 0, 6, 1), branchY: P(8, 2, 30, 1), branches: P(6, 0, 12, 1), branchR: P(6.2, 1, 8, 0.1), branchTop: P(13, 4, 36, 1),
+      crownY: P(17, 6, 38, 0.5), crownR: P(7.3, 1, 9, 0.1), crownH: P(4.2, 1, 9, 0.1), clumpLift: P(2.5, 0, 6, 0.5), clumpR: P(3.2, 0, 6, 0.1), clumpH: P(2.6, 0, 6, 0.1),
+      holes: P(0.05, 0, 0.6, 0.01), clumpHoles: P(0.06, 0, 0.6, 0.01), rough: P(0.45, 0, 1.5, 0.05), snow: P(0.6, 0, 1, 0.05) },
+    breza: { trunkH: P(26, 4, 40, 1), marks: P(0.22, 0, 1, 0.01), twigs: P(6, 0, 12, 1), twigY: P(13, 2, 36, 1), twigStep: P(2, 0, 5, 1), twigTurn: P(1.1, 0, 6.3, 0.1),
+      twigLen: P(3, 0, 6, 1), twigRise: P(4, 0, 8, 1), clumps: P(6, 0, 12, 1), clumpY: P(15, 4, 38, 0.5), clumpStep: P(2.4, 0, 5, 0.1), clumpTurn: P(2.1, 0, 6.3, 0.1),
+      clumpSpread: P(2.4, 0, 6, 0.1), clumpR: P(2.8, 0, 6, 0.1), clumpH: P(2.3, 0, 6, 0.1), holes: P(0.22, 0, 0.6, 0.01),
+      topY: P(29, 4, 42, 0.5), topR: P(2.4, 0, 6, 0.1), topH: P(2.2, 0, 6, 0.1), topHoles: P(0.15, 0, 0.6, 0.01), rough: P(0.45, 0, 1.5, 0.05), snow: P(0.4, 0, 1, 0.05) },
+    jablon: { trunkH: P(6, 2, 20, 1), branchY: P(5, 1, 20, 1), branches: P(4, 0, 12, 1), branchR: P(3.2, 1, 8, 0.1), branchTop: P(9, 2, 30, 1),
+      crownY: P(11, 4, 36, 0.5), crownR: P(5.4, 1, 9, 0.1), crownH: P(4.3, 1, 9, 0.1), holes: P(0.05, 0, 0.6, 0.01), rough: P(0.45, 0, 1.5, 0.05),
+      applesSummer: P(0.09, 0, 1, 0.01), applesAutumn: P(0.14, 0, 1, 0.01), snow: P(0.6, 0, 1, 0.05) },
+    smrek: { trunkH: P(28, 4, 40, 1), base: P(4, 0, 20, 1), top: P(36, 8, 40, 1), spire: P(3, 0, 6, 1), baseR: P(7.2, 1, 9, 0.1), tipR: P(0.7, 0, 3, 0.1),
+      minR: P(1.3, 0, 4, 0.1), tier: P(4, 1, 8, 1), droop: P(0.13, 0, 0.5, 0.01), rough: P(0.9, 0, 2, 0.05), dark: P(0.5, 0, 1, 0.05), snow: P(0.75, 0, 1, 0.05) },
+    borovica: { trunkH: P(30, 4, 40, 1), crownY: P(31.5, 8, 40, 0.5), crownR: P(5.8, 1, 9, 0.1), crownH: P(2.8, 1, 6, 0.1), sides: P(1, 0, 2, 0.05),
+      holes: P(0.08, 0, 0.6, 0.01), rough: P(0.45, 0, 1.5, 0.05), snow: P(0.8, 0, 1, 0.05) }
+  };
+  for (const k in TREE_PARAMS) TREE_PARAMS[k] = Object.assign({}, COMMON, TREE_PARAMS[k]);
+  // Predvolené parametre druhu stromu prepísané zadanými (orezané na rozsah a krok)
+  function treeParams(kind, over) {
+    const out = {};
+    for (const [k, d] of Object.entries(TREE_PARAMS[kind])) {
+      const v = over && Number.isFinite(+over[k]) && over[k] !== '' && over[k] != null ? +over[k] : d.def;
+      out[k] = Math.max(d.min, Math.min(d.max, d.step >= 1 ? Math.round(v) : v));
+    }
+    return out;
+  }
   const TREE_BUILD = {
-    buk(C, se) {
-      C.fbox(3, 0, 3, 4, 14, 4, M.BARK); roots(C, M.BARK);
-      const ends = branches(C, 10, 5, 4.5, 17, M.BARK, 1);
-      C.line(4, 12, 4, 4, 23, 3, M.BARK);
-      if (se === 3) return snowOn(C, [M.BARK], 0.6, 10);
+    buk(C, se, p) {
+      C.fbox(3, 0, 3, 4, p.trunkH, 4, M.BARK); roots(C, M.BARK);
+      const ends = branches(C, p.branchY, p.branches, p.branchR, p.branchTop, M.BARK, 1 + p.seed);
+      C.line(4, p.trunkH - 2, 4, 4, p.leaderTop, 3, M.BARK);
+      if (se === 3) return snowOn(C, [M.BARK], p.snow, p.branchY);
       const mat = pickOf(LEAVES.buk[se]);
-      blob(C, CX, 21, CZ, 6.5, 5.5, 6.5, mat, 0.05, 1);
-      for (const e of ends) blob(C, e[0], e[1] + 2, e[2], 3.4, 3, 3.4, mat, 0.08, 2);
+      blob(C, CX, p.crownY, CZ, p.crownR, p.crownH, p.crownR, mat, p.holes, 1 + p.seed, p.rough);
+      for (const e of ends) blob(C, e[0], e[1] + p.clumpLift, e[2], p.clumpR, p.clumpH, p.clumpR, mat, p.clumpHoles, 2 + p.seed, p.rough);
     },
-    dub(C, se) {
-      C.fbox(3, 0, 3, 4, 11, 4, M.BARK_DARK); C.fbox(2, 0, 3, 5, 2, 4, M.BARK_DARK); C.fbox(3, 0, 2, 4, 2, 5, M.BARK_DARK);
-      const ends = branches(C, 8, 6, 6.2, 13, M.BARK_DARK, 2);
-      if (se === 3) return snowOn(C, [M.BARK_DARK], 0.6, 8);
+    dub(C, se, p) {
+      C.fbox(3, 0, 3, 4, p.trunkH, 4, M.BARK_DARK);
+      if (p.flareH > 0) { C.fbox(2, 0, 3, 5, p.flareH, 4, M.BARK_DARK); C.fbox(3, 0, 2, 4, p.flareH, 5, M.BARK_DARK); }
+      const ends = branches(C, p.branchY, p.branches, p.branchR, p.branchTop, M.BARK_DARK, 2 + p.seed);
+      if (se === 3) return snowOn(C, [M.BARK_DARK], p.snow, p.branchY);
       const mat = pickOf(LEAVES.dub[se]);
-      blob(C, CX, 17, CZ, 7.3, 4.2, 7.3, mat, 0.05, 3);
-      for (const e of ends) blob(C, e[0], e[1] + 2.5, e[2], 3.2, 2.6, 3.2, mat, 0.06, 4);
+      blob(C, CX, p.crownY, CZ, p.crownR, p.crownH, p.crownR, mat, p.holes, 3 + p.seed, p.rough);
+      for (const e of ends) blob(C, e[0], e[1] + p.clumpLift, e[2], p.clumpR, p.clumpH, p.clumpR, mat, p.clumpHoles, 4 + p.seed, p.rough);
     },
-    breza(C, se) {
-      C.fbox(3, 0, 3, 4, 26, 4, (x, y, z) => hash(x, y, z + 21) < 0.22 ? M.BIRCH_MARK : M.BIRCH);
+    breza(C, se, p) {
+      C.fbox(3, 0, 3, 4, p.trunkH, 4, (x, y, z) => hash(x, y, z + 21 + p.seed) < p.marks ? M.BIRCH_MARK : M.BIRCH);
       // tenké vetvičky smerom hore
-      for (let i = 0; i < 6; i++) { const a = i * 1.1, y = 13 + i * 2; C.line(Math.round(CX), y, Math.round(CZ), Math.round(CX + Math.cos(a) * 3), y + 4, Math.round(CZ + Math.sin(a) * 3), M.BARK_DARK); }
-      if (se === 3) return snowOn(C, [M.BARK_DARK, M.BIRCH, M.BIRCH_MARK], 0.4, 12);
+      for (let i = 0; i < p.twigs; i++) { const a = i * p.twigTurn, y = p.twigY + i * p.twigStep; C.line(Math.round(CX), y, Math.round(CZ), Math.round(CX + Math.cos(a) * p.twigLen), y + p.twigRise, Math.round(CZ + Math.sin(a) * p.twigLen), M.BARK_DARK); }
+      if (se === 3) return snowOn(C, [M.BARK_DARK, M.BIRCH, M.BIRCH_MARK], p.snow, p.twigY - 1);
       const mat = pickOf(LEAVES.breza[se]);
-      for (let k = 0; k < 6; k++) { const a = k * 2.1; blob(C, CX + Math.cos(a) * 2.4, 15 + k * 2.4, CZ + Math.sin(a) * 2.4, 2.8, 2.3, 2.8, mat, 0.22, 10 + k); }
-      blob(C, CX, 29, CZ, 2.4, 2.2, 2.4, mat, 0.15, 17);
+      for (let k = 0; k < p.clumps; k++) { const a = k * p.clumpTurn; blob(C, CX + Math.cos(a) * p.clumpSpread, p.clumpY + k * p.clumpStep, CZ + Math.sin(a) * p.clumpSpread, p.clumpR, p.clumpH, p.clumpR, mat, p.holes, 10 + k + p.seed, p.rough); }
+      blob(C, CX, p.topY, CZ, p.topR, p.topH, p.topR, mat, p.topHoles, 17 + p.seed, p.rough);
     },
-    jablon(C, se) {
-      C.fbox(3, 0, 3, 4, 6, 4, M.BARK); roots(C, M.BARK);
-      branches(C, 5, 4, 3.2, 9, M.BARK, 3);
-      if (se === 3) return snowOn(C, [M.BARK], 0.6, 6);
-      blob(C, CX, 11, CZ, 5.4, 4.3, 5.4, pickOf(LEAVES.jablon[se]), 0.05, 5);
+    jablon(C, se, p) {
+      C.fbox(3, 0, 3, 4, p.trunkH, 4, M.BARK); roots(C, M.BARK);
+      branches(C, p.branchY, p.branches, p.branchR, p.branchTop, M.BARK, 3 + p.seed);
+      if (se === 3) return snowOn(C, [M.BARK], p.snow, p.trunkH);
+      blob(C, CX, p.crownY, CZ, p.crownR, p.crownH, p.crownR, pickOf(LEAVES.jablon[se]), p.holes, 5 + p.seed, p.rough);
       // v lete a na jeseň jablká na povrchu koruny (zboku aj zospodu)
-      if (se >= 1) for (let z = -FM; z < 12; z++) for (let y = 6; y < 18; y++) for (let x = -FM; x < 12; x++) {
+      const apples = se === 1 ? p.applesSummer : p.applesAutumn;
+      if (se >= 1) for (let z = -FM; z < C.D2 + FM; z++) for (let y = 0; y < C.sy; y++) for (let x = -FM; x < C.W2 + FM; x++) {
         const m = C.getf(x, y, z);
         if (!m || m === M.BARK || m === M.APPLE) continue;
         const exposed = !C.getf(x + 1, y, z) || !C.getf(x - 1, y, z) || !C.getf(x, y, z + 1) || !C.getf(x, y, z - 1) || !C.getf(x, y - 1, z);
-        if (exposed && hash(x, y, z + 31) < (se === 1 ? 0.09 : 0.14)) C.put(x, y, z, M.APPLE);
+        if (exposed && hash(x, y, z + 31 + p.seed) < apples) C.put(x, y, z, M.APPLE);
       }
     },
-    smrek(C, se) {
-      C.fbox(3, 0, 3, 4, 28, 4, M.BARK_DARK); // kmeň končí pod vrcholom, aby cez riedke ihličie nepresvital
-      for (let y = 4; y <= 36; y++) {
-        const t = (y - 4) / 32, layer = (y - 4) % 4;
-        const r = Math.max(1.3, (7.2 * (1 - t) + 0.7) * (1 - 0.13 * layer)); // ovisnuté poschodia
+    smrek(C, se, p) {
+      C.fbox(3, 0, 3, 4, p.trunkH, 4, M.BARK_DARK); // kmeň končí pod vrcholom, aby cez riedke ihličie nepresvital
+      for (let y = p.base; y <= p.top; y++) {
+        const t = (y - p.base) / Math.max(1, p.top - p.base), layer = (y - p.base) % p.tier;
+        const r = Math.max(p.minR, (p.baseR * (1 - t) + p.tipR) * (1 - p.droop * layer)); // ovisnuté poschodia
         for (let z = -FM; z < 12; z++) for (let x = -FM; x < 12; x++) {
-          const d = Math.hypot(x + 0.5 - CX, z + 0.5 - CZ), n = hash(x, y, z + 41);
-          if (d <= r + (n - 0.5) * 0.9 && C.getf(x, y, z) !== M.BARK_DARK) C.put(x, y, z, n < 0.5 ? M.NEEDLE : M.NEEDLE2);
+          const d = Math.hypot(x + 0.5 - CX, z + 0.5 - CZ), n = hash(x, y, z + 41 + p.seed);
+          if (d <= r + (n - 0.5) * p.rough && C.getf(x, y, z) !== M.BARK_DARK) C.put(x, y, z, n < p.dark ? M.NEEDLE : M.NEEDLE2);
         }
       }
-      C.fbox(3, 37, 3, 4, 39, 4, M.NEEDLE);
-      if (se === 3) snowOn(C, [M.NEEDLE, M.NEEDLE2], 0.75, 4);
+      if (p.spire > 0) C.fbox(3, p.top + 1, 3, 4, p.top + p.spire, 4, M.NEEDLE);
+      if (se === 3) snowOn(C, [M.NEEDLE, M.NEEDLE2], p.snow, p.base);
     },
-    borovica(C, se) {
-      C.fbox(3, 0, 3, 4, 30, 4, M.PINE_BARK);
-      for (const [y, dx, dz] of [[12, 1, 0], [17, 0, -1], [22, -1, 1]]) C.line(Math.round(CX), y, Math.round(CZ), Math.round(CX + dx * 3), y + 1, Math.round(CZ + dz * 3), M.PINE_BARK);
+    borovica(C, se, p) {
+      C.fbox(3, 0, 3, 4, p.trunkH, 4, M.PINE_BARK);
+      for (const [y, dx, dz] of [[12, 1, 0], [17, 0, -1], [22, -1, 1]]) if (y < p.trunkH) C.line(Math.round(CX), y, Math.round(CZ), Math.round(CX + dx * 3), y + 1, Math.round(CZ + dz * 3), M.PINE_BARK);
       const mat = (x, y, z, n) => n < 0.5 ? M.NEEDLE : M.NEEDLE2;
-      blob(C, CX, 31.5, CZ, 5.8, 2.8, 5.8, mat, 0.08, 51);
-      blob(C, 1, 28.5, 6, 3.4, 2.2, 3.4, mat, 0.08, 52);
-      blob(C, 6.5, 29.5, 1.5, 3.2, 2.2, 3.2, mat, 0.08, 53);
-      if (se === 3) snowOn(C, [M.NEEDLE, M.NEEDLE2], 0.8, 24);
+      blob(C, CX, p.crownY, CZ, p.crownR, p.crownH, p.crownR, mat, p.holes, 51 + p.seed, p.rough);
+      // dva bočné chumáče trochu nižšie (sides = ich veľkosť voči pôvodnej)
+      if (p.sides > 0) {
+        blob(C, 1, p.crownY - 3, 6, 3.4 * p.sides, 2.2 * p.sides, 3.4 * p.sides, mat, p.holes, 52 + p.seed, p.rough);
+        blob(C, 6.5, p.crownY - 2, 1.5, 3.2 * p.sides, 2.2 * p.sides, 3.2 * p.sides, mat, p.holes, 53 + p.seed, p.rough);
+      }
+      if (se === 3) snowOn(C, [M.NEEDLE, M.NEEDLE2], p.snow, p.crownY - 7.5);
     }
   };
   const TREE_KINDS = Object.keys(TREE_BUILD);
@@ -475,11 +513,18 @@
     return { sx, sy, sz, data: out };
   }
   const treeCache = new Map();
-  function treeModel(kind, season, rot) {
+  // over = vlastné parametre (editor generátorov): model sa vtedy postaví nanovo a neukladá sa do cache
+  function treeModel(kind, season, rot, over) {
+    if (over) {
+      const C = fineCanvas(1, 1, 44); TREE_BUILD[kind](C, season, treeParams(kind, over));
+      let f = C.done();
+      for (let i = 0; i < rot; i++) f = rotate90(f);
+      return f;
+    }
     const key = kind + '|' + season + '|' + rot;
     if (treeCache.has(key)) return treeCache.get(key);
     let f;
-    if (rot === 0) { const C = fineCanvas(1, 1, 44); TREE_BUILD[kind](C, season); f = C.done(); }
+    if (rot === 0) { const C = fineCanvas(1, 1, 44); TREE_BUILD[kind](C, season, treeParams(kind)); f = C.done(); }
     else f = rotate90(treeModel(kind, season, rot - 1));
     treeCache.set(key, f);
     return f;
@@ -750,7 +795,7 @@
 
   // farby lístia stromu v danom období (pre padajúce lístie); ihličnany a zima → null
   const leafMats = (kind, se) => (LEAVES[kind] && LEAVES[kind][se]) || null;
-  const api = { R, NX, NY, NZ, M, FINE, modelsOnRay, TREE_KINDS, treeKind, leafMats, PALETTE, EMISSIVE, colorOf, hash, buildGrid, get, surfaceY, sunDir, daylight, sunVisibility, sunHours, groundHeight, WATER_Y, waterMask, waterQuads, lilyPads, nearestWater };
+  const api = { R, NX, NY, NZ, M, FINE, modelsOnRay, TREE_KINDS, TREE_PARAMS, treeParams, treeModel, treeKind, leafMats, PALETTE, EMISSIVE, colorOf, hash, buildGrid, get, surfaceY, sunDir, daylight, sunVisibility, sunHours, groundHeight, WATER_Y, waterMask, waterQuads, lilyPads, nearestWater };
   root.World3D = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof self !== 'undefined' ? self : this);
