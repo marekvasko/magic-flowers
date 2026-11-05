@@ -374,7 +374,7 @@ export function create(api) {
     reach: 4,          // ako ďaleko od hráča smerom ku kamere sa ešte zoslabuje (bloky)
     width: 1.2,        // polovičná šírka oblasti pri hráčovi (bloky, naprieč smerom pohľadu)
     spread: 0.5,       // o koľko sa oblasť rozšíri na každý blok smerom ku kamere
-    back: 0.3,         // ako ďaleko za hráčom (smerom od kamery) ešte môže byť objekt
+    ahead: 0.3,        // o koľko (bloky) musí byť stred objektu bližšie ku kamere než hráč – objekty vedľa hráča a za ním sa nezoslabia
     ray: true,         // objekt priamo na lúči hráč → kamera zoslabiť naplno, aj keď je ďalej než reach (vysoké stromy)
     hold: 400,         // ms – ako dlho ostane objekt zoslabený, keď už do oblasti nepatrí (na hrane nebliká)
     speed: 4,          // rýchlosť prechodu (zmena viditeľnosti za sekundu)
@@ -1038,7 +1038,8 @@ export function create(api) {
   }
   // Ktoré objekty zoslabiť a nakoľko (mesh → viditeľnosť). Oblasť nie je okolo hráča, ale len pred ním smerom
   // ku kamere: klin, ktorý sa od hráča rozširuje (width + spread × vzdialenosť) a končí po reach blokoch.
-  // Rozhoduje najbližší bod pôdorysu objektu k hráčovi, takže aj dlhá budova sa zoslabí, keď je hráč pri jej rohu.
+  // Či je objekt v kline, rozhoduje stred jeho pôdorysu (koruna stromu vedľa hráča siaha k nemu, ale strom je vedľa,
+  // nie pred ním); nakoľko sa zoslabí, rozhoduje najbližší bod pôdorysu (dlhá budova sa zoslabí aj pri rohu).
   function fadeTargets(cfg, meH) {
     const out = new Map();
     if (window.MF_NOFADE) return out;
@@ -1046,9 +1047,11 @@ export function create(api) {
     const dx = toCam.x / hl, dz = toCam.z / hl, px = S.me.x, pz = S.me.y;
     for (const m of fineMeshes) {
       const b = m.userData.box;
-      const qx = Math.min(b.max.x, Math.max(b.min.x, px)) - px, qz = Math.min(b.max.z, Math.max(b.min.z, pz)) - pz;
-      const along = qx * dx + qz * dz, across = Math.abs(qx * dz - qz * dx), dist = Math.hypot(qx, qz);
-      if (along < -cfg.back || dist > cfg.reach || across > cfg.width + cfg.spread * Math.max(0, along)) continue;
+      const cx = (b.min.x + b.max.x) / 2 - px, cz = (b.min.z + b.max.z) / 2 - pz;
+      const along = cx * dx + cz * dz, across = Math.abs(cx * dz - cz * dx);
+      if (along < cfg.ahead || across > cfg.width + cfg.spread * along) continue;
+      const dist = Math.hypot(Math.min(b.max.x, Math.max(b.min.x, px)) - px, Math.min(b.max.z, Math.max(b.min.z, pz)) - pz);
+      if (dist > cfg.reach) continue;
       const k = Math.max(0, Math.min(1, (dist - cfg.near) / Math.max(0.01, cfg.reach - cfg.near)));
       out.set(m, cfg.min + (cfg.edge - cfg.min) * k);
     }
