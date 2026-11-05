@@ -57,6 +57,7 @@ See `README.md` for gameplay and architecture. [`CONTRIBUTING.md`](CONTRIBUTING.
 - **Missed GitHub events** (outages) can leave staging stale or a merged PR's preview running. To recover:
   - **dev**: Actions → CI → *Run workflow* on `dev` rebuilds and redeploys staging (`gh workflow run CI --ref dev`).
   - **previews**: the `Upratanie PR náhľadov` job (`scripts/deploy.sh prune <open PR numbers…>`) removes every `mf-pr-<n>` whose PR is no longer open. It runs after each dev deploy, daily, and on *Run workflow*.
+- **GitHub Deployments page:** only the currently running deployment stays active. After each deploy, `scripts/deployments.sh supersede <env> [<branch>]` marks the older deployments of that environment (for previews: of that PR's branch) `inactive`; closing a PR runs `retire preview <branch>`. The `Upratanie PR náhľadov` job also runs `scripts/deployments.sh prune <open PR branches…>` as a safety net. Deployments are never deleted, only marked inactive. `DRY_RUN=1` prints what would change.
 
 ### Releases (maintainer, or an agent when explicitly asked)
 
