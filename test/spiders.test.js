@@ -7,6 +7,7 @@ const { spawn } = require('child_process');
 const WebSocket = require('ws');
 const D = require('../shared/data.js');
 const Sp = require('../spiders.js');
+const Webs = require('../shared/webs.js');
 
 const TPD = D.TICKS_PER_DAY, LW = D.LES_W, LH = D.LES_H;
 const SEASON_TICK = se => se * D.DAYS_PER_SEASON * TPD + D.DAWN_TICK; // prvé ráno obdobia se
@@ -88,7 +89,7 @@ test('pavučiny: medzi dvoma oporami, najviac 2 políčka (na čistine 3), celé
     f.cands.forEach((list, o) => {
       for (const c of list) {
         total++;
-        assert.ok(c.n >= 1 && c.n <= (c.tiles.some(i => les[i].g === 'glade') ? D.WEB.glade : D.WEB.span));
+        assert.ok(c.n >= 1 && c.n <= (c.tiles.some(i => les[i].g === 'glade') ? Webs.WEB_PARAMS.gladeSpan.def : Webs.WEB_PARAMS.span.def));
         assert.deepStrictEqual(c.tiles, Sp.webTiles(c));
         for (const i of c.tiles) { assert.strictEqual(f.owner[i], o); assert.ok(!D.BLOCK[les[i].g] && les[i].g !== 'gate'); }
         const [sx, sy] = c.ax ? [0, 1] : [1, 0];
@@ -379,4 +380,35 @@ test('server: svet z verzie 7 dostane pavučiny; v lese sa ťahá hodváb, s lam
   assert.ok(saved.spid.corner.garden.length >= 1);
   assert.strictEqual(saved.saves.eva.inv.silk, 1);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('pavučina: parametre sa orežú na rozsah; vlákna začínajú na kmeňoch opôr (strom, obor, ker, spadnutý kmeň)', () => {
+  const P = Webs.webParams({ rays: 999, pitch: -1, fill: 1.4, nope: 3 });
+  assert.strictEqual(P.rays, Webs.WEB_PARAMS.rays.max);
+  assert.strictEqual(P.pitch, Webs.WEB_PARAMS.pitch.min);
+  assert.strictEqual(P.fill, 1);
+  assert.ok(!('nope' in P));
+  assert.deepStrictEqual(Webs.webParams(), Object.fromEntries(Object.entries(Webs.WEB_PARAMS).map(([k, d]) => [k, d.def])));
+  // chodník široký 2 políčka medzi dvoma oporami v riadku 3
+  const geom = (anchor, over) => {
+    const w = 8, h = 6, t = new Array(w * h).fill('path'), put = (x, y, g) => { t[y * w + x] = g; };
+    if (anchor === 'giant') { put(1, 2, 'giant'); put(2, 2, 'trunk'); put(1, 3, 'trunk'); put(2, 3, 'trunk'); put(5, 2, 'giant'); put(6, 2, 'trunk'); put(5, 3, 'trunk'); put(6, 3, 'trunk'); }
+    else { put(2, 3, anchor); put(5, 3, anchor); }
+    return Webs.webGeom(t.map(g => ({ g })), w, h, { x: 3, y: 3, ax: 0, n: 2 }, over);
+  };
+  for (const a of ['tree', 'giant', 'bush', 'log']) {
+    const g = geom(a), A = Webs.ANCHOR[a];
+    assert.strictEqual(g.a.g === 'trunk' ? 'giant' : g.a.g, a === 'giant' ? 'giant' : a);
+    // dotyk leží na povrchu kmeňa (kruh okolo stredu opory) a pavučina je medzi oporami
+    assert.ok(Math.abs(Math.hypot(g.u0 - g.a.cx, g.line - g.a.cz) - A.r) < 1e-9, a + ': ľavý dotyk na kmeni');
+    assert.ok(Math.abs(Math.hypot(g.u1 - g.b.cx, g.line - g.b.cz) - A.r) < 1e-9, a + ': pravý dotyk na kmeni');
+    assert.ok(g.u0 <= 3 && g.u1 >= 5 && g.len > 2);
+    assert.strictEqual(g.hgt, Math.min(Webs.WEB_PARAMS.height.def, A.top), a + ': pri nízkej opore nižšia');
+  }
+  assert.deepStrictEqual([geom('giant').a.cx, geom('giant').a.cz], [2, 3], 'obor: stred kmeňa v strede štvorca 2 × 2');
+  assert.strictEqual(geom('tree', { height: 1.6 }).hgt, 1.6);
+  // rozpätie z parametrov mení, kde môžu pavučiny visieť
+  const les = D.buildLes(SEEDS[0]).map(g => ({ g }));
+  const n1 = Webs.analyze(les, SEEDS[0], { span: 1, gladeSpan: 1 }).cands.flat(), n4 = Webs.analyze(les, SEEDS[0], { span: 4, gladeSpan: 5 }).cands.flat();
+  assert.ok(n1.every(c => c.n === 1) && n4.some(c => c.n >= 3) && n4.length > n1.length);
 });
