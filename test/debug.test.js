@@ -15,10 +15,11 @@ async function setup() {
   fs.mkdirSync(dataDir); fs.mkdirSync(debugDir);
   fs.writeFileSync(path.join(debugDir, 'index.html'), '<h1>debug</h1>');
   fs.writeFileSync(path.join(dir, 'secret.txt'), 'nie');
-  const saved = JSON.stringify({ v: 1, tick: 100, saves: { [KEY]: { coins: 5 } }, contracts: { list: [{ by: KEY }] } });
+  const saved = JSON.stringify({ v: 1, tick: 100, rng: 1, events: [{ at: 150, seq: 1, type: 'stary', data: null }, { at: 130, seq: 2, type: 'dawn', data: null, key: 'dawn', periodic: true }], saves: { [KEY]: { coins: 5 } }, contracts: { list: [{ by: KEY }] } });
   fs.writeFileSync(path.join(dataDir, 'room-stary.json'), saved);
   const rooms = new Map([['zivy', { tick: 7, state: { tick: 7, saves: { [KEY]: { coins: 9 } } }, players: new Map([[1, { name: 'Anka', area: 'hory', key: KEY }]]) }]]);
-  const handle = Debug.create({ dataDir, debugDir, rooms, serialize: r => JSON.stringify(r.state), migrate: s => Object.assign({ migrated: true }, s) });
+  const sim = { handlers: { dawn() {}, hourly() {} }, periodic: [{ key: 'dawn', type: 'dawn', next: (w, from) => from + 50 }, { key: 'hourly', type: 'hourly', next: (w, from) => from + 12 }] };
+  const handle = Debug.create({ dataDir, debugDir, rooms, serialize: r => JSON.stringify(r.state), migrate: s => Object.assign({ migrated: true }, s), sim: () => sim });
   const srv = http.createServer((req, res) => { if (!handle(req, res)) { res.writeHead(404); res.end(); } });
   await new Promise(r => srv.listen(0, '127.0.0.1', r));
   const request = (method, p) => new Promise((resolve, reject) => http.request({ host: '127.0.0.1', port: srv.address().port, path: p, method }, res => {
@@ -76,5 +77,20 @@ test('debug: snímka sveta je len na čítanie a bez kľúčov hráčov', async 
     assert.strictEqual(fs.readFileSync(file, 'utf8'), s.saved);
     assert.strictEqual(fs.statSync(file).mtimeMs, before);
     assert.deepStrictEqual([...s.rooms.keys()], ['zivy'], 'svet zo súboru sa nenačíta do servera');
+  } finally { s.close(); }
+});
+
+test('debug: stav reconcilera – naplánované, chýbajúce a zahodené udalosti (svet sa nezmení)', async () => {
+  const s = await setup();
+  try {
+    const r = JSON.parse((await s.get('/api/debug/room?id=stary')).body).reconciler;
+    assert.deepStrictEqual([r.declared, r.handlers], [2, 2]);
+    assert.deepStrictEqual(r.counts, { periodic: 1, unique: 0, plain: 1 });
+    assert.deepStrictEqual(r.periodic, [
+      { key: 'hourly', type: 'hourly', status: 'missing', at: 113 },
+      { key: 'dawn', type: 'dawn', status: 'scheduled', at: 130 }
+    ]);
+    assert.deepStrictEqual(r.drop, [{ key: null, type: 'stary', at: 150, why: 'unknown type (no handler)' }]);
+    assert.strictEqual(fs.readFileSync(path.join(s.dataDir, 'room-stary.json'), 'utf8'), s.saved);
   } finally { s.close(); }
 });
