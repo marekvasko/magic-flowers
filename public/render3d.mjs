@@ -364,7 +364,25 @@ export function create(api) {
   const depthOnlyMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: 'void main() { gl_FragColor = vec4(0.0); }', uniforms: material.uniforms, transparent: true, depthWrite: true, colorWrite: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 });
   // svet v zrkadle pod hladinou: rovnaký shader, stačia 4 vzorky tieňa
   const reflMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { SHADOW_TAPS: 4 }, uniforms: material.uniforms });
-  const FADE_MIN = 0.3; // ako veľmi ostane vidieť budovu/strom, za ktorým stojí hráč
+  // Zoslabovanie objektov pred hráčom (smerom ku kamere): pri hráčovi najviac, ďalej menej, za hranicou nič.
+  // Ladí sa za behu v konzole: window.MF_FADE = { reach: 5, edge: 0.7 } prepíše len uvedené hodnoty
+  // (predvolené sú v window.MF_FADE_DEFAULTS); window.MF_NOFADE = true zoslabovanie vypne.
+  const FADE_DEFAULTS = {
+    min: 0.3,          // viditeľnosť objektu pri hráčovi a objektu, ktorý hráča priamo zakrýva (0 = neviditeľný, 1 = plný)
+    edge: 0.8,         // viditeľnosť objektu na konci oblasti (vo vzdialenosti reach)
+    near: 1.5,         // do tejto vzdialenosti od hráča (bloky) je zoslabenie najväčšie (min)
+    reach: 4,          // ako ďaleko od hráča smerom ku kamere sa ešte zoslabuje (bloky)
+    width: 1.2,        // polovičná šírka oblasti pri hráčovi (bloky, naprieč smerom pohľadu)
+    spread: 0.5,       // o koľko sa oblasť rozšíri na každý blok smerom ku kamere
+    back: 0.3,         // ako ďaleko za hráčom (smerom od kamery) ešte môže byť objekt
+    ray: true,         // objekt priamo na lúči hráč → kamera zoslabiť naplno, aj keď je ďalej než reach (vysoké stromy)
+    hold: 400,         // ms – ako dlho ostane objekt zoslabený, keď už do oblasti nepatrí (na hrane nebliká)
+    speed: 4,          // rýchlosť prechodu (zmena viditeľnosti za sekundu)
+    outline: 0.7,      // nepriehľadnosť obrysu
+    outlineRamp: 0.15  // obrys je naplno už pri takomto zoslabení – aj slabo zoslabené objekty majú zreteľný obrys
+  };
+  window.MF_FADE_DEFAULTS = FADE_DEFAULTS;
+  const fadeCfg = () => Object.assign({}, FADE_DEFAULTS, window.MF_FADE || {});
   let mesh = null, grid = null, builtSeason = -1, builtGen = -1;
   const AXES = [[0, 1, 2], [1, 2, 0], [2, 0, 1]]; // [normálová os, u, v] – u × v = normála
 
@@ -1009,7 +1027,7 @@ export function create(api) {
   // ---------- Kamera ----------
   let viewTop = 1, viewW = 11;
   // ---------- Objekty, za ktorými stojí hráč: zmiznú a ostane z nich len jemný obrys ----------
-  let occluders = new Set(), occAt = 0;
+  let fadeWant = new Map(), occAt = 0;
   function computeOccluders(meH) {
     // pochod cez hrubú mriežku: neviditeľná náhrada každého modelu vie, ku ktorému modelu patrí (bez testov trojuholníkov)
     const toCam = camera.position.clone().sub(camTarget).normalize(), idx = new Set();
@@ -1018,16 +1036,38 @@ export function create(api) {
     for (const i of idx) if (fineMeshes[i]) set.add(fineMeshes[i]);
     return set;
   }
+  // Ktoré objekty zoslabiť a nakoľko (mesh → viditeľnosť). Oblasť nie je okolo hráča, ale len pred ním smerom
+  // ku kamere: klin, ktorý sa od hráča rozširuje (width + spread × vzdialenosť) a končí po reach blokoch.
+  // Rozhoduje najbližší bod pôdorysu objektu k hráčovi, takže aj dlhá budova sa zoslabí, keď je hráč pri jej rohu.
+  function fadeTargets(cfg, meH) {
+    const out = new Map();
+    if (window.MF_NOFADE) return out;
+    const toCam = camera.position.clone().sub(camTarget), hl = Math.hypot(toCam.x, toCam.z) || 1;
+    const dx = toCam.x / hl, dz = toCam.z / hl, px = S.me.x, pz = S.me.y;
+    for (const m of fineMeshes) {
+      const b = m.userData.box;
+      const qx = Math.min(b.max.x, Math.max(b.min.x, px)) - px, qz = Math.min(b.max.z, Math.max(b.min.z, pz)) - pz;
+      const along = qx * dx + qz * dz, across = Math.abs(qx * dz - qz * dx), dist = Math.hypot(qx, qz);
+      if (along < -cfg.back || dist > cfg.reach || across > cfg.width + cfg.spread * Math.max(0, along)) continue;
+      const k = Math.max(0, Math.min(1, (dist - cfg.near) / Math.max(0.01, cfg.reach - cfg.near)));
+      out.set(m, cfg.min + (cfg.edge - cfg.min) * k);
+    }
+    if (cfg.ray) for (const m of computeOccluders(meH)) out.set(m, cfg.min); // tie hráča naozaj zakrývajú
+    return out;
+  }
   function updateFades(dt, meH) {
-    const now = performance.now();
-    if (now - occAt > 100) { occluders = window.MF_NOFADE ? new Set() : computeOccluders(meH); occAt = now; for (const m of occluders) m.userData.occUntil = now + 400; }
+    const now = performance.now(), cfg = fadeCfg();
+    if (now - occAt > 100) {
+      fadeWant = fadeTargets(cfg, meH); occAt = now;
+      for (const [m, v] of fadeWant) { m.userData.want = v; m.userData.wantUntil = now + cfg.hold; }
+    }
     let any = false;
     const fadingList = [];
     for (const m of fineMeshes) {
-      // zoslabený ostane ešte chvíľu po poslednom zásahu – na hrane objektu tak nebliká
-      const target = now < (m.userData.occUntil || 0) ? FADE_MIN : 1;
-      // priblíž sa k cieľu najviac o dt*4 – keď je cieľ dosiahnutý, hodnota ostane stáť (žiadne kmitanie)
-      const step = dt * 4, cur = m.userData.fade;
+      // zoslabený ostane ešte chvíľu po tom, čo z oblasti vypadol – na hrane oblasti tak nebliká
+      const target = now < (m.userData.wantUntil || 0) ? m.userData.want : 1;
+      // priblíž sa k cieľu najviac o dt × speed – keď je cieľ dosiahnutý, hodnota ostane stáť (žiadne kmitanie)
+      const step = dt * cfg.speed, cur = m.userData.fade;
       const f = m.userData.fade = Math.abs(target - cur) <= step ? target : cur + Math.sign(target - cur) * step;
       const fading = f < 0.98;
       m.material = fading ? fadeMaterial : material;
@@ -1060,6 +1100,7 @@ export function create(api) {
   const OUTLINE_DIRS = [[1, 1], [-1, 1], [1, -1], [-1, -1]].map(([x, y]) => [x * 0.85, y * 0.85]); // 4 posuny stačia na obrys ~1,5 px
   const camRight = new THREE.Vector3(), camUp = new THREE.Vector3();
   function drawOutlines() {
+    const cfg = fadeCfg();
     const cssW = api.glCanvas.getBoundingClientRect().width || 1;
     const px = (camera.right - camera.left) / cssW * 1.5; // ~1,5 CSS px vo svetových jednotkách
     camRight.setFromMatrixColumn(camera.matrixWorld, 0);
@@ -1074,7 +1115,7 @@ export function create(api) {
     }
     for (const m of list) {
       const old = m.material, pos = m.position.clone();
-      outlineDraw.opacity = 0.7 * (1 - m.userData.fade) / (1 - FADE_MIN);
+      outlineDraw.opacity = cfg.outline * Math.min(1, (1 - m.userData.fade) / Math.max(0.01, cfg.outlineRamp));
       m.material = outlineDraw;
       for (const [dx, dy] of OUTLINE_DIRS) {
         m.position.copy(pos).addScaledVector(camRight, dx * px).addScaledVector(camUp, dy * px);
@@ -1302,7 +1343,7 @@ export function create(api) {
 
   resize();
   // ladenie: priehľadnosť jemných modelov (1 = plne viditeľný)
-  const debugFades = () => fineMeshes.map(m => ({ type: grid.fine[fineMeshes.indexOf(m)].type, fade: +m.userData.fade.toFixed(2), occ: occluders.has(m) }));
+  const debugFades = () => fineMeshes.map(m => ({ type: grid.fine[fineMeshes.indexOf(m)].type, fade: +m.userData.fade.toFixed(2), want: fadeWant.has(m) ? +fadeWant.get(m).toFixed(2) : null }));
   return { frame, resize, pick, screenToWorld, rotate, sunHoursAt, dir8, debugFades, ripple, setWaterQuality, get waterQuality() { return waterQuality; }, setParticleQuality: particles.setQuality, get particleQuality() { return particles.quality; }, get yaw() { return yaw; } };
 }
 
