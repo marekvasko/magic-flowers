@@ -500,11 +500,11 @@ function act(pl, m) {
     if (!t.s && D.TILLABLE[t.g]) {
       if (t.g === 'ring') return;
       const lim = Econ.plotLimit(room);
-      if (Econ.plotsUsed(room) >= lim) return toast(pl, `Spoločné povolenie záhrady je na ${lim} políčok a všetky sú obrobené. Väčšie pole môže pre všetkých kúpiť ktokoľvek na trhu (záložka Vylepšiť), alebo zarovnaj svoje prázdne políčko motykou.`);
+      if (Econ.plotsUsed(room) >= lim) return toast(pl, `Spoločné povolenie záhrady je na ${lim} políčok a všetky sú obrobené. Väčšie pole môže pre všetkých kúpiť ktokoľvek na trhu (záložka Vylepšiť), alebo motykou zarovnaj niektoré prázdne políčko.`);
       t.s = { k: D.TILLABLE[t.g], w: room.weather === 'rain' ? 1 : 0, r: 0, p: null, o: pl.key };
       tileMsg(room, i); broadcast(room, plotsMsg(room)); fx(room, 'dirt', x + 0.5, y + 0.5); return;
     }
-    if (t.s && !t.s.p && (!t.s.o || t.s.o === pl.key)) { // zarovnať prázdne políčko – uvoľní miesto v spoločnom povolení
+    if (t.s && !t.s.p) { // zarovnať prázdne políčko (ktorýkoľvek hráč) – uvoľní miesto v spoločnom povolení
       t.s = null; Scav.empty(room, i); tileMsg(room, i); broadcast(room, plotsMsg(room)); return; // čerstvo zarovnaná zem semienka nemá
     }
     if (t.g === 'ring' || t.g === 'shroom') return toast(pl, 'Kruh z húb radšej nechaj tak… niekto tu v noci tancuje. 🍄');

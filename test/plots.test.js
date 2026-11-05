@@ -9,11 +9,10 @@ const D = require('../shared/data.js');
 const Econ = require('../economy.js');
 
 // ---------- Spoločné povolenie na pole ----------
-test('povolenie na pole: najvyššia úroveň je polovica záhrady', () => {
+test('povolenie na pole: najvyššia úroveň je 96 políčok', () => {
   const L = D.UPGRADES.plots.levels;
   assert.ok(D.UPGRADES.plots.shared);
-  assert.deepStrictEqual(L.map(l => l.v), [8, 16, 28, 48, D.W * D.H / 2]);
-  assert.strictEqual(L[L.length - 1].v, 340);
+  assert.deepStrictEqual(L.map(l => l.v), [8, 16, 28, 48, 96]);
 });
 
 test('povolenie na pole: patrí záhrade, kúpi ho ktokoľvek a obrobené políčka všetkých sa rátajú spolu', () => {
@@ -34,7 +33,7 @@ test('povolenie na pole: patrí záhrade, kúpi ho ktokoľvek a obrobené polí�
   assert.match(Econ.upgrade(room, eva, 'plots'), /reputáciu úrovne 1/);
   eva.rep = D.REP_LEVELS[3]; eva.coins = 5000;
   for (let k = 0; k < 3; k++) assert.strictEqual(Econ.upgrade(room, eva, 'plots'), null);
-  assert.strictEqual(Econ.plotLimit(room), 340);
+  assert.strictEqual(Econ.plotLimit(room), 96);
   assert.strictEqual(Econ.upgrade(room, eva, 'plots'), 'Záhrada už má najvyššiu úroveň.');
   // osobné vylepšenia ostávajú hráčovi
   assert.strictEqual(Econ.upgrade(room, jan, 'can'), null);
@@ -114,14 +113,19 @@ test('server: osobné povolenia z verzie 4 prejdú na spoločné povolenie záhr
     assert.match((await eva.wait(m => m.t === 'toast' && /povolenie/.test(m.text))).text, /Spoločné povolenie záhrady je na 48 políčok/);
     // Eva kúpi ďalšiu úroveň pre všetkých – Ján sa to dozvie a môže kopať
     eva.send({ t: 'upgrade', kind: 'plots' });
-    assert.match((await jan.wait(m => m.t === 'toast' && /celú záhradu/.test(m.text))).text, /Eva kúpil\(a\) pre celú záhradu Povolenie na pole: 340 políčok/);
+    assert.match((await jan.wait(m => m.t === 'toast' && /celú záhradu/.test(m.text))).text, /Eva kúpil\(a\) pre celú záhradu Povolenie na pole: 96 políčok/);
     assert.strictEqual((await jan.wait(m => m.t === 'me')).up.plots, 4);
-    assert.deepStrictEqual(await jan.wait(m => m.t === 'plots'), { t: 'plots', used: 48, limit: 340 });
+    assert.deepStrictEqual(await jan.wait(m => m.t === 'plots'), { t: 'plots', used: 48, limit: 96 });
+    assert.deepStrictEqual(await eva.wait(m => m.t === 'plots'), { t: 'plots', used: 48, limit: 96 });
     jan.send({ t: 'act', x: jx, y: jy, item: 'hoe' });
-    assert.deepStrictEqual(await eva.wait(m => m.t === 'plots' && m.used === 49), { t: 'plots', used: 49, limit: 340 });
-    // zarovnané prázdne políčko uvoľní miesto pre všetkých
-    jan.send({ t: 'act', x: jx, y: jy, item: 'hoe' });
-    assert.deepStrictEqual(await eva.wait(m => m.t === 'plots' && m.used === 48), { t: 'plots', used: 48, limit: 340 });
+    assert.deepStrictEqual(await eva.wait(m => m.t === 'plots' && m.used === 49), { t: 'plots', used: 49, limit: 96 });
+    // prázdne políčko zarovná ktokoľvek, nielen ten, kto ho prekopal – uvoľní miesto pre všetkých
+    // (Ján z políčka odstúpi – motyka na políčku s iným hráčom by darovala)
+    jan.send({ t: 'move', x: jx + 1.9, y: jy + 0.5, dir: 0, ar: 0 });
+    eva.send({ t: 'move', x: jx - 0.9, y: jy + 0.5, dir: 0, ar: 0 });
+    await jan.wait(m => m.t === 'pl' && m.list.some(p => p.name === 'Eva' && Math.abs(p.x - (jx - 0.9)) < 0.01) && m.list.some(p => p.name === 'Jan' && Math.abs(p.x - (jx + 1.9)) < 0.01));
+    eva.send({ t: 'act', x: jx, y: jy, item: 'hoe' });
+    assert.deepStrictEqual(await eva.wait(m => m.t === 'plots' && m.used === 48), { t: 'plots', used: 48, limit: 96 });
     // ďalšia úroveň už nie je
     eva.send({ t: 'upgrade', kind: 'plots' });
     assert.strictEqual((await eva.wait(m => m.t === 'toast' && /najvyššiu/.test(m.text))).text, 'Záhrada už má najvyššiu úroveň.');

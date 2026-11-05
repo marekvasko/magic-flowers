@@ -202,8 +202,8 @@
   const UPGRADES = {
     can: { name: 'Krhla', icon: '💧', unit: 'polievaní', levels: [{ v: 5 }, { v: 12, price: 80, rep: 0 }, { v: 25, price: 300, rep: 1 }, { v: 50, price: 900, rep: 2 }] },
     // Povolenie na pole je spoločné pre celú záhradu (ako ľadovňa): kúpi ho ktokoľvek, platí pre všetkých
-    // a do limitu sa rátajú obrobené políčka všetkých hráčov. Najviac polovica záhrady.
-    plots: { name: 'Povolenie na pole', icon: '🟫', unit: 'políčok', shared: true, levels: [{ v: 8 }, { v: 16, price: 100, rep: 0 }, { v: 28, price: 350, rep: 1 }, { v: 48, price: 1000, rep: 2 }, { v: W * H / 2, price: 2500, rep: 3 }] },
+    // a do limitu sa rátajú obrobené políčka všetkých hráčov. Najviac 96 políčok.
+    plots: { name: 'Povolenie na pole', icon: '🟫', unit: 'políčok', shared: true, levels: [{ v: 8 }, { v: 16, price: 100, rep: 0 }, { v: 28, price: 350, rep: 1 }, { v: 48, price: 1000, rep: 2 }, { v: 96, price: 2500, rep: 3 }] },
     composter: { name: 'Kompostér', icon: '♻️', unit: 'kompost denne', levels: [{ v: 0 }, { v: 1, price: 450, rep: 1 }, { v: 2, price: 1200, rep: 3 }] }
   };
   const FESTIVALS = [
