@@ -527,6 +527,7 @@
   // Rozloženie je podľa semienka sveta; uloží sa so svetom (areas.js), takže ho nezmení ani neskoršia úprava generátora.
   const LES_CELL = 4;  // bunka bludiska (políčka): v každej je uzol chodníka, chodníky spájajú uzly susedných buniek
   const LES_GLADES = 6; // počet čistín
+  const LES_GIANT = 0.5; // podiel voľných štvorcov 2 × 2, na ktorých rastie obor (inak bežné stromy)
   const LES_DECOR = ['moss', 'fern', 'roots', 'fungi']; // priechodná zem medzi stromami
   function buildLes(seed) {
     const w = LES_W, h = LES_H;
@@ -586,13 +587,14 @@
         if (d <= 1 + (rnd() - 0.5) * 0.4 && x >= 1 && y >= 1 && x <= w - 2 && y <= h - 2) { g[y * w + x] = 'glade'; glade[y * w + x] = 1; }
       }
     }
-    // Obrovské stromy všade, kde je v hustom lese voľný štvorec 2 × 2
+    // Obrovské stromy: na voľnom štvorci 2 × 2 v hustom lese zhruba každý druhý raz obor, inak tam rastú bežné stromy (sem-tam ker)
     const spots = [];
     for (let y = 0; y < h - 1; y++) for (let x = 0; x < w - 1; x++) spots.push(y * w + x);
     for (const i of shuffle(spots)) {
       const x = i % w, y = (i / w) | 0;
-      if (at(x, y) || at(x + 1, y) || at(x, y + 1) || at(x + 1, y + 1) || rnd() < 0.15) continue;
-      g[i] = 'giant'; g[i + 1] = g[i + w] = g[i + w + 1] = 'trunk';
+      if (at(x, y) || at(x + 1, y) || at(x, y + 1) || at(x + 1, y + 1)) continue;
+      if (rnd() < LES_GIANT) { g[i] = 'giant'; g[i + 1] = g[i + w] = g[i + w + 1] = 'trunk'; }
+      else for (const j of [i, i + 1, i + w, i + w + 1]) g[j] = rnd() < 0.15 ? 'bush' : 'tree';
     }
     // Zvyšok hustého lesa: menšie stromy, kry, spadnuté kmene, inde priechodná zem (mach, papraď, korene, huby)
     for (let i = 0; i < g.length; i++) {

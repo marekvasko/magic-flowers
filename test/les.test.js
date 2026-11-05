@@ -72,7 +72,7 @@ test('Les divov: obrovské stromy na 2 × 2 políčkach, úzke chodníky, čisti
       // každé políčko 'trunk' patrí k obrovi vľavo / hore / vľavo hore
       if (t === 'trunk') assert.ok([[x - 1, y], [x, y - 1], [x - 1, y - 1]].some(([a, b]) => at(a, b) === 'giant'), `kmeň bez stromu ${x},${y}`);
     }
-    assert.ok(giants >= 150, `veľa obrovských stromov (${giants})`);
+    assert.ok(giants >= 90 && giants <= 170, `obrovské stromy – zhruba každý druhý voľný štvorec (${giants})`);
     // chodníky sú úzke: nikde mimo čistín nie je voľný štvorec 3 × 3
     for (let y = 0; y < LH - 2; y++) for (let x = 0; x < LW - 2; x++) {
       let open = true, glade = false;
