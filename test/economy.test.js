@@ -91,6 +91,19 @@ test('zákazka: rezervácia, odovzdanie po častiach, odmena; prepadnutá stojí
   assert.strictEqual(room.saves.anka.rep, Math.max(0, repBefore - 5));
 });
 
+test('zákazka: pri prebytku v inventári sa odovzdá len to, čo ešte chýba', () => {
+  const { room } = makeWorld(9);
+  room.saves.anka = { coins: 0, inv: {}, rep: 0 };
+  const c = room.contracts.list[0], id = 'fl_' + c.sp;
+  Econ.takeContract(room, 'anka', c.id);
+  room.saves.anka.inv[id] = 1;
+  Econ.deliverContract(room, 'anka', c.id);
+  room.saves.anka.inv[id] = c.n + 5;
+  const r = Econ.deliverContract(room, 'anka', c.id);
+  assert.ok(r.done);
+  assert.strictEqual(room.saves.anka.inv[id], 6, 'zostane prebytok');
+});
+
 test('krátke zákazky sú len na kvety, ktoré sa dajú vypestovať v aktuálnom období', () => {
   const { room, run } = makeWorld(11);
   for (let d = 0; d < 32; d++) {
