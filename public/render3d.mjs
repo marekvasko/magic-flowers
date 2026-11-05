@@ -432,13 +432,18 @@ export function create(api) {
     speed: 4,          // rýchlosť prechodu (zmena viditeľnosti za sekundu)
     outline: 0.7,      // nepriehľadnosť obrysu
     outlineRamp: 0.15, // obrys je naplno už pri takomto zoslabení – aj slabo zoslabené objekty majú zreteľný obrys
-    dark: { min: 0.2, edge: 0.5, reach: 2 } // v tmavom lese prepíše hodnoty vyššie a zoslabuje sa aj zem pred hráčom
+    dark: { min: 0.2, edge: 0.5, reach: 2 }, // v tmavom lese prepíše hodnoty vyššie a zoslabuje sa aj zem pred hráčom
+    // Les divov (temná plocha): ako tmavý les, ale bez obrysu a obrovské stromy sa nezoslabujú nikdy (solid = typy modelov),
+    // takže niektoré miesta ostanú skryté
+    les: { outline: 0, solid: ['giant'] }
   };
   window.MF_FADE_DEFAULTS = FADE_DEFAULTS;
   function fadeCfg() {
     const u = window.MF_FADE || {}, c = Object.assign({}, FADE_DEFAULTS, u);
-    c.inDark = D.gloomAt(S.area, S.me.y) >= c.darkFrom;
+    const les = D.isDark(S.area);
+    c.inDark = les || D.gloomAt(S.area, S.me.y) >= c.darkFrom;
     if (c.inDark) Object.assign(c, FADE_DEFAULTS.dark, u.dark || {});
+    if (les) Object.assign(c, FADE_DEFAULTS.les, u.les || {});
     return c;
   }
   let mesh = null, grid = null, builtSeason = -1, builtGen = -1;
@@ -542,6 +547,7 @@ export function create(api) {
     fmesh.userData.depthTwin = depthTwin;
     fmesh.onBeforeRender = () => { if (fmesh.material === fadeMaterial) { fadeMaterial.uniforms.opacity.value = fmesh.userData.fade; fadeMaterial.uniformsNeedUpdate = true; } };
     fmesh.userData.tile = f.tile;
+    fmesh.userData.type = f.type;
     scene.add(fmesh);
     return fmesh;
   }
@@ -1233,9 +1239,10 @@ void main() {
   // Body na zemi sú len na priechodných políčkach (zem pod kmeňom stromu či pod budovou nie je cesta).
   function fadeTargets(cfg, meH) {
     const out = new Map();
-    if (window.MF_NOFADE || !grid || D.isDark(S.area)) return out; // v temnej ploche sa nič nezoslabuje – niektoré miesta ostanú skryté
+    if (window.MF_NOFADE || !grid) return out;
     const toCam = camera.position.clone().sub(camTarget).normalize(), hits = new Set();
-    const lower = (m, v) => { if (m && !(out.get(m) <= v)) out.set(m, v); };
+    const solid = cfg.solid || [];
+    const lower = (m, v) => { if (m && !solid.includes(m.userData.type) && !(out.get(m) <= v)) out.set(m, v); };
     let fx, fz;
     if (cfg.dir === 'camera') { const hl = Math.hypot(toCam.x, toCam.z) || 1; fx = toCam.x / hl; fz = toCam.z / hl; }
     else { const a = S.me.a != null ? S.me.a : DIR_ANGLE[S.me.dir || 0]; fx = Math.cos(a); fz = Math.sin(a); }
@@ -1270,7 +1277,7 @@ void main() {
       const f = m.userData.fade = Math.abs(target - cur) <= step ? target : cur + Math.sign(target - cur) * step;
       const fading = f < 0.98;
       m.material = fading ? fadeMaterial : material;
-      m.userData.depthTwin.visible = fading;
+      m.userData.depthTwin.visible = fading && m.visible;
       if (fading) { any = true; fadingList.push(m); }
     }
     // Zoslabené objekty kreslíme odzadu dopredu a každý celý naraz (najprv jeho hĺbka, potom priesvitná plocha).
@@ -1289,7 +1296,7 @@ void main() {
     for (const yOff of [0.15, 0.6, 1.1]) {
       hit.clear();
       W.modelsOnRay(grid, o.sp.position.x, o.sp.position.y + yOff, o.sp.position.z, toCam.x, toCam.y, toCam.z, 6, hit);
-      if (![...hit].some(i => fineMeshes[i] && fineMeshes[i].visible)) return false;
+      if (![...hit].some(i => fineMeshes[i] && fineMeshes[i].visible && fineMeshes[i].userData.fade > 0.5)) return false; // cez zoslabený strom vidno
     }
     return true;
   }
@@ -1322,6 +1329,7 @@ void main() {
   const camRight = new THREE.Vector3(), camUp = new THREE.Vector3();
   function drawOutlines() {
     const cfg = fadeCfg();
+    if (cfg.outline <= 0) return; // Les divov: bez obrysu
     const cssW = api.glCanvas.getBoundingClientRect().width || 1;
     const px = (camera.right - camera.left) / cssW * 1.5; // ~1,5 CSS px vo svetových jednotkách
     camRight.setFromMatrixColumn(camera.matrixWorld, 0);
