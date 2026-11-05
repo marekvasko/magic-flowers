@@ -128,12 +128,20 @@ test('reconcile: doplní chýbajúce, zahodí duplicity, nedeklarované a nezná
       { key: 'novy', type: 'novy', data: { a: 1 }, next: E.daily(84) }
     ]
   };
+  // plán ukáže presne to, čo reconcile urobí, a svet nezmení
+  const before = JSON.stringify(w), plan = E.reconcilePlan(w, spec);
+  assert.strictEqual(JSON.stringify(w), before);
+  assert.deepStrictEqual(plan.drop.map(d => [d.ev.key || d.ev.type, d.ev.at, d.why]), [['dawn', 120, 'duplicita'], ['fest:zruseny', 130, 'nedeklarovaná periodická'], ['odstraneny', 140, 'neznámy typ']]);
+  assert.deepStrictEqual(plan.missing.map(d => d.key), ['novy']);
+  assert.deepStrictEqual(plan.ok.map(o => [o.def.key, o.ev.at]), [['dawn', 110]]);
   const warn = console.warn; console.warn = () => {};
   try { E.reconcile(w, spec); } finally { console.warn = warn; }
   assert.deepStrictEqual(w.events.map(e => [e.key || e.type, e.at]), [['dawn', 110], ['cExpire:7', 150], ['novy', 84 + TPD]]);
   assert.deepStrictEqual(E.pending(w, 'novy').data, { a: 1 });
   E.reconcile(w, spec); // druhý reconcile už nič nemení
   assert.strictEqual(w.events.length, 3);
+  const after = E.reconcilePlan(w, spec);
+  assert.deepStrictEqual([after.drop.length, after.missing.length, after.ok.length], [0, 0, 2]);
 });
 
 test('unikátna udalosť: nová nahradí čakajúcu s rovnakým kľúčom, cancel ruší podľa kľúča', () => {

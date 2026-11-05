@@ -120,6 +120,8 @@
         card('Icehouse', w.icehouse && w.icehouse.built ? `${w.icehouse.ice || 0} ice` : 'not built'))
     ];
 
+    out.push(...reconcilerView(s.reconciler, tick));
+
     out.push(h('h3', null, `Players (${saves.length})`));
     out.push(saves.length ? h('div', { class: 'tablewrap' }, h('table', null,
       h('tr', null, ['Player', 'Online as', 'Area', 'Coins', 'Rep', 'Water', 'Inventory', 'Recipes', 'Upgrades', 'Last seen'].map((c, i) => h('th', { class: [3, 4, 5, 6, 7].includes(i) ? 'num' : null }, c))),
@@ -135,12 +137,39 @@
 
     out.push(h('h3', null, `Upcoming events (${events.length})`));
     out.push(events.length ? h('div', { class: 'tablewrap' }, h('table', null,
-      h('tr', null, h('th', null, 'When'), h('th', null, ''), h('th', null, 'Type'), h('th', null, 'Data')),
-      events.slice(0, 25).map(e => h('tr', null, h('td', null, when(e.at)), h('td', { class: 'muted' }, inTicks(e.at - tick)), h('td', null, h('b', null, e.type)), h('td', { class: 'mono' }, short(e.data)))),
-      events.length > 25 ? h('tr', null, h('td', { colspan: 4, class: 'muted' }, `… and ${events.length - 25} more (see raw state)`)) : null)) : h('div', { class: 'empty' }, 'No events scheduled.'));
+      h('tr', null, h('th', null, 'When'), h('th', null, ''), h('th', null, 'Type'), h('th', null, 'Kind'), h('th', null, 'Data')),
+      events.slice(0, 25).map(e => h('tr', null, h('td', null, when(e.at)), h('td', { class: 'muted' }, inTicks(e.at - tick)), h('td', null, h('b', null, e.type)),
+        h('td', null, h('span', { class: 'badge', title: e.key || '' }, e.periodic ? 'periodic' : e.key != null ? 'unique' : 'plain')), h('td', { class: 'mono' }, short(e.data)))),
+      events.length > 25 ? h('tr', null, h('td', { colspan: 5, class: 'muted' }, `… and ${events.length - 25} more (see raw state)`)) : null)) : h('div', { class: 'empty' }, 'No events scheduled.'));
 
     out.push(h('h3', null, 'Raw state'));
     out.push(h('div', { class: 'json' }, jsonNode('state', w, true)));
+    return out;
+  }
+
+  // Stav reconcilera: každá deklarovaná periodická udalosť má mať vo fronte práve jednu; čo chýba, doplní,
+  // čo už do hry nepatrí (neznámy typ, nedeklarovaná, duplicita), zahodí. Toto je len plán, svet sa nemení.
+  function reconcilerView(r, tick) {
+    if (!r) return [];
+    const missing = r.periodic.filter(p => p.status === 'missing');
+    const healthy = !missing.length && !r.drop.length;
+    const out = [
+      h('h3', null, 'Reconciler ', h('span', { class: 'badge' + (healthy ? ' live' : ' warn') }, healthy ? 'in sync' : `${missing.length} missing · ${r.drop.length} to drop`)),
+      h('div', { class: 'muted', style: 'margin-bottom:8px' },
+        `${r.declared} periodic declared, ${r.handlers} handlers · queue: ${r.counts.periodic} periodic, ${r.counts.unique} unique, ${r.counts.plain} plain. `,
+        'The next reconcile (before every jump in time, and when the world loads) adds the missing ones and drops the rest. A loaded world should always be in sync; an old save read from file may not be yet.')
+    ];
+    out.push(h('div', { class: 'tablewrap' }, h('table', null,
+      h('tr', null, h('th', null, 'Periodic key'), h('th', null, 'Type'), h('th', null, 'Status'), h('th', null, 'Next run'), h('th', null, '')),
+      r.periodic.map(p => h('tr', null, h('td', { class: 'mono' }, p.key), h('td', null, p.type),
+        h('td', null, h('span', { class: 'badge' + (p.status === 'scheduled' ? ' live' : ' warn') }, p.status === 'scheduled' ? 'scheduled' : 'missing')),
+        h('td', null, p.at == null ? '–' : (p.status === 'missing' ? 'would be ' : '') + when(p.at)), h('td', { class: 'muted' }, p.at == null ? '' : inTicks(p.at - tick)))))));
+    if (r.drop.length) {
+      out.push(h('div', { class: 'muted', style: 'margin:10px 0 6px' }, 'Would be dropped:'));
+      out.push(h('div', { class: 'tablewrap' }, h('table', null,
+        h('tr', null, h('th', null, 'Key / type'), h('th', null, 'At'), h('th', null, 'Why')),
+        r.drop.map(d => h('tr', null, h('td', { class: 'mono' }, d.key || d.type), h('td', null, when(d.at)), h('td', null, d.why))))));
+    }
     return out;
   }
 

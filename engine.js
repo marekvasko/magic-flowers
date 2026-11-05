@@ -81,22 +81,32 @@ function nextAt(world) { return world.events.length ? world.events[0].at : null;
 //   4. chýbajúce naplánuje na def.next(world, world.tick + 1).
 // Keď sa periodická udalosť vykoná, z fronty zmizne a najbližší reconcile naplánuje ďalšiu.
 // Tak isto sa nové periodické udalosti dostanú aj do starých uložených svetov.
-function reconcile(world, spec) {
+// Plán reconcile bez zmeny sveta (reconcile ho len vykoná; ladiaca stránka ho ukazuje):
+//   drop    – [{ ev, why }] udalosti, ktoré zahodí
+//   missing – deklarácie, ktoré vo fronte chýbajú a naplánuje ich
+//   ok      – deklarácie s práve jednou udalosťou vo fronte: [{ def, ev }]
+function reconcilePlan(world, spec) {
   const defs = spec.periodic || [];
   const declared = new Set(defs.map(d => d.key));
-  const seen = new Set();
-  world.events = world.events.filter(e => {
+  const seen = new Map(), drop = [];
+  for (const e of world.events) {
     let why = null;
     if (!spec.handlers[e.type]) why = 'neznámy typ';
     else if (e.periodic && !declared.has(e.key)) why = 'nedeklarovaná periodická';
     else if (e.periodic && seen.has(e.key)) why = 'duplicita';
-    if (why) { console.warn(`[engine] zahodená udalosť ${e.key || e.type} (${why})`); return false; }
-    if (e.periodic) seen.add(e.key);
-    return true;
-  });
-  for (const def of defs) {
-    if (!seen.has(def.key)) insert(world, def.next(world, world.tick + 1), def.type, def.data, def.key, true);
+    if (why) drop.push({ ev: e, why });
+    else if (e.periodic) seen.set(e.key, e);
   }
+  return { drop, missing: defs.filter(d => !seen.has(d.key)), ok: defs.filter(d => seen.has(d.key)).map(def => ({ def, ev: seen.get(def.key) })) };
+}
+function reconcile(world, spec) {
+  const { drop, missing } = reconcilePlan(world, spec);
+  if (drop.length) {
+    const gone = new Set(drop.map(d => d.ev));
+    for (const d of drop) console.warn(`[engine] zahodená udalosť ${d.ev.key || d.ev.type} (${d.why})`);
+    world.events = world.events.filter(e => !gone.has(e));
+  }
+  for (const def of missing) insert(world, def.next(world, world.tick + 1), def.type, def.data, def.key, true);
 }
 
 // ---- Vykonávanie ----
@@ -163,6 +173,6 @@ module.exports = {
   TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, dayOfTick, minOfTick,
   tickMs, rand, randInt, pick,
   schedule, scheduleIn, scheduleUnique, cancel, pending, nextAt,
-  reconcile, runBatch, advanceTo, advance,
+  reconcile, reconcilePlan, runBatch, advanceTo, advance,
   nextEvery, nextDailyTick, daily, every
 };
