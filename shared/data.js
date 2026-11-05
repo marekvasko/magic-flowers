@@ -269,16 +269,45 @@
   }
 
   const RING = { x0: 2, y0: 2, x1: 4, y1: 4 };
-  // Prechody medzi plochami: na políčku 'gate' sa hráč presunie na príchodové miesto druhej plochy.
-  const AREAS = ['garden', 'hory'];
-  const AREA_NAMES = { garden: 'Záhrada', hory: 'Hory' };
+  // ---- Plochy a prechody medzi nimi ----
+  // Každá plocha má vlastnú veľkosť (políčka w × h). Hráč je vždy na jednej ploche.
+  const AREAS = ['garden', 'hory', 'pomedzie'];
+  const AREA_SIZE = { garden: { w: W, h: H }, hory: { w: W, h: H }, pomedzie: { w: W, h: H } };
+  function areaSize(area) { return AREA_SIZE[area] || AREA_SIZE.garden; }
+  const AREA_NAMES = { garden: 'Záhrada', hory: 'Hory', pomedzie: 'Les na pomedzí' };
+  const AREA_IN = { garden: 'v záhrade', hory: 'v horách', pomedzie: 'v Lese na pomedzí' };
   // prechod medzi plochami (stmavnutie s menom): ikona, farba žiary na okrajoch a ozdoby po okrajoch – nová plocha pridá záznam
   const AREA_FX = {
     garden: { icon: '🌸', glow: '#7fa86a', deco: ['🌸', '🌼', '🌷', '🌿', '🦋', '🍃'] },
     hory: { icon: '🏔️', glow: '#9bb4c8', deco: ['❄️', '🌲', '⛰️', '🪨', '🦅', '❄️'] },
+    pomedzie: { icon: '🌳', glow: '#5f8a4a', deco: ['🌳', '🌾', '🦋', '🍃', '🌲', '🌿'] },
   };
-  const GATES = { garden: [[16, 0], [17, 0]], hory: [[9, H - 1], [10, H - 1]] };
-  const ARRIVE = { garden: { x: 17, y: 1.6 }, hory: { x: 10, y: H - 2.4 } };
+  // Prechody: políčka 'gate' na okraji plochy, každé vedie do svojej cieľovej plochy (to).
+  // Záhrada: na severe hory, na východe Les na pomedzí. Z Lesa na pomedzí na severe raz povedie cesta do Lesa divov.
+  const GATES = {
+    garden: [{ x: 16, y: 0, to: 'hory' }, { x: 17, y: 0, to: 'hory' }, { x: W - 1, y: 25, to: 'pomedzie' }, { x: W - 1, y: 26, to: 'pomedzie' }],
+    hory: [{ x: 9, y: H - 1, to: 'garden' }, { x: 10, y: H - 1, to: 'garden' }],
+    pomedzie: [{ x: 0, y: 25, to: 'garden' }, { x: 0, y: 26, to: 'garden' }]
+  };
+  // Príchodové miesto pre každý prechod (odkiaľ > kam): voľné políčko hneď vedľa prechodu v cieľovej ploche
+  const ARRIVE = {
+    'garden>hory': { x: 10, y: H - 2.4 }, 'hory>garden': { x: 17, y: 1.6 },
+    'garden>pomedzie': { x: 1.6, y: 26 }, 'pomedzie>garden': { x: W - 1.6, y: 26 }
+  };
+  function arrival(from, to) { return ARRIVE[from + '>' + to] || null; }
+  // Prechod na políčku (x, y) plochy area, alebo null
+  function gateAt(area, x, y) { return (GATES[area] || []).find(g => g.x === x && g.y === y) || null; }
+  // Na ktorú stranu plochy prechod vedie (podľa okraja, na ktorom leží): 'n', 's', 'w', 'e'
+  function gateSide(area, g) { const { w, h } = areaSize(area); return g.y === 0 ? 'n' : g.y === h - 1 ? 's' : g.x === 0 ? 'w' : g.x === w - 1 ? 'e' : 'n'; }
+  // Les na pomedzí sa smerom na sever stmieva: koľko svetla (okolie aj slnko) ubudne na riadku y (0 = nič, max = najviac).
+  // Zdieľa to klient (shader, sprity, obloha) – svetlo lampášov sa nestmieva.
+  const GLOOM = { pomedzie: { from: 23, max: 0.8, pow: 1.4 } };
+  function gloomAt(area, y) {
+    const g = GLOOM[area];
+    if (!g) return 0;
+    const t = Math.max(0, Math.min(1, (g.from - y) / g.from));
+    return g.max * Math.pow(t, g.pow);
+  }
   // Pôvodná výška ľadu (vo vrstvách) na každom políčku: 2 × vzdialenosť od okraja ľadovca, najviac GLACIER_TOP
   function glacierLevels(g) {
     const dist = new Array(W * H).fill(0), q = [];
@@ -298,7 +327,8 @@
     }
     return dist.map(d => Math.min(GLACIER_TOP, 2 * d));
   }
-  function buildArea(area) { return area === 'hory' ? buildMountains() : buildMap(); }
+  // seed: Les na pomedzí má rozloženie podľa semienka sveta (pre záhradu a hory sa ignoruje)
+  function buildArea(area, seed) { return area === 'hory' ? buildMountains() : area === 'pomedzie' ? buildPomedzie(seed) : buildMap(); }
   const SPAWN = { x: 10.5, y: 30.5 };
   const BABKA = { x: 15, y: 5 };
 
@@ -328,12 +358,15 @@
     set(17, 5, 'cauldron');
     set(18, 2, 'tree'); set(19, 4, 'tree'); set(13, 1, 'tree');
     // Horský chodník: na severovýchodnom okraji mapy sa ide do hôr
-    for (const [x, y] of GATES.garden) { set(x, y, 'gate'); set(x, y + 1, 'path'); }
+    for (const gt of GATES.garden) if (gt.to === 'hory') { set(gt.x, gt.y, 'gate'); set(gt.x, gt.y + 1, 'path'); }
     // Cesty
     for (let y = 4; y < H; y++) set(10, y, 'path');
     for (let x = 10; x <= 15; x++) set(x, 6, 'path');
     set(15, 4, 'path');
-    for (let x = 3; x <= 17; x++) set(x, 26, 'path');
+    for (let x = 3; x <= 18; x++) set(x, 26, 'path');
+    // na východnom okraji cesta do Lesa na pomedzí
+    set(W - 2, 25, 'path');
+    for (const gt of GATES.garden) if (gt.to === 'pomedzie') set(gt.x, gt.y, 'gate');
     // Jazierko s pieskom
     for (let y = 10; y <= 18; y++) for (let x = 0; x <= 7; x++) {
       const dx = (x - 3) / 2.6, dy = (y - 14) / 2.6;
@@ -391,7 +424,7 @@
       for (const x of [px - 1, px]) if (g[y * W + x] !== 'water') set(x, y, 'path');
       if (y % 5 === 0) px += (y % 10 === 0 ? 1 : -1);
     }
-    for (const [x, y] of GATES.hory) set(x, y, 'gate');
+    for (const gt of GATES.hory) set(gt.x, gt.y, 'gate');
     // pod chodníkom nesmie byť strom ani balvan (aby sa dalo prejsť)
     for (let y = 11; y < H; y++) for (let x = 0; x < W; x++) if (g[y * W + x] === 'path') for (const dx of [-1, 1]) {
       const n = g[y * W + x + dx];
@@ -400,7 +433,85 @@
     return g;
   }
 
-  const BLOCK = { tree: 1, water: 1, hut: 1, babka: 1, cauldron: 1, stall: 1, well: 1, boulder: 1, house: 1, cliff: 1, glacier: 1, spruce: 1, icehouse: 1 };
+  // ---- Les na pomedzí: plocha medzi záhradou a Lesom divov (rovnaká veľkosť ako záhrada) ----
+  // Na juhu lúka s poľnými kvetmi a pár stromami, v strede mierny les s krami, papraďou a chodníčkami,
+  // smerom na sever les hustne, až na severe ostane len chodník k okraju (tam raz bude prechod do Lesa divov).
+  // Rozloženie je podľa semienka sveta: každý svet má svoj les, ale stále ten istý.
+  const POMEDZIE_NORTH = [9, 10]; // stĺpce chodníka na severnom okraji (budúci prechod do Lesa divov)
+  const MEADOW_Y = 24;            // od tohto riadku na juh je lúka
+  function buildPomedzie(seed) {
+    const { w, h } = AREA_SIZE.pomedzie;
+    const g = new Array(w * h).fill('forest');
+    const inside = (x, y) => x >= 0 && y >= 0 && x < w && y < h;
+    const set = (x, y, v) => { if (inside(x, y)) g[y * w + x] = v; };
+    const at = (x, y) => inside(x, y) ? g[y * w + x] : null;
+    const rnd = mulberry32(((seed >>> 0) ^ 0x9e3779b9) >>> 0);
+    const ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
+    // hustota stromov podľa riadku: lúka riedko, les smerom na sever čoraz hustejšie
+    const edge = MEADOW_Y - 3;
+    const treeP = y => y >= MEADOW_Y ? 0.05 : y >= edge ? 0.14 : 0.16 + 0.72 * Math.pow((edge - y) / edge, 1.5);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const meadow = y >= MEADOW_Y || (y >= edge && rnd() < (y - edge + 1) / 4); // okraj lúky je zubatý
+      const r = rnd(), p = treeP(y);
+      if (r < p) set(x, y, 'tree');
+      else if (r < p + (meadow ? 0.03 : 0.07)) set(x, y, 'bush');
+      else set(x, y, meadow ? 'meadow' : rnd() < 0.25 ? 'fern' : 'forest');
+    }
+    // Chodník: krok po kroku (vždy susedné políčka), vodorovne smerom k cieľu
+    const path = (x, y) => { if (at(x, y) !== 'gate') set(x, y, 'path'); };
+    const walkTo = (x, y, gx, maxStep) => { let k = 0; while (x !== gx && k++ < maxStep) { x += Math.sign(gx - x); path(x, y); } return x; };
+    // Hlavný chodník: od prechodu na západe kúsok po lúke na východ a potom kľukato na sever
+    const gy = GATES.pomedzie[1].y;
+    let x = 1, y = gy;
+    path(1, gy - 1); path(1, gy);
+    x = walkTo(x, y, ri(4, 7), w);
+    let goal = x;
+    const trail = [];
+    while (y > 0) {
+      y--; path(x, y);
+      if (y > 6 && y % 3 === 0) goal = Math.max(3, Math.min(w - 4, x + ri(-4, 4)));
+      if (y <= 6) goal = POMEDZIE_NORTH[0];
+      x = walkTo(x, y, goal, 2);
+      trail.push({ x, y });
+    }
+    for (const nx of POMEDZIE_NORTH) { path(nx, 0); path(nx, 1); }
+    // Bočné chodníčky: z hlavného chodníka do strany k malej čistinke
+    for (const [y0, y1] of [[8, 13], [15, 20]]) {
+      const from = trail.find(t => t.y === ri(y0, y1));
+      if (!from) continue;
+      const dir = from.x < w / 2 ? 1 : -1, len = ri(4, 7);
+      let cx = from.x, cy = from.y;
+      for (let i = 0; i < len; i++) {
+        cx += dir; if (cx < 1 || cx > w - 2) { cx -= dir; break; }
+        path(cx, cy);
+        if (rnd() < 0.35 && cy > 4 && cy < MEADOW_Y - 1) { cy += rnd() < 0.5 ? -1 : 1; path(cx, cy); }
+      }
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (at(cx + dx, cy + dy) && at(cx + dx, cy + dy) !== 'path') set(cx + dx, cy + dy, (dx + dy) % 2 ? 'fern' : 'forest');
+    }
+    // Chodníček po lúke od prechodu na juhovýchod
+    let mx = 2, my = gy;
+    while (my < h - 2) { my++; path(mx, my); mx = walkTo(mx, my, Math.min(w - 3, mx + ri(1, 3)), 3); }
+    // Pri prechode do záhrady voľná lúka
+    for (let yy = gy - 2; yy <= gy + 1; yy++) for (let xx = 0; xx <= 2; xx++) if (at(xx, yy) !== 'path') set(xx, yy, 'meadow');
+    // Na severe už len stromy a chodník
+    for (let yy = 0; yy <= 2; yy++) for (let xx = 0; xx < w; xx++) if (at(xx, yy) !== 'path') set(xx, yy, 'tree');
+    for (const gt of GATES.pomedzie) set(gt.x, gt.y, 'gate');
+    // Každé priechodné políčko musí byť dosiahnuteľné od prechodu – uzavreté kúty zarastú
+    const seen = new Uint8Array(w * h), q = [gy * w];
+    seen[gy * w] = 1;
+    for (let k = 0; k < q.length; k++) {
+      const i = q[k], qx = i % w, qy = (i / w) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = qx + dx, ny = qy + dy, n = ny * w + nx;
+        if (!inside(nx, ny) || seen[n] || BLOCK[g[n]]) continue;
+        seen[n] = 1; q.push(n);
+      }
+    }
+    for (let i = 0; i < g.length; i++) if (!seen[i] && !BLOCK[g[i]]) g[i] = ((i / w) | 0) >= MEADOW_Y ? 'bush' : 'tree';
+    return g;
+  }
+
+  const BLOCK = { tree: 1, water: 1, hut: 1, babka: 1, cauldron: 1, stall: 1, well: 1, boulder: 1, house: 1, cliff: 1, glacier: 1, spruce: 1, icehouse: 1, bush: 1 };
   // Výška terénu v podkockách (pol bloku) podľa typu zeme – zdieľa ju 3D svet (world3d.js) aj chôdza
   // (hory: sutina a sneh vyššie, ľadovec ešte vyššie, skalné steny najvyššie; v záhrade skalka nad trávou).
   const TERRAIN_H = { water: 1, rock: 3, boulder: 3, scree: 3, snow: 3, glacier: 3, cliff: 8 };
@@ -463,8 +574,8 @@
     CHAT_MAX, chatText,
     W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
-    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_NAMES, AREA_FX, GATES, ARRIVE,
-    sellPrice, itemName, buildMap, buildMountains, buildArea, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
+    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y,
+    sellPrice, itemName, buildMap, buildMountains, buildPomedzie, buildArea, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
   };
   root.GameData = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

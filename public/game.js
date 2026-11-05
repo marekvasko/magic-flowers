@@ -2,7 +2,6 @@
 (() => {
   const D = window.GameData;
   const $ = id => document.getElementById(id);
-  const W = D.W, H = D.H;
 
   const SHIRTS = ['#4a90d9', '#e05a5a', '#5cb85c', '#f0ad4e', '#9b59d0', '#20b2aa', '#ff7eb6', '#555555'];
   const HAIRS = ['#5b3a1a', '#2b1a10', '#e8c36a', '#c0532a', '#9e9e9e', '#d96fa8', '#3a6ea5'];
@@ -20,7 +19,7 @@
     tiles: [], tick: 0, market: null, board: [], rep: 0, up: {}, canCap: 5, plotLimit: 8, plotsUsed: 0, maxActive: 1, day: 1, min: 390, weather: 'sun', timeAt: 0, tickMs: 1000, daySeconds: 300, mode: 'running', storage: {},
     me: { x: D.SPAWN.x, y: D.SPAWN.y, dir: 0, phase: 0, moving: false, jz: 0, jv: 0, crawl: false }, crawlKey: false, crawlTgl: false, myEmote: null,
     others: new Map(), inv: {}, coins: 0, water: 20, recipes: [], seen: [], vily: false,
-    sel: 'hoe', area: 'garden', areaSeq: 0, tilesGen: 0, storageRate: D.STORAGE_AGE_RATE, icehouse: { built: false, ice: 0 }, quest: null, eternal: false, names: [],
+    sel: 'hoe', area: 'garden', areaSeq: 0, W: D.W, H: D.H, tilesGen: 0, storageRate: D.STORAGE_AGE_RATE, icehouse: { built: false, ice: 0 }, quest: null, eternal: false, names: [],
     keys: {}, stick: { x: 0, y: 0 }, path: null, pendingAct: null, tapMark: null, lastSent: '', sentAt: 0,
     fx: [], screenFx: [], bubbles: {}, modal: null, cauldron: [], brewed: null, anchors: {}, joined: false,
     skyTaps: [], tipIdx: Math.floor(Math.random() * D.TIPS.length), stuckT: 0
@@ -93,12 +92,13 @@
 
   function onMsg(m) {
     // počas stmavovania pred prechodom sa správy z novej plochy odložia, kým sa svet za čiernou nevymení
-    if (S.areaFx && S.areaFx.pending && m.t !== 'area' && m.t !== 'welcome' && m.t !== 'error') { S.areaFx.queue.push(m); return; }
+    if (S.areaFx && S.areaFx.phase === 'out' && m.t !== 'area' && m.t !== 'welcome' && m.t !== 'error') { S.areaFx.queue.push(m); return; }
     switch (m.t) {
       case 'welcome':
         if (S.areaFx) endAreaFx(true); // nové pripojenie – rozbehnutý prechod už neplatí
         S.id = m.id; S.tiles = m.tiles; S.me.x = m.x; S.me.y = m.y; S.joined = true;
         S.area = m.area || 'garden'; S.areaSeq = m.seq | 0; S.tilesGen++;
+        S.W = m.w || D.W; S.H = m.h || D.H;
         findAnchors();
         if (!localStorage.getItem('mfHint')) { localStorage.setItem('mfHint', '1'); setTimeout(() => toast('👆 Potiahni prstom kdekoľvek pre pohyb · ťukni na objekt pre akciu'), 600); }
         $('join').classList.add('hidden'); $('game').classList.remove('hidden'); $('conn').classList.add('hidden');
@@ -112,7 +112,7 @@
         renderHotbar(); updateHud();
         if (S.modal && S.modal.refresh) S.modal.refresh();
         break;
-      case 'area': areaChange(m); break; // prechod do inej plochy (záhrada ↔ hory)
+      case 'area': areaChange(m); break; // prechod do inej plochy (záhrada ↔ hory, záhrada ↔ Les na pomedzí)
       case 'room':
         S.storageRate = m.storageRate || D.STORAGE_AGE_RATE; S.icehouse = m.icehouse || { built: false, ice: 0 };
         S.eternal = m.eternal; S.storageFb = m.storageFb || {}; S.storageTick = m.tick; S.names = m.names; S.mode = m.mode; S.daySeconds = m.daySeconds; S.storage = m.storage || {};
@@ -162,6 +162,7 @@
   let areaHideT = 0;
   function applyArea(m) {
     S.area = m.area; S.areaSeq = m.seq; S.tiles = m.tiles; S.tilesGen++;
+    S.W = m.w || D.W; S.H = m.h || D.H; // každá plocha má vlastnú veľkosť
     S.me.x = m.x; S.me.y = m.y; S.others.clear(); stopWalk();
     findAnchors();
   }
@@ -182,24 +183,43 @@
       box.appendChild(sp);
     }
   }
+  // Priebeh prechodu (S.areaFx.phase): 'out' – stmavuje sa, 'build' – za čiernou sa stavia svet novej plochy,
+  // 'named' – meno plochy svieti AREA_HOLD ms, potom sa rozjasní (endAreaFx). Stavba 3D sveta je ťažká a na mobile
+  // na stovky ms zastaví stránku – meno sa preto ukáže až po nej a čas AREA_HOLD beží až odvtedy.
   function areaChange(m) {
     stopWalk(); S.keys = {}; S.stick.x = S.stick.y = 0;
     const fx = S.areaFx;
-    if (fx && fx.pending) { fx.msg = m; paintAreaFade(m.area); return; } // ešte stmavuje – platí posledná správa
-    if (fx) { applyArea(m); paintAreaFade(m.area); clearTimeout(fx.timer); fx.timer = setTimeout(endAreaFx, AREA_HOLD); return; } // už je čierno
+    if (fx && fx.phase === 'out') { fx.msg = m; paintAreaFade(m.area); return; } // ešte stmavuje – platí posledná správa
+    if (fx) { clearTimeout(fx.timer); applyArea(m); paintAreaFade(m.area); showAreaName(fx); return; } // už je čierno
     const el = $('areaFade');
     clearTimeout(areaHideT);
     paintAreaFade(m.area);
     el.classList.remove('hidden', 'named'); void el.offsetWidth; el.classList.add('on');
     sfx('magic');
-    const nfx = S.areaFx = { pending: true, msg: m, queue: [] };
+    const nfx = S.areaFx = { phase: 'out', msg: m, queue: [] };
     nfx.timer = setTimeout(() => {
-      nfx.pending = false;
       applyArea(nfx.msg); // svet sa prestavia za čiernou
-      el.classList.add('named');
       for (const q of nfx.queue.splice(0)) onMsg(q);
-      nfx.timer = setTimeout(endAreaFx, AREA_HOLD);
+      showAreaName(nfx);
     }, reducedMotion() ? 0 : AREA_FADE);
+  }
+  // Počká, kým 3D pohľad postaví a nakreslí svet novej plochy (najviac 4 s), potom ukáže meno a nechá ho svietiť AREA_HOLD.
+  function showAreaName(fx) {
+    fx.phase = 'build';
+    const el = $('areaFade'), t0 = performance.now(), gen = S.tilesGen, tok = fx.tok = {}; // platí len posledné čakanie
+    const live = () => S.areaFx === fx && fx.tok === tok;
+    const ready = () => !R3 || S.worldGen >= gen || performance.now() - t0 > 4000;
+    const step = () => {
+      if (!live()) return; // medzitým prechod skončil alebo prišla ďalšia plocha
+      if (!ready()) return requestAnimationFrame(step);
+      requestAnimationFrame(() => { // ešte jeden snímok, nech je postavený svet naozaj nakreslený
+        if (!live()) return;
+        fx.phase = 'named';
+        el.classList.add('named');
+        fx.timer = setTimeout(endAreaFx, AREA_HOLD);
+      });
+    };
+    requestAnimationFrame(step);
   }
   function endAreaFx(now) {
     const el = $('areaFade');
@@ -213,7 +233,7 @@
     S.anchors = {};
     for (let i = 0; i < S.tiles.length; i++) {
       const g = S.tiles[i].g;
-      if ((g === 'hut' || g === 'house' || g === 'stall' || g === 'well' || g === 'cauldron' || g === 'icehouse') && !S.anchors[g]) S.anchors[g] = { x: i % W, y: (i / W) | 0 };
+      if ((g === 'hut' || g === 'house' || g === 'stall' || g === 'well' || g === 'cauldron' || g === 'icehouse') && !S.anchors[g]) S.anchors[g] = { x: i % S.W, y: (i / S.W) | 0 };
     }
   }
 
@@ -225,13 +245,13 @@
   function realMin() { return (S.min + Math.min(D.MIN_PER_TICK, (performance.now() - S.timeAt) / S.tickMs * D.MIN_PER_TICK)) % 1440; }
   function season() { return window.MF_TIME && window.MF_TIME.season != null ? window.MF_TIME.season : D.seasonOf(S.day); }
   const GLACIER_MAX = D.glacierLevels(D.buildMountains()); // pôvodná výška ľadu na políčkach hôr
-  function tileAt(x, y) { return (x < 0 || y < 0 || x >= W || y >= H) ? null : S.tiles[y * W + x]; }
+  function tileAt(x, y) { return (x < 0 || y < 0 || x >= S.W || y >= S.H) ? null : S.tiles[y * S.W + x]; }
   // Dá sa vstúpiť na políčko pod bodom (x, y) z políčka here? Na ľadovec len o pol bloku vyššie (vo výskoku o blok),
   // plazením vôbec nie cez výškový rozdiel – políčka, na ktorých už čiastočne leží (overlap), ho však nezadržia.
   function solid(x, y, here, lift, crawl, overlap) {
     const tx = Math.floor(x), ty = Math.floor(y), t = tileAt(tx, ty);
     if (!t) return true;
-    if (crawl && D.passable(t) && overlap.has(ty * W + tx)) return false;
+    if (crawl && D.passable(t) && overlap.has(ty * S.W + tx)) return false;
     return !D.canStep(here, t, lift, crawl);
   }
   function playerOn(tx, ty) {
@@ -324,6 +344,8 @@
       case 'lot': return { i: '🪧', l: 'Pozemok', info: true };
       case 'shroom': case 'ring': return { i: '🍄', l: 'Huby', info: true };
     }
+    // mimo záhrady sa nepestuje ani nehľadá – použiť sa dá len elixír
+    if (S.area !== 'garden') return sel.startsWith('po_') ? { i: '🧪', l: 'Použiť' } : null;
     const s = t.s, p = s && s.p;
     if (p && !p.d && D.stageOf(p) === 3) return (p.sp === 'papradie' && !D.isNight(curMin())) ? { i: '🌙', l: 'Čaká na noc' } : { i: '🧺', l: 'Zbierať' };
     if (sel === 'hoe') {
@@ -509,19 +531,19 @@
   // BFS po políčkach – nájde cestu k prvému políčku, ktoré spĺňa podmienku
   function findPath(goal) {
     const sx = Math.floor(S.me.x), sy = Math.floor(S.me.y);
-    const prev = new Int32Array(W * H).fill(-2);
-    const q = [sy * W + sx];
+    const prev = new Int32Array(S.W * S.H).fill(-2);
+    const q = [sy * S.W + sx];
     prev[q[0]] = -1;
     for (let qi = 0; qi < q.length; qi++) {
-      const i = q[qi], x = i % W, y = (i / W) | 0;
+      const i = q[qi], x = i % S.W, y = (i / S.W) | 0;
       if (goal(x, y)) {
         const path = [];
-        for (let k = i; k !== -1; k = prev[k]) path.unshift({ x: k % W + 0.5, y: ((k / W) | 0) + 0.5 });
+        for (let k = i; k !== -1; k = prev[k]) path.unshift({ x: k % S.W + 0.5, y: ((k / S.W) | 0) + 0.5 });
         return path;
       }
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const nx = x + dx, ny = y + dy, n = ny * W + nx;
-        if (nx < 0 || ny < 0 || nx >= W || ny >= H || prev[n] !== -2) continue;
+        const nx = x + dx, ny = y + dy, n = ny * S.W + nx;
+        if (nx < 0 || ny < 0 || nx >= S.W || ny >= S.H || prev[n] !== -2) continue;
         if (!D.canStep(S.tiles[i], S.tiles[n], 0, S.me.crawl)) continue;
         prev[n] = i; q.push(n);
       }
@@ -623,7 +645,7 @@
     const m = curMin(), h = Math.floor(m / 60), mm = Math.floor(m % 60 / 10) * 10;
     const se = season();
     const dayInSeason = (S.day - 1) % D.DAYS_PER_SEASON + 1;
-    $('hDate').textContent = (S.area === 'hory' ? '🏔️ ' : '') + `${D.SEASON_ICONS[se]} ${D.SEASONS[se]} · deň ${dayInSeason}/${D.DAYS_PER_SEASON}`;
+    $('hDate').textContent = (S.area !== 'garden' ? (D.AREA_FX[S.area] || {}).icon + ' ' : '') + `${D.SEASON_ICONS[se]} ${D.SEASONS[se]} · deň ${dayInSeason}/${D.DAYS_PER_SEASON}`;
     $('hClock').textContent = String(h).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
     $('hSky').textContent = (h >= 20 || h < 5) ? '🌙' : '☀️';
     $('hWeather').textContent = { rain: '🌧️', snow: '🌨️', sun: '' }[S.weather] + (S.eternal ? '🌸' : '') + (S.vily ? '🧚' : '');
@@ -1181,7 +1203,7 @@
       const overlap = new Set();
       for (const [cx, cy] of corners(me.x, me.y)) {
         const t = tileAt(Math.floor(cx), Math.floor(cy));
-        overlap.add(Math.floor(cy) * W + Math.floor(cx));
+        overlap.add(Math.floor(cy) * S.W + Math.floor(cx));
         if (D.passable(t) && D.level(t) > D.level(here)) here = t;
       }
       const lift = Math.floor((me.jz || 0) * D.GLACIER_LAYERS);

@@ -4,8 +4,8 @@
 // Na políčku ľadovca je ice = koľko vrstiev ľadu (po 1/4 bloku) na ňom ešte stojí; cut = 1 → do vody sa dnes už vysekal otvor.
 const D = require('./shared/data.js');
 const I = require('./items.js');
+const { areaTiles } = require('./areas.js');
 
-function areaTiles(room, area) { return area === 'hory' ? room.hory : room.tiles; }
 // pôvodná (najvyššia) výška ľadu na každom políčku hôr
 const LEVELS = D.glacierLevels(D.buildMountains());
 
@@ -107,7 +107,7 @@ function feedGlacier(room, weather) {
 // Vráti zoznam plôch, ktoré sa zmenili.
 function dawnIce(room, season, weather) {
   const changed = new Set();
-  for (const area of D.AREAS) for (const t of areaTiles(room, area)) if (t.cut) { delete t.cut; changed.add(area); }
+  for (const area of D.AREAS) for (const t of areaTiles(room, area) || []) if (t.cut) { delete t.cut; changed.add(area); }
   if (meltGlacier(room, D.GLACIER_MELT[season])) changed.add('hory');
   if (feedGlacier(room, weather)) changed.add('hory');
   return [...changed];
@@ -166,12 +166,4 @@ function buyTool(sv, id) {
   return null;
 }
 
-// Na ktorom prechode stojí hráč: vráti cieľovú plochu, alebo null.
-function gateTarget(tiles, area, x, y) {
-  const tx = Math.floor(x), ty = Math.floor(y);
-  if (tx < 0 || ty < 0 || tx >= D.W || ty >= D.H) return null;
-  if (tiles[ty * D.W + tx].g !== 'gate') return null;
-  return area === 'hory' ? 'garden' : 'hory';
-}
-
-module.exports = { LEVELS, areaTiles, loadHory, saveHory, lotIdx, applyIcehouse, digIce, dawnIce, meltGlacier, growGlacier, feedGlacier, glacierTotal, glacierMax, setIce, meltHourly, fillIcehouse, buildIcehouse, buyTool, gateTarget };
+module.exports = { LEVELS, areaTiles, loadHory, saveHory, lotIdx, applyIcehouse, digIce, dawnIce, meltGlacier, growGlacier, feedGlacier, glacierTotal, glacierMax, setIce, meltHourly, fillIcehouse, buildIcehouse, buyTool };

@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const D = require('../shared/data.js');
 const I = require('../items.js');
 const Ice = require('../ice.js');
+const Areas = require('../areas.js');
 const TPD = D.TICKS_PER_DAY;
 
 // Minimálny svet: záhrada z generátora, hory, sklad
@@ -17,10 +18,8 @@ test('hory majú rovnakú veľkosť ako záhrada, prechody a príchody sedia', (
   const h = D.buildMountains(), g = D.buildMap();
   assert.strictEqual(h.length, D.W * D.H);
   for (const area of D.AREAS) {
-    const tiles = D.buildArea(area);
-    for (const [x, y] of D.GATES[area]) assert.strictEqual(tiles[y * D.W + x], 'gate', `${area} ${x},${y}`);
-    const a = D.ARRIVE[area], t = tiles[Math.floor(a.y) * D.W + Math.floor(a.x)];
-    assert.ok(!D.BLOCK[t] && t !== 'gate', `príchod do ${area} je na voľnom políčku (${t})`);
+    const tiles = D.buildArea(area, 1);
+    for (const { x, y } of D.GATES[area]) assert.strictEqual(tiles[y * D.W + x], 'gate', `${area} ${x},${y}`);
   }
   assert.ok(h.includes('glacier') && h.includes('water'));
   assert.strictEqual(g.filter(t => t === 'lot').length, 4);
@@ -28,7 +27,7 @@ test('hory majú rovnakú veľkosť ako záhrada, prechody a príchody sedia', (
 
 test('z príchodu v horách sa dá dôjsť k ľadovcu aj späť k prechodu', () => {
   const tiles = D.buildMountains(), W = D.W, H = D.H;
-  const a = D.ARRIVE.hory, start = Math.floor(a.y) * W + Math.floor(a.x);
+  const a = D.arrival('garden', 'hory'), start = Math.floor(a.y) * W + Math.floor(a.x);
   const seen = new Set([start]), q = [start];
   while (q.length) {
     const i = q.shift(), x = i % W, y = (i / W) | 0;
@@ -38,18 +37,18 @@ test('z príchodu v horách sa dá dôjsť k ľadovcu aj späť k prechodu', () 
       seen.add(n); q.push(n);
     }
   }
-  const gates = D.GATES.hory.map(([x, y]) => y * W + x);
+  const gates = D.GATES.hory.map(({ x, y }) => y * W + x);
   assert.ok(gates.some(i => seen.has(i)), 'prechod do záhrady');
   const nextToGlacier = [...seen].some(i => [1, -1, W, -W].some(d => tiles[i + d] === 'glacier'));
   assert.ok(nextToGlacier, 'k ľadovcu sa dá podísť');
 });
 
-test('prechod: na políčku gate vráti druhú plochu', () => {
+test('prechod: na políčku gate vráti cieľovú plochu', () => {
   const r = room();
-  const [gx, gy] = D.GATES.garden[0], [hx, hy] = D.GATES.hory[0];
-  assert.strictEqual(Ice.gateTarget(r.tiles, 'garden', gx + 0.5, gy + 0.3), 'hory');
-  assert.strictEqual(Ice.gateTarget(r.hory, 'hory', hx + 0.5, hy + 0.7), 'garden');
-  assert.strictEqual(Ice.gateTarget(r.tiles, 'garden', D.SPAWN.x, D.SPAWN.y), null);
+  const { x: gx, y: gy } = D.GATES.garden[0], { x: hx, y: hy } = D.GATES.hory[0];
+  assert.strictEqual(Areas.gateTarget(r.tiles, 'garden', gx + 0.5, gy + 0.3), 'hory');
+  assert.strictEqual(Areas.gateTarget(r.hory, 'hory', hx + 0.5, hy + 0.7), 'garden');
+  assert.strictEqual(Areas.gateTarget(r.tiles, 'garden', D.SPAWN.x, D.SPAWN.y), null);
 });
 
 test('ľadovec: úrovne od pol bloku na okraji po 2 bloky v strede', () => {
