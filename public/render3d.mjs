@@ -13,6 +13,7 @@ const GT = 32;                                   // px na políčko v textúre z
 const MAX_LIGHTS = 16;
 // blčanie svetiel (pomerná zmena dosahu): oheň, lampáš, okno, ostatné (hráči, kvety, víly)
 const FL_FIRE = 0.16, FL_LANTERN = 0.08, FL_WINDOW = 0.035, FL_SOFT = 0.03;
+const LAMP_R = 6.5; // dosah svetla lampáša v ruke (políčka)
 // plynulý „plameňový“ šum zo súčtu sínusov s nesúdeliteľnými frekvenciami
 function flicker(t, seed, amt) {
   const n = 0.5 * Math.sin(t * 7.3 + seed) + 0.3 * Math.sin(t * 13.7 + seed * 2.1) + 0.2 * Math.sin(t * 23.9 + seed * 3.7);
@@ -1106,11 +1107,13 @@ export function create(api) {
     // každé svetlo blčí ako plameň: oheň najviac, lampáše menej, okná a ostatné len jemne
     const lights = [];
     const dl = W.daylight(min);
+    const lampState = dl < 0.8 ? 'lit' : 'on'; // lampáš v ruke horí, len keď je šero
     if (dl < 0.8) {
       const A = api.S.anchors;
       const add = (x, y, z, r, fl) => { if (lights.length < MAX_LIGHTS) lights.push(new THREE.Vector4(x, y, z, r * flicker(t, x * 7.1 + z * 3.3, fl || FL_SOFT))); };
-      add(S.me.x, 1.6, S.me.y, 3.2);
-      for (const o of S.others.values()) add(o.x, 1.6, o.y, 2.6);
+      // hráč s lampášom v ruke svieti ďaleko viac (svetlo je nižšie, pri ruke, a blčí ako plameň)
+      if (S.sel === 'lamp') add(S.me.x, 1.1, S.me.y, LAMP_R, FL_LANTERN); else add(S.me.x, 1.6, S.me.y, 3.2);
+      for (const o of S.others.values()) if (o.lp) add(o.x, 1.1, o.y, LAMP_R, FL_LANTERN); else add(o.x, 1.6, o.y, 2.6);
       if (A.hut) { add(A.hut.x + 0.5, 2.05, A.hut.y + 2.2, 2.2, FL_WINDOW); add(A.hut.x + 2.4, 2.05, A.hut.y + 2.2, 2.2, FL_WINDOW); }
       if (A.house) { add(A.house.x + 0.62, 2.2, A.house.y + 2.3, 2.2, FL_WINDOW); add(A.house.x + 2.37, 2.2, A.house.y + 2.3, 2.2, FL_WINDOW); add(A.house.x + 2.06, 2.4, A.house.y + 2.06, 1.8, FL_LANTERN); }
       if (A.cauldron) add(A.cauldron.x + 0.5, 1.3, A.cauldron.y + 0.5, 2.6, FL_FIRE);   // oheň pod kotlíkom
@@ -1136,8 +1139,8 @@ export function create(api) {
     }
     for (const o of chars.values()) o.alive = false;
     const me = S.me;
-    const meO = drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : DIR_ANGLE[me.dir], S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz, crawl: me.crawl, dig: api.searching({ si: S.mySi }) && t }, dt);
-    for (const o of S.others.values()) drawChar(o.id, o.x, o.y, o.look, o.a != null ? o.a : DIR_ANGLE[o.dir || 0], o.e === 'dance' ? t * 4 : o.phase, { dance: o.e === 'dance', jz: o.jz, crawl: o.cr, dig: api.searching(o) && t }, dt);
+    const meO = drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : DIR_ANGLE[me.dir], S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz, crawl: me.crawl, dig: api.searching({ si: S.mySi }) && t, lamp: S.sel === 'lamp' && lampState }, dt);
+    for (const o of S.others.values()) drawChar(o.id, o.x, o.y, o.look, o.a != null ? o.a : DIR_ANGLE[o.dir || 0], o.e === 'dance' ? t * 4 : o.phase, { dance: o.e === 'dance', jz: o.jz, crawl: o.cr, dig: api.searching(o) && t, lamp: o.lp && lampState }, dt);
     if (S.area !== 'garden') babka = null; // babka býva v záhrade (bez alive ju upratovanie nižšie odstráni)
     else if (!babka) babka = drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, 0, { babka: true }, 1);
     else { babka.alive = true; if (Math.floor(t) !== babka.lastT) { babka.lastT = Math.floor(t); drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, Math.sin(t) * 0.3, { babka: true }, 1); } }

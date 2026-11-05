@@ -135,7 +135,7 @@
           let o = S.others.get(p.id);
           if (!o) { o = { x: p.x, y: p.y, phase: 0, jz: 0, jv: 0, j: p.j }; S.others.set(p.id, o); }
           if (p.j !== o.j && !o.jz) o.jv = JUMP_V; // iný hráč skočil
-          Object.assign(o, { id: p.id, tx: p.x, ty: p.y, dir: p.dir, a: p.a, look: p.look || {}, name: p.name, e: p.e, cr: !!p.cr, j: p.j, si: p.si });
+          Object.assign(o, { id: p.id, tx: p.x, ty: p.y, dir: p.dir, a: p.a, look: p.look || {}, name: p.name, e: p.e, cr: !!p.cr, lp: !!p.lp, j: p.j, si: p.si });
         }
         for (const id of [...S.others.keys()]) if (!seen.has(id)) S.others.delete(id);
         break;
@@ -401,7 +401,7 @@
       else plantInfo(tx, ty);
       return;
     }
-    if (a.l === 'Hľadať') { const me = S.me; send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl, ar: S.areaSeq }); } // server musí vedieť, že už stojím na políčku
+    if (a.l === 'Hľadať') { const me = S.me; send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq }); } // server musí vedieť, že už stojím na políčku
     send({ t: 'act', x: tx, y: ty, item: S.sel });
     if (a.l === 'Kopať' || a.l === 'Vysekať ľad') sfx('dig'); else if (a.l === 'Poliať' || a.l === 'Načrieť') sfx('water'); else sfx('pop');
   }
@@ -566,7 +566,7 @@
 
   // ---------- Hotbar ----------
   function hotbarIds() {
-    const order = id => id === 'hoe' ? 0 : id === 'can' ? 1 : id === 'pick' ? 1.5 : id === 'compost' ? 2 : id.startsWith('seed_') || D.isWild(id) ? 3 : id.startsWith('fl_') ? 4 : id === 'wilted' ? 4.5 : 5;
+    const order = id => id === 'hoe' ? 0 : id === 'can' ? 1 : id === 'pick' ? 1.5 : id === 'lamp' ? 1.6 : id === 'compost' ? 2 : id.startsWith('seed_') || D.isWild(id) ? 3 : id.startsWith('fl_') ? 4 : id === 'wilted' ? 4.5 : 5;
     const spOrder = Object.keys(D.SPECIES);
     const rank = id => { const k = id.replace(/^(seed_|fl_|po_)/, ''); const i = spOrder.indexOf(k); return i < 0 ? 99 : i; };
     return Object.keys(S.inv).filter(id => S.inv[id] > 0).sort((a, b) => order(a) - order(b) || rank(a) - rank(b));
@@ -586,7 +586,7 @@
         if (o) d.innerHTML += `<span class="n">${S.inv[id]}</span><div class="wbar fresh"><i style="width:${o.rem * 100}%;background:${freshColor(o.rem)}"></i></div>`;
         else d.innerHTML += `<span class="n">${S.inv[id]}</span>`;
       }
-      else if (id !== 'hoe' && id !== 'pick') d.innerHTML += `<span class="n">${S.inv[id]}</span>`;
+      else if (id !== 'hoe' && id !== 'pick' && id !== 'lamp') d.innerHTML += `<span class="n">${S.inv[id]}</span>`;
       d.onclick = () => selectItem(id);
       bar.appendChild(d);
     }
@@ -610,6 +610,7 @@
     if (D.isWild(S.sel)) txt += ' · ' + D.SEASON_ICONS[+S.sel.slice(5)] + ' · nevedno, čo z neho vyrastie';
     if (S.sel === 'wilted') txt += ` · ${D.WILTED_PER_COMPOST} ks = 1 kompost (v sklade)`;
     if (S.sel === 'pick') txt += ' · ľad na ľadovci v horách, v zime aj na jazierku';
+    if (S.sel === 'lamp') txt += ' · v ruke svieti, keď je tma';
     if (S.sel === 'ice') {
       const o = oldestBatch('ice');
       txt += ` ${S.inv.ice || 0}/${D.ICE_CARRY} · ťažký` + (o ? ` · roztopí sa o ${fmtLeft(o.left)}` : '');
@@ -1202,8 +1203,8 @@
     } else me.phase = 0;
     // odoslanie pozície
     const now = performance.now();
-    const key = me.x.toFixed(2) + ',' + me.y.toFixed(2) + ',' + me.dir + ',' + (me.a != null ? me.a.toFixed(1) : '') + ',' + me.crawl;
-    if (key !== S.lastSent && now - S.sentAt > 90) { send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl, ar: S.areaSeq }); S.lastSent = key; S.sentAt = now; }
+    const key = me.x.toFixed(2) + ',' + me.y.toFixed(2) + ',' + me.dir + ',' + (me.a != null ? me.a.toFixed(1) : '') + ',' + me.crawl + ',' + (S.sel === 'lamp');
+    if (key !== S.lastSent && now - S.sentAt > 90) { send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq }); S.lastSent = key; S.sentAt = now; }
     // ostatní hráči
     for (const o of S.others.values()) {
       const dx = o.tx - o.x, dy = o.ty - o.y;

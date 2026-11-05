@@ -194,6 +194,19 @@ const Art = (() => {
   // dir: 0 dole, 1 vľavo, 2 vpravo, 3 hore, 4 vľavo dole, 5 vpravo dole, 6 vľavo hore, 7 vpravo hore
   // o.crawl: plazí sa (pokrčené kolená, predklon)
   // o.dig: čas v s, keď hráč hrabe v tráve – je prikrčený a rukami striedavo hrabe pred sebou
+  function lantern(c, x, y, h, lit) {
+    const w = h * 0.5;
+    c.strokeStyle = '#3a3a3a'; c.lineWidth = Math.max(1, h * 0.05);
+    c.beginPath(); c.arc(x, y + h * 0.16, h * 0.14, Math.PI, TAU); c.stroke(); // ucho
+    c.fillStyle = '#4a4a4a';
+    c.beginPath(); c.moveTo(x - w * 0.55, y + h * 0.3); c.lineTo(x, y + h * 0.14); c.lineTo(x + w * 0.55, y + h * 0.3); c.fill(); // strieška
+    c.fillStyle = lit ? '#ffe28a' : '#cfd9dc'; c.fillRect(x - w * 0.4, y + h * 0.3, w * 0.8, h * 0.5); // sklo
+    if (lit) { ell(c, x, y + h * 0.58, w * 0.16, h * 0.13, 0, '#ff9a2a'); ell(c, x, y + h * 0.6, w * 0.08, h * 0.07, 0, '#fff6c8'); }
+    c.fillStyle = '#3a3a3a';
+    c.fillRect(x - w * 0.45, y + h * 0.28, w * 0.9, h * 0.05); c.fillRect(x - w * 0.5, y + h * 0.78, w, h * 0.1); // obruče
+    c.fillRect(x - w * 0.04, y + h * 0.3, w * 0.08, h * 0.5); // priečka
+  }
+
   function char(c, x, y, s, look, dir, phase, o) {
     o = o || {};
     const skin = '#f2c9a0';
@@ -241,6 +254,11 @@ const Art = (() => {
     } else {
       circ(c, x - s * 0.22, yb - s * 0.36 + (d === 1 || d === 2 ? 0 : sw), s * 0.065, skin);
       circ(c, x + s * 0.22, yb - s * 0.36 - (d === 1 || d === 2 ? 0 : sw), s * 0.065, skin);
+      // lampáš visí z pravej ruky (pri pohľade doľava ho zakryje telo – kreslíme ho pred telo k ľavej ruke)
+      if (o.lamp) {
+        const lx = d === 1 ? x - s * 0.22 : x + s * 0.22, ly = yb - s * 0.36 + (d === 1 ? sw : d === 2 ? 0 : -sw);
+        lantern(c, lx, ly, s * 0.3, o.lamp === 'lit');
+      }
     }
     // hlava
     const hy = yb - s * 0.74;
@@ -422,6 +440,8 @@ const Art = (() => {
       c.strokeStyle = '#8b5a2b'; c.lineWidth = 6; c.lineCap = 'round'; c.beginPath(); c.moveTo(16, 56); c.lineTo(42, 18); c.stroke();
       c.strokeStyle = '#8e99a3'; c.lineWidth = 7; c.beginPath(); c.moveTo(18, 14); c.quadraticCurveTo(42, 4, 60, 30); c.stroke();
       c.strokeStyle = '#c6cfd6'; c.lineWidth = 2; c.beginPath(); c.moveTo(22, 11); c.quadraticCurveTo(42, 3, 56, 24); c.stroke();
+    } else if (id === 'lamp') {
+      lantern(c, 32, 8, 50, true);
     } else if (id === 'ice') {
       c.fillStyle = '#bfe6fb'; c.beginPath(); c.moveTo(32, 8); c.lineTo(56, 20); c.lineTo(32, 32); c.lineTo(8, 20); c.fill();
       c.fillStyle = '#8ccbec'; c.beginPath(); c.moveTo(8, 20); c.lineTo(32, 32); c.lineTo(32, 58); c.lineTo(8, 46); c.fill();

@@ -716,6 +716,7 @@ wss.on('connection', ws => {
           pl.dir = m.dir | 0;
           if (typeof m.a === 'number' && isFinite(m.a)) pl.a = +m.a.toFixed(3); // presný smer pohľadu (3D: 8 smerov)
           pl.cr = !!m.cr; // plazí sa
+          pl.lp = !!m.lp && !!sv.inv.lamp; // drží lampáš (svieti)
           sv.x = pl.x; sv.y = pl.y;
           if (pl.scav && Math.hypot(pl.x - pl.scav.px, pl.y - pl.scav.py) > 0.35) stopScavenge(pl, 'Pohol(a) si sa skôr, než si dohľadal(a).');
           const to = Ice.gateTarget(Ice.areaTiles(room, pl.area), pl.area, pl.x, pl.y);
@@ -908,7 +909,7 @@ setInterval(() => {
   for (const room of rooms.values()) {
     if (!room.players.size) continue;
     const list = [...room.players.values()].map(p => ({
-      id: p.id, name: p.name, x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, a: p.a, look: p.look, cr: p.cr ? 1 : 0, j: p.jn | 0, si: p.scav ? p.scav.i : -1, area: p.area,
+      id: p.id, name: p.name, x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, a: p.a, look: p.look, cr: p.cr ? 1 : 0, lp: p.lp ? 1 : 0, j: p.jn | 0, si: p.scav ? p.scav.i : -1, area: p.area,
       e: p.sleep ? 'sleep' : p.scav ? 'search' : p.emote && now - p.emoteAt < 6000 ? p.emote : null
     }));
     for (const area of D.AREAS) broadcastArea(room, area, { t: 'pl', list: list.filter(p => p.area === area) });
