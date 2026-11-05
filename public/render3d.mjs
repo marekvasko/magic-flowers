@@ -15,7 +15,9 @@ const MAX_LIGHTS = 16;
 const FL_FIRE = 0.16, FL_LANTERN = 0.08, FL_WINDOW = 0.035, FL_SOFT = 0.03;
 const LAMP_R = 6.5; // dosah svetla lampáša v ruke (políčka)
 const LAMP_COL = [1, 0.78, 0.45]; // farba (a sila) svetla lampášov
-const TRUNK_KEEP_R = 0.8; // polomer kmeňa obrovského stromu (bloky) – kmeň sa nikdy nezoslabí, len koruna
+// Obrovský strom (Les divov): kmeň (do polomeru TRUNK_KEEP_R od osi) a všetko do výšky CROWN_FROM nad zemou (korene) je vždy plné,
+// koruna (konáre a lístie nad tým) je zoslabená stále – inak by sa vzdialené koruny zjavovali a mizli ako diery v mape
+const TRUNK_KEEP_R = 0.8, CROWN_FROM = 3;
 const LAMP_DUSK = 0.8; // lampáš (aj okná, oheň…) horí, keď je svetla menej než toto (deň × stmavnutie lesa)
 // plynulý „plameňový“ šum zo súčtu sínusov s nesúdeliteľnými frekvenciami
 function flicker(t, seed, amt) {
@@ -96,7 +98,7 @@ precision highp float;
 #endif
 uniform sampler2D map; uniform sampler2D shadowMap;
 uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec3 emisColor;
-uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount; uniform float opacity; uniform vec3 trunkKeep;
+uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount; uniform float opacity; uniform vec4 trunkKeep;
 uniform float shadowOn; uniform vec2 shadowTexel; uniform float shadowRadius;
 uniform vec3 gloom; uniform vec3 gloomFog;
 uniform float darkOn; uniform vec4 eye; uniform vec2 eyeLit; uniform vec3 darkFog; uniform sampler2D canopy; uniform vec2 areaSize;
@@ -129,8 +131,8 @@ void main() {
   col = mix(col, darkFog, fogK);
   col = max(col, base * emisColor * vEmis); // svietiace veci (okná, oheň, živica) vidno aj v tme za dohľadom
   // zoslabený objekt: časť do výšky hráča (pne, kmene na zemi, kry) ostane plná, priehľadné je len to nad ňou
-  // zoslabený obrovský strom (trunkKeep = stred kmeňa x, z a polomer): kmeň ostane plný v celej výške, priehľadná je len koruna
-  bool keep = trunkKeep.z > 0.0 && distance(vPos.xz, trunkKeep.xy) < trunkKeep.z;
+  // obrovský strom (trunkKeep = stred kmeňa x, z, polomer, výška začiatku koruny): kmeň a korene plné, priehľadná je len koruna
+  bool keep = trunkKeep.z > 0.0 && (distance(vPos.xz, trunkKeep.xy) < trunkKeep.z || vPos.y < trunkKeep.w);
   gl_FragColor = vec4(col, keep ? 1.0 : opacity);
 }`;
 
@@ -411,7 +413,7 @@ export function create(api) {
   // Uniformy zdieľa s hlavným materiálom; priehľadnosť sa nastaví pre každý objekt tesne pred vykreslením.
   // Svetlo zdieľajú (rovnaké objekty uniform), ale priehľadnosť má každý materiál vlastnú – hlavný materiál ostáva úplne nepriehľadný.
   // priesvitná plocha: stačia 4 vzorky tieňa (pri ~30 % priehľadnosti rozdiel nevidno)
-  const fadeMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { SHADOW_TAPS: 4 }, uniforms: { ...material.uniforms, opacity: { value: 1 }, trunkKeep: { value: new THREE.Vector3() } }, transparent: true, depthWrite: false });
+  const fadeMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { SHADOW_TAPS: 4 }, uniforms: { ...material.uniforms, opacity: { value: 1 }, trunkKeep: { value: new THREE.Vector4() } }, transparent: true, depthWrite: false });
   // hĺbkový prechod tým istým shaderom (rovnaký výpočet hĺbky → žiadne bodkovanie)
   // malý posun dozadu, aby predná plocha zoslabeného objektu vždy spoľahlivo prešla testom hĺbky (žiadne kmitanie na mobiloch)
   // hĺbkový prechod: rovnaký vertex shader (rovnaká hĺbka – bez bodkovania), ale prázdny fragment shader
@@ -546,7 +548,7 @@ export function create(api) {
     fmesh.position.set(f.ox, f.oy, f.oz);
     fmesh.updateMatrixWorld();
     fmesh.userData.box = geo.boundingBox.clone().translate(fmesh.position); // vo svete (poradie zoslabených, lístie)
-    fmesh.userData.fade = 1;
+    fmesh.userData.fade = f.type === 'giant' ? fadeCfg().min : 1; // koruna obra je zoslabená od začiatku
     // pri zoslabení: najprv len hĺbka (aby bolo vidno iba prednú plochu modelu), potom model priehľadne
     fmesh.renderOrder = 2;
     const depthTwin = new THREE.Mesh(geo, depthOnlyMaterial);
@@ -555,7 +557,8 @@ export function create(api) {
     scene.add(depthTwin);
     fmesh.userData.depthTwin = depthTwin;
     // obrovský strom: stred kmeňa (stred modelu 2 × 2 políčka) – kmeň sa nezoslabuje
-    const trunk = f.type === 'giant' ? new THREE.Vector3(f.ox + f.sx / W.FINE / 2, f.oz + f.sz / W.FINE / 2, TRUNK_KEEP_R) : new THREE.Vector3();
+    const trunk = f.type === 'giant' ? new THREE.Vector4(f.ox + f.sx / W.FINE / 2, f.oz + f.sz / W.FINE / 2, TRUNK_KEEP_R, f.oy + CROWN_FROM) : new THREE.Vector4();
+    fmesh.userData.trunk = trunk;
     fmesh.onBeforeRender = () => { if (fmesh.material === fadeMaterial) { fadeMaterial.uniforms.opacity.value = fmesh.userData.fade; fadeMaterial.uniforms.trunkKeep.value.copy(trunk); fadeMaterial.uniformsNeedUpdate = true; } };
     fmesh.userData.tile = f.tile;
     fmesh.userData.type = f.type;
@@ -678,7 +681,7 @@ void main() {
         uniforms: { op: { value: 0 }, col: { value: new THREE.Vector3(1, 0.93, 0.7) } }
       }));
       m.userData.base = { x: x + 0.3 + 0.4 * W.hash(x, y, 145), z: y + 0.3 + 0.4 * W.hash(x, y, 147), k: g === 'glade' ? 1 : 0.6 };
-      m.layers.set(1); m.renderOrder = 20; m.frustumCulled = false; m.visible = false;
+      m.layers.set(1); m.renderOrder = 5e5; m.frustumCulled = false; m.visible = false; // po zoslabených objektoch
       scene.add(m);
       shafts.push(m);
     }
@@ -1092,7 +1095,7 @@ void main() {
     const sp = makeSprite(0.96, 1.28); sp.material.map = tex;
     // „röntgen“: polopriehľadná silueta postavičky viditeľná aj cez budovy a stromy
     const ghost = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.35, depthTest: false, depthWrite: false }));
-    ghost.center.copy(sp.center); ghost.scale.copy(sp.scale); ghost.renderOrder = 10; ghost.layers.set(1);
+    ghost.center.copy(sp.center); ghost.scale.copy(sp.scale); ghost.renderOrder = 1e6; ghost.layers.set(1); // až po všetkých zoslabených objektoch (aj stále zoslabených korunách obrov)
     scene.add(ghost);
     const shadow = blobShadow(); shadow.material = shadowMat.clone(); // vlastný materiál – tieň sa prelína s postavičkou
     // vis: viditeľnosť 0–1; iní hráči sa pri príchode/odchode z plochy plynulo objavia a zmiznú
@@ -1287,7 +1290,8 @@ void main() {
     const fadingList = [];
     for (const m of fineMeshes) {
       // zoslabený ostane ešte chvíľu po tom, čo z oblasti vypadol – na hrane oblasti tak nebliká
-      const target = now < (m.userData.wantUntil || 0) ? m.userData.want : 1;
+      // koruna obrovského stromu je zoslabená stále (kmeň ostáva plný v shaderi), ostatné len keď zakrývajú hráča
+      const target = m.userData.type === 'giant' ? cfg.min : now < (m.userData.wantUntil || 0) ? m.userData.want : 1;
       // priblíž sa k cieľu najviac o dt × speed – keď je cieľ dosiahnutý, hodnota ostane stáť (žiadne kmitanie)
       const step = dt * cfg.speed, cur = m.userData.fade;
       const f = m.userData.fade = Math.abs(target - cur) <= step ? target : cur + Math.sign(target - cur) * step;
@@ -1312,7 +1316,8 @@ void main() {
     for (const yOff of [0.15, 0.6, 1.1]) {
       hit.clear();
       W.modelsOnRay(grid, o.sp.position.x, o.sp.position.y + yOff, o.sp.position.z, toCam.x, toCam.y, toCam.z, 6, hit);
-      if (![...hit].some(i => fineMeshes[i] && fineMeshes[i].visible && fineMeshes[i].userData.fade > 0.5)) return false; // cez zoslabený strom vidno
+      // cez zoslabený strom vidno; obor je dolu (kmeň, korene – kam lúče od postavy siahajú) vždy plný
+      if (![...hit].some(i => fineMeshes[i] && fineMeshes[i].visible && (fineMeshes[i].userData.fade > 0.5 || fineMeshes[i].userData.type === 'giant'))) return false;
     }
     return true;
   }
@@ -1403,8 +1408,11 @@ void main() {
     // kvety a huby sa nevyberajú podľa obrázka – platí len políčko zeme pod nimi
     // vlastná postavička je pre ťuknutie priehľadná – zakrýva políčko za sebou, to hráč myslí
     const sprites = [...[...chars.entries()].filter(([id, o]) => o.alive && id !== 'me').map(([, o]) => o.sp), babka && babka.sp].filter(Boolean);
-    const hits = ray.intersectObjects(sprites.concat(mesh ? [mesh] : [], glacierMesh ? [glacierMesh] : [], waterMesh ? [waterMesh] : [], fineMeshes.filter(m => m.visible && m.userData.fade > 0.5)), false);
+    const hits = ray.intersectObjects(sprites.concat(mesh ? [mesh] : [], glacierMesh ? [glacierMesh] : [], waterMesh ? [waterMesh] : [], fineMeshes.filter(m => m.visible && (m.userData.fade > 0.5 || m.userData.type === 'giant'))), false);
     for (const h of hits) {
+      // obrovský strom: ťuknutie zachytí kmeň a korene, cez stále zoslabenú korunu prejde na zem za ňou
+      const tk = h.object.userData.trunk;
+      if (tk && tk.z > 0 && h.point.y >= tk.w && Math.hypot(h.point.x - tk.x, h.point.z - tk.y) >= tk.z) continue;
       if (h.object.isSprite || h.object.userData.tile) return Object.assign({}, h.object.userData.tile);
       const q = h.point.clone().addScaledVector(h.face.normal, -0.01);
       const x = Math.floor(q.x), y = Math.floor(q.z);
