@@ -1,7 +1,7 @@
 # AGENTS.md – rules for coding agents (and humans)
 
 Čarovná záhrada is a multiplayer flower-growing web game (Node.js + `ws`, 3D only with Three.js at `/`).
-See `README.md` for gameplay and architecture.
+See `README.md` for gameplay and architecture. [`CONTRIBUTING.md`](CONTRIBUTING.md) defines how issues, labels and PRs work; it applies to agents too.
 
 ## Language
 
@@ -10,9 +10,9 @@ See `README.md` for gameplay and architecture.
 
 ## Workflow: every change goes issue → refinement → PR → review → merge
 
-1. **Issue.** Every feature or fix starts as a GitHub issue. Don't start coding without one.
+1. **Issue.** Every feature or fix starts as a GitHub issue. Don't start coding without one. Use exactly one of the three types (bug / feature / discussion) from `.github/ISSUE_TEMPLATE/`. From the CLI, reproduce the form's `### ` headings in the body and pass `--label "type: …" --label "status: needs refinement"` (see CONTRIBUTING.md, *Creating issues from the CLI*). Propose `Priority` / `Size` in the body; the maintainer confirms them.
 2. **Human-guided refinement.** Before implementing, refine the issue with the maintainer: scope, gameplay rules, open questions. Write the agreed scope into the issue (body or comment). If something is ambiguous, ask; don't guess on game-design decisions.
-3. **PR.** Implement on an issue branch and open a PR **into `dev`** that references the issue (`Closes #<n>`). CI tests it and deploys a preview to `https://pr-<n>.zahrada.spis-ai.com/` (`<n>` = PR number).
+3. **PR.** Implement on an issue branch and open a PR **into `dev`** using `.github/pull_request_template.md`; the body must reference the issue (`Closes #<n>`, same number as the branch) or the **Kontrola PR** check fails. CI tests it and deploys a preview to `https://pr-<n>.zahrada.spis-ai.com/` (`<n>` = PR number).
 4. **Review.** The maintainer reviews the code and plays the preview. Address feedback with new commits on the same branch.
 5. **Merge only if OK.** Merging is the maintainer's decision; agents never merge their own PRs unless explicitly told to. Use **rebase** or **squash** merge (merge commits are disabled).
 

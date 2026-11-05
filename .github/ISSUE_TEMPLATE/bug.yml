@@ -1,0 +1,82 @@
+# Hlavičky polí (label) číta .github/workflows/triage.yml – nepremenovávať bez úpravy workflow.
+name: 🐞 Bug
+description: Something in the game or the infrastructure doesn't work as it should.
+labels: ["type: bug", "status: needs refinement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Môžeš písať po slovensky aj po anglicky.
+        One bug per issue, please. Read [CONTRIBUTING.md](https://github.com/marekvasko/magic-flowers/blob/dev/CONTRIBUTING.md) if you are not sure.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Describe the problem. Quotes from in-game chat are welcome (add a translation if not Slovak/English).
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to …
+        2. Use … on …
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options:
+        - production (zahrada.spis-ai.com)
+        - dev / staging (dev.zahrada.spis-ai.com)
+        - PR preview (pr-<n>.zahrada.spis-ai.com)
+        - local
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and browser
+      placeholder: e.g. Android 15, Chrome 140 / iPhone 16, Safari
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the project is affected? (pick all that apply)
+      multiple: true
+      options:
+        - gameplay
+        - ui
+        - 3d
+        - server
+        - ci-cd
+        - docs
+        - not sure
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: Your estimate; the maintainer confirms it during refinement.
+      options:
+        - "critical — game unplayable or players' gardens at risk"
+        - "high — a core feature is broken, no workaround"
+        - "medium — annoying, a workaround exists"
+        - "low — cosmetic"
+        - "not sure"
+      default: 4
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Screenshots, logs, likely cause in code (`file:line`), ideas for a fix.

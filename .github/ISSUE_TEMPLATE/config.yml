@@ -1,0 +1,6 @@
+# Len tri typy issues: chyba, nápad (feature), diskusia. Prázdne issues sú vypnuté.
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Contribution guidelines
+    url: https://github.com/marekvasko/magic-flowers/blob/dev/CONTRIBUTING.md
+    about: How issues, labels and PRs work in this repository.

@@ -188,6 +188,18 @@ GitHub Actions (`.github/workflows/ci.yml`) on every push and pull request:
 
 To run the published image instead of building locally, set `image: ghcr.io/marekvasko/magic-flowers:latest` in `docker-compose.yml`, remove `build: .` and use `docker compose pull && docker compose up -d`.
 
+## Contributing
+
+Bugs, ideas and questions go to [GitHub issues](https://github.com/marekvasko/magic-flowers/issues/new/choose) (🐞 Bug, ✨ Feature or 💬 Discussion). How issues, labels, priority/size and pull requests work is described in [`CONTRIBUTING.md`](CONTRIBUTING.md); coding agents also follow [`AGENTS.md`](AGENTS.md).
+
+- `.github/workflows/triage.yml` turns the form's priority / size / area answers into labels and flags issues without exactly one `type:` label with `status: needs triage`.
+- `.github/workflows/pr-check.yml` checks that a PR links its issue and comes from an `issue/<n>-…` branch into `dev`.
+- `scripts/labels.sh` syncs the label set (`DRY_RUN=1` to preview).
+
+## License
+
+[MIT](LICENSE) © 2026 Marek Vaško
+
 ## Technical details
 
 - `server.js` – Node.js HTTP + WebSocket server (`ws`). The game state lives on the server: time, weather, growth, inventory and magic.

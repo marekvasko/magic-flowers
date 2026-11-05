@@ -1,0 +1,68 @@
+# Automatické triedenie issues (CONTRIBUTING.md):
+#   - odpovede z formulára (Priority, Size, Area) → štítky priority: / size: / area:
+#     (len ak issue taký štítok ešte nemá, aby sa neprepísalo rozhodnutie maintainera)
+#   - issue musí mať práve jeden štítok type: … – inak dostane „status: needs triage“
+# Beží na GitHub runneri, bez checkoutu; telo issue ide cez env, nikdy nie priamo do shellu.
+name: Triedenie issues
+
+on:
+  issues:
+    types: [opened, edited, labeled, unlabeled, reopened]
+
+permissions:
+  issues: write
+
+concurrency:
+  group: triage-${{ github.event.issue.number }}
+
+jobs:
+  triage:
+    name: Štítky issue
+    if: github.event.issue.state == 'open'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      NUMBER: ${{ github.event.issue.number }}
+      ACTION: ${{ github.event.action }}
+      BODY: ${{ github.event.issue.body }}
+    steps:
+      - name: Štítky z formulára a kontrola typu
+        run: |
+          set -euo pipefail
+          # aktuálne štítky (nie snímka z udalosti – štítky sa medzitým mohli zmeniť)
+          LABELS="$(gh issue view "$NUMBER" --json labels -q '[.labels[].name]')"
+          labels() { jq -r '.[]' <<<"$LABELS"; }
+          has_prefix() { labels | grep -q "^$1"; }
+          # prvý neprázdny riadok pod „### <nadpis>“ z formulára
+          answer() { awk -v h="### $1" '$0==h{f=1;next} f&&/^### /{exit} f&&NF{print;exit}' <<<"$BODY" | tr -d '\r'; }
+          add=()
+
+          if ! has_prefix 'priority: '; then
+            p="$(answer Priority | grep -oE '^(critical|high|medium|low)\b' || true)"
+            [ -n "$p" ] && add+=("priority: $p")
+          fi
+          if ! has_prefix 'size: '; then
+            s="$(answer Size | grep -oE '^(XS|S|M|L|XL)\b' || true)"
+            [ -n "$s" ] && add+=("size: $s")
+          fi
+          if ! has_prefix 'area: '; then
+            for a in $(answer Area | tr ',' '\n' | tr -d ' ' | grep -xE 'gameplay|ui|3d|server|ci-cd|docs' || true); do
+              add+=("area: $a")
+            done
+          fi
+
+          types="$(labels | grep -c '^type: ' || true)"
+          if [ "$types" -eq 1 ]; then
+            labels | grep -qx 'status: needs triage' && gh issue edit "$NUMBER" --remove-label 'status: needs triage'
+          elif ! labels | grep -qx 'status: needs triage'; then
+            add+=('status: needs triage')
+            if [ "$ACTION" = opened ]; then
+              gh issue comment "$NUMBER" --body "This issue needs exactly one type label: \`type: bug\`, \`type: feature\` or \`type: discussion\` (it has $types). Please use one of the [issue forms](https://github.com/$GH_REPO/issues/new/choose) or follow [CONTRIBUTING.md](https://github.com/$GH_REPO/blob/dev/CONTRIBUTING.md#reporting-issues)."
+            fi
+          fi
+
+          for l in "${add[@]}"; do
+            echo "pridávam štítok: $l"
+            gh issue edit "$NUMBER" --add-label "$l"
+          done

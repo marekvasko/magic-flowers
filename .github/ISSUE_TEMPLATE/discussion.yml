@@ -1,0 +1,36 @@
+# Hlavičky polí (label) číta .github/workflows/triage.yml – nepremenovávať bez úpravy workflow.
+name: 💬 Discussion
+description: An idea or an open question to talk through before it becomes a bug or a feature.
+labels: ["type: discussion"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Môžeš písať po slovensky aj po anglicky.
+        A discussion ends with a decision: it is closed, or turned into one or more 🐞 Bug / ✨ Feature issues that link back here.
+  - type: textarea
+    id: topic
+    attributes:
+      label: Topic
+      description: What should be discussed or decided?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Background, links to related issues/PRs, what exists today.
+  - type: textarea
+    id: options
+    attributes:
+      label: Options
+      description: Possible directions with their pros and cons, if you have any.
+  - type: textarea
+    id: questions
+    attributes:
+      label: Questions to decide
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
