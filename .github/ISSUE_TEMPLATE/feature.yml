@@ -1,0 +1,87 @@
+# Hlavičky polí (label) číta .github/workflows/triage.yml – nepremenovávať bez úpravy workflow.
+name: ✨ Feature
+description: A new feature or an improvement of the game, the repo or the infrastructure.
+labels: ["feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Môžeš písať po slovensky aj po anglicky. All player-visible text in the game itself stays Slovak.
+        A feature is refined with the maintainer before anyone starts coding – see [CONTRIBUTING.md](https://github.com/marekvasko/magic-flowers/blob/dev/CONTRIBUTING.md).
+        Not sure yet what you want? Open a 💬 Discussion instead.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What is missing or what could be better, and for whom (players, maintainer, agents)?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How it should work. For gameplay, describe the rules (items, prices, timing, who can do what).
+    validations:
+      required: true
+  - type: textarea
+    id: questions
+    attributes:
+      label: Open questions
+      description: Game-design or technical decisions that need the maintainer.
+      placeholder: |
+        1. …
+        2. …
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How do we know it's done?
+      placeholder: |
+        - …
+        - …
+    validations:
+      required: true
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      description: Which parts of the game or the repo does it touch? (pick all that apply)
+      multiple: true
+      options:
+        - gameplay — game rules / economy / flowers / magic
+        - logic — server / engine / saves / game state
+        - ui — controls / menus / overlay / texts
+        - graphics — 3D view / models / particles
+        - infra — CI/CD / Docker / deploys
+        - docs — README / AGENTS.md / CONTRIBUTING.md
+    validations:
+      required: true
+  - type: dropdown
+    id: size
+    attributes:
+      label: Size
+      description: Rough estimate of the work; the maintainer confirms it during refinement.
+      options:
+        - "XS — trivial, under an hour"
+        - "S — a few hours"
+        - "M — about a day"
+        - "L — several days"
+        - "XL — too big, should be split"
+        - "not sure"
+      default: 5
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: Your estimate; the maintainer confirms it during refinement.
+      options:
+        - "critical — needed right now"
+        - "high — next in line"
+        - "medium — normal"
+        - "low — nice to have"
+        - "not sure"
+      default: 4
+    validations:
+      required: true

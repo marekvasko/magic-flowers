@@ -1,0 +1,42 @@
+# Kontrola PR (CONTRIBUTING.md): telo odkazuje na issue (Closes #<n>) a vetva je issue/<n>-popis
+# s tým istým číslom. Výnimka: release PR dev → main. Používa len údaje z udalosti, žiadny
+# checkout ani kód z PR – bezpečné aj pre PR z forkov.
+name: Kontrola PR
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Odkaz na issue a názov vetvy
+    runs-on: ubuntu-latest
+    env:
+      BODY: ${{ github.event.pull_request.body }}
+      HEAD: ${{ github.event.pull_request.head.ref }}
+      BASE: ${{ github.event.pull_request.base.ref }}
+    steps:
+      - name: Kontrola
+        run: |
+          set -uo pipefail
+          if [ "$BASE" = main ] && [ "$HEAD" = dev ]; then
+            echo "Release PR dev → main – bez kontroly issue."; exit 0
+          fi
+          fail=0
+          linked="$(grep -oiE '\b(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#[0-9]+' <<<"$BODY" | grep -oE '[0-9]+' | sort -u || true)"
+          if [ -z "$linked" ]; then
+            echo "::error::PR body must link its issue, e.g. 'Closes #12' (see CONTRIBUTING.md)."; fail=1
+          fi
+          if [[ ! "$HEAD" =~ ^issue/([0-9]+)-[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+            echo "::error::Branch '$HEAD' must be named issue/<number>-short-description (lowercase, words separated by '-')."; fail=1
+          elif [ -n "$linked" ] && ! grep -qx "${BASH_REMATCH[1]}" <<<"$linked"; then
+            echo "::error::Branch '$HEAD' is for issue #${BASH_REMATCH[1]}, but the PR body links: $(echo $linked | sed 's/[^ ]*/#&/g')."; fail=1
+          fi
+          if [ "$BASE" != dev ]; then
+            echo "::error::Issue PRs must target 'dev' (this one targets '$BASE')."; fail=1
+          fi
+          [ "$fail" -eq 0 ] && echo "OK: vetva $HEAD, issue #$(echo $linked | sed 's/ / #/g') → $BASE"
+          exit $fail
