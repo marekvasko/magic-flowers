@@ -476,7 +476,54 @@
     });
     window._r3pick = (x, y) => R3.pick(x, y); // pre ladenie / testy
     window._r3 = R3;
+    R3.setStats(Fps.on);
   }).catch(e => { console.error(e); toast('3D sa nepodarilo načítať – skús obnoviť stránku.'); });
+  // Počítadlo snímok (FPS): zapína sa v menu, platí len na tomto zariadení. Vypnuté nerobí nič navyše.
+  const Fps = (() => {
+    const N = 120; // graf: posledných 120 snímok
+    let on = false, el = null, txt = null, gc = null, last = 0, lastText = 0;
+    const frames = [], cpu = [];
+    try { on = localStorage.getItem('mfFps') === '1'; } catch (e) { }
+    const f1 = v => v.toFixed(1).replace('.', ',');
+    function build() {
+      el = h('div', { id: 'fps' }, txt = h('div'), gc = h('canvas', { width: N, height: 30 }));
+      $('game').appendChild(el);
+    }
+    function set(v) {
+      on = v; frames.length = cpu.length = 0; last = 0;
+      try { localStorage.setItem('mfFps', v ? '1' : '0'); } catch (e) { }
+      if (R3) R3.setStats(v);
+      if (!v && el) { el.remove(); el = null; }
+    }
+    function draw() {
+      const c = gc.getContext('2d'), H = gc.height;
+      c.clearRect(0, 0, N, H);
+      c.fillStyle = '#ffffff22'; c.fillRect(0, H - 16.7 / 50 * H, N, 1); // čiara 60 FPS (16,7 ms)
+      frames.forEach((ms, i) => { c.fillStyle = ms > 34 ? '#ff6b6b' : ms > 18 ? '#ffd166' : '#7bd88f'; const bh = Math.min(H, ms / 50 * H); c.fillRect(i + N - frames.length, H - bh, 1, bh); });
+    }
+    // now = čas snímku z requestAnimationFrame, cpuMs = koľko trval 3D snímok (R3.frame)
+    function tick(now, cpuMs) {
+      if (last) { frames.push(now - last); cpu.push(cpuMs); if (frames.length > N) { frames.shift(); cpu.shift(); } }
+      last = now;
+      if (now - lastText < 250 || !frames.length) return;
+      lastText = now;
+      if (!el) build();
+      const avg = frames.reduce((a, b) => a + b, 0) / frames.length, cAvg = cpu.reduce((a, b) => a + b, 0) / cpu.length;
+      const r = R3 ? R3.stats() : null;
+      txt.textContent = [
+        `${Math.round(1000 / avg)} FPS · ${f1(avg)} ms`,
+        `min ${f1(Math.min(...frames))} · max ${f1(Math.max(...frames))}`,
+        `3D (CPU) ${f1(cAvg)} ms`,
+        r ? `tiene ${f1(r.shadow)} · odraz ${f1(r.refl)}` : '',
+        r ? `scéna ${f1(r.scene)} ms` : '',
+        r ? `kreslení ${r.calls} · △ ${r.triangles >= 1e4 ? Math.round(r.triangles / 1000) + ' tis.' : r.triangles}` : '',
+        r ? `geom. ${r.geometries} · text. ${r.textures}` : '',
+        r ? `${r.w}×${r.h} (×${f1(r.pr)})` : ''
+      ].filter(Boolean).join('\n');
+      draw();
+    }
+    return { get on() { return on; }, set, tick };
+  })();
   const gameEl = $('game'), joy = $('joy'), joyKnob = $('joyKnob');
   const JOY_R = 50, DRAG_START = 10;
   const ptrs = new Map();
@@ -993,6 +1040,13 @@
       body.appendChild(h('div', { class: 'row', style: 'flex-direction:column;align-items:stretch' },
         h('b', null, '✨ Častice (dážď, oheň, lístie, víly)'), h('div', { style: 'display:flex;gap:6px' }, ...pbtns),
         h('small', null, 'Platí len na tomto zariadení. Na slabšom telefóne zvoľ menej.')));
+      const fopts = [[false, 'vypnuté'], [true, 'zapnuté']];
+      const fbtns = fopts.map(([v, l]) => h('button', { class: 'btn' + (Fps.on === v ? '' : ' gray'), style: 'flex:1', onclick: () => {
+        Fps.set(v); fbtns.forEach((b, i) => b.classList.toggle('gray', fopts[i][0] !== v));
+      } }, l));
+      body.appendChild(h('div', { class: 'row', style: 'flex-direction:column;align-items:stretch' },
+        h('b', null, '📊 Počítadlo snímok (FPS)'), h('div', { style: 'display:flex;gap:6px' }, ...fbtns),
+        h('small', null, 'Ukáže v rohu, ako rýchlo sa hra na tomto zariadení kreslí. Hodí sa pri hľadaní, čo telefón spomaľuje.')));
     }
     // Projekt na GitHube: zdrojový kód a hlásenie chýb / nápadov
     const REPO = 'https://github.com/marekvasko/magic-flowers';
@@ -1251,7 +1305,10 @@
   let last = performance.now();
   function loop(now) {
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
-    if (S.joined) { update(dt); if (R3) R3.frame(now / 1000); }
+    if (S.joined) {
+      update(dt);
+      if (R3) { const t0 = Fps.on ? performance.now() : 0; R3.frame(now / 1000); if (Fps.on) Fps.tick(now, performance.now() - t0); }
+    }
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);

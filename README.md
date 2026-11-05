@@ -187,6 +187,7 @@ The game is 3D only, rendered with Three.js (`public/render3d.mjs`) at `/` (`/?r
   - **Fireflies** at night around trees, the pond and the mushroom ring: many in summer, fewer in spring and autumn, none in winter or in rain. They drift slowly at knee-to-head height and blink (a short flash, then a faint glow). They fade in at dusk and fade out at dawn.
   - Snow is still drawn on the canvas overlay (`#cv`) on top of the 3D view.
   - **Menu → "✨ Častice"** (per device, `localStorage.mfParticles`): *menej* (default on touch devices) or *viac*.
+- **Menu → "📊 Počítadlo snímok (FPS)"** (per device, `localStorage.mfFps`, default off): a small overlay under the clock with FPS, frame time (avg / min / max) and a graph of the last 120 frames, CPU time of the 3D frame and its passes (shadows, water reflection, scene), draw calls and triangles summed over all passes, geometries, textures and the canvas resolution. When off it costs nothing; `Render3D.setStats(on)` / `stats()` expose the numbers.
 - **Gameplay hook:** `World3D.sunHours(grid, x, y, season)` returns how many hours of direct sun a tile gets per day. Leafless deciduous trees let more sun through in winter. Tapping a plant already shows it; later it can replace the simple "shade = next to a tree" rule on the server.
 - Joystick and keyboard directions are relative to the screen (recomputed for the camera rotation); tapping objects uses a ray into the scene.
 

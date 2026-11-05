@@ -198,3 +198,6 @@ button { font: inherit; cursor: pointer; border: none; }
   #mBody { padding-bottom: 16px; }
 }
 @media (hover: hover) and (pointer: fine) { .slot .k { display: block; } }
+/* Počítadlo snímok (menu → FPS): pod hodinami vľavo, neprijíma dotyky */
+#fps { position: absolute; top: calc(env(safe-area-inset-top) + 66px); left: calc(8px + env(safe-area-inset-left)); background: #000a; color: #e8ffe8; border-radius: 8px; padding: 4px 6px; font: 600 10px/1.3 ui-monospace, Menlo, Consolas, monospace; white-space: pre; pointer-events: none; z-index: 5; }
+#fps canvas { display: block; width: 120px; height: 30px; margin-top: 3px; image-rendering: pixelated; }

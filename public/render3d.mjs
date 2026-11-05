@@ -294,6 +294,15 @@ export function create(api) {
   const { S } = api;
   const renderer = new THREE.WebGLRenderer({ canvas: api.glCanvas, antialias: true, stencil: true }); // stencil – obrys zoslabených objektov
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  // Počítadlo snímok (menu → FPS): čas jednotlivých prechodov a súčet kreslení za celý snímok (všetky prechody)
+  let statsOn = false;
+  const passMs = { shadow: 0, refl: 0, scene: 0 };
+  function setStats(on) { statsOn = !!on; renderer.info.autoReset = !statsOn; renderer.info.reset(); }
+  function stats() {
+    const i = renderer.info, size = renderer.getDrawingBufferSize(new THREE.Vector2());
+    return { calls: i.render.calls, triangles: i.render.triangles, geometries: i.memory.geometries, textures: i.memory.textures,
+      w: size.x, h: size.y, pr: renderer.getPixelRatio(), shadow: passMs.shadow, refl: passMs.refl, scene: passMs.scene };
+  }
   renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
   const scene = new THREE.Scene();
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
@@ -1204,13 +1213,16 @@ export function create(api) {
   let babka = null, last = performance.now(), lastGround = 0;
   function frame(t) {
     const now = performance.now(), dt = Math.min(0.1, (now - last) / 1000); last = now;
+    if (statsOn) renderer.info.reset();
     const min = api.curMin(), se = api.season(), night = D.isNight(min);
     // prestavba sveta: nové obdobie, iná plocha (záhrada / hory) alebo nová stavba
     if (builtSeason !== se || builtGen !== S.tilesGen) { builtGen = S.tilesGen; buildMesh(se); holesSig = null; refreshGround(se, t, true); drawnSeason = se; }
     S.worldGen = builtGen; // svet tejto verzie políčok je postavený (prechod medzi plochami čaká, kým je, a až potom ukáže meno)
     if (now - lastGround > 600) { refreshGround(se, t, false); lastGround = now; }
     lighting(min, se);
+    let tp = statsOn ? performance.now() : 0;
     updateShadowMap(min, se);
+    if (statsOn) passMs.shadow = performance.now() - tp;
     placeCamera(dt);
 
     // svetelné zdroje (okná, kotlík, lampáše, hráči, víly, svietiace kvety) – len keď je šero
@@ -1267,9 +1279,12 @@ export function create(api) {
     const lit = curAmb.map((v, i) => Math.min(1.2, v + curSun[i] * 0.7));
     particles.update(dt, t, { grid, fine: grid && grid.fine, fineMeshes, target: camTarget, viewW, viewH: viewTop * 2, se, min, lit, cauldron: fireCenter(), lantern: lanternCenter() });
     updateWater(t, now);
+    if (statsOn) tp = performance.now();
     renderReflection();
+    if (statsOn) { const q = performance.now(); passMs.refl = q - tp; tp = q; }
     renderer.render(scene, camera);
     if (fading) drawOutlines();
+    if (statsOn) passMs.scene = performance.now() - tp;
     drawOverlay(t, min, se, night);
   }
 
@@ -1362,7 +1377,7 @@ export function create(api) {
   resize();
   // ladenie: priehľadnosť jemných modelov (1 = plne viditeľný)
   const debugFades = () => fineMeshes.map(m => ({ type: grid.fine[fineMeshes.indexOf(m)].type, fade: +m.userData.fade.toFixed(2), want: fadeWant.has(m) ? +fadeWant.get(m).toFixed(2) : null }));
-  return { frame, resize, pick, screenToWorld, rotate, sunHoursAt, dir8, debugFades, ripple, setWaterQuality, get waterQuality() { return waterQuality; }, setParticleQuality: particles.setQuality, get particleQuality() { return particles.quality; }, get yaw() { return yaw; } };
+  return { frame, resize, pick, screenToWorld, rotate, sunHoursAt, dir8, debugFades, ripple, setWaterQuality, get waterQuality() { return waterQuality; }, setParticleQuality: particles.setQuality, get particleQuality() { return particles.quality; }, setStats, stats, get yaw() { return yaw; } };
 }
 
 window.Render3D = { create };
