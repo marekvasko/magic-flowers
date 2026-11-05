@@ -290,8 +290,14 @@ const hex = h => { const n = parseInt(h.slice(1), 16); return [(n >> 16) / 255, 
 const toLin = c => c; // pracujeme priamo v sRGB ako kresby z art.js (bez prevodu farieb)
 THREE.ColorManagement.enabled = false;
 
+// Voliteľné háčiky pre ladiacu stránku /debug (hra ich nepoužíva, bez nich sa nič nemení):
+//   api.placeCamera(camera, camTarget, dt) – vlastná kamera (poloha, smer aj výrez) namiesto kamery za hráčom
+//   api.noPlayer – bez vlastnej postavičky (S.me ostáva len bod, podľa ktorého sa ráta šero lesa)
+//   api.layers – { shadows, lights, particles }: false vypne tiene, svetlá lámp a častice
+//   api.beforeRender() – po príprave snímky, tesne pred vykreslením (viditeľnosť vrstiev, ladiace pomôcky)
 export function create(api) {
   const { S } = api;
+  const layerOn = k => !api.layers || api.layers[k] !== false;
   const renderer = new THREE.WebGLRenderer({ canvas: api.glCanvas, antialias: true, stencil: true }); // stencil – obrys zoslabených objektov
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   // Počítadlo snímok (menu → FPS): čas jednotlivých prechodov a súčet kreslení za celý snímok (všetky prechody)
@@ -836,11 +842,11 @@ export function create(api) {
   function updateShadowMap(min, se) {
     const u = material.uniforms;
     const stepMin = Math.floor(min / D.MIN_PER_TICK) * D.MIN_PER_TICK; // slnko z aktuálneho herného kroku
-    const key = se + ':' + stepMin;
+    const key = se + ':' + stepMin + (layerOn('shadows') ? '' : ':off');
     if (!shadowDirty && key === lastShadowKey) return;
     shadowDirty = false; lastShadowKey = key;
     const dir = W.sunDir(stepMin, se);
-    if (!dir) { u.shadowOn.value = 0; return; }
+    if (!dir || !layerOn('shadows')) { u.shadowOn.value = 0; return; }
     u.shadowOn.value = 1;
     u.sunDir.value.set(dir.x, dir.y, dir.z); // rovnaké slnko ako mapa – odvrátené steny sedia s tieňom
     const center = new THREE.Vector3(S.W / 2, 3, S.H / 2);
@@ -1166,6 +1172,11 @@ export function create(api) {
   }
   const camTarget = new THREE.Vector3();
   function placeCamera(dt) {
+    if (api.placeCamera) {
+      api.placeCamera(camera, camTarget, dt);
+      viewW = camera.right - camera.left; viewTop = (camera.top - camera.bottom) / 2; // výrez pre častice a prekrytie
+      return;
+    }
     yaw = lerp(yaw, yawTarget, Math.min(1, dt * 8));
     if (Math.abs(yaw - yawTarget) < 0.001) yaw = yawTarget;
     const me = S.me, h = groundY(me.x, me.y);
@@ -1231,7 +1242,7 @@ export function create(api) {
     // v tmavom lese je šero aj cez deň – lampáše svietia podľa svetla tam, kde stojí hráč
     const dl = W.daylight(min) * (1 - D.gloomAt(S.area, S.me.y));
     const lampState = dl < LAMP_DUSK ? 'lit' : 'on'; // lampáš v ruke horí, len keď je šero
-    if (dl < LAMP_DUSK) {
+    if (dl < LAMP_DUSK && layerOn('lights')) {
       const A = api.S.anchors;
       const add = (x, y, z, r, fl) => { if (lights.length < MAX_LIGHTS) lights.push(new THREE.Vector4(x, y, z, r * flicker(t, x * 7.1 + z * 3.3, fl || FL_SOFT))); };
       // hráč svieti, len keď drží lampáš (svetlo pri ruke, blčí ako plameň); bez lampáša je potme
@@ -1250,6 +1261,7 @@ export function create(api) {
     const lu = material.uniforms.lights.value;
     lights.forEach((l, i) => lu[i].copy(l));
     material.uniforms.lightCount.value = lights.length;
+    lastLights = lights;
 
     // sprity
     syncPlants(night);
@@ -1262,7 +1274,7 @@ export function create(api) {
     }
     for (const o of chars.values()) o.alive = false;
     const me = S.me;
-    const meO = drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : DIR_ANGLE[me.dir], S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz, crawl: me.crawl, dig: api.searching({ si: S.mySi }) && t, lamp: S.sel === 'lamp' && lampState }, dt);
+    const meO = api.noPlayer ? null : drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : DIR_ANGLE[me.dir], S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz, crawl: me.crawl, dig: api.searching({ si: S.mySi }) && t, lamp: S.sel === 'lamp' && lampState }, dt);
     for (const o of S.others.values()) drawChar(o.id, o.x, o.y, o.look, o.a != null ? o.a : DIR_ANGLE[o.dir || 0], o.e === 'dance' ? t * 4 : o.phase, { dance: o.e === 'dance', jz: o.jz, crawl: o.cr, dig: api.searching(o) && t, lamp: o.lp && lampState }, dt);
     if (S.area !== 'garden') babka = null; // babka býva v záhrade (bez alive ju upratovanie nižšie odstráni)
     else if (!babka) babka = drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, 0, { babka: true }, 1);
@@ -1277,8 +1289,9 @@ export function create(api) {
 
     const fading = updateFades(dt, meO ? meO.h : 1);
     const lit = curAmb.map((v, i) => Math.min(1.2, v + curSun[i] * 0.7));
-    particles.update(dt, t, { grid, fine: grid && grid.fine, fineMeshes, target: camTarget, viewW, viewH: viewTop * 2, se, min, lit, cauldron: fireCenter(), lantern: lanternCenter() });
+    if (layerOn('particles')) particles.update(dt, t, { grid, fine: grid && grid.fine, fineMeshes, target: camTarget, viewW, viewH: viewTop * 2, se, min, lit, cauldron: fireCenter(), lantern: lanternCenter() });
     updateWater(t, now);
+    if (api.beforeRender) api.beforeRender();
     if (statsOn) tp = performance.now();
     renderReflection();
     if (statsOn) { const q = performance.now(); passMs.refl = q - tp; tp = q; }
@@ -1362,7 +1375,9 @@ export function create(api) {
   function sunHoursAt(x, y) { return grid ? W.sunHours(grid, x, y, api.season()) : null; }
 
   // ---------- Častice a blčanie svetiel ----------
+  const sceneBefore = new Set(scene.children);
   const particles = createParticles({ scene, camera, renderer, W, D, S, api, ripple });
+  const particleObjs = scene.children.filter(o => !sceneBefore.has(o)); // objekty častíc (ladiaca stránka ich vie skryť)
   // stred ohniska pod kotlíkom (model má okraj FM minikociek, ohnisko je v strede políčka nad zemou)
   function fireCenter() {
     const f = grid && grid.fine.find(m => m.type === 'cauldron');
@@ -1374,10 +1389,24 @@ export function create(api) {
     return f ? { x: f.ox + 27.5 / W.FINE, y: f.oy + 12.5 / W.FINE, z: f.oz + 11.5 / W.FINE } : null;
   }
 
+  // ---------- Ladiaca stránka: pohľad dovnútra a uvoľnenie ----------
+  let lastLights = [];
+  function debugView() {
+    return { THREE, scene, camera, camTarget, lightCam, renderer, grid, mesh, fineMeshes, waterMesh, lilyMesh, glacierMesh, plantSprites, chars, particleObjs,
+      lights: lastLights, materials: [material, fadeMaterial, reflMaterial, waterMaterial, glacierMaterial], groundY };
+  }
+  function invalidateShadows() { shadowDirty = true; }
+  function dispose() {
+    scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material && o.material.dispose) o.material.dispose(); });
+    for (const t of texCache.values()) t.dispose();
+    groundTex.dispose(); shadowRT.dispose(); if (reflRT) reflRT.dispose(); if (maskTex) maskTex.dispose();
+    renderer.dispose(); renderer.forceContextLoss();
+  }
+
   resize();
   // ladenie: priehľadnosť jemných modelov (1 = plne viditeľný)
   const debugFades = () => fineMeshes.map(m => ({ type: grid.fine[fineMeshes.indexOf(m)].type, fade: +m.userData.fade.toFixed(2), want: fadeWant.has(m) ? +fadeWant.get(m).toFixed(2) : null }));
-  return { frame, resize, pick, screenToWorld, rotate, sunHoursAt, dir8, debugFades, ripple, setWaterQuality, get waterQuality() { return waterQuality; }, setParticleQuality: particles.setQuality, get particleQuality() { return particles.quality; }, setStats, stats, get yaw() { return yaw; } };
+  return { frame, resize, pick, screenToWorld, rotate, sunHoursAt, dir8, debugFades, ripple, setWaterQuality, get waterQuality() { return waterQuality; }, setParticleQuality: particles.setQuality, get particleQuality() { return particles.quality; }, setStats, stats, get yaw() { return yaw; }, debugView, invalidateShadows, dispose };
 }
 
 window.Render3D = { create };
