@@ -1071,7 +1071,8 @@ export function create(api) {
     const ndc = new THREE.Vector2((clientX - r.left) / r.width * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
     ray.setFromCamera(ndc, camera);
     // kvety a huby sa nevyberajú podľa obrázka – platí len políčko zeme pod nimi
-    const sprites = [...[...chars.values()].filter(o => o.alive).map(o => o.sp), babka && babka.sp].filter(Boolean);
+    // vlastná postavička je pre ťuknutie priehľadná – zakrýva políčko za sebou, to hráč myslí
+    const sprites = [...[...chars.entries()].filter(([id, o]) => o.alive && id !== 'me').map(([, o]) => o.sp), babka && babka.sp].filter(Boolean);
     const hits = ray.intersectObjects(sprites.concat(mesh ? [mesh] : [], glacierMesh ? [glacierMesh] : [], waterMesh ? [waterMesh] : [], fineMeshes.filter(m => m.userData.fade > 0.5)), false);
     for (const h of hits) {
       if (h.object.isSprite || h.object.userData.tile) return Object.assign({}, h.object.userData.tile);
