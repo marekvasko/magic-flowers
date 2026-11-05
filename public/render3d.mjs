@@ -1109,8 +1109,8 @@ void main() { vY = rayY; vW = rayW; gl_Position = projectionMatrix * viewMatrix 
 uniform float op; uniform vec3 col;
 varying float vY; varying float vW;
 void main() {
-  // vY 0 = zem, 1 = hrana, ktorá tieň vrhá: lúč slabne smerom hore a pri korune sa stratí
-  float a = op * vW * smoothstep(0.0, 0.05, vY) * (1.0 - 0.55 * vY) * (1.0 - smoothstep(0.75, 1.0, vY));
+  // vY 0 = zem, 1 = hrana, ktorá tieň vrhá: najjasnejší pri zemi, smerom hore plynulo slabne až do straty
+  float a = op * 1.5 * vW * pow(1.0 - vY, 2.2);
   gl_FragColor = vec4(col * a, 1.0);
 }`;
   const sunRays = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.ShaderMaterial({
