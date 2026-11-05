@@ -635,19 +635,6 @@ const Art = (() => {
     c.strokeStyle = 'rgba(232,240,246,0.7)'; c.strokeRect(1, 1, w - 2, h - 2); // nosné vlákna k oporám
     c.restore();
   }
-  // Pavučina v kúte: vejár z rohu (vľavo dolu = hrana steny pri zemi) a v nej malý krížiak (sit = sedí v nej)
-  function cornerWeb(c, s, sit) {
-    c.strokeStyle = 'rgba(236,240,244,0.85)'; c.lineWidth = Math.max(1, s / 64);
-    const ox = 2, oy = s - 2;
-    for (let i = 0; i <= 5; i++) { const a = -i / 5 * Math.PI / 2; c.beginPath(); c.moveTo(ox, oy); c.lineTo(ox + Math.cos(a) * s, oy + Math.sin(a) * s); c.stroke(); }
-    for (let r = 1; r <= 4; r++) {
-      c.beginPath();
-      for (let i = 0; i <= 5; i++) { const a = -i / 5 * Math.PI / 2, rr = r / 4.4 * s * (0.92 + 0.08 * Math.sin(i * 2 + r)); i ? c.lineTo(ox + Math.cos(a) * rr, oy + Math.sin(a) * rr) : c.moveTo(ox + Math.cos(a) * rr, oy + Math.sin(a) * rr); }
-      c.stroke();
-    }
-    if (sit) spider(c, 'k', s * 0.36, s * 0.66, s * 0.36, 0);
-  }
-
   // Bublina chatu nad hráčom: zalomí slová do max. 4 riadkov (šírka ~4,5 políčka), zvyšok skončí „…“.
   // (x, y) = účiarie menovky; bublina (biely obdĺžnik) sa kreslí nad ňu.
   function wrapText(c, text, maxW, maxLines) {
@@ -683,6 +670,6 @@ const Art = (() => {
     c.textBaseline = 'alphabetic';
   }
 
-  return { plant, char, ground, soil, shroom, icon, hash, circ, bubble, spider, web, cornerWeb };
+  return { plant, char, ground, soil, shroom, icon, hash, circ, bubble, spider, web };
 })();
 window.Art = Art; // pre 3D modul (render3d.mjs)
