@@ -116,3 +116,12 @@ test('predaj starších kvetov vynesie menej než čerstvých', () => {
   assert.ok(old.coins < fresh.coins * 0.8, `${old.coins} vs ${fresh.coins}`);
   assert.match(r.msg, /čerstvosť/);
 });
+
+test('štartovný kapitál: chudobný začiatok, v testovacích prostrediach viac', () => {
+  assert.deepStrictEqual(Econ.startCapital({}), { coins: 30, rep: 0 });
+  assert.deepStrictEqual(Econ.startCapital({ START_COINS: '', START_REP: '' }), { coins: 30, rep: 0 });
+  const t = Econ.startCapital({ START_COINS: '5000', START_REP: '3' });
+  assert.strictEqual(t.coins, 5000);
+  assert.strictEqual(D.repLevel(t.rep), 3);
+  assert.strictEqual(D.repLevel(Econ.startCapital({ START_REP: '99' }).rep), D.REP_LEVELS.length - 1);
+});
