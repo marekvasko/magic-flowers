@@ -34,7 +34,7 @@ const MIME = {
 };
 const gzCache = new Map(); // súbor → { mtime, gz } – Three.js má ~2 MB, gzip ho zmenší asi na štvrtinu
 const server = http.createServer((req, res) => {
-  if (debugHandle(req, res)) return; // /debug a /api/debug/* (len s DEBUG_TOKEN, inak 404)
+  if (debugHandle(req, res)) return; // /debug a /api/debug/* (len na čítanie)
   let url = decodeURIComponent((req.url || '/').split('?')[0]);
   // hra je len v 3D na '/'; staré odkazy na /3d presmerujeme (aj s ?room=…)
   if (url === '/3d' || url === '/3d/') { const q = (req.url || '').indexOf('?'); res.writeHead(301, { Location: '/' + (q >= 0 ? req.url.slice(q) : '') }); return res.end(); }
@@ -159,7 +159,7 @@ function serialize(room) {
   });
 }
 // Ladiaca stránka /debug: svety len číta (z pamäte alebo zo súboru), nič nenačíta ani neuloží
-const debugHandle = Debug.create({ token: process.env.DEBUG_TOKEN, dataDir: DATA_DIR, debugDir: path.join(__dirname, 'debug'), rooms, serialize, migrate });
+const debugHandle = Debug.create({ dataDir: DATA_DIR, debugDir: path.join(__dirname, 'debug'), rooms, serialize, migrate });
 let saveSeq = 0;
 // Atómový zápis: najprv dočasný súbor, potom premenovanie – pri páde nezostane rozbitý JSON.
 function saveRoom(room, sync) {

@@ -32,7 +32,6 @@
 
   async function api(p) {
     const r = await fetch(p, { cache: 'no-store' });
-    if (r.status === 404 && p.endsWith('/rooms')) throw new Error('Not authorised – open /debug?key=… again.');
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
     return j;

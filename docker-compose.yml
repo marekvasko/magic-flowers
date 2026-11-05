@@ -15,8 +15,6 @@ services:
       # štartovné mince a úroveň reputácie nového hráča – nastavuje ich deploy.sh len pre dev a PR náhľady
       START_COINS: ${START_COINS:-}
       START_REP: ${START_REP:-}
-      # tajný kľúč ladiacej stránky /debug (GitHub secret DEBUG_TOKEN, môže byť iný pre každé prostredie); prázdny = /debug neexistuje
-      DEBUG_TOKEN: ${DEBUG_TOKEN:-}
     volumes:
       - magicflowers-data:/app/data
     networks:

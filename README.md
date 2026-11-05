@@ -206,13 +206,13 @@ To run the published image instead of building locally, set `image: ghcr.io/mare
 
 ## Debug page (`/debug`)
 
-A maintainer-only page (in English) for looking at worlds without playing: a rooms list, tabs and a read-only room overview. More tabs (World, Assets, Generators, Market) follow in #64.
+A maintainer page (in English) for looking at worlds without playing: a rooms list, tabs and a read-only room overview. More tabs (World, Assets, Generators, Market) follow in #64.
 
-- **Off unless `DEBUG_TOKEN` is set.** The deploy jobs pass the GitHub secret `DEBUG_TOKEN` (repository-wide, or per environment `preview` / `dev` / `production`) through `docker-compose.yml`. Without it, `/debug` doesn't exist.
-- **Opening it:** go to `https://<host>/debug?key=<token>` once. The server sets an `HttpOnly` cookie (a hash of the token) and redirects to `/debug`. Without a valid cookie, or the `X-Debug-Token: <token>` header for scripts, every `/debug/*` and `/api/debug/*` URL answers 404.
-- **Read-only:** `GET /api/debug/rooms` lists all worlds (saved files and rooms in memory, who's online). `GET /api/debug/room?id=…` returns a snapshot: a loaded room is serialized from memory; an unloaded one is only parsed from `data/room-<id>.json` (and run through `migrate()` on the copy). It's never loaded into the server, advanced or saved. Player save keys are replaced with short hashes (`p-…`).
-- Files: `debug.js` (server side), `debug/` (page; not under `public/`, so it's only reachable through the routes above).
-- Locally: `DEBUG_TOKEN=secret PORT=8099 DATA_DIR=/tmp/mf npm start`, then open `http://localhost:8099/debug?key=secret`.
+- **Open to anyone at `/debug`, but read-only.** Nothing can be changed there: the page and its API only answer `GET`.
+- `GET /api/debug/rooms` lists all worlds (saved files and rooms in memory, who's online). `GET /api/debug/room?id=…` returns a snapshot: a loaded room is serialized from memory; an unloaded one is only parsed from `data/room-<id>.json` (and run through `migrate()` on the copy). It's never loaded into the server, advanced or saved.
+- **Player save keys never leave the server.** They're a player's identity (whoever has one can play as that player), so the API replaces them with short hashes (`p-…`).
+- Files: `debug.js` (server side), `debug/` (page; not under `public/`, served only through `/debug/…`).
+- Locally: `PORT=8099 DATA_DIR=/tmp/mf npm start`, then open `http://localhost:8099/debug`.
 
 ## Contributing
 

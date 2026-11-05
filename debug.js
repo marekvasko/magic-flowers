@@ -1,11 +1,10 @@
-// Ladiaca stránka /debug (#64, #74): tajný prístup cez DEBUG_TOKEN, statické súbory z debug/ a API len na čítanie.
-// Bez DEBUG_TOKEN stránka neexistuje. Bez platného cookie (alebo hlavičky X-Debug-Token) odpovedá všetko 404,
-// takže hráč ani nespozná, že tu niečo je. Čítanie sveta ho nikdy nenačíta do servera, neposúva čas ani neukladá.
+// Ladiaca stránka /debug (#64, #74): statické súbory z debug/ a API len na čítanie, prístupné priamo (bez kľúča).
+// Nič sa tu nedá zmeniť: čítanie sveta ho nikdy nenačíta do servera, neposúva čas ani neukladá.
+// Kľúče hráčov (ich identita, s ňou by sa dalo prihlásiť za hráča) sa nikdy neukážu.
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const COOKIE = 'mfdebug';
 const ROOM_RE = /^[a-z0-9-]{1,16}$/; // rovnaké mená svetov ako pri pripojení hráča
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
 
@@ -13,24 +12,9 @@ const sha = s => crypto.createHash('sha256').update(s).digest('hex');
 // Kľúč hráča (jeho identita v ukladaní) sa nikdy neukáže – nahradí ho krátky odtlačok
 const keyId = k => 'p-' + sha('mf-player:' + k).slice(0, 8);
 
-function cookies(req) {
-  const out = {};
-  for (const part of String(req.headers.cookie || '').split(';')) {
-    const i = part.indexOf('=');
-    if (i > 0) out[part.slice(0, i).trim()] = part.slice(i + 1).trim();
-  }
-  return out;
-}
-function same(a, b) { return typeof a === 'string' && a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b)); }
-
-// ctx: { token, dataDir, debugDir, rooms (Map id → svet v pamäti), serialize(room) → JSON, migrate(stav) → stav }
+// ctx: { dataDir, debugDir, rooms (Map id → svet v pamäti), serialize(room) → JSON, migrate(stav) → stav }
 // Vráti handle(req, res) → true, ak požiadavku vybavil (inak ju server spracuje ako obyčajný súbor).
 function create(ctx) {
-  const token = ctx.token;
-  if (!token) return () => false;
-  const mark = sha('mf-debug:' + token); // v cookie je len odtlačok, nie samotný token
-
-  const authed = req => same(req.headers['x-debug-token'], token) || same(cookies(req)[COOKIE], mark);
   const notFound = res => { res.writeHead(404); res.end('Not found'); return true; };
   const json = (res, code, obj) => {
     res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex' });
@@ -88,19 +72,7 @@ function create(ctx) {
     const url = (q >= 0 ? req.url.slice(0, q) : req.url) || '/';
     const query = new URLSearchParams(q >= 0 ? req.url.slice(q + 1) : '');
     if (url !== '/debug' && !url.startsWith('/debug/') && !url.startsWith('/api/debug/')) return false;
-    if (req.method !== 'GET') return notFound(res);
-    // prvé otvorenie: /debug?key=<token> → cookie a presmerovanie (token nezostane v adrese ani v histórii)
-    if (url === '/debug' && query.has('key')) {
-      if (!same(query.get('key'), token)) return notFound(res);
-      const secure = req.socket.encrypted || req.headers['x-forwarded-proto'] === 'https';
-      res.writeHead(302, {
-        'Set-Cookie': `${COOKIE}=${mark}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000${secure ? '; Secure' : ''}`,
-        Location: '/debug', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer'
-      });
-      res.end();
-      return true;
-    }
-    if (!authed(req)) return notFound(res);
+    if (req.method !== 'GET') return notFound(res); // len na čítanie
     if (url === '/api/debug/rooms') return json(res, 200, { rooms: listRooms(), now: Date.now() });
     if (url === '/api/debug/room') {
       const id = query.get('id') || '';
