@@ -746,14 +746,21 @@
     { g: 'cauldron', build: cauldronModel, tile: [0, 0] },
     { g: 'icehouse', build: icehouseModel, tile: [0, 1] }
   ];
+  // budovy závisia len od obdobia – postavia sa raz (aj ich sieť v render3d sa tak počíta len raz)
+  const buildingCache = new Map();
+  function buildingModel(ft, season) {
+    const key = ft.g + '|' + season;
+    if (!buildingCache.has(key)) buildingCache.set(key, ft.build(season));
+    return buildingCache.get(key);
+  }
   function fineModels(tiles, season, w, area) {
     const out = [];
     for (const ft of FINE_TYPES) {
       const i = tiles.findIndex(t => t.g === ft.g);
       if (i < 0) continue;
       const tx = i % w, ty = (i / w) | 0;
-      const m = ft.build(season);
-      out.push(Object.assign(m, { type: ft.g, ox: tx - FM / FINE, oy: groundHeight('grass') / R, oz: ty - FM / FINE, tile: { x: tx + ft.tile[0], y: ty + ft.tile[1] } }));
+      const m = buildingModel(ft, season);
+      out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: ft.g, ox: tx - FM / FINE, oy: groundHeight('grass') / R, oz: ty - FM / FINE, tile: { x: tx + ft.tile[0], y: ty + ft.tile[1] } });
     }
     for (let i = 0; i < tiles.length; i++) {
       const g = tiles[i].g;

@@ -49,11 +49,12 @@ function loadScript(src) {
     document.head.appendChild(s);
   });
 }
-// Herné moduly: world3d.js a art.js sú klasické skripty (globály), render3d.mjs a three sú moduly
+// Herné moduly: world3d.js, mesher.js a art.js sú klasické skripty (globály), render3d.mjs a three sú moduly
 let depsP = null;
 function loadDeps() {
   if (!depsP) depsP = (async () => {
     if (!window.World3D) await loadScript('/shared/world3d.js');
+    if (!window.Mesher) await loadScript('/shared/mesher.js');
     if (!window.Art) await loadScript('/art.js');
     const THREE = await import('/vendor/three/three.module.js');
     await import('/render3d.mjs');

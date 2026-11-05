@@ -4,7 +4,7 @@
 import * as THREE from '/vendor/three/three.module.js';
 import { createParticles } from '/particles3d.mjs';
 
-const D = window.GameData, W = window.World3D, Art = window.Art;
+const D = window.GameData, W = window.World3D, Art = window.Art, MS = window.Mesher;
 const R = W.R;
 const PITCH = Math.atan(1 / Math.SQRT2);       // klasická izometria ~35,26°
 const FACE_SHADE = [0.62, 0.62, 1.0, 0.5, 0.8, 0.8]; // +x, -x, +y, -y, +z, -z (ako v Minecrafte)
@@ -79,22 +79,36 @@ float forestSun() {
   return max(spots * 0.8, open * (0.5 + 0.5 * spots));
 }`;
 
+// VOX (jemné modely): sieť nesie len polohu, normálu a súradnice do dvoch vypečených obrázkov modelu (Mesher.bakeModel):
+// farba steny každej minikocky (bez interpolácie, alfa = žiarenie) a zatienenie rohov (s lineárnou interpoláciou).
+// Steny sa tak zlučujú bez ohľadu na materiál a tieň.
 const VERT = `
+#ifdef VOX
+attribute vec2 aoUv;
+#else
 attribute vec3 color;
 attribute float ao;
 attribute float emis;
 attribute float tex;
+#endif
 uniform mat4 shadowMatrix; uniform vec3 sunDir; uniform float shadowNormalBias;
 varying vec3 vColor; varying float vAo; varying float vEmis; varying float vTex; varying float vFacing; varying float vUp;
-varying vec2 vUv; varying vec3 vPos; varying vec4 vShadow;
+varying vec2 vUv; varying vec3 vPos; varying vec4 vShadow; varying vec2 vUv2;
 void main() {
   vec4 wp = modelMatrix * vec4(position, 1.0);
-  vColor = color; vAo = ao; vEmis = emis; vTex = tex; vUv = uv; vPos = wp.xyz;
+#ifdef VOX
+  vUv = uv; vUv2 = aoUv;
+#else
+  vColor = color; vAo = ao; vEmis = emis; vTex = tex; vUv = uv;
+#endif
+  vPos = wp.xyz;
   vFacing = dot(normal, sunDir); vUp = normal.y;
   // bod do mapy tieňov mierne posunutý po normále (proti „tieňovým pruhom“ na povrchu)
   vShadow = shadowMatrix * vec4(wp.xyz + normal * shadowNormalBias, 1.0);
   gl_Position = projectionMatrix * viewMatrix * wp;
 }`;
+const VOX_GLSL = `
+uniform sampler2D voxColor; uniform sampler2D voxAo;`;
 const FRAG = `
 precision highp float;
 #ifndef SHADOW_TAPS
@@ -107,16 +121,25 @@ uniform float shadowOn; uniform vec2 shadowTexel; uniform float shadowRadius;
 uniform vec3 gloom; uniform vec3 gloomFog;
 uniform float darkOn; uniform float sunMode; uniform vec3 sunFill; uniform vec4 eye; uniform vec2 eyeLit; uniform vec3 darkFog; uniform sampler2D canopy; uniform vec2 areaSize; uniform vec4 sunZone;
 varying vec3 vColor; varying float vAo; varying float vEmis; varying float vTex; varying float vFacing; varying float vUp;
-varying vec2 vUv; varying vec3 vPos; varying vec4 vShadow;
+varying vec2 vUv; varying vec3 vPos; varying vec4 vShadow; varying vec2 vUv2;
 ${SHADOW_GLSL}
 ${GLOOM_GLSL}
 ${DARK_GLSL}
+#ifdef VOX
+${VOX_GLSL}
+#endif
 void main() {
+#ifdef VOX
+  vec4 tc = texture2D(voxColor, vUv);
+  vec3 base = tc.rgb; float em = tc.a, ao = texture2D(voxAo, vUv2).r, tx = 0.0; // modely nie sú zem
+#else
   vec3 base = vTex > 0.5 ? texture2D(map, vUv).rgb * vColor : vColor;
+  float em = vEmis, ao = vAo, tx = vTex;
+#endif
   float gm = gloomAt(vPos.z);
   // darkOn 0–1: koľko tmy Lesa divov (pri severnom okraji Lesa na pomedzí postupne pribúda, opar Lesa na pomedzí ubúda)
   // slnko v tme: sunMode 1 = skutočný tieň (mapa tieňov cez stromy), ale svieti len na zem; 0 = škvrny z šumu (forestSun)
-  float groundSun = sunMode > 0.5 && vTex > 0.5 && darkOn > 0.0 ? sunVisibility(vFacing) : 0.0;
+  float groundSun = sunMode > 0.5 && tx > 0.5 && darkOn > 0.0 ? sunVisibility(vFacing) : 0.0;
   // slnko len v srdci lesa a kúsok okolo (sunZone: stred a polosi elipsy; z = 0 → všade), na okraji postupne zhasne
   if (sunZone.z > 0.0) groundSun *= 1.0 - smoothstep(0.8, 1.0, length((vPos.xz - sunZone.xy) / sunZone.zw));
   float darkSun = sunMode > 0.5 ? groundSun * LES_SUN_K : forestSun();
@@ -139,10 +162,10 @@ void main() {
     fogK = darkOn * smoothstep(eye.w * 0.6, eye.w * 1.15, d) * (1.0 - clamp(lamp * 1.6, 0.0, 1.0));
     fogK *= 1.0 - groundSun; // zem v slnku vidno aj za dohľadom (pokus)
   }
-  vec3 col = base * vAo * light;
+  vec3 col = base * ao * light;
   col = mix(col, gloomFog, gm * 0.3 * (1.0 - darkOn)); // v hustom lese visí opar
   col = mix(col, darkFog, fogK);
-  col = max(col, base * emisColor * vEmis); // svietiace veci (okná, oheň, živica) vidno aj v tme za dohľadom
+  col = max(col, base * emisColor * em); // svietiace veci (okná, oheň, živica) vidno aj v tme za dohľadom
   // zoslabený objekt: časť do výšky hráča (pne, kmene na zemi, kry) ostane plná, priehľadné je len to nad ňou
   gl_FragColor = vec4(col, opacity);
 }`;
@@ -420,17 +443,21 @@ export function create(api) {
       darkFog: { value: new THREE.Vector3() }, canopy: { value: null }, areaSize: { value: new THREE.Vector2(S.W, S.H) }, sunZone: { value: new THREE.Vector4() }
     }
   });
-  // Rovnaký shader pre objekty, ktoré práve miznú (hráč zašiel za ne): priehľadný, bez zápisu do hĺbky.
-  // Uniformy zdieľa s hlavným materiálom; priehľadnosť sa nastaví pre každý objekt tesne pred vykreslením.
-  // Svetlo zdieľajú (rovnaké objekty uniform), ale priehľadnosť má každý materiál vlastnú – hlavný materiál ostáva úplne nepriehľadný.
-  // priesvitná plocha: stačia 4 vzorky tieňa (pri ~30 % priehľadnosti rozdiel nevidno)
-  const fadeMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { SHADOW_TAPS: 4 }, uniforms: { ...material.uniforms, opacity: { value: 1 } }, transparent: true, depthWrite: false });
-  // hĺbkový prechod tým istým shaderom (rovnaký výpočet hĺbky → žiadne bodkovanie)
-  // malý posun dozadu, aby predná plocha zoslabeného objektu vždy spoľahlivo prešla testom hĺbky (žiadne kmitanie na mobiloch)
-  // hĺbkový prechod: rovnaký vertex shader (rovnaká hĺbka – bez bodkovania), ale prázdny fragment shader
-  const depthOnlyMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: 'void main() { gl_FragColor = vec4(0.0); }', uniforms: material.uniforms, transparent: true, depthWrite: true, colorWrite: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 });
   // svet v zrkadle pod hladinou: rovnaký shader, stačia 4 vzorky tieňa
   const reflMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { SHADOW_TAPS: 4 }, uniforms: material.uniforms });
+  // Jemné modely: shader s VOX – vypečené obrázky modelu sa nastavia pred vykreslením každého modelu. Svetlo zdieľajú so svetom.
+  const voxUniforms = { ...material.uniforms, voxColor: { value: null }, voxAo: { value: null } };
+  const fineMats = {
+    main: new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { VOX: 1 }, uniforms: voxUniforms }),
+    // Objekt, ktorý práve mizne (hráč zašiel zaň): priehľadný, bez zápisu do hĺbky. Priehľadnosť má vlastnú
+    // (nastaví sa pre každý objekt tesne pred vykreslením) – hlavný materiál ostáva úplne nepriehľadný.
+    // Stačia 4 vzorky tieňa (pri ~30 % priehľadnosti rozdiel nevidno).
+    fade: new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { VOX: 1, SHADOW_TAPS: 4 }, uniforms: { ...voxUniforms, opacity: { value: 1 } }, transparent: true, depthWrite: false }),
+    // hĺbkový prechod: rovnaký vertex shader (rovnaká hĺbka – bez bodkovania), ale prázdny fragment shader;
+    // malý posun dozadu, aby predná plocha zoslabeného objektu vždy spoľahlivo prešla testom hĺbky (žiadne kmitanie na mobiloch)
+    depth: new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: 'void main() { gl_FragColor = vec4(0.0); }', defines: { VOX: 1 }, uniforms: voxUniforms, transparent: true, depthWrite: true, colorWrite: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 }),
+    refl: new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { VOX: 1, SHADOW_TAPS: 4 }, uniforms: voxUniforms })
+  };
   // Zoslabovanie objektov: všade sa zoslabí objekt, za ktorým stojí hráč (zakrýva ho). V tmavom lese (od miesta, kde les
   // berie toľko svetla, že sa aj cez deň rozsvieti lampáš) navyše tak, aby bolo vidno zem v smere pohľadu: vejár bodov na zemi pred hráčom (do reach blokov, rozširuje sa) – z každého bodu
   // sa vedie lúč ku kamere a objekty, ktoré ho zakrývajú, sa zoslabia: pri hráčovi najviac, ďalej menej.
@@ -469,76 +496,64 @@ export function create(api) {
     return c;
   }
   let mesh = null, grid = null, builtSeason = -1, builtGen = -1;
-  const AXES = [[0, 1, 2], [1, 2, 0], [2, 0, 1]]; // [normálová os, u, v] – u × v = normála
+
+  // Sieť zo zlúčených stien (Mesher.greedy): bunka má veľkosť 1/scale bloku; look(q) → { col, em, tex } pre materiál steny
+  function quadsGeometry(quads, scale, look) {
+    const n = quads.length;
+    const P = new Float32Array(n * 12), C = new Float32Array(n * 12), A = new Float32Array(n * 4), E = new Float32Array(n * 4),
+      T = new Float32Array(n * 4), U = new Float32Array(n * 8), N = new Float32Array(n * 12);
+    const I = new (n * 4 > 65535 ? Uint32Array : Uint16Array)(n * 6);
+    quads.forEach((q, k) => {
+      const { col, em, tex } = look(q), shade = FACE_SHADE[MS.faceIndex(q)];
+      MS.quadCorners(q).forEach((p, j) => {
+        const i = k * 4 + j;
+        P.set([p[0] / scale, p[1] / scale, p[2] / scale], i * 3);
+        C.set([col[0] * shade, col[1] * shade, col[2] * shade], i * 3);
+        N[i * 3 + q.ax] = q.sg;
+        A[i] = AO_CURVE[q.ao[j]]; E[i] = em; T[i] = tex ? 1 : 0;
+        if (tex) { U[i * 2] = p[0] / scale / S.W; U[i * 2 + 1] = 1 - p[2] / scale / S.H; }
+      });
+      I.set(MS.quadIndices(q.ao, k * 4), k * 6);
+    });
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(P, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(C, 3));
+    geo.setAttribute('ao', new THREE.BufferAttribute(A, 1));
+    geo.setAttribute('emis', new THREE.BufferAttribute(E, 1));
+    geo.setAttribute('tex', new THREE.BufferAttribute(T, 1));
+    geo.setAttribute('uv', new THREE.BufferAttribute(U, 2));
+    geo.setAttribute('normal', new THREE.BufferAttribute(N, 3));
+    geo.setIndex(new THREE.BufferAttribute(I, 1));
+    geo.computeBoundingSphere();
+    geo.computeBoundingBox();
+    return geo;
+  }
 
   function buildMesh(se) {
     sizeGround();
     grid = W.buildGrid(S.tiles, se, S.W, S.area);
     sizeWorld();
-    const P = [], C = [], A = [], E = [], T = [], U = [], N = [], I = [];
-    const g = grid, get = (x, y, z) => W.get(g, x, y, z);
-    let vi = 0;
-    for (let z = 0; z < g.NZ; z++) for (let y = 0; y < W.NY; y++) for (let x = 0; x < g.NX; x++) {
-      const m = get(x, y, z);
-      if (!m || m === W.M.INVIS || m === W.M.ICE) continue; // ľad má vlastnú sieť a shader (buildGlacier)
-      const matCol = toLin(hex(W.colorOf(m, se)));
-      const em = W.EMISSIVE[m] ? 1 : 0;
-      for (let f = 0; f < 6; f++) {
-        const ax = f >> 1, sg = f & 1 ? -1 : 1;
-        const n = [0, 0, 0]; n[ax] = sg;
-        const nb = get(x + n[0], y + n[1], z + n[2]);
-        if (nb && nb !== W.M.INVIS) continue; // skrytá stena (zem pod budovou ostáva – keď budova zmizne, nesmie tam byť diera)
-        if (m === W.M.WATER && ax === 1 && sg > 0) continue; // vrch vody kreslí samostatná hladina
-        const [, ua, va] = AXES[ax];
-        const fi = ax === 0 ? (sg > 0 ? 0 : 1) : ax === 1 ? (sg > 0 ? 2 : 3) : (sg > 0 ? 4 : 5);
-        const textured = m < 16 && ax === 1 && sg > 0;   // vrch terénu nesie kresbu zeme
-        const shade = FACE_SHADE[fi];
-        const col = textured ? [1, 1, 1] : matCol;
-        let corners = [[0, 0], [1, 0], [1, 1], [0, 1]];
-        if (sg < 0) corners = [[0, 0], [0, 1], [1, 1], [1, 0]];
-        const aoV = [];
-        for (const [du, dv] of corners) {
-          const p = [x, y, z];
-          if (sg > 0) p[ax] += 1;
-          p[ua] += du; p[va] += dv;
-          // ambientné zatienenie rohu: dve bočné a jedna rohová podkocka vo vrstve pred stenou
-          const L = [x + n[0], y + n[1], z + n[2]];
-          const s1 = L.slice(), s2 = L.slice(), cc = L.slice();
-          s1[ua] += du ? 1 : -1; s2[va] += dv ? 1 : -1; cc[ua] += du ? 1 : -1; cc[va] += dv ? 1 : -1;
-          // plocha priamo pod jemným modelom: jeho neviditeľnú náhradu do zatienenia nerátame (keď model zmizne, zem nemá byť čierna)
-          const solid = q => { const v = get(...q); return v && !(nb === W.M.INVIS && v === W.M.INVIS); };
-          const o1 = solid(s1) ? 1 : 0, o2 = solid(s2) ? 1 : 0, oc = solid(cc) ? 1 : 0;
-          const ao = o1 && o2 ? 0 : 3 - (o1 + o2 + oc);
-          aoV.push(ao);
-          P.push(p[0] / R, p[1] / R, p[2] / R);
-          C.push(col[0] * shade, col[1] * shade, col[2] * shade);
-          A.push(AO_CURVE[ao]); E.push(em); T.push(textured ? 1 : 0);
-          U.push(p[0] / R / S.W, 1 - p[2] / R / S.H);
-          N.push(n[0], n[1], n[2]);
-        }
-        // otočenie uhlopriečky podľa AO, aby tieň v rohoch nebol „zalomený“
-        if (aoV[0] + aoV[2] < aoV[1] + aoV[3]) I.push(vi + 1, vi + 2, vi + 3, vi + 1, vi + 3, vi);
-        else I.push(vi, vi + 1, vi + 2, vi, vi + 2, vi + 3);
-        vi += 4;
-      }
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(C, 3));
-    geo.setAttribute('ao', new THREE.Float32BufferAttribute(A, 1));
-    geo.setAttribute('emis', new THREE.Float32BufferAttribute(E, 1));
-    geo.setAttribute('tex', new THREE.Float32BufferAttribute(T, 1));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2));
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
-    geo.setIndex(I);
-    geo.computeBoundingSphere();
+    const g = grid, I = W.M.INVIS;
+    const quads = MS.greedy([g.NX, W.NY, g.NZ], (x, y, z) => W.get(g, x, y, z),
+      // ľad má vlastnú sieť a shader (buildGlacier); skrytá stena sa nekreslí (zem pod budovou ostáva – keď budova zmizne,
+      // nesmie tam byť diera); vrch vody kreslí samostatná hladina
+      (m, nb, ax, sg) => m !== I && m !== W.M.ICE && !(nb && nb !== I) && !(m === W.M.WATER && ax === 1 && sg > 0),
+      // plocha priamo pod jemným modelom: jeho neviditeľnú náhradu do zatienenia nerátame (keď model zmizne, zem nemá byť čierna)
+      (v, front) => v && !(front === I && v === I));
+    const cols = new Map();
+    const geo = quadsGeometry(quads, R, q => {
+      const textured = q.m < 16 && q.ax === 1 && q.sg > 0; // vrch terénu nesie kresbu zeme
+      if (!cols.has(q.m)) cols.set(q.m, toLin(hex(W.colorOf(q.m, se))));
+      return { col: textured ? [1, 1, 1] : cols.get(q.m), em: W.EMISSIVE[q.m] ? 1 : 0, tex: textured };
+    });
     if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); }
     mesh = new THREE.Mesh(geo, material);
     scene.add(mesh);
     for (const fm of fineMeshes) { scene.remove(fm); scene.remove(fm.userData.depthTwin); if (fm.userData.solidPart) scene.remove(fm.userData.solidPart); }
-    for (const geo of fineGeos.values()) geo.dispose();
-    fineGeos.clear();
-    fineMeshes = grid.fine.map(f => buildFine(f, se));
+    const oldGeos = fineGeos;
+    fineGeos = new Map();
+    fineMeshes = grid.fine.map(f => buildFine(f, se, oldGeos));
+    for (const [data, e] of oldGeos) if (fineGeos.get(data) !== e) { e.geo.dispose(); e.color.dispose(); e.ao.dispose(); }
     buildCanopy();
     buildShafts();
     buildWater(se);
@@ -551,7 +566,6 @@ export function create(api) {
   // Rovnaké modely (strom rovnakého druhu a natočenia…) zdieľajú jednu geometriu, každý má vlastnú polohu –
   // v Lese divov sú ich stovky a stavba aj pamäť by inak rástli s počtom stromov.
   let fineMeshes = [];
-  const fineGeos = new Map(); // dáta modelu → geometria (v súradniciach modelu)
   // Obrovský strom rozdelený na kmeň (plný) a korunu (stále zoslabená) – dáta oboch častí, každé vo vlastnom modeli
   function giantParts(f) {
     const { sx, sy, sz, data } = f, F = W.FINE, R2 = (TRUNK_KEEP_R * F) ** 2, top = CROWN_FROM * F;
@@ -565,91 +579,97 @@ export function create(api) {
     return { trunk: { sx, sy, sz, data: trunk }, crown: { sx, sy, sz, data: crown } };
   }
   const giantSplit = new Map(); // dáta modelu obra → { trunk, crown }
-  function buildFine(f, se) {
+  // Model s vypečenou textúrou (Mesher.bakeModel): sieť je len povrch zlúčený bez ohľadu na materiál a zatienenie,
+  // farby stien minikociek (materiál × tieňovanie strany × jemná variácia – drevo, kameň, šindle) a zatienenie rohov
+  // sú v dvoch obrázkoch modelu. Optimalizácia beží pre každý model len raz: world3d.js modely vyrába raz (stromy,
+  // kríky, skaly aj budovy sú v pamäti podľa druhu, obdobia a otočenia) a výsledok sa pamätá pri dátach modelu.
+  const fineMeshData = new WeakMap(); // dáta modelu → { se, bake } (polia v pamäti, prežijú aj prestavbu sveta)
+  function meshFine(f, se) {
+    let r = fineMeshData.get(f.data);
+    if (r && r.se === se) return r.bake;
+    const { sx, sy, sz, data } = f;
+    const get = (x, y, z) => (y < 0 ? 1 : (x < 0 || z < 0 || x >= sx || y >= sy || z >= sz) ? 0 : data[(z * sy + y) * sx + x]); // pod modelom je zem
+    const cols = new Map();
+    const bake = MS.bakeModel([sx, sy, sz], get, v => !!v, (m, x, y, z, fi) => {
+      if (!cols.has(m)) cols.set(m, toLin(hex(W.colorOf(m, se))));
+      const vary = 0.94 + W.hash(x, y, z) * 0.12, sh = FACE_SHADE[fi], c = cols.get(m);
+      return [Math.min(1, c[0] * vary) * sh, Math.min(1, c[1] * vary) * sh, Math.min(1, c[2] * vary) * sh, W.EMISSIVE[m] ? 1 : 0];
+    }, AO_CURVE);
+    const F = W.FINE;
+    for (let i = 0; i < bake.P.length; i++) bake.P[i] /= F; // minikocky → bloky
+    fineMeshData.set(f.data, { se, bake });
+    return bake;
+  }
+  // Na GPU: mesh sa posunie na políčko, takže rovnaké modely (napr. stromy rovnakého druhu, obdobia a otočenia)
+  // majú jednu spoločnú sieť aj obrázky; tie, ktoré sa pri prestavbe sveta nepoužili, sa uvoľnia.
+  let fineGeos = new Map(); // dáta modelu → { se, geo, color, ao }
+  function bakedTex(img, format) {
+    const t = new THREE.DataTexture(img.data, img.W, img.H, format, THREE.UnsignedByteType);
+    t.unpackAlignment = 1; t.flipY = false; t.generateMipmaps = false; t.colorSpace = THREE.NoColorSpace;
+    t.needsUpdate = true;
+    return t;
+  }
+  function fineGeometry(f, se, old) {
+    let e = fineGeos.get(f.data) || old.get(f.data);
+    if (e && e.se === se) { fineGeos.set(f.data, e); return e; }
+    const b = meshFine(f, se);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(b.P, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(b.N, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(b.UV, 2));
+    geo.setAttribute('aoUv', new THREE.BufferAttribute(b.UV2, 2));
+    geo.setIndex(new THREE.BufferAttribute(b.I, 1));
+    geo.computeBoundingSphere();
+    geo.computeBoundingBox();
+    const color = bakedTex(b.color, THREE.RGBAFormat);
+    color.magFilter = color.minFilter = THREE.NearestFilter; // farby stien bez interpolácie
+    const ao = bakedTex(b.ao, THREE.RedFormat);
+    ao.magFilter = ao.minFilter = THREE.LinearFilter; // zatienenie plynulo medzi rohmi
+    e = { se, geo, color, ao };
+    fineGeos.set(f.data, e);
+    return e;
+  }
+  function buildFine(f, se, old) {
     let solidPart = null;
     if (f.type === 'giant') {
       let parts = giantSplit.get(f.data);
       if (!parts) { parts = giantParts(f); giantSplit.set(f.data, parts); }
       // kmeň: obyčajná plná sieť (nezoslabuje sa), ťuká sa naň ako na políčko stromu
-      let tg = fineGeos.get(parts.trunk.data);
-      if (!tg) { tg = fineGeometry(parts.trunk, se); fineGeos.set(parts.trunk.data, tg); }
-      solidPart = new THREE.Mesh(tg, material);
+      const t = fineGeometry(parts.trunk, se, old);
+      solidPart = new THREE.Mesh(t.geo, fineMats.main);
       solidPart.position.set(f.ox, f.oy, f.oz);
       solidPart.userData.tile = f.tile;
+      solidPart.onBeforeRender = (r, sc, cam, g, mat) => { if (mat.defines && mat.defines.VOX) { voxUniforms.voxColor.value = t.color; voxUniforms.voxAo.value = t.ao; mat.uniformsNeedUpdate = true; } };
       scene.add(solidPart);
       f = Object.assign({}, f, { data: parts.crown.data }); // ďalej sa stavia (a zoslabuje) len koruna
     }
-    let geo = fineGeos.get(f.data);
-    if (!geo) { geo = fineGeometry(f, se); fineGeos.set(f.data, geo); }
-    const fmesh = new THREE.Mesh(geo, material);
+    const { geo, color, ao } = fineGeometry(f, se, old);
+    const fmesh = new THREE.Mesh(geo, fineMats.main);
     fmesh.userData.solidPart = solidPart;
     fmesh.position.set(f.ox, f.oy, f.oz);
     fmesh.updateMatrixWorld();
     fmesh.userData.box = geo.boundingBox.clone().translate(fmesh.position); // vo svete (poradie zoslabených, lístie)
     fmesh.userData.fade = f.type === 'giant' ? fadeCfg().min : 1; // koruna obra je zoslabená od začiatku
+    // obrázky tohto modelu do zdieľaných uniform tesne pred vykreslením (hlavný, priehľadný, hĺbkový aj zrkadlový materiál)
+    const useVox = (mat, fade) => {
+      if (!mat.defines || !mat.defines.VOX) return;
+      voxUniforms.voxColor.value = color; voxUniforms.voxAo.value = ao;
+      if (fade) fineMats.fade.uniforms.opacity.value = fmesh.userData.fade;
+      mat.uniformsNeedUpdate = true;
+    };
     // pri zoslabení: najprv len hĺbka (aby bolo vidno iba prednú plochu modelu), potom model priehľadne
     fmesh.renderOrder = 2;
-    const depthTwin = new THREE.Mesh(geo, depthOnlyMaterial);
+    const depthTwin = new THREE.Mesh(geo, fineMats.depth);
     depthTwin.position.copy(fmesh.position);
     depthTwin.renderOrder = 1; depthTwin.visible = false; depthTwin.layers.set(1); // do mapy tieňov nepatrí
+    depthTwin.onBeforeRender = (r, sc, cam, g, mat) => useVox(mat);
     scene.add(depthTwin);
     fmesh.userData.depthTwin = depthTwin;
-    fmesh.onBeforeRender = () => { if (fmesh.material === fadeMaterial) { fadeMaterial.uniforms.opacity.value = fmesh.userData.fade; fadeMaterial.uniformsNeedUpdate = true; } };
+    fmesh.onBeforeRender = (r, sc, cam, g, mat) => useVox(mat, mat === fineMats.fade);
     fmesh.userData.tile = f.tile;
     fmesh.userData.type = f.type;
     scene.add(fmesh);
     return fmesh;
-  }
-  function fineGeometry(f, se) {
-    const F = W.FINE, { sx, sy, sz, data } = f;
-    const get = (x, y, z) => (y < 0 ? 1 : (x < 0 || z < 0 || x >= sx || y >= sy || z >= sz) ? 0 : data[(z * sy + y) * sx + x]); // pod modelom je zem
-    const P = [], C = [], A = [], E = [], T = [], U = [], N = [], I = [];
-    let vi = 0;
-    for (let z = 0; z < sz; z++) for (let y = 0; y < sy; y++) for (let x = 0; x < sx; x++) {
-      const m = data[(z * sy + y) * sx + x];
-      if (!m) continue;
-      const vary = 0.94 + W.hash(x, y, z) * 0.12; // jemná variácia farby – drevo, kameň, šindle
-      const mc = toLin(hex(W.colorOf(m, se))).map(v => Math.min(1, v * vary));
-      const em = W.EMISSIVE[m] ? 1 : 0;
-      for (let fi = 0; fi < 6; fi++) {
-        const ax = fi >> 1, sg = fi & 1 ? -1 : 1;
-        const n = [0, 0, 0]; n[ax] = sg;
-        if (get(x + n[0], y + n[1], z + n[2])) continue;
-        const [, ua, va] = AXES[ax];
-        const shade = FACE_SHADE[ax === 0 ? (sg > 0 ? 0 : 1) : ax === 1 ? (sg > 0 ? 2 : 3) : (sg > 0 ? 4 : 5)];
-        const corners = sg > 0 ? [[0, 0], [1, 0], [1, 1], [0, 1]] : [[0, 0], [0, 1], [1, 1], [1, 0]];
-        const aoV = [];
-        for (const [du, dv] of corners) {
-          const p = [x, y, z];
-          if (sg > 0) p[ax] += 1;
-          p[ua] += du; p[va] += dv;
-          const L = [x + n[0], y + n[1], z + n[2]];
-          const s1 = L.slice(), s2 = L.slice(), cc = L.slice();
-          s1[ua] += du ? 1 : -1; s2[va] += dv ? 1 : -1; cc[ua] += du ? 1 : -1; cc[va] += dv ? 1 : -1;
-          const o1 = get(...s1) ? 1 : 0, o2 = get(...s2) ? 1 : 0, oc = get(...cc) ? 1 : 0;
-          const ao = o1 && o2 ? 0 : 3 - (o1 + o2 + oc);
-          aoV.push(ao);
-          P.push(p[0] / F, p[1] / F, p[2] / F);
-          C.push(mc[0] * shade, mc[1] * shade, mc[2] * shade);
-          A.push(AO_CURVE[ao]); E.push(em); T.push(0); U.push(0, 0); N.push(n[0], n[1], n[2]);
-        }
-        if (aoV[0] + aoV[2] < aoV[1] + aoV[3]) I.push(vi + 1, vi + 2, vi + 3, vi + 1, vi + 3, vi);
-        else I.push(vi, vi + 1, vi + 2, vi, vi + 2, vi + 3);
-        vi += 4;
-      }
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(C, 3));
-    geo.setAttribute('ao', new THREE.Float32BufferAttribute(A, 1));
-    geo.setAttribute('emis', new THREE.Float32BufferAttribute(E, 1));
-    geo.setAttribute('tex', new THREE.Float32BufferAttribute(T, 1));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2));
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
-    geo.setIndex(I);
-    geo.computeBoundingSphere();
-    geo.computeBoundingBox();
-    return geo;
   }
 
   // ---------- Les divov: otvorenosť korún (slnko na čistinách) a lúče slnka ----------
@@ -966,7 +986,7 @@ void main() {
     // svet v zrkadle: lacnejší materiál, zoslabené budovy plné (odraz nemá byť priesvitný)
     const oldMats = fineMeshes.map(m => m.material);
     mesh.material = reflMaterial;
-    for (const m of fineMeshes) m.material = reflMaterial;
+    for (const m of fineMeshes) m.material = fineMats.refl;
     // Sprite rastie vždy po osi „hore“ kamery a záporná mierka nepomôže (shader berie dĺžku), ale „hore“ zrkadlovej
     // kamery smeruje do zeme. Preto ukotvenie preklopíme na druhý koniec a obrázok prevrátime zvisle.
     const flip = sprites ? [...plantSprites.values(), ...[...chars.values()].map(o => o.sp)] : [];
@@ -1472,7 +1492,7 @@ void main() {
       const step = dt * cfg.speed, cur = m.userData.fade;
       const f = m.userData.fade = Math.abs(target - cur) <= step ? target : cur + Math.sign(target - cur) * step;
       const fading = f < 0.98;
-      m.material = fading ? fadeMaterial : material;
+      m.material = fading ? fineMats.fade : fineMats.main;
       m.userData.depthTwin.visible = fading && m.visible;
       if (fading) { any = true; fadingList.push(m); }
     }
@@ -1792,7 +1812,7 @@ void main() {
   let lastLights = [];
   function debugView() {
     return { THREE, scene, camera, camTarget, lightCam, renderer, grid, mesh, fineMeshes, waterMesh, lilyMesh, glacierMesh, plantSprites, chars, particleObjs,
-      lights: lastLights, materials: [material, fadeMaterial, reflMaterial, waterMaterial, glacierMaterial], groundY };
+      lights: lastLights, materials: [material, reflMaterial, waterMaterial, glacierMaterial, ...Object.values(fineMats)], groundY };
   }
   function invalidateShadows() { shadowDirty = true; }
   function dispose() {
