@@ -230,7 +230,7 @@
 
   // ---- Skutočné vlákna (čiary) z tých istých parametrov ----
   // Výsledok v súradniciach roviny pavučiny so stredom v strede (x pozdĺž, y hore, z von z roviny – vydutie):
-  // pos (dvojice bodov úsečiek), tan (smer vlákna pri každom bode), rnd (náhoda vlákna – fáza kývania).
+  // pos (dvojice bodov úsečiek), tan (smer vlákna pri každom bode).
   function noise2(x, y, s) { // gradientový (Perlinov) šum, ~ −0,7 … 0,7
     const g = (i, j) => { const a = Math.sin(i * 127.1 + j * 311.7 + s * 17.13) * 43758.5453; const t = (a - Math.floor(a)) * 6.2831853; return [Math.cos(t), Math.sin(t)]; };
     const i = Math.floor(x), j = Math.floor(y), fx = x - i, fy = y - j, u = fx * fx * fx * (fx * (fx * 6 - 15) + 10), v = fy * fy * fy * (fy * (fy * 6 - 15) + 10);
@@ -241,7 +241,7 @@
   function webThreads(over, opts) {
     const P = webParams(over), L = webLayout(P, opts), { w, h, corner } = opts, keep = opts.keep == null ? 1 : opts.keep;
     const s = L.seed, hh = n => { const x = Math.sin(s * 3.17 + n * 91.7) * 43758.5453; return x - Math.floor(x); };
-    const pos = [], tan = [], rnd = [];
+    const pos = [], tan = [];
     const bowZ = (x, y) => P.bow * Math.sin(Math.PI * Math.min(1, Math.max(0, x / w))) * Math.sin(Math.PI * Math.min(1, Math.max(0, y / h))) * (0.75 + 0.5 * noise2(x * 2, y * 2, s));
     // polyline v rovine → úsečky s vydutím (z) a smerom vlákna
     const line = (pts, r) => {
@@ -250,7 +250,6 @@
         const dx = b[0] - a[0], dy = b[1] - a[1], dz = zb - za, l = Math.hypot(dx, dy, dz) || 1;
         pos.push(a[0] - w / 2, a[1] - h / 2, za, b[0] - w / 2, b[1] - h / 2, zb);
         tan.push(dx / l, dy / l, dz / l, dx / l, dy / l, dz / l);
-        rnd.push(r, r);
       }
     };
     const seg = (a, b, n, r) => { const pts = []; for (let i = 0; i <= n; i++) pts.push([a[0] + (b[0] - a[0]) * i / n, a[1] + (b[1] - a[1]) * i / n]); line(pts, r); };
@@ -327,7 +326,7 @@
       }
     }
     return finish();
-    function finish() { return { pos: new Float32Array(pos), tan: new Float32Array(tan), rnd: new Float32Array(rnd), count: pos.length / 3, layout: L }; }
+    function finish() { return { pos: new Float32Array(pos), tan: new Float32Array(tan), count: pos.length / 3, layout: L }; }
   }
 
   const api = { WEB_PARAMS, webParams, ANCHOR, anchorAt, webGeom, webLayout, webThreads, noise2, analyze, cornerSpots, bfs };
