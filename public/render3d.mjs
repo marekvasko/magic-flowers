@@ -15,7 +15,6 @@ const MAX_LIGHTS = 16;
 const FL_FIRE = 0.16, FL_LANTERN = 0.08, FL_WINDOW = 0.035, FL_SOFT = 0.03;
 const LAMP_R = 6.5; // dosah svetla lampáša v ruke (políčka)
 const LAMP_COL = [1, 0.78, 0.45]; // farba (a sila) svetla lampášov
-const TRUNK_KEEP_R = 0.8; // polomer kmeňa obrovského stromu (bloky), ktorý sa pri zoslabení nezoslabuje
 const LAMP_DUSK = 0.8; // lampáš (aj okná, oheň…) horí, keď je svetla menej než toto (deň × stmavnutie lesa)
 // plynulý „plameňový“ šum zo súčtu sínusov s nesúdeliteľnými frekvenciami
 function flicker(t, seed, amt) {
@@ -96,7 +95,7 @@ precision highp float;
 #endif
 uniform sampler2D map; uniform sampler2D shadowMap;
 uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec3 emisColor;
-uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount; uniform float opacity; uniform float keepBelow; uniform vec3 trunkKeep;
+uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount; uniform float opacity;
 uniform float shadowOn; uniform vec2 shadowTexel; uniform float shadowRadius;
 uniform vec3 gloom; uniform vec3 gloomFog;
 uniform float darkOn; uniform vec4 eye; uniform vec2 eyeLit; uniform vec3 darkFog; uniform sampler2D canopy; uniform vec2 areaSize;
@@ -129,9 +128,7 @@ void main() {
   col = mix(col, darkFog, fogK);
   col = max(col, base * emisColor * vEmis); // svietiace veci (okná, oheň, živica) vidno aj v tme za dohľadom
   // zoslabený objekt: časť do výšky hráča (pne, kmene na zemi, kry) ostane plná, priehľadné je len to nad ňou
-  // kmeň obrovského stromu (trunkKeep = stred x, z a polomer) ostane plný v celej výške – zoslabí sa len koruna a konáre
-  bool keep = vPos.y < keepBelow || (trunkKeep.z > 0.0 && distance(vPos.xz, trunkKeep.xy) < trunkKeep.z);
-  gl_FragColor = vec4(col, keep ? 1.0 : opacity);
+  gl_FragColor = vec4(col, opacity);
 }`;
 
 // ---------- Shader vody: odraz zo zrkadlovej kamery, Fresnel, odlesk slnka, hĺbka k brehu ----------
@@ -402,7 +399,7 @@ export function create(api) {
       lights: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4()) }, lightCount: { value: 0 }, opacity: { value: 1 },
       shadowMap: { value: null }, shadowMatrix: { value: new THREE.Matrix4() }, sunDir: { value: new THREE.Vector3(0, 1, 0) },
       shadowOn: { value: 0 }, shadowTexel: { value: new THREE.Vector2(1 / SHADOW_SIZE, 1 / SHADOW_SIZE) }, shadowRadius: { value: 3.5 },
-      shadowNormalBias: { value: 0.03 }, gloom: { value: new THREE.Vector3() }, gloomFog: { value: new THREE.Vector3() }, keepBelow: { value: -1e9 }, trunkKeep: { value: new THREE.Vector3() },
+      shadowNormalBias: { value: 0.03 }, gloom: { value: new THREE.Vector3() }, gloomFog: { value: new THREE.Vector3() },
       darkOn: { value: 0 }, eye: { value: new THREE.Vector4(0, 0, 0, 3) }, eyeLit: { value: new THREE.Vector2(3, 0) },
       darkFog: { value: new THREE.Vector3() }, canopy: { value: null }, areaSize: { value: new THREE.Vector2(S.W, S.H) }
     }
@@ -411,7 +408,7 @@ export function create(api) {
   // Uniformy zdieľa s hlavným materiálom; priehľadnosť sa nastaví pre každý objekt tesne pred vykreslením.
   // Svetlo zdieľajú (rovnaké objekty uniform), ale priehľadnosť má každý materiál vlastnú – hlavný materiál ostáva úplne nepriehľadný.
   // priesvitná plocha: stačia 4 vzorky tieňa (pri ~30 % priehľadnosti rozdiel nevidno)
-  const fadeMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { SHADOW_TAPS: 4 }, uniforms: { ...material.uniforms, opacity: { value: 1 }, trunkKeep: { value: new THREE.Vector3() } }, transparent: true, depthWrite: false });
+  const fadeMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { SHADOW_TAPS: 4 }, uniforms: { ...material.uniforms, opacity: { value: 1 } }, transparent: true, depthWrite: false });
   // hĺbkový prechod tým istým shaderom (rovnaký výpočet hĺbky → žiadne bodkovanie)
   // malý posun dozadu, aby predná plocha zoslabeného objektu vždy spoľahlivo prešla testom hĺbky (žiadne kmitanie na mobiloch)
   // hĺbkový prechod: rovnaký vertex shader (rovnaká hĺbka – bez bodkovania), ale prázdny fragment shader
@@ -438,14 +435,10 @@ export function create(api) {
     speed: 4,          // rýchlosť prechodu (zmena viditeľnosti za sekundu)
     outline: 0.7,      // nepriehľadnosť obrysu
     outlineRamp: 0.15, // obrys je naplno už pri takomto zoslabení – aj slabo zoslabené objekty majú zreteľný obrys
-    // v tmavom lese (aj v celom Lese divov) prepíše hodnoty vyššie; fan = zoslabovať aj zem pred hráčom v smere pohľadu
-    // (vypnuté: zoslabia sa len stromy, ktoré zakrývajú samého hráča; zapne sa cez MF_FADE = { dark: { fan: true } })
-    dark: { min: 0.2, edge: 0.5, reach: 2, fan: false },
-    // obrovské stromy (Les divov) sa zoslabia, keď zakrývajú zem okolo hráča do tohto polomeru (bloky) – nielen samého hráča
-    giantRing: 2,
-    // v tmavom lese a v Lese divov: do tejto výšky nad zemou hráča (bloky, ~výška postavičky) ostáva zoslabený objekt plný –
-    // pne obrovských stromov, spadnuté kmene a kry nikdy nezmiznú, priehľadné je len to, čo je vyššie
-    keepBelow: 1.3,
+    // v tmavom lese (aj v celom Lese divov) prepíše hodnoty vyššie. off = stromy sa vôbec nezoslabujú – hráča vidno
+    // len ako priesvitnú siluetu cez stromy; fan = zoslabovať aj zem pred hráčom v smere pohľadu.
+    // Skúsiť sa dá za behu: MF_FADE = { dark: { off: false } } (len stromy pred hráčom), { dark: { off: false, fan: true } }
+    dark: { min: 0.2, edge: 0.5, reach: 2, fan: false, off: true },
     les: { outline: 0 } // Les divov: zoslabené stromy bez obrysu, nech hráča v tme nerozptyľuje
   };
   window.MF_FADE_DEFAULTS = FADE_DEFAULTS;
@@ -556,9 +549,7 @@ export function create(api) {
     depthTwin.renderOrder = 1; depthTwin.visible = false; depthTwin.layers.set(1); // do mapy tieňov nepatrí
     scene.add(depthTwin);
     fmesh.userData.depthTwin = depthTwin;
-    // obrovský strom: stred kmeňa (stred modelu 2 × 2 políčka) a jeho polomer – kmeň sa nezoslabuje
-    const trunk = f.type === 'giant' ? new THREE.Vector3(f.ox + f.sx / W.FINE / 2, f.oz + f.sz / W.FINE / 2, TRUNK_KEEP_R) : new THREE.Vector3();
-    fmesh.onBeforeRender = () => { if (fmesh.material === fadeMaterial) { fadeMaterial.uniforms.opacity.value = fmesh.userData.fade; fadeMaterial.uniforms.trunkKeep.value.copy(trunk); fadeMaterial.uniformsNeedUpdate = true; } };
+    fmesh.onBeforeRender = () => { if (fmesh.material === fadeMaterial) { fadeMaterial.uniforms.opacity.value = fmesh.userData.fade; fadeMaterial.uniformsNeedUpdate = true; } };
     fmesh.userData.tile = f.tile;
     fmesh.userData.type = f.type;
     scene.add(fmesh);
@@ -1257,7 +1248,7 @@ void main() {
   // Body na zemi sú len na priechodných políčkach (zem pod kmeňom stromu či pod budovou nie je cesta).
   function fadeTargets(cfg, meH) {
     const out = new Map();
-    if (window.MF_NOFADE || !grid) return out;
+    if (window.MF_NOFADE || !grid || (cfg.inDark && cfg.off)) return out; // v tmavom lese sa stromy nezoslabujú
     const toCam = camera.position.clone().sub(camTarget).normalize(), hits = new Set();
     const lower = (m, v) => { if (m && !(out.get(m) <= v)) out.set(m, v); };
     let fx, fz;
@@ -1273,18 +1264,6 @@ void main() {
         hits.clear();
         W.modelsOnRay(grid, x, W.surfaceY(grid, tx, tz) + 0.05, z, toCam.x, toCam.y, toCam.z, 25, hits);
         for (const i of hits) lower(fineMeshes[i], vis);
-      }
-    }
-    // obrovské stromy: všetko, čo zakrýva zem okolo hráča (kruh giantRing) – ich vysoké kmene a koruny by inak zakryli výhľad
-    if (cfg.giantRing > 0 && fineMeshes.some(m => m.userData.type === 'giant')) {
-      const R = cfg.giantRing;
-      for (let dz = -R; dz <= R + 1e-6; dz += step) for (let dx = -R; dx <= R + 1e-6; dx += step) {
-        if (dx * dx + dz * dz > R * R) continue;
-        const x = px + dx, z = pz + dz, tx = Math.floor(x), tz = Math.floor(z);
-        if (tx < 0 || tz < 0 || tx >= S.W || tz >= S.H || !D.passable(S.tiles[tz * S.W + tx])) continue;
-        hits.clear();
-        W.modelsOnRay(grid, x, W.surfaceY(grid, tx, tz) + 0.05, z, toCam.x, toCam.y, toCam.z, 25, hits);
-        for (const i of hits) if (fineMeshes[i] && fineMeshes[i].userData.type === 'giant') lower(fineMeshes[i], cfg.min);
       }
     }
     for (const m of computeOccluders(meH)) lower(m, cfg.min); // objekty, za ktorými hráč stojí – všade
@@ -1514,8 +1493,6 @@ void main() {
     }
     void meO;
 
-    const fcfg = fadeCfg();
-    material.uniforms.keepBelow.value = fcfg.inDark && fcfg.keepBelow > 0 ? groundY(me.x, me.y) + fcfg.keepBelow : -1e9;
     const fading = updateFades(dt, meO ? meO.h : 1);
     const lit = curAmb.map((v, i) => Math.min(1.2, v + curSun[i] * 0.7));
     if (layerOn('particles')) particles.update(dt, t, { grid, fine: grid && grid.fine, fineMeshes, target: camTarget, viewW, viewH: viewTop * 2, se, min, lit, cauldron: fireCenter(), lantern: lanternCenter() });
