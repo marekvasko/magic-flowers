@@ -397,6 +397,21 @@
   }
 
   const BLOCK = { tree: 1, water: 1, hut: 1, babka: 1, cauldron: 1, stall: 1, well: 1, boulder: 1, house: 1, cliff: 1, glacier: 1, spruce: 1, icehouse: 1 };
+  // Výška terénu v podkockách (pol bloku) podľa typu zeme – zdieľa ju 3D svet (world3d.js) aj chôdza
+  // (hory: sutina a sneh vyššie, ľadovec ešte vyššie, skalné steny najvyššie; v záhrade skalka nad trávou).
+  const TERRAIN_H = { water: 1, rock: 3, boulder: 3, scree: 3, snow: 3, glacier: 3, cliff: 8 };
+  function terrainH(g) { return TERRAIN_H[g] || 2; }
+  // Výška povrchu políčka vo vrstvách (1/4 bloku): terén a na ľadovci aj ľad.
+  // Chodí sa hore najviac GLACIER_STEP vrstiev (pol bloku), dolu hocikoľko.
+  // lift = o koľko vrstiev vyššie je hráč vo výskoku (skokom sa vylezie aj o blok). Plazením sa výškový rozdiel neprejde ani hore, ani dolu.
+  const GLACIER_STEP = 2;
+  function level(t) { return t ? terrainH(t.g) * GLACIER_LAYERS / 2 + (t.g === 'glacier' ? t.ice || 0 : 0) : 0; }
+  function passable(t) { return !!t && (!BLOCK[t.g] || t.g === 'glacier'); }
+  function canStep(from, to, lift, crawl) {
+    if (!passable(to)) return false;
+    const up = level(to) - level(from);
+    return crawl ? up === 0 : up <= GLACIER_STEP + (lift || 0);
+  }
   const TILLABLE = { grass: 'normal', forest: 'forest', sand: 'sand', rock: 'rock' };
 
   function isShade(tiles, x, y) {
@@ -444,7 +459,7 @@
     CHAT_MAX, chatText,
     W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
-    RING, SPAWN, BABKA, BLOCK, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_NAMES, AREA_FX, GATES, ARRIVE,
+    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_NAMES, AREA_FX, GATES, ARRIVE,
     sellPrice, itemName, buildMap, buildMountains, buildArea, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
   };
   root.GameData = api;

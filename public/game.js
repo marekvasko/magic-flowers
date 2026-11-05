@@ -226,7 +226,14 @@
   function season() { return window.MF_TIME && window.MF_TIME.season != null ? window.MF_TIME.season : D.seasonOf(S.day); }
   const GLACIER_MAX = D.glacierLevels(D.buildMountains()); // pôvodná výška ľadu na políčkach hôr
   function tileAt(x, y) { return (x < 0 || y < 0 || x >= W || y >= H) ? null : S.tiles[y * W + x]; }
-  function solid(x, y) { const t = tileAt(Math.floor(x), Math.floor(y)); return !t || !!D.BLOCK[t.g]; }
+  // Dá sa vstúpiť na políčko pod bodom (x, y) z políčka here? Na ľadovec len o pol bloku vyššie (vo výskoku o blok),
+  // plazením vôbec nie cez výškový rozdiel – políčka, na ktorých už čiastočne leží (overlap), ho však nezadržia.
+  function solid(x, y, here, lift, crawl, overlap) {
+    const tx = Math.floor(x), ty = Math.floor(y), t = tileAt(tx, ty);
+    if (!t) return true;
+    if (crawl && D.passable(t) && overlap.has(ty * W + tx)) return false;
+    return !D.canStep(here, t, lift, crawl);
+  }
   function playerOn(tx, ty) {
     for (const o of S.others.values()) if (Math.hypot(o.x - (tx + 0.5), o.y - (ty + 0.5)) < 0.8) return o;
     return null;
@@ -310,7 +317,9 @@
       case 'water':
         if (sel === 'pick' && season() === 3) return t.cut ? { i: '🕳️', l: 'Otvor v ľade', info: true } : { i: '🧊', l: 'Vysekať ľad' };
         return sel === 'can' ? { i: '💧', l: 'Načrieť' } : null;
-      case 'glacier': return sel === 'pick' && t.ice ? { i: '🧊', l: 'Vysekať ľad' } : { i: '🧊', l: 'Ľadovec', info: true };
+      case 'glacier':
+        if (sel === 'pick') return t.ice ? { i: '🧊', l: 'Vysekať ľad' } : { i: '🧊', l: 'Ľadovec', info: true };
+        return S.inv.pick ? null : { i: '🧊', l: 'Ľadovec', info: true }; // bez krompáča v ruke sa po ľadovci len chodí
       case 'icehouse': return { i: '🧊', l: 'Ľadovňa', ui: 'icehouse' };
       case 'lot': return { i: '🪧', l: 'Pozemok', info: true };
       case 'shroom': case 'ring': return { i: '🍄', l: 'Huby', info: true };
@@ -513,7 +522,7 @@
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
         const nx = x + dx, ny = y + dy, n = ny * W + nx;
         if (nx < 0 || ny < 0 || nx >= W || ny >= H || prev[n] !== -2) continue;
-        if (D.BLOCK[S.tiles[n].g]) continue;
+        if (!D.canStep(S.tiles[i], S.tiles[n], 0, S.me.crawl)) continue;
         prev[n] = i; q.push(n);
       }
     }
@@ -532,10 +541,10 @@
     if (a && (inReach(tgt.x, tgt.y) || a.ui === 'wish' || a.info)) {
       face(tgt.x + 0.5 - S.me.x, tgt.y + 0.5 - S.me.y);
       doAction(tgt.x, tgt.y);
-      if (!a.info || inReach(tgt.x, tgt.y)) return;
+      if (!a.info || (inReach(tgt.x, tgt.y) && a.l !== 'Ľadovec')) return; // na ľadovec sa dá aj vyjsť
     }
     const cx0 = tgt.x + 0.5, cy0 = tgt.y + 0.5;
-    const walkable = !D.BLOCK[tileAt(tgt.x, tgt.y).g];
+    const walkable = D.passable(tileAt(tgt.x, tgt.y));
     let path;
     if (a && !GROUND[a.l] && !a.info) {
       // objekt: dôjdi k nemu a urob akciu
@@ -543,7 +552,8 @@
       if (path) S.pendingAct = { x: tgt.x, y: tgt.y };
     } else {
       // zem: dôjdi na políčko (alebo čo najbližšie k nemu)
-      path = walkable ? findPath((x, y) => x === tgt.x && y === tgt.y) : findPath((x, y) => Math.hypot(x + 0.5 - cx0, y + 0.5 - cy0) <= 1.45);
+      // (na privysoký ľad sa nevylezie – vtedy čo najbližšie k nemu)
+      path = (walkable && findPath((x, y) => x === tgt.x && y === tgt.y)) || findPath((x, y) => Math.hypot(x + 0.5 - cx0, y + 0.5 - cy0) <= 1.45);
     }
     if (!path) return;
     if (path.length > 1 && Math.hypot(path[0].x - S.me.x, path[0].y - S.me.y) < 0.6) path.shift();
@@ -1052,7 +1062,7 @@
       <p>📋 <b>Zákazky</b> nájdeš na nástenke pri 👵 babke. Zarezervuj si ich, termín platí; odovzdávať môžeš aj po častiach. Za splnenie dostaneš peniaze a ⭐ reputáciu, za nesplnenie reputáciu stratíš. ⚗️ V babkinom <b>kotlíku</b> sa z troch kvetov varia elixíry.</p>
       <p>🥀 <b>Kvety vädnú:</b> odrezaný kvet vydrží len pár dní (mak 2, tulipán 4, chryzantéma 7…) a s vekom klesá jeho výkupná cena. Rozkvitnutá rastlina na poli po čase odkvitne. V chladnom sklade vädnú kvety 2× pomalšie, zvädnuté sa dajú skompostovať.</p>
       <p>📦 V <b>domčeku</b> je spoločný sklad pre celú záhradu – peniaze má každý svoje.</p>
-      <p>🏔️ <b>Hory:</b> chodník na severovýchodnom okraji záhrady (za babkinou chalúpkou) vedie do hôr. Na ľadovci pod skalami vysekáš <b>krompáčom</b> ⛏️ ľad – každé ťuknutie zoberie vrchnú vrstvu. Ľadu je málo: ľadovec sám nedorastá, len keď prší alebo sneží, a v teple sa topí od okrajov. Kto ho vykope priveľa, nechá ostatných bez ľadu. V zime vysekáš ľad aj na zamrznutom jazierku (z každého políčka raz za deň).</p>
+      <p>🏔️ <b>Hory:</b> chodník na severovýchodnom okraji záhrady (za babkinou chalúpkou) vedie do hôr. Na ľadovci pod skalami vysekáš <b>krompáčom</b> ⛏️ ľad – každé ťuknutie zoberie vrchnú vrstvu. Po ľadovci sa dá chodiť: vyjdeš o pol bloku, so skokom o celý blok, a kde stojíš, tam ľad nedorastie. Plazením cez žiadny schod (ľad, skalka…) nezídeš ani nevyjdeš – nespadneš z hrany. Ľadu je málo: ľadovec sám nedorastá, len keď prší alebo sneží, a v teple sa topí od okrajov. Kto ho vykope priveľa, nechá ostatných bez ľadu. V zime vysekáš ľad aj na zamrznutom jazierku (z každého políčka raz za deň).</p>
       <p>🧊 Uneseš najviac ${D.ICE_CARRY} kusov ľadu, ťahá ťa dolu (chodíš pomalšie) a do pol dňa sa ti v batohu roztopí – ponáhľaj sa s ním do ľadovne. V lete ho trh dobre vykúpi, v zime takmer vôbec.</p>
       <p>🧊 <b>Ľadovňa</b> pri domčeku (kúpi ju ktokoľvek na trhu v záložke Vylepšiť) drží ${D.ICEHOUSE.cap} blokov ľadu. Kým je v nej ľad, kvety v sklade vädnú 4× pomalšie. Ľad sa topí – v lete rýchlo, v zime vôbec – tak ho dopĺňaj.</p>
       <p>⚙️ V menu sa dá nastaviť, či svet <b>beží ďalej aj bez hráčov</b>, a ako dlho trvá herný deň.</p>
@@ -1160,10 +1170,25 @@
       const sp = 3.8 * dt * (me.crawl ? CRAWL_SPEED : 1) * Math.max(0.4, 1 - D.ICE_SLOW * (S.inv.ice || 0));
       const ox = me.x, oy = me.y;
       const rx = 0.26, ry = 0.16;
+      // hráč stojí na najvyššom políčku pod sebou – kým celkom nezíde z ľadu, nezasekne sa o jeho hranu
+      const corners = (x, y) => [[x - rx, y - ry], [x + rx, y - ry], [x - rx, y + ry], [x + rx, y + ry]];
+      let here = tileAt(Math.floor(me.x), Math.floor(me.y));
+      const overlap = new Set();
+      for (const [cx, cy] of corners(me.x, me.y)) {
+        const t = tileAt(Math.floor(cx), Math.floor(cy));
+        overlap.add(Math.floor(cy) * W + Math.floor(cx));
+        if (D.passable(t) && D.level(t) > D.level(here)) here = t;
+      }
+      const lift = Math.floor((me.jz || 0) * D.GLACIER_LAYERS);
+      // plazenie: meria sa od políčka pod stredom postavy a stred nesmie prejsť na inú výšku
+      // (inak by sa dalo vyliezť, keď sa už rohom dotýka vyššieho ľadu)
+      const mid = tileAt(Math.floor(me.x), Math.floor(me.y)), from = me.crawl ? mid : here;
+      const free = (x, y) => corners(x, y).every(([cx, cy]) => !solid(cx, cy, from, lift, me.crawl, overlap))
+        && (!me.crawl || D.level(tileAt(Math.floor(x), Math.floor(y))) === D.level(mid));
       const nx = me.x + vx * sp;
-      if (!solid(nx - rx, me.y - ry) && !solid(nx + rx, me.y - ry) && !solid(nx - rx, me.y + ry) && !solid(nx + rx, me.y + ry)) me.x = nx;
+      if (free(nx, me.y)) me.x = nx;
       const ny = me.y + vy * sp;
-      if (!solid(me.x - rx, ny - ry) && !solid(me.x + rx, ny - ry) && !solid(me.x - rx, ny + ry) && !solid(me.x + rx, ny + ry)) me.y = ny;
+      if (free(me.x, ny)) me.y = ny;
       face(vx, vy);
       me.a = Math.atan2(vy, vx); // presný smer pre 8-smerový sprite
       me.phase += dt * (me.crawl ? 7 : 11);

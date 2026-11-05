@@ -61,16 +61,36 @@ function meltGlacier(room, n) {
   }
   return k;
 }
+// Políčka hôr, na ktorých stojí hráč – pod nohami ľad nedorastá.
+function occupied(room) {
+  const s = new Set();
+  if (room.players) for (const p of room.players.values()) if (p.area === 'hory') s.add(Math.floor(p.y) * D.W + Math.floor(p.x));
+  return s;
+}
+// Najnižšie priechodné susedné políčko (vo vrstvách ľadu) – ľadovec dorastá len tak, aby sa naň dalo vyliezť.
+function lowestNeighbour(tiles, i) {
+  const x = i % D.W, y = (i / D.W) | 0;
+  let m = Infinity;
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const nx = x + dx, ny = y + dy;
+    if (nx < 0 || ny < 0 || nx >= D.W || ny >= D.H) continue;
+    const t = tiles[ny * D.W + nx];
+    if (D.passable(t)) m = Math.min(m, D.level(t));
+  }
+  return m;
+}
 // Dorastanie: n vrstiev, rovnomerne od najvyšších políčok pod skalami nadol, najviac do pôvodnej výšky.
+// Nedorastá pod hráčom a nikdy nie viac ako pol bloku nad najnižšieho suseda – nikoho nezamuruje.
 function growGlacier(room, n) {
   const list = room.hory.map((t, i) => i).filter(i => LEVELS[i] > 0).sort((a, b) => LEVELS[b] - LEVELS[a] || a - b);
+  const occ = occupied(room);
   let k = 0, any = true;
   while (k < n && any) {
     any = false;
     for (const i of list) {
       if (k >= n) break;
       const t = room.hory[i];
-      if (t.ice < LEVELS[i]) { t.ice++; k++; any = true; }
+      if (t.ice < LEVELS[i] && !occ.has(i) && D.level(t) + 1 <= lowestNeighbour(room.hory, i) + D.GLACIER_STEP) { t.ice++; k++; any = true; }
     }
   }
   return k;
