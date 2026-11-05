@@ -207,12 +207,24 @@ To run the published image instead of building locally, set `image: ghcr.io/mare
 
 ## Debug page (`/debug`)
 
-A maintainer page (in English) for looking at worlds without playing: a rooms list, tabs and a read-only room overview. More tabs (World, Assets, Generators, Market) follow in #64.
+A maintainer page (in English) for looking at worlds and the game's content without playing (#64). A rooms list on the left (filter, who's online), an area selector, and tabs. Selections are kept in the URL hash, so a view can be shared as a link.
+
+| Tab | What it shows |
+|---|---|
+| **Room** | Day, season, time, mode, weather, players (save stats, online names), upcoming events with their kind (periodic / unique / plain), the **reconciler state** (every declared periodic event: scheduled or missing, and what reconcile would drop and why; `E.reconcilePlan`), and the raw save as a JSON tree. |
+| **Map** | A top-down plan of an area: ground height, paths, objects, gates and arrivals, grid; tile inspector and area stats. *Seed* mode shows any seed, *Room* mode the room's real layout with beds, ice and players. (`debug/tabs/map.mjs`, `map-core.mjs`) |
+| **World** | The game's own 3D renderer without a player: free camera (mouse, touch, keys; follow an online player), time / season / weather controls independent of the room clock, layer toggles, and helpers: bounding boxes, tile grid, tap areas, gates and arrivals, lights and sun, wireframe, shadow camera, plus FPS and renderer stats. Uses optional hooks in `public/render3d.mjs` (`placeCamera`, `noPlayer`, `layers`, `beforeRender`, `debugView()`, `dispose()`) that the game never passes. |
+| **Assets** | Every fine 3D model (`World3D.FINE_MODELS`: buildings, market stall, well, cauldron, trees, bushes, rocks) in any season and rotation or a 4×4 grid, with size, voxel count and materials; a 2D flower gallery from `art.js`. |
+| **Generators** | Tree parameter sliders (`World3D.TREE_PARAMS`) with a live default-vs-tweaked preview and *Copy parameters* (JSON for `treeModel(kind, season, rot, overrides)`); area layouts (`D.buildArea`) for several seeds side by side. Tweaks never touch the game. |
+| **Market** | Prices of the selected world broken into their factors (`Econ.seedPriceParts` / `flowerPriceParts` / `compostPriceParts`, the same functions the game prices with), sell-back prices, history charts, NPCs (Jano, Fero), festivals, market news, upcoming market events, contracts, and *How prices work*. |
+
+The FPS counter for players is separate: in the game menu (see *3D view*).
 
 - **Open to anyone at `/debug`, but read-only.** Nothing can be changed there: the page and its API only answer `GET`.
 - `GET /api/debug/rooms` lists all worlds (saved files and rooms in memory, who's online). `GET /api/debug/room?id=…` returns a snapshot: a loaded room is serialized from memory; an unloaded one is only parsed from `data/room-<id>.json` (and run through `migrate()` on the copy). It's never loaded into the server, advanced or saved.
 - **Player save keys never leave the server.** They're a player's identity (whoever has one can play as that player), so the API replaces them with short hashes (`p-…`).
-- Files: `debug.js` (server side), `debug/` (page; not under `public/`, served only through `/debug/…`).
+- Files: `debug.js` (server side), `debug/` (page; not under `public/`, served only through `/debug/…`): `debug/debug.js` (shell, Room tab), `debug/tabs/*.mjs` (other tabs; `modelview.mjs` is the shared voxel model viewer), `debug/api/*.js` (tab data).
+- Tab data endpoints: `GET /api/debug/market?id=<room>` (price breakdown, NPCs, festivals, events, contracts), `GET /api/debug/world?room=<id>&area=<a>` or `?seed=<n>&area=<a>` (an area's tiles built as the server builds them, plus players on it).
 - **Adding a tab:** create `debug/tabs/<id>.mjs` exporting `mount(el, ctx)` → `{ update?(ctx), unmount?() }` and list the tab in `TABS` in `debug/debug.js` (until the module exists, the tab shows its description). `ctx` has the selected `room`, `area`, room snapshot `snap`, `api(path)`, `param` / `setParam` (kept in the URL hash), `setArea`, the `h` element helper, `D` (`shared/data.js`) and formatters.
 - **Adding server data for a tab:** create `debug/api/<name>.js` exporting `(query, tools) => object`; it answers `GET /api/debug/<name>`. `tools.load(id)` gives a copy of a world's state (never the live room); player keys are stripped from the response automatically.
 - Locally: `PORT=8099 DATA_DIR=/tmp/mf npm start`, then open `http://localhost:8099/debug`.
