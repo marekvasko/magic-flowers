@@ -343,7 +343,7 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
     while (flakes.length < snowWant) flakes.push(newFlake(rnd(0, SNOW_TOP)));
     function newFlake(h) {
       const x = target.x + rnd(-span, span), z = target.z + rnd(-span, span);
-      return { x, z, y: groundAt(grid, x, z) + h, v: rnd(0.7, 1.3), ph: Math.random() * 9, sw: rnd(0.15, 0.4), s: rnd(0.13, 0.2), rest: -1, out: false };
+      return { x, z, y: groundAt(grid, x, z) + h, v: rnd(0.7, 1.3), ph: Math.random() * 9, sw: rnd(0.15, 0.4), s: rnd(0.09, 0.14), rest: -1, out: false };
     }
     // keď prestane snežiť, vločky dopadajú ďalej, len sa už nevracajú hore
     for (let i = snowWant; i < flakes.length; i++) flakes[i].out = true;
