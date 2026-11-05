@@ -225,15 +225,18 @@ function silkUniforms(THREE, world, view, P, seed, corner) {
 // Skutočné 3D vlákna (Webs.webThreads: tie isté parametre, vydutie z roviny) ako úsečky (gl.LINES, 1 pixel).
 // Hrúbka: každá úsečka sa nakreslí v copies kópiách (inštancie), vertex shader ich posunie na obrazovke o pixel
 // (až po premietnutí, takže svetlo počíta každá kópia z polohy skutočného vlákna); krajné kópie sú slabšie (mäkký okraj).
-// Vietor: stred pavučiny sa kýve (kotvy na kmeňoch stoja). Svetlo: ten istý silkShade ako shader na rovine.
+// Vietor: stred pavučiny sa kýve ako celok (jedno pole posunutia, kotvy na kmeňoch stoja). Svetlo: ten istý silkShade ako shader na rovine.
 const LINE_VERT = `
-attribute vec3 aT; attribute float aRnd; attribute vec3 aOff;
-uniform vec2 uSize; uniform vec2 uRes; uniform float uTime; uniform float uSway;
+attribute vec3 aT; attribute vec3 aOff;
+uniform vec2 uSize; uniform vec2 uRes; uniform float uTime; uniform float uSway; uniform float uPhase;
 varying vec3 vPos; varying vec3 vT; varying float vEdge;
 void main() {
   vec3 p = position;
   float s = clamp(p.x / uSize.x + 0.5, 0.0, 1.0), t = clamp(p.y / uSize.y + 0.5, 0.0, 1.0);
-  p.z += uSway * sin(uTime * 1.7 + aRnd * 6.2832 + p.x * 1.3) * sin(3.14159 * s) * (0.35 + 0.65 * t);
+  // vietor: jedno hladké pole posunutia pre celú pavučinu (len z polohy a fázy pavučiny) – vlákna, ktoré sa stretávajú,
+  // sa hýbu spolu a kotvy na kmeňoch (s = 0 a 1) stoja; mierne sa mení aj smer kývania (dve vlny)
+  float wind = sin(uTime * 1.7 + uPhase + p.x * 1.1) + 0.45 * sin(uTime * 2.9 + uPhase * 1.7 - p.y * 2.3 + p.x * 0.6);
+  p.z += uSway * wind * sin(3.14159 * s) * (0.35 + 0.65 * t);
   vec4 wp = modelMatrix * vec4(p, 1.0);
   vPos = wp.xyz; vT = normalize(mat3(modelMatrix) * aT); vEdge = aOff.z;
   gl_Position = projectionMatrix * viewMatrix * wp;
@@ -255,14 +258,13 @@ export function webLines(THREE, world, view, P, opts, maxLights, frame) {
   const g = new THREE.InstancedBufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(th.pos, 3));
   g.setAttribute('aT', new THREE.BufferAttribute(th.tan, 3));
-  g.setAttribute('aRnd', new THREE.BufferAttribute(th.rnd, 1));
   const n = P.copies, off = COPIES.slice(0, n), cx = off.reduce((s, o) => s + o[0], 0) / n, cy = off.reduce((s, o) => s + o[1], 0) / n;
   g.setAttribute('aOff', new THREE.InstancedBufferAttribute(new Float32Array(off.flatMap(o => [o[0] - cx, o[1] - cy, o[2]])), 3));
   g.instanceCount = n;
   const mat = new THREE.ShaderMaterial({
     vertexShader: LINE_VERT, fragmentShader: LINE_FRAG(maxLights), transparent: true, depthWrite: false,
     uniforms: Object.assign(silkUniforms(THREE, world, view, P, L.seed, opts.corner), {
-      uSize: { value: new THREE.Vector2(opts.w, opts.h) }, uRes: frame.res, uTime: frame.time, uSway: { value: P.sway }
+      uSize: { value: new THREE.Vector2(opts.w, opts.h) }, uRes: frame.res, uTime: frame.time, uSway: { value: P.sway }, uPhase: { value: (L.seed % 97) * 0.6 }
     })
   });
   mat.userData.info = { hubs: L.nH, moor: L.moor, fill: L.fill, render: 'lines', segments: th.count / 2, copies: n };
