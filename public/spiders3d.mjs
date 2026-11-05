@@ -22,20 +22,53 @@ void main() {
   vAx = normalize(mat3(modelMatrix) * vec3(1.0, 0.0, 0.0)); vAy = normalize(mat3(modelMatrix) * vec3(0.0, 1.0, 0.0));
   gl_Position = projectionMatrix * viewMatrix * wp;
 }`;
-export const WEB_FRAG = (MAX) => `
-precision highp float;
-#define TAU 6.28318530718
-uniform vec2 uSize; uniform float uSeed; uniform float uKeep; uniform vec3 uView;
-uniform vec4 uMode; // x výplň (0 špirála, 1 kruhy), y kútová (spleť), z počet lúčov, w rozostup závitov
-uniform vec4 uA;    // ohnutie lúčov, jeho frekvencia, zvlnenie závitov, jeho frekvencia
-uniform vec4 uB;    // stred, voľná zóna, polomer, šum okraja
-uniform vec4 uC;    // hrúbka vlákna, lesk, dúha, priehľadnosť v šere
-uniform vec4 uD;    // šum rozostupu, prehnutie nosných vlákien, závoj kútovej pavučiny
-uniform vec4 uE;    // rozptyl počtu lúčov, počet stredov, kotviace vlákna na ľavom a pravom kmeni
-uniform vec4 uHX; uniform vec4 uHY; // stredy (najviac 4)
+// Svetlo na hodvábe (spoločné pre shader na rovine aj pre čiary): okolie, slnko, lampáše (guľa okolo zdroja), slabé svetlo
+// pri hráčovi; vlákno, nie plocha – rozptyl aj odlesk podľa smeru vlákna T (Kajiya–Kay), odlesk jemne dúhový.
+// V tme za dohľadom vlákna zmiznú ako svet, lampášom osvetlené ostanú (aj o kúsok ďalej sa lesknú).
+const SILK_GLSL = (MAX) => `
 uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 sunDir; uniform vec3 lampColor;
 uniform vec4 lights[${MAX}]; uniform int lightCount;
 uniform float darkOn; uniform vec4 eye; uniform vec2 eyeLit;
+uniform vec3 uView; uniform float uSeed;
+uniform vec4 uC;    // hrúbka vlákna, lesk, dúha, priehľadnosť v šere
+vec4 silkShade(vec3 T, vec3 P, float mask, float veil) {
+  vec3 V = normalize(uView);
+  float lamp = 0.0, spec = 0.0, diff = 0.0;
+  for (int i = 0; i < ${MAX}; i++) {
+    if (i >= lightCount) break;
+    vec3 L = lights[i].xyz - P; float d = length(L); L /= d;
+    float att = 1.0 - smoothstep(0.0, lights[i].w, d), attG = 1.0 - smoothstep(0.0, lights[i].w * 1.3, d);
+    float tl2 = dot(T, L), th = dot(T, normalize(L + V));
+    lamp += att; diff += att * sqrt(max(0.0, 1.0 - tl2 * tl2));
+    spec += attG * pow(sqrt(max(0.0, 1.0 - th * th)), uC.y);
+  }
+  float sl = dot(T, sunDir), sh = dot(T, normalize(sunDir + V));
+  float sunK = 1.0 - darkOn * 0.85; // v Lese divov sa slnko cez koruny skoro nedostane
+  vec3 silk = vec3(0.86, 0.9, 0.95);
+  vec3 col = silk * (ambient * 0.9 + sunColor * sunK * sqrt(max(0.0, 1.0 - sl * sl)) + lampColor * diff * 1.1);
+  col += silk * vec3(0.8, 0.85, 1.0) * eyeLit.y * darkOn * (1.0 - smoothstep(0.0, eyeLit.x, distance(P, eye.xyz)));
+  vec3 iri = (1.0 - uC.z) + uC.z * cos(vec3(0.0, 2.1, 4.2) + dot(T, V) * 6.0 + uSeed); // jemná dúha v odlesku
+  col += (lampColor * spec * 2.2 + sunColor * sunK * pow(sqrt(max(0.0, 1.0 - sh * sh)), uC.y) * 1.5) * iri;
+  // závoj kútovej pavučiny: zaprášený, rozptyľuje svetlo zo všetkých strán
+  vec3 dust = vec3(0.78, 0.76, 0.72) * (ambient + sunColor * sunK * 0.6 + lampColor * lamp * 0.6);
+  float fogK = 0.0;
+  if (darkOn > 0.0) fogK = darkOn * smoothstep(eye.w * 0.6, eye.w * 1.15, distance(P.xz, eye.xz)) * (1.0 - clamp(lamp * 1.6 + spec * 4.0, 0.0, 1.0));
+  float lum = dot(col, vec3(0.3, 0.55, 0.15));
+  float aT = mask * clamp(uC.w + lum * 1.3, 0.0, 1.0);
+  float a = aT + veil * (1.0 - aT);
+  return vec4(min(mix(dust, col, aT / max(a, 1e-3)), vec3(1.6)), a * (1.0 - fogK));
+}`;
+export const WEB_FRAG = (MAX) => `
+precision highp float;
+#define TAU 6.28318530718
+uniform vec2 uSize; uniform float uKeep;
+uniform vec4 uMode; // x výplň (0 špirála, 1 kruhy), y kútová (spleť), z počet lúčov, w rozostup závitov
+uniform vec4 uA;    // ohnutie lúčov, jeho frekvencia, zvlnenie závitov, jeho frekvencia
+uniform vec4 uB;    // stred, voľná zóna, polomer, šum okraja
+uniform vec4 uD;    // šum rozostupu, prehnutie nosných vlákien, závoj kútovej pavučiny
+uniform vec4 uE;    // rozptyl počtu lúčov, počet stredov, kotviace vlákna na ľavom a pravom kmeni
+uniform vec4 uHX; uniform vec4 uHY; // stredy (najviac 4)
+${SILK_GLSL(MAX)}
 varying vec2 vP; varying vec3 vPos; varying vec3 vAx; varying vec3 vAy;
 float gSeed;
 float h11(float n) { return fract(sin(n * 127.1 + gSeed * 311.7) * 43758.5453); }
@@ -155,71 +188,90 @@ void main() {
     }
   }
   if (max(mask, veil) < 0.003) discard;
-  vec3 T = normalize(vAx * tl.x + vAy * tl.y), V = normalize(uView);
-  // rozptyl a odlesk na vlákne (Kajiya–Kay)
-  float lamp = 0.0, spec = 0.0, diff = 0.0;
-  for (int i = 0; i < ${MAX}; i++) {
-    if (i >= lightCount) break;
-    vec3 L = lights[i].xyz - vPos; float d = length(L); L /= d;
-    float att = 1.0 - smoothstep(0.0, lights[i].w, d), attG = 1.0 - smoothstep(0.0, lights[i].w * 1.3, d);
-    float tl2 = dot(T, L), th = dot(T, normalize(L + V));
-    lamp += att; diff += att * sqrt(max(0.0, 1.0 - tl2 * tl2));
-    spec += attG * pow(sqrt(max(0.0, 1.0 - th * th)), uC.y);
-  }
-  float sl = dot(T, sunDir), sh = dot(T, normalize(sunDir + V));
-  float sunK = 1.0 - darkOn * 0.85; // v Lese divov sa slnko cez koruny skoro nedostane
-  vec3 silk = vec3(0.86, 0.9, 0.95);
-  vec3 col = silk * (ambient * 0.9 + sunColor * sunK * sqrt(max(0.0, 1.0 - sl * sl)) + lampColor * diff * 1.1);
-  col += silk * vec3(0.8, 0.85, 1.0) * eyeLit.y * darkOn * (1.0 - smoothstep(0.0, eyeLit.x, distance(vPos, eye.xyz)));
-  vec3 iri = (1.0 - uC.z) + uC.z * cos(vec3(0.0, 2.1, 4.2) + dot(T, V) * 6.0 + uSeed); // jemná dúha v odlesku
-  col += (lampColor * spec * 2.2 + sunColor * sunK * pow(sqrt(max(0.0, 1.0 - sh * sh)), uC.y) * 1.5) * iri;
-  // závoj kútovej pavučiny: zaprášený, rozptyľuje svetlo zo všetkých strán
-  vec3 dust = vec3(0.78, 0.76, 0.72) * (ambient + sunColor * sunK * 0.6 + lampColor * lamp * 0.6);
-  // tma Lesa divov: za dohľadom vlákna zmiznú, lampášom osvetlené ostanú
-  float fogK = 0.0;
-  if (darkOn > 0.0) fogK = darkOn * smoothstep(eye.w * 0.6, eye.w * 1.15, distance(vPos.xz, eye.xz)) * (1.0 - clamp(lamp * 1.6 + spec * 4.0, 0.0, 1.0));
-  float lum = dot(col, vec3(0.3, 0.55, 0.15));
-  float aT = mask * clamp(uC.w + lum * 1.3, 0.0, 1.0);
-  float alpha = (aT + veil * (1.0 - aT)) * (1.0 - fogK);
-  gl_FragColor = vec4(min(mix(dust, col, aT / max(alpha / max(1.0 - fogK, 1e-3), 1e-3)), vec3(1.6)), alpha);
+  gl_FragColor = silkShade(normalize(vAx * tl.x + vAy * tl.y), vPos, mask, veil);
 }`;
 // Materiál jednej pavučiny: P = Webs.webParams(...), opts = { w, h, seed, keep (0–1 koľko vlákien ostalo), corner }.
 // Veľká pavučina má náhodne veľa stredov (1 … P.hubs, na každý aspoň P.hubSpan políčka šírky) a na každom kmeni
 // náhodne veľa kotviacich vlákien (P.moorMin … P.moor).
 // world = uniformy svetla (svet v hre, vlastné v ladiacej stránke), view = { value: Vector3 } smer ku kamere.
 export function webMaterial(THREE, world, view, P, opts, maxLights) {
-  const { w, h, corner } = opts, seed = (opts.seed + P.seed * 101) % 997;
-  const hs = n => { const x = Math.sin(seed * 12.9898 + n * 78.233) * 43758.5453; return x - Math.floor(x); };
-  const fill = P.fill === 2 ? (hs(3) < 0.5 ? 0 : 1) : P.fill;
-  const cj = P.centerJitter, room = Math.max(1, Math.min(P.hubs, Math.floor(w / P.hubSpan)));
-  const nH = corner ? 1 : 1 + Math.floor(hs(6) * room);
+  const { w, h, corner } = opts, L = window.Webs.webLayout(P, opts);
   const hx = [0, 0, 0, 0], hy = [0, 0, 0, 0];
-  for (let i = 0; i < nH; i++) {
-    hx[i] = w * (i + 0.5 + (hs(10 + i) - 0.5) * 2 * cj * (nH > 1 ? 0.8 : 1)) / nH;
-    hy[i] = h * (0.5 + (hs(20 + i) - 0.5) * 2 * cj * (nH > 1 ? 1.5 : 1));
-  }
-  const moorN = k => P.moorMin + Math.floor(hs(k) * (Math.max(P.moor, P.moorMin) - P.moorMin + 1));
+  L.hubs.forEach((c, i) => { hx[i] = c.x; hy[i] = c.y; });
   const mat = new THREE.ShaderMaterial({
     vertexShader: WEB_VERT, fragmentShader: WEB_FRAG(maxLights), transparent: true, depthWrite: false, side: THREE.DoubleSide,
-    uniforms: {
-      ambient: world.ambient, sunColor: world.sunColor, sunDir: world.sunDir, lampColor: world.lampColor, lights: world.lights, lightCount: world.lightCount,
-      darkOn: world.darkOn, eye: world.eye, eyeLit: world.eyeLit, uView: view,
-      uSize: { value: new THREE.Vector2(w, h) },
-      uSeed: { value: seed % 97 }, uKeep: { value: opts.keep == null ? 1 : opts.keep },
-      uMode: { value: new THREE.Vector4(fill, corner ? 1 : 0, P.rays, P.pitch * (1 + (hs(5) - 0.5) * P.pitchVar)) },
+    uniforms: Object.assign(silkUniforms(THREE, world, view, P, L.seed, corner), {
+      uSize: { value: new THREE.Vector2(w, h) }, uKeep: { value: opts.keep == null ? 1 : opts.keep },
+      uMode: { value: new THREE.Vector4(L.fill, corner ? 1 : 0, P.rays, L.pitch) },
       uA: { value: new THREE.Vector4(P.bend, P.bendFreq, P.wobble, P.wobbleFreq) },
       uB: { value: new THREE.Vector4(P.hub, P.free, P.radius, P.edgeNoise) },
-      uC: { value: new THREE.Vector4(P.width * (corner ? 1.2 : 1), P.glint, P.iri, P.alpha) },
       uD: { value: new THREE.Vector4(P.pitchNoise, P.sag, corner ? P.veil : 0, 0) },
-      uE: { value: new THREE.Vector4(P.raysVar, nH, moorN(7), moorN(8)) },
+      uE: { value: new THREE.Vector4(P.raysVar, L.nH, L.moor[0], L.moor[1]) },
       uHX: { value: new THREE.Vector4(...hx) }, uHY: { value: new THREE.Vector4(...hy) }
-    }
+    })
   });
-  mat.userData.info = { hubs: nH, moor: [mat.uniforms.uE.value.z, mat.uniforms.uE.value.w], fill };
+  mat.userData.info = { hubs: L.nH, moor: L.moor, fill: L.fill, render: 'shader' };
   return mat;
 }
+function silkUniforms(THREE, world, view, P, seed, corner) {
+  return {
+    ambient: world.ambient, sunColor: world.sunColor, sunDir: world.sunDir, lampColor: world.lampColor, lights: world.lights, lightCount: world.lightCount,
+    darkOn: world.darkOn, eye: world.eye, eyeLit: world.eyeLit, uView: view, uSeed: { value: seed % 97 },
+    uC: { value: new THREE.Vector4(P.width * (corner ? 1.2 : 1), P.glint, P.iri, P.alpha) }
+  };
+}
 
-export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, world, maxLights }) {
+// ---------- Pavučina z čiar ----------
+// Skutočné 3D vlákna (Webs.webThreads: tie isté parametre, vydutie z roviny) ako úsečky (gl.LINES, 1 pixel).
+// Hrúbka: každá úsečka sa nakreslí v copies kópiách (inštancie), vertex shader ich posunie na obrazovke o pixel
+// (až po premietnutí, takže svetlo počíta každá kópia z polohy skutočného vlákna); krajné kópie sú slabšie (mäkký okraj).
+// Vietor: stred pavučiny sa kýve (kotvy na kmeňoch stoja). Svetlo: ten istý silkShade ako shader na rovine.
+const LINE_VERT = `
+attribute vec3 aT; attribute float aRnd; attribute vec3 aOff;
+uniform vec2 uSize; uniform vec2 uRes; uniform float uTime; uniform float uSway;
+varying vec3 vPos; varying vec3 vT; varying float vEdge;
+void main() {
+  vec3 p = position;
+  float s = clamp(p.x / uSize.x + 0.5, 0.0, 1.0), t = clamp(p.y / uSize.y + 0.5, 0.0, 1.0);
+  p.z += uSway * sin(uTime * 1.7 + aRnd * 6.2832 + p.x * 1.3) * sin(3.14159 * s) * (0.35 + 0.65 * t);
+  vec4 wp = modelMatrix * vec4(p, 1.0);
+  vPos = wp.xyz; vT = normalize(mat3(modelMatrix) * aT); vEdge = aOff.z;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+  gl_Position.xy += aOff.xy * 2.0 / uRes * gl_Position.w; // kópia posunutá o pixel na obrazovke
+}`;
+const LINE_FRAG = (MAX) => `
+precision highp float;
+${SILK_GLSL(MAX)}
+varying vec3 vPos; varying vec3 vT; varying float vEdge;
+void main() {
+  vec4 c = silkShade(normalize(vT), vPos, vEdge, 0.0);
+  if (c.a < 0.003) discard;
+  gl_FragColor = c;
+}`;
+// posuny kópií v pixeloch (z = sila kópie): 1 = len vlákno, 2–4 = hrubšie
+const COPIES = [[0, 0, 1], [1, 0, 0.6], [0, 1, 0.6], [1, 1, 0.35]];
+export function webLines(THREE, world, view, P, opts, maxLights, frame) {
+  const th = window.Webs.webThreads(P, opts), L = th.layout;
+  const g = new THREE.InstancedBufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(th.pos, 3));
+  g.setAttribute('aT', new THREE.BufferAttribute(th.tan, 3));
+  g.setAttribute('aRnd', new THREE.BufferAttribute(th.rnd, 1));
+  const n = P.copies, off = COPIES.slice(0, n), cx = off.reduce((s, o) => s + o[0], 0) / n, cy = off.reduce((s, o) => s + o[1], 0) / n;
+  g.setAttribute('aOff', new THREE.InstancedBufferAttribute(new Float32Array(off.flatMap(o => [o[0] - cx, o[1] - cy, o[2]])), 3));
+  g.instanceCount = n;
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: LINE_VERT, fragmentShader: LINE_FRAG(maxLights), transparent: true, depthWrite: false,
+    uniforms: Object.assign(silkUniforms(THREE, world, view, P, L.seed, opts.corner), {
+      uSize: { value: new THREE.Vector2(opts.w, opts.h) }, uRes: frame.res, uTime: frame.time, uSway: { value: P.sway }
+    })
+  });
+  mat.userData.info = { hubs: L.nH, moor: L.moor, fill: L.fill, render: 'lines', segments: th.count / 2, copies: n };
+  const m = new THREE.LineSegments(g, mat);
+  m.frustumCulled = false; // vydutie a kývanie mení tvar mimo pôvodnej rovinky
+  return m;
+}
+
+export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, renderer, world, maxLights }) {
   const SPI = D.SPIDERS;
   const webMeshes = new Map(), cornerMeshes = [], burrowMeshes = [], sprites = new Map();
   let builtWebs = -1, builtCorner = -1, builtArea = null, builtTiles = -1;
@@ -230,8 +282,11 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
   // Pavučina so shaderom; parametre z Webs.webParams (v hre sa dajú skúsiť cez window.MF_WEB = { rays: 20, … })
   const view = { value: new THREE.Vector3(0, 1, 0) };
   const params = () => window.Webs.webParams(window.MF_WEB);
+  const frame = { res: { value: new THREE.Vector2(1, 1) }, time: { value: 0 } }; // pre pavučiny z čiar
   function webPlane(w, h, seed, keep, corner) {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), webMaterial(THREE, world, view, params(), { w, h, seed, keep, corner }, maxLights));
+    const P = params(), opts = { w, h, seed, keep, corner };
+    const m = P.render === 1 ? webLines(THREE, world, view, P, opts, maxLights, frame)
+      : new THREE.Mesh(new THREE.PlaneGeometry(w, h), webMaterial(THREE, world, view, P, opts, maxLights));
     m.renderOrder = 2;
     return add(m);
   }
@@ -303,6 +358,8 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
     // pavučiny: v tme len v dohľade (a v svetle lampášov); s lampášom v ruke sa lesknú ešte kúsok ďalej
     // pavučiny svieti shader (svetlo zo sveta); smer ku kamere pre odlesk
     view.value.copy(camera.position).sub(camTarget).normalize();
+    frame.time.value = t;
+    if (renderer) renderer.getDrawingBufferSize(frame.res.value);
     for (const m of cornerMeshes) if (m.isSprite) m.material.color.setRGB(...lightAt(m.position.x, m.position.y, m.position.z, lights, lights.length));
     for (const m of burrowMeshes) { const p = m.position; lightAt(p.x, p.y, p.z, lights, lights.length, lo); m.material.opacity = 0.85 * lo.seen; m.visible = lo.seen > 0.02; }
     const alive = new Set();

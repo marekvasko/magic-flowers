@@ -3,7 +3,7 @@
 // shaderom ako v hre (public/spiders3d.mjs) a pôdorys Lesa divov s miestami, kde môže pavučina visieť (rozpätie span / gladeSpan).
 // Úpravy žijú len v tejto stránke (a v adrese); „Copy parameters“ dá JSON so zmenenými hodnotami (v hre: window.MF_WEB = …).
 import * as THREE from '/vendor/three/three.module.js';
-import { webMaterial } from '/spiders3d.mjs';
+import { webMaterial, webLines } from '/spiders3d.mjs';
 
 const MAX_LIGHTS = 16;
 export const CSS = `
@@ -71,7 +71,7 @@ export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone })
 
   // ---- posuvníky po skupinách ----
   const rows = {};
-  const GROUP_NAMES = { placement: 'Placement & size', structure: 'Structure', noise: 'Perlin noise', look: 'Look & light' };
+  const GROUP_NAMES = { render: 'Render (0 = shader on a plane, 1 = 3D lines)', placement: 'Placement & size', structure: 'Structure', noise: 'Perlin noise', look: 'Look & light' };
   for (const gr of Object.keys(GROUP_NAMES)) {
     const box = h('div', { class: 'gn-sliders' });
     for (const [k, d] of Object.entries(defs)) {
@@ -114,6 +114,7 @@ export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone })
     darkOn: { value: 0 }, eye: { value: new THREE.Vector4(0, 0, 0, 3.5) }, eyeLit: { value: new THREE.Vector2(3.6, 0.2) }
   };
   const viewDir = { value: new THREE.Vector3() };
+  const frame = { res: { value: new THREE.Vector2(1, 1) }, time: { value: 0 } }; // pavučina z čiar: veľkosť obrazu a čas (kývanie)
   const lampMesh = new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffd27a }));
   let objs = [], web = null;
   const view = { yaw: 0.35, pitch: 0.38, dist: 4.2 };
@@ -144,6 +145,10 @@ export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone })
     else { put(a, y, st.anchor); put(b, y, st.anchor); }
     return { t: t.map(g => ({ g })), w, hh, wb: { x: a + 1, y, ax: 0, n: st.n } };
   }
+  // pavučina tak, ako ju kreslí hra: shader na rovine, alebo 3D vlákna z čiar (render = 1)
+  function makeWeb(P, opts) {
+    return P.render === 1 ? webLines(THREE, world, viewDir, P, opts, MAX_LIGHTS, frame) : new THREE.Mesh(new THREE.PlaneGeometry(opts.w, opts.h), webMaterial(THREE, world, viewDir, P, opts, MAX_LIGHTS));
+  }
   function anchorMesh(o) {
     if (o.g === 'bush') { const m = new THREE.Mesh(new THREE.SphereGeometry(o.r, 16, 12), matLeaf); m.position.set(o.cx, o.r * 0.8, o.cz); return m; }
     if (o.g === 'log') { const m = new THREE.Mesh(new THREE.CylinderGeometry(o.r, o.r, 1, 14), matBark); m.rotation.x = Math.PI / 2; m.position.set(o.cx, o.r, o.cz); return m; }
@@ -157,13 +162,13 @@ export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone })
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(T.w, T.hh), matGround); ground.rotation.x = -Math.PI / 2; ground.position.set(T.w / 2, 0, T.hh / 2); objs.push(ground);
     if (st.anchor === 'corner') return rebuildCorner(P);
     for (const o of [g.a, g.b]) if (o) objs.push(anchorMesh(o));
-    web = new THREE.Mesh(new THREE.PlaneGeometry(g.len, g.hgt), webMaterial(THREE, world, viewDir, P, { w: g.len, h: g.hgt, seed: st.web, keep: st.silk >= 3 ? 1 : st.silk === 2 ? 0.72 : 0.42 }, MAX_LIGHTS));
+    web = makeWeb(P, { w: g.len, h: g.hgt, seed: st.web, keep: st.silk >= 3 ? 1 : st.silk === 2 ? 0.72 : 0.42 });
     web.position.set((g.u0 + g.u1) / 2, g.hgt / 2 + 0.02, g.line);
     objs.push(web);
     for (const o of objs) scene.add(o);
     target.set((g.u0 + g.u1) / 2, g.hgt * 0.5, g.line);
-    const u = web.material.uniforms, inf = web.material.userData.info;
-    stats.textContent = `web ${st.web}: ${g.len.toFixed(2)} × ${g.hgt.toFixed(2)} tiles between ${g.a ? g.a.g : '–'} and ${g.b ? g.b.g : '–'} · ${inf.hubs} centre${inf.hubs > 1 ? 's' : ''} · mooring ${inf.moor[0]} + ${inf.moor[1]} · ${u.uMode.value.x ? 'concentric' : 'spiral'} fill · ${u.uMode.value.z}+ rays · pitch ${u.uMode.value.w.toFixed(3)} · ${Object.keys(changed()).length} changed`;
+    const inf = web.material.userData.info;
+    stats.textContent = `web ${st.web}: ${g.len.toFixed(2)} × ${g.hgt.toFixed(2)} tiles between ${g.a ? g.a.g : '–'} and ${g.b ? g.b.g : '–'} · ${inf.render}${inf.render === 'lines' ? ` (${inf.segments} segments × ${inf.copies} copies)` : ''} · ${inf.hubs} centre${inf.hubs > 1 ? 's' : ''} · mooring ${inf.moor[0]} + ${inf.moor[1]} · ${inf.fill ? 'concentric' : 'spiral'} fill · ${Object.keys(changed()).length} changed`;
     placeLamp(); applyLight(); request();
   }
   // kútová pavučina: stena (kváder) na zemi, pavučina šikmo v kúte pri päte steny a jej konci (ako v hre)
@@ -173,7 +178,7 @@ export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone })
     const L = 0.7, up = 0.42, out = 0.4;
     const top = new THREE.Vector3(4 - L / 2, up, 3), bot = new THREE.Vector3(4 - L / 2, 0.01, 3 + out);
     const X = new THREE.Vector3(1, 0, 0), Y = top.clone().sub(bot), len = Y.length(); Y.normalize();
-    web = new THREE.Mesh(new THREE.PlaneGeometry(L, len), webMaterial(THREE, world, viewDir, P, { w: L, h: len, seed: st.web, keep: 1, corner: true }, MAX_LIGHTS));
+    web = makeWeb(P, { w: L, h: len, seed: st.web, keep: 1, corner: true });
     web.matrixAutoUpdate = false;
     web.matrix.makeBasis(X, Y, X.clone().cross(Y)).setPosition(top.clone().add(bot).multiplyScalar(0.5));
     objs.push(web);
@@ -210,7 +215,10 @@ export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone })
     cam.lookAt(target);
     viewDir.value.copy(cam.position).sub(target).normalize();
     if (LIGHT[st.light].lamp) { world.lights.value[0].set(lampMesh.position.x, lampMesh.position.y, lampMesh.position.z, LIGHT[st.light].dark ? 3.5 : 6.5); }
+    renderer.getDrawingBufferSize(frame.res.value);
+    frame.time.value = performance.now() / 1000;
     renderer.render(scene, cam);
+    if (web && web.isLineSegments && Webs.webParams(over()).sway > 0) request(); // kývanie: kreslí sa stále
   }
 
   // ---- pôdorys: kde môže pavučina visieť (Webs.analyze s aktuálnym rozpätím) ----

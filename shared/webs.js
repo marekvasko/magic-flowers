@@ -25,6 +25,9 @@
     hubs: Pd(3, 1, 4, 1, 'structure'), hubSpan: Pd(1.3, 0.5, 3, 0.1, 'structure'), moorMin: Pd(1, 0, 6, 1, 'structure'), moor: Pd(4, 0, 6, 1, 'structure'),
     // kútová pavučina krížiaka: hustota mliečneho závoja
     veil: Pd(0.18, 0, 0.6, 0.01, 'look'),
+    // kreslenie: 0 = shader na rovine (vlákna z výpočtu v každom pixeli), 1 = skutočné 3D vlákna ako čiary;
+    // pri čiarach: copies = koľko kópií posunutých o pixel (hrúbka), bow = vydutie z roviny, sway = kývanie vo vetre
+    render: Pd(0, 0, 1, 1, 'render'), copies: Pd(2, 1, 4, 1, 'render'), bow: Pd(0.12, 0, 0.5, 0.01, 'render'), sway: Pd(0.02, 0, 0.12, 0.005, 'render'),
     // Perlinov šum: ohnutie lúčov, zvlnenie závitov, nerovný okraj, rozostup
     bend: Pd(0.22, 0, 0.8, 0.01, 'noise'), bendFreq: Pd(2.3, 0.2, 8, 0.1, 'noise'), wobble: Pd(0.035, 0, 0.2, 0.005, 'noise'),
     wobbleFreq: Pd(4, 0.5, 12, 0.5, 'noise'), edgeNoise: Pd(0.12, 0, 0.5, 0.01, 'noise'), pitchNoise: Pd(0.25, 0, 1, 0.05, 'noise'),
@@ -211,7 +214,123 @@
     return out;
   }
 
-  const api = { WEB_PARAMS, webParams, ANCHOR, anchorAt, webGeom, analyze, cornerSpots, bfs };
+
+  // ---- Rozloženie jednej pavučiny (spoločné pre shader aj čiary): stredy, kotvenie, výplň ----
+  function webLayout(P, opts) {
+    const { w, h, corner } = opts, seed = (opts.seed + P.seed * 101) % 997;
+    const hs = n => { const x = Math.sin(seed * 12.9898 + n * 78.233) * 43758.5453; return x - Math.floor(x); };
+    const fill = P.fill === 2 ? (hs(3) < 0.5 ? 0 : 1) : P.fill;
+    const cj = P.centerJitter, room = Math.max(1, Math.min(P.hubs, Math.floor(w / P.hubSpan)));
+    const nH = corner ? 1 : 1 + Math.floor(hs(6) * room);
+    const hubs = [];
+    for (let i = 0; i < nH; i++) hubs.push({ x: w * (i + 0.5 + (hs(10 + i) - 0.5) * 2 * cj * (nH > 1 ? 0.8 : 1)) / nH, y: h * (0.5 + (hs(20 + i) - 0.5) * 2 * cj * (nH > 1 ? 1.5 : 1)) });
+    const moorN = k => P.moorMin + Math.floor(hs(k) * (Math.max(P.moor, P.moorMin) - P.moorMin + 1));
+    return { seed, hs, fill, nH, hubs, moor: [moorN(7), moorN(8)], pitch: P.pitch * (1 + (hs(5) - 0.5) * P.pitchVar) };
+  }
+
+  // ---- Skutočné vlákna (čiary) z tých istých parametrov ----
+  // Výsledok v súradniciach roviny pavučiny so stredom v strede (x pozdĺž, y hore, z von z roviny – vydutie):
+  // pos (dvojice bodov úsečiek), tan (smer vlákna pri každom bode), rnd (náhoda vlákna – fáza kývania).
+  function noise2(x, y, s) { // gradientový (Perlinov) šum, ~ −0,7 … 0,7
+    const g = (i, j) => { const a = Math.sin(i * 127.1 + j * 311.7 + s * 17.13) * 43758.5453; const t = (a - Math.floor(a)) * 6.2831853; return [Math.cos(t), Math.sin(t)]; };
+    const i = Math.floor(x), j = Math.floor(y), fx = x - i, fy = y - j, u = fx * fx * fx * (fx * (fx * 6 - 15) + 10), v = fy * fy * fy * (fy * (fy * 6 - 15) + 10);
+    const d = (gi, gj, dx, dy) => { const q = g(gi, gj); return q[0] * dx + q[1] * dy; };
+    const a = d(i, j, fx, fy), b = d(i + 1, j, fx - 1, fy), c = d(i, j + 1, fx, fy - 1), e = d(i + 1, j + 1, fx - 1, fy - 1);
+    return a + (b - a) * u + (c - a + (a - b - c + e) * u) * v;
+  }
+  function webThreads(over, opts) {
+    const P = webParams(over), L = webLayout(P, opts), { w, h, corner } = opts, keep = opts.keep == null ? 1 : opts.keep;
+    const s = L.seed, hh = n => { const x = Math.sin(s * 3.17 + n * 91.7) * 43758.5453; return x - Math.floor(x); };
+    const pos = [], tan = [], rnd = [];
+    const bowZ = (x, y) => P.bow * Math.sin(Math.PI * Math.min(1, Math.max(0, x / w))) * Math.sin(Math.PI * Math.min(1, Math.max(0, y / h))) * (0.75 + 0.5 * noise2(x * 2, y * 2, s));
+    // polyline v rovine → úsečky s vydutím (z) a smerom vlákna
+    const line = (pts, r) => {
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const a = pts[i], b = pts[i + 1], za = bowZ(a[0], a[1]), zb = bowZ(b[0], b[1]);
+        const dx = b[0] - a[0], dy = b[1] - a[1], dz = zb - za, l = Math.hypot(dx, dy, dz) || 1;
+        pos.push(a[0] - w / 2, a[1] - h / 2, za, b[0] - w / 2, b[1] - h / 2, zb);
+        tan.push(dx / l, dy / l, dz / l, dx / l, dy / l, dz / l);
+        rnd.push(r, r);
+      }
+    };
+    const seg = (a, b, n, r) => { const pts = []; for (let i = 0; i <= n; i++) pts.push([a[0] + (b[0] - a[0]) * i / n, a[1] + (b[1] - a[1]) * i / n]); line(pts, r); };
+    if (corner) { // kútová spleť: trojuholník pri konci steny (x = šírka), od steny (y = výška) k zemi
+      for (let i = 0; i < 36; i++) {
+        let u = hh(i), v = hh(i + 7); if (u + v < 1) { u = 1 - u; v = 1 - v; }
+        const an = hh(i + 13) * 6.2831853, ln = (0.12 + 0.3 * hh(i + 19)) * w, a = [u * w, v * h];
+        const b = [Math.min(w, Math.max(0, a[0] + Math.cos(an) * ln)), Math.min(h, Math.max(0, a[1] + Math.sin(an) * ln))];
+        if (b[0] / w + b[1] / h >= 0.85) seg(a, b, 3, hh(i + 23));
+      }
+      for (let i = 0; i < 7; i++) {
+        const a = [w, hh(i + 90) * h], b = [(0.05 + 0.9 * hh(i + 95)) * w, h], c = [(a[0] + b[0]) / 2 - 0.06 * w * hh(i + 99), (a[1] + b[1]) / 2 - 0.06 * h * hh(i + 99)];
+        line([a, c, b], hh(i + 100));
+      }
+      return finish();
+    }
+    const nH = L.nH, hubs = L.hubs;
+    const sagY = x => P.sag * 4 * (x / w) * (1 - x / w);
+    const yTop = x => h * 0.96 - sagY(x), yBot = x => h * 0.06 + sagY(x) * 0.5;
+    const nearest = (x, y) => { let bi = 0, bd = 1e9; hubs.forEach((c, i) => { const d = Math.hypot(x - c.x, y - c.y); if (d < bd) { bd = d; bi = i; } }); return bi; };
+    const inside = (x, y, i) => x >= 0 && x <= w && y > yBot(x) && y < yTop(x) && nearest(x, y) === i;
+    // nosné vlákna hore a dole (od kmeňa po kmeň, prehnuté)
+    for (const f of [yTop, yBot]) { const pts = []; for (let i = 0; i <= 24; i++) pts.push([w * i / 24, f(w * i / 24)]); line(pts, hh(200 + (f === yTop ? 0 : 1))); }
+    // deliace vlákna medzi susednými stredmi (os úsečky medzi nimi)
+    for (let i = 0; i + 1 < nH; i++) {
+      const c1 = hubs[i], c2 = hubs[i + 1], mx = (c1.x + c2.x) / 2, my = (c1.y + c2.y) / 2, dx = c2.x - c1.x, dy = c2.y - c1.y, pts = [];
+      for (let k = 0; k <= 10; k++) { const y = yBot(mx) + (yTop(mx) - yBot(mx)) * k / 10; pts.push([mx - (y - my) * dy / dx, y]); }
+      line(pts, hh(300 + i));
+    }
+    hubs.forEach((c, hi) => {
+      const hsd = n => hh(n + hi * 37 + 500);
+      const rays = P.rays + Math.floor(hsd(5) * (P.raysVar + 1)), cellW = w / nH;
+      const rMaxAt = a => (P.radius * Math.min(cellW, h) + 0.12 * Math.max(cellW - h, 0)) * (1 + P.edgeNoise * noise2(a * 1.3, hi * 3.7, s));
+      // lúče: od stredu von, ohnuté šumom, až po hranicu bunky / nosné vlákno / kmeň
+      const spokes = [];
+      for (let k = 0; k < rays; k++) {
+        const ar = (k + (hsd(k) - 0.5) * 0.35) * 6.2831853 / rays, pts = [];
+        for (let t = P.hub * 0.5; t < 4; t += 0.025) {
+          const a = ar - P.bend * noise2(t * P.bendFreq, s * 7.1 + hi, s) / Math.max(t * 2, 0.6);
+          const x = c.x + Math.cos(a) * t, y = c.y + Math.sin(a) * t;
+          if (!inside(x, y, hi)) { if (x <= 0 || x >= w) pts.push([Math.min(w, Math.max(0, x)), y]); break; }
+          pts.push([x, y]);
+        }
+        spokes.push({ ar, pts, keep: hsd(k + 40) < keep + 0.15 });
+        if (spokes[k].keep && pts.length > 1) line(pts.filter((p, i) => i % 3 === 0 || i === pts.length - 1), hsd(k + 60));
+      }
+      // bod na lúči k vo vzdialenosti r od stredu (null, ak je lúč kratší)
+      const at = (k, r) => { const sp = spokes[(k + rays) % rays]; const i = Math.round((r - P.hub * 0.5) / 0.025); return i >= 0 && i < sp.pts.length ? sp.pts[i] : null; };
+      // výplň: špirála (polomer rastie s uhlom) alebo sústredné kruhy; medzi lúčmi rovné úsečky
+      for (let turn = 0; turn < 60; turn++) {
+        let any = false;
+        for (let k = 0; k < rays; k++) {
+          const rr = (kk, tt) => { const base = P.free + L.pitch * (tt + (L.fill === 0 ? kk / rays : 0)); return base * (1 + P.wobble * noise2(kk * P.wobbleFreq / rays * 6, base * 6, s)) * (1 + P.pitchNoise * 0.3 * noise2(base * 3, s, s)); };
+          const r1 = rr(k, turn), r2 = L.fill === 0 && k === rays - 1 ? rr(0, turn + 1) : rr(k + 1, turn);
+          if (r1 > rMaxAt(spokes[k].ar) || r2 > rMaxAt(spokes[(k + 1) % rays].ar)) continue;
+          const a = at(k, r1), b2 = at(k + 1, r2);
+          if (!a || !b2) continue;
+          any = true;
+          if (hh(turn * 31 + k + hi * 977) < keep) seg(a, b2, 2, hsd(turn * 7 + k));
+        }
+        if (!any && P.free + L.pitch * turn > 3) break;
+      }
+      // hustý stred
+      for (let r = L.pitch * 0.3; r < P.hub; r += L.pitch * 0.3) for (let k = 0; k < rays; k++) { const a = at(k, r), b2 = at(k + 1, r); if (a && b2) seg(a, b2, 1, hsd(k + 900)); }
+    });
+    // kotviace vlákna: z bodov na kmeňoch k okraju krajného stredu
+    for (let sd = 0; sd < 2; sd++) {
+      const cnt = L.moor[sd], c = sd === 0 ? hubs[0] : hubs[nH - 1], rim = P.radius * Math.min(w / nH, h) * 0.92;
+      for (let i = 0; i < cnt; i++) {
+        const fi = i * 2 + sd, fy = (i + 0.5 + (hh(fi + 9) - 0.5) * 0.8) / cnt, ax = sd === 0 ? 0 : w;
+        const A = [ax, yBot(ax) + (yTop(ax) - yBot(ax)) * fy];
+        let dx = A[0] - c.x, dy = A[1] - c.y + (hh(fi + 3) - 0.5) * 0.4; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+        if (hh(fi + 70) < keep + 0.2) seg(A, [c.x + dx * rim, c.y + dy * rim], 6, hh(fi + 11));
+      }
+    }
+    return finish();
+    function finish() { return { pos: new Float32Array(pos), tan: new Float32Array(tan), rnd: new Float32Array(rnd), count: pos.length / 3, layout: L }; }
+  }
+
+  const api = { WEB_PARAMS, webParams, ANCHOR, anchorAt, webGeom, webLayout, webThreads, noise2, analyze, cornerSpots, bfs };
   root.Webs = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof self !== 'undefined' ? self : this);

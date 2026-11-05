@@ -1800,7 +1800,7 @@ void main() {
   const sceneBefore = new Set(scene.children);
   const particles = createParticles({ scene, camera, renderer, W, D, S, api, ripple });
   const particleObjs = scene.children.filter(o => !sceneBefore.has(o)); // objekty častíc (ladiaca stránka ich vie skryť)
-  const spiders3d = createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, world: material.uniforms, maxLights: MAX_LIGHTS });
+  const spiders3d = createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, renderer, world: material.uniforms, maxLights: MAX_LIGHTS });
   // stred ohniska pod kotlíkom (model má okraj FM minikociek, ohnisko je v strede políčka nad zemou)
   function fireCenter() {
     const f = grid && grid.fine.find(m => m.type === 'cauldron');
