@@ -102,7 +102,7 @@ uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec
 uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount; uniform float opacity;
 uniform float shadowOn; uniform vec2 shadowTexel; uniform float shadowRadius;
 uniform vec3 gloom; uniform vec3 gloomFog;
-uniform float darkOn; uniform vec4 eye; uniform vec2 eyeLit; uniform vec3 darkFog; uniform sampler2D canopy; uniform vec2 areaSize;
+uniform float darkOn; uniform float sunMode; uniform vec4 eye; uniform vec2 eyeLit; uniform vec3 darkFog; uniform sampler2D canopy; uniform vec2 areaSize;
 varying vec3 vColor; varying float vAo; varying float vEmis; varying float vTex; varying float vFacing; varying float vUp;
 varying vec2 vUv; varying vec3 vPos; varying vec4 vShadow;
 ${SHADOW_GLSL}
@@ -112,7 +112,9 @@ void main() {
   vec3 base = vTex > 0.5 ? texture2D(map, vUv).rgb * vColor : vColor;
   float gm = gloomAt(vPos.z);
   // darkOn 0–1: koľko tmy Lesa divov (pri severnom okraji Lesa na pomedzí postupne pribúda, opar Lesa na pomedzí ubúda)
-  float sunV = darkOn >= 1.0 ? forestSun() : darkOn > 0.0 ? mix(sunVisibility(vFacing), forestSun(), darkOn) : sunVisibility(vFacing);
+  // slnko v tme: sunMode 1 = skutočný tieň (mapa tieňov cez stromy), ale svieti len na zem; 0 = škvrny z šumu (forestSun)
+  float darkSun = sunMode > 0.5 ? (vTex > 0.5 ? sunVisibility(vFacing) : 0.0) : forestSun();
+  float sunV = darkOn >= 1.0 ? darkSun : darkOn > 0.0 ? mix(sunVisibility(vFacing), darkSun, darkOn) : sunVisibility(vFacing);
   vec3 light = (ambient + sunColor * sunV) * (1.0 - gm * (1.0 - darkOn));
   // Svetlo lampášov (aj slabé svetlo okolo hráča) je guľa okolo zdroja – na vrchy obrovských stromov nedosiahne.
   // Dohľad v tme (kde začína tma) sa však meria po zemi: vrchy kmeňov pri hráčovi sú tmavé drevo, nie čierne diery.
@@ -406,7 +408,7 @@ export function create(api) {
       shadowMap: { value: null }, shadowMatrix: { value: new THREE.Matrix4() }, sunDir: { value: new THREE.Vector3(0, 1, 0) },
       shadowOn: { value: 0 }, shadowTexel: { value: new THREE.Vector2(1 / SHADOW_SIZE, 1 / SHADOW_SIZE) }, shadowRadius: { value: 3.5 },
       shadowNormalBias: { value: 0.03 }, gloom: { value: new THREE.Vector3() }, gloomFog: { value: new THREE.Vector3() },
-      darkOn: { value: 0 }, eye: { value: new THREE.Vector4(0, 0, 0, 3) }, eyeLit: { value: new THREE.Vector2(3, 0) },
+      darkOn: { value: 0 }, sunMode: { value: 1 }, eye: { value: new THREE.Vector4(0, 0, 0, 3) }, eyeLit: { value: new THREE.Vector2(3, 0) },
       darkFog: { value: new THREE.Vector3() }, canopy: { value: null }, areaSize: { value: new THREE.Vector2(S.W, S.H) }
     }
   });
@@ -1017,18 +1019,21 @@ void main() {
     for (const x of [0, S.W]) for (const y of [0, 7]) for (const z of [0, S.H]) worldCorners.push(new THREE.Vector3(x, y, z));
     shadowDirty = true;
   }
+  // Pokus (Les divov): slnko ako skutočný tieň stromov, len na zemi (1), alebo pôvodné škvrny zo šumu (0, MF_LES_SUN = 'dapple')
+  const lesSunMode = () => window.MF_LES_SUN === 'dapple' ? 0 : 1;
   let shadowDirty = true, lastShadowKey = '';
   function updateShadowMap(min, se) {
     const u = material.uniforms;
     const stepMin = Math.floor(min / D.MIN_PER_TICK) * D.MIN_PER_TICK; // slnko z aktuálneho herného kroku
-    const key = se + ':' + stepMin + (layerOn('shadows') ? '' : ':off');
+    const key = se + ':' + stepMin + (layerOn('shadows') ? '' : ':off') + ':' + lesSunMode();
     if (!shadowDirty && key === lastShadowKey) return;
     shadowDirty = false; lastShadowKey = key;
     const dir = W.sunDir(stepMin, se);
     if (!dir || !layerOn('shadows')) { u.shadowOn.value = 0; return; }
     u.sunDir.value.set(dir.x, dir.y, dir.z); // rovnaké slnko ako mapa – odvrátené steny sedia s tieňom
     // temná plocha: slnko len v škvrnách cez koruny (shader), mapa tieňov netreba – stovky stromov by ju aj tak rozmazali
-    if (D.isDark(S.area)) { u.shadowOn.value = 0; shadowDirty = true; return; }
+    // temná plocha: so škvrnami zo šumu (MF_LES_SUN = 'dapple') mapu tieňov netreba; inak skutočný tieň stromov na zemi
+    if (D.isDark(S.area) && !lesSunMode()) { u.shadowOn.value = 0; shadowDirty = true; return; }
     u.shadowOn.value = 1;
     const center = new THREE.Vector3(S.W / 2, 3, S.H / 2);
     lightCam.position.copy(center).addScaledVector(new THREE.Vector3(dir.x, dir.y, dir.z), 80);
@@ -1218,6 +1223,7 @@ void main() {
     // Les divov (k = 1) a cesta k nemu na severe Lesa na pomedzí (k 0 → 1): málo svetla, slnko len cez koruny, za dohľadom tma (aj obloha)
     const k = D.darkAt(S.area, S.me.y), dark = D.DARK.les;
     material.uniforms.darkOn.value = k;
+    material.uniforms.sunMode.value = lesSunMode();
     if (k > 0) material.uniforms.emisColor.value.set(1, 0.95, 0.8); // v Lese divov svieti živica aj cez deň
     material.uniforms.lampColor.value.set(...LAMP_COL.map(v => v * lerp(1, dark.lampK, k)));
     curDark = null;
