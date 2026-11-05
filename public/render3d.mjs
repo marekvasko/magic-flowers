@@ -95,7 +95,7 @@ precision highp float;
 #endif
 uniform sampler2D map; uniform sampler2D shadowMap;
 uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec3 emisColor;
-uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount; uniform float opacity;
+uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount; uniform float opacity; uniform float keepBelow;
 uniform float shadowOn; uniform vec2 shadowTexel; uniform float shadowRadius;
 uniform vec3 gloom; uniform vec3 gloomFog;
 uniform float darkOn; uniform vec4 eye; uniform vec2 eyeLit; uniform vec3 darkFog; uniform sampler2D canopy; uniform vec2 areaSize;
@@ -127,7 +127,8 @@ void main() {
   col = mix(col, gloomFog, gm * 0.3 * (1.0 - darkOn)); // v hustom lese visí opar
   col = mix(col, darkFog, fogK);
   col = max(col, base * emisColor * vEmis); // svietiace veci (okná, oheň, živica) vidno aj v tme za dohľadom
-  gl_FragColor = vec4(col, opacity);
+  // zoslabený objekt: časť do výšky hráča (pne, kmene na zemi, kry) ostane plná, priehľadné je len to nad ňou
+  gl_FragColor = vec4(col, vPos.y < keepBelow ? 1.0 : opacity);
 }`;
 
 // ---------- Shader vody: odraz zo zrkadlovej kamery, Fresnel, odlesk slnka, hĺbka k brehu ----------
@@ -398,7 +399,7 @@ export function create(api) {
       lights: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4()) }, lightCount: { value: 0 }, opacity: { value: 1 },
       shadowMap: { value: null }, shadowMatrix: { value: new THREE.Matrix4() }, sunDir: { value: new THREE.Vector3(0, 1, 0) },
       shadowOn: { value: 0 }, shadowTexel: { value: new THREE.Vector2(1 / SHADOW_SIZE, 1 / SHADOW_SIZE) }, shadowRadius: { value: 3.5 },
-      shadowNormalBias: { value: 0.03 }, gloom: { value: new THREE.Vector3() }, gloomFog: { value: new THREE.Vector3() },
+      shadowNormalBias: { value: 0.03 }, gloom: { value: new THREE.Vector3() }, gloomFog: { value: new THREE.Vector3() }, keepBelow: { value: -1e9 },
       darkOn: { value: 0 }, eye: { value: new THREE.Vector4(0, 0, 0, 3) }, eyeLit: { value: new THREE.Vector2(3, 0) },
       darkFog: { value: new THREE.Vector3() }, canopy: { value: null }, areaSize: { value: new THREE.Vector2(S.W, S.H) }
     }
@@ -439,6 +440,9 @@ export function create(api) {
     dark: { min: 0.2, edge: 0.5, reach: 2, fan: false },
     // obrovské stromy (Les divov) sa zoslabia, keď zakrývajú zem okolo hráča do tohto polomeru (bloky) – nielen samého hráča
     giantRing: 2,
+    // v tmavom lese a v Lese divov: do tejto výšky nad zemou hráča (bloky, ~výška postavičky) ostáva zoslabený objekt plný –
+    // pne obrovských stromov, spadnuté kmene a kry nikdy nezmiznú, priehľadné je len to, čo je vyššie
+    keepBelow: 1.3,
     les: { outline: 0 } // Les divov: zoslabené stromy bez obrysu, nech hráča v tme nerozptyľuje
   };
   window.MF_FADE_DEFAULTS = FADE_DEFAULTS;
@@ -1505,6 +1509,8 @@ void main() {
     }
     void meO;
 
+    const fcfg = fadeCfg();
+    material.uniforms.keepBelow.value = fcfg.inDark && fcfg.keepBelow > 0 ? groundY(me.x, me.y) + fcfg.keepBelow : -1e9;
     const fading = updateFades(dt, meO ? meO.h : 1);
     const lit = curAmb.map((v, i) => Math.min(1.2, v + curSun[i] * 0.7));
     if (layerOn('particles')) particles.update(dt, t, { grid, fine: grid && grid.fine, fineMeshes, target: camTarget, viewW, viewH: viewTop * 2, se, min, lit, cauldron: fireCenter(), lantern: lanternCenter() });
