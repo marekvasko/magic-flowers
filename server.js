@@ -10,12 +10,15 @@ const Econ = require('./economy.js');
 const I = require('./items.js');
 const Scav = require('./scavenge.js');
 const Ice = require('./ice.js');
+const P = require('./presence.js');
 
 const PORT = +process.env.PORT || 3000;
 // Dĺžka herného dňa je napevno D.BASE_DAY_SECONDS (20 min); DAY_SECONDS v prostredí slúži len na testovanie.
 const DAY_SECONDS = +process.env.DAY_SECONDS || D.BASE_DAY_SECONDS;
 const MAX_PLAYERS = 4;
 const START = Econ.startCapital(process.env); // mince a reputácia nového hráča (v testovacích prostrediach viac)
+const RECONNECT_GRACE_MS = 10000; // návrat do 10 s je rýchle znovupripojenie – bez hlásení o odchode a príchode
+const HEARTBEAT_MS = 30000; // ping klientom; kto neodpovie do ďalšieho kola, toho odpojíme
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const SHARED_DIR = path.join(__dirname, 'shared');
@@ -665,8 +668,10 @@ function checkFairies(room, pl) {
 // ---------- WebSocket ----------
 const wss = new WebSocketServer({ server });
 let nextId = 1;
+const leaving = P.createLeaving(RECONNECT_GRACE_MS);
 
 wss.on('connection', ws => {
+  P.watch(ws);
   let pl = null;
   ws.on('message', raw => {
     let m;
@@ -677,8 +682,12 @@ wss.on('connection', ws => {
       const name = String(m.name || '').replace(/[<>]/g, '').trim().slice(0, 14) || 'Záhradník';
       const room = getRoom(roomId);
       const key = name.toLowerCase();
-      for (const o of room.players.values()) if (o.key === key) { o.ws.close(); room.players.delete(o.id); }
+      // Rýchle znovupripojenie: nahrádza ešte živé (často už mŕtve, len nezistené) spojenie
+      // alebo prichádza krátko po odchode. Vtedy nehlásime príchod ani „kým si bol(a) preč“.
+      let quick = false;
+      for (const o of room.players.values()) if (o.key === key) { o.save.lastTick = room.tick; o.ws.close(); room.players.delete(o.id); quick = true; }
       if (room.players.size >= MAX_PLAYERS) { send(ws, { t: 'error', text: 'Záhrada je plná (max ' + MAX_PLAYERS + ' hráči).' }); return ws.close(); }
+      if (leaving.back(roomId + ':' + key)) quick = true;
       if (!room.saves[key]) room.saves[key] = newSave(room);
       const sv = room.saves[key];
       migrateSave(sv, room);
@@ -696,9 +705,9 @@ wss.on('connection', ws => {
       sendMe(pl);
       broadcast(room, roomInfo(room));
       broadcast(room, sleepMsg(room));
-      toastAll(room, area === 'hory' ? `${name} prišiel(a) – je v horách 🏔️` : `${name} prišiel(a) do záhrady 🌼`);
-      if (sv.lastTick != null && room.tick - sv.lastTick >= TPD) {
-        const days = Math.floor((room.tick - sv.lastTick) / TPD);
+      if (!quick) toastAll(room, area === 'hory' ? `${name} prišiel(a) – je v horách 🏔️` : `${name} prišiel(a) do záhrady 🌼`);
+      const days = quick ? 0 : P.awayDays(sv.lastTick, room.tick, TPD);
+      if (days) {
         toast(pl, `Kým si bol(a) preč, ubehlo ${days} ${days === 1 ? 'deň' : days < 5 ? 'dni' : 'dní'}. Pozri sa, čo sa v záhrade zmenilo. 🌱`, 'day');
       }
       if (!sv.talked) { sv.talked = true; toast(pl, 'Vitaj! Začínaš s pár semienkami a prázdnym vreckom. Pri babke na severe je nástenka so zákazkami. 👵', 'gift'); }
@@ -881,7 +890,8 @@ wss.on('connection', ws => {
     if (room.players.get(pl.id) === pl) {
       room.players.delete(pl.id);
       pl.save.lastTick = room.tick;
-      toastAll(room, `${pl.name} odišiel(a) zo záhrady.`);
+      const name = pl.name;
+      leaving.leave(room.id + ':' + pl.key, () => toastAll(room, `${name} odišiel(a) zo záhrady.`));
       broadcast(room, roomInfo(room));
       broadcast(room, sleepMsg(room));
       checkSleep(room); // ak odišiel posledný bdejúci, ostatní môžu zaspať
@@ -914,7 +924,11 @@ setInterval(() => {
     for (const area of D.AREAS) broadcastArea(room, area, { t: 'pl', list: list.filter(p => p.area === area) });
   }
 }, 100);
-setInterval(() => { for (const room of rooms.values()) saveRoom(room); }, 15000);
+// Priebežne ukladáme aj „naposledy videný“ – po páde servera tak dni neprítomnosti sedia (±15 s).
+setInterval(() => {
+  for (const room of rooms.values()) { for (const p of room.players.values()) p.save.lastTick = room.tick; saveRoom(room); }
+}, 15000);
+setInterval(() => P.heartbeat(wss.clients), HEARTBEAT_MS);
 
 function shutdown() {
   for (const room of rooms.values()) { for (const p of room.players.values()) p.save.lastTick = room.tick; saveRoom(room, true); }
