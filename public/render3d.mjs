@@ -14,6 +14,7 @@ const MAX_LIGHTS = 16;
 // blčanie svetiel (pomerná zmena dosahu): oheň, lampáš, okno, ostatné (hráči, kvety, víly)
 const FL_FIRE = 0.16, FL_LANTERN = 0.08, FL_WINDOW = 0.035, FL_SOFT = 0.03;
 const LAMP_R = 6.5; // dosah svetla lampáša v ruke (políčka)
+const LAMP_COL = [1, 0.78, 0.45]; // farba (a sila) svetla lampášov
 const LAMP_DUSK = 0.8; // lampáš (aj okná, oheň…) horí, keď je svetla menej než toto (deň × stmavnutie lesa)
 // plynulý „plameňový“ šum zo súčtu sínusov s nesúdeliteľnými frekvenciami
 function flicker(t, seed, amt) {
@@ -392,7 +393,7 @@ export function create(api) {
     vertexShader: VERT, fragmentShader: FRAG,
     uniforms: {
       map: { value: groundTex }, ambient: { value: new THREE.Vector3() }, sunColor: { value: new THREE.Vector3() },
-      lampColor: { value: new THREE.Vector3(...toLin([1, 0.78, 0.45])) }, emisColor: { value: new THREE.Vector3(1, 1, 1) },
+      lampColor: { value: new THREE.Vector3(...LAMP_COL) }, emisColor: { value: new THREE.Vector3(1, 1, 1) },
       lights: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4()) }, lightCount: { value: 0 }, opacity: { value: 1 },
       shadowMap: { value: null }, shadowMatrix: { value: new THREE.Matrix4() }, sunDir: { value: new THREE.Vector3(0, 1, 0) },
       shadowOn: { value: 0 }, shadowTexel: { value: new THREE.Vector2(1 / SHADOW_SIZE, 1 / SHADOW_SIZE) }, shadowRadius: { value: 3.5 },
@@ -1157,7 +1158,7 @@ void main() {
   const GLOOM_FOG = [0.16, 0.24, 0.2]; // tmavozelený opar hustého lesa
   // Les divov: tma za dohľadom (aj pozadie) – cez deň temne zelená, v noci takmer čierna; okolie a slnko len zlomok
   const DARK_DAY = [0.03, 0.05, 0.04], DARK_NIGHT = [0.008, 0.011, 0.02];
-  const DARK_AMB = 0.2, DARK_AMB_NIGHT = 0.12, DARK_SUN = 0.9, EYE_LIT = [0.42, 0.3]; // slabé svetlo okolo hráča: deň, noc
+  const DARK_AMB = 0.12, DARK_AMB_NIGHT = 0.08, DARK_SUN = 0.65, EYE_LIT = [0.24, 0.16]; // slabé svetlo okolo hráča: deň, noc
   let curAmb = DAY_AMB, curSun = SUN_DAY, curSunDir = null, curDark = null;
   function lighting(min, se) {
     const dl = W.daylight(min), dir = W.sunDir(min, se);
@@ -1178,6 +1179,7 @@ void main() {
     let sky = mix3(mix3(mix3(SKY_NIGHT, SKY_DAY, dl), SKY_DUSK, dusk * 0.6), fog, gm);
     const dark = D.DARK[S.area];
     material.uniforms.darkOn.value = dark ? 1 : 0;
+    material.uniforms.lampColor.value.set(...LAMP_COL.map(v => v * (dark ? dark.lampK : 1)));
     curDark = null;
     if (dark) { // Les divov: málo svetla, slnko len cez koruny, za dohľadom tma (aj obloha)
       curAmb = mix3(NIGHT_AMB.map(v => v * DARK_AMB_NIGHT), DAY_AMB.map(v => v * DARK_AMB), dl);
@@ -1445,8 +1447,9 @@ void main() {
       const A = api.S.anchors;
       const add = (x, y, z, r, fl) => { if (lights.length < MAX_LIGHTS) lights.push(new THREE.Vector4(x, y, z, r * flicker(t, x * 7.1 + z * 3.3, fl || FL_SOFT))); };
       // hráč svieti, len keď drží lampáš (svetlo pri ruke, blčí ako plameň); bez lampáša je potme
-      if (S.sel === 'lamp') add(S.me.x, 1.1, S.me.y, LAMP_R, FL_LANTERN);
-      for (const o of S.others.values()) if (o.lp) add(o.x, 1.1, o.y, LAMP_R, FL_LANTERN);
+      const lampR = dark ? dark.lampR : LAMP_R; // v Lese divov lampáš svieti slabšie a na kratšiu vzdialenosť
+      if (S.sel === 'lamp') add(S.me.x, 1.1, S.me.y, lampR, FL_LANTERN);
+      for (const o of S.others.values()) if (o.lp) add(o.x, 1.1, o.y, lampR, FL_LANTERN);
       if (A.hut) { add(A.hut.x + 0.5, 2.05, A.hut.y + 2.2, 2.2, FL_WINDOW); add(A.hut.x + 2.4, 2.05, A.hut.y + 2.2, 2.2, FL_WINDOW); }
       if (A.house) { add(A.house.x + 0.62, 2.2, A.house.y + 2.3, 2.2, FL_WINDOW); add(A.house.x + 2.37, 2.2, A.house.y + 2.3, 2.2, FL_WINDOW); add(A.house.x + 2.06, 2.4, A.house.y + 2.06, 1.8, FL_LANTERN); }
       if (A.cauldron) add(A.cauldron.x + 0.5, 1.3, A.cauldron.y + 0.5, 2.6, FL_FIRE);   // oheň pod kotlíkom

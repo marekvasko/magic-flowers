@@ -628,7 +628,8 @@
 
   // Temné plochy: vidno len kúsok okolo seba (sight políčok, s lampášom v ruke lamp), objekty sa za hráčom nezoslabujú
   // ani nezvýrazňujú a lampáš svieti aj cez deň. Svetlo lampášov (aj cudzích) presvetlí tmu okolo nich.
-  const DARK = { les: { sight: 3, lamp: 6 } };
+  // lampR = dosah svetla lampáša v tme (políčka, inde render3d LAMP_R), lampK = jeho sila (1 = ako v záhrade v noci)
+  const DARK = { les: { sight: 3, lamp: 4.5, lampR: 4.5, lampK: 0.6 } };
   function isDark(area) { return !!DARK[area]; }
 
   const BLOCK = { tree: 1, water: 1, hut: 1, babka: 1, cauldron: 1, stall: 1, well: 1, boulder: 1, house: 1, cliff: 1, glacier: 1, spruce: 1, icehouse: 1, bush: 1, giant: 1, trunk: 1, log: 1 };
