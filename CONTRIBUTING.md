@@ -40,7 +40,17 @@ GitHub's built-in *Issue Types* only exist for repositories owned by an organisa
 
 ### Creating issues from the CLI (agents)
 
-`gh issue create` can't fill in issue forms, so agents (and anyone using the API) **must reproduce the form by hand**: use the same `### ` headings as the template, in the same order, and pass the kind and category labels explicitly. The triage workflow reads the `### Category`, `### Priority` and `### Size` answers, so a body written this way is labelled the same as one from the web form.
+`gh issue create` can't fill in issue forms, so agents (and anyone using the API) **must reproduce the form by hand**: use the same `### ` headings as the template, in the same order. The triage workflow reads the `### Category`, `### Priority` and `### Size` answers, and when the issue has no kind label yet it infers the kind from the headings, so a body written this way is labelled the same as one from the web form:
+
+| First heading | Also required | Kind |
+|---|---|---|
+| `What happened` | `Steps to reproduce`, `Expected behaviour`, `Where`, `Category`, `Priority` | `bug` |
+| `Problem / motivation` | `Proposed solution`, `Acceptance criteria`, `Category`, `Size`, `Priority` | `feature` |
+| `Topic` | `Category`, `Questions to decide` | `discussion` |
+
+The workflow comments `Kind inferred from the template headings: …` when it does this. It never touches an issue that already has a kind label, and it doesn't infer on label changes, so a maintainer swapping the kind isn't overridden. A body that matches no template keeps the `triage` label and the comment.
+
+Collaborators with triage access should still pass the kind and category labels with `--label`; contributors without it can't (GitHub refuses to add labels) and rely on the headings.
 
 ```sh
 gh issue create --title "Planting water flowers" \
@@ -62,7 +72,7 @@ All labels are single words, defined in [`scripts/labels.sh`](scripts/labels.sh)
 
 | Group | Labels | Rule | Who sets it |
 |---|---|---|---|
-| Kind | `bug`, `feature`, `discussion` | exactly one | the template |
+| Kind | `bug`, `feature`, `discussion` | exactly one | the template (from the CLI: `--label` or inferred from the headings) |
 | Category | `gameplay`, `logic`, `ui`, `graphics`, `infra`, `docs` | at least one | the form, then anyone |
 | Priority | `critical`, `high`, `medium`, `low` | at most one (bug, feature) | proposed in the form, confirmed by the maintainer |
 | Size | `XS`, `S`, `M`, `L`, `XL` | at most one (feature, optionally bug) | proposed in the form, confirmed by the maintainer |

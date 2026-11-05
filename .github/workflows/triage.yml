@@ -1,6 +1,9 @@
 # Automatické triedenie issues (CONTRIBUTING.md):
 #   - odpovede z formulára (Category, Priority, Size) → štítky kategórie / priority / veľkosti
 #     (len ak issue zo skupiny ešte nemá žiadny štítok, aby sa neprepísalo rozhodnutie maintainera)
+#   - druh (bug / feature / discussion) z nadpisov šablóny, keď issue ešte nemá žiadny druh
+#     (issue z CLI od prispievateľa bez práv na štítky): prvý nadpis „### …“ určí šablónu
+#     a v tele musia byť všetky jej povinné nadpisy (pri opened / edited / reopened)
 #   - issue musí mať práve jeden druh (bug / feature / discussion) a aspoň jednu kategóriu,
 #     inak dostane štítok „triage“
 # Beží na GitHub runneri, bez checkoutu; telo issue ide cez env, nikdy nie priamo do shellu.
@@ -48,7 +51,29 @@ jobs:
           [ "$(count "$PRIORITIES")" -gt 0 ] || { p="$(answer Priority "$PRIORITIES" | head -1)"; [ -n "$p" ] && add+=("$p"); }
           [ "$(count "$SIZES")" -gt 0 ] || { s="$(answer Size "$SIZES" | head -1)"; [ -n "$s" ] && add+=("$s"); }
 
+          # druh z nadpisov šablóny (.github/ISSUE_TEMPLATE/*.yml): prvý nadpis + povinné nadpisy
+          kind_from_headings() {
+            local headings first
+            headings="$(tr -d '\r' <<<"$BODY" | sed -n 's/^### //p')"
+            first="$(head -1 <<<"$headings")"
+            has_all() { local h; for h in "$@"; do grep -qxF "$h" <<<"$headings" || return 1; done; }
+            case "$first" in
+              'What happened') has_all 'Steps to reproduce' 'Expected behaviour' Where Category Priority && echo bug ;;
+              'Problem / motivation') has_all 'Proposed solution' 'Acceptance criteria' Category Size Priority && echo feature ;;
+              Topic) has_all Category 'Questions to decide' && echo discussion ;;
+            esac
+            return 0
+          }
           kinds="$(count "$KINDS")"
+          # nie pri (od)označení: maintainer práve mení druh (odobral starý, pridá nový)
+          if [ "$kinds" -eq 0 ] && [ "$ACTION" != labeled ] && [ "$ACTION" != unlabeled ]; then
+            k="$(kind_from_headings)"
+            if [ -n "$k" ]; then
+              add+=("$k")
+              kinds=1
+              gh issue comment "$NUMBER" --body "Kind inferred from the template headings: \`$k\`."
+            fi
+          fi
           categories=$(( $(count "$CATEGORIES") + $(printf '%s\n' "${add[@]}" | grep -cxE "$CATEGORIES" || true) ))
           if [ "$kinds" -eq 1 ] && [ "$categories" -gt 0 ]; then
             if grep -qx triage <<<"$LABELS"; then gh issue edit "$NUMBER" --remove-label triage; fi
