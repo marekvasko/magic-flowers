@@ -12,7 +12,7 @@ Every change goes **issue → refinement → PR → review → merge**:
 
 1. **Issue.** Open an issue with one of the templates below. No code without an issue.
 2. **Refinement.** The maintainer and the author agree on the scope, the gameplay rules and the answers to the open questions. The agreed scope is written into the issue (body or comment). The maintainer then confirms the category, priority and size labels. Don't guess game-design decisions; ask in the issue.
-3. **PR.** Implement on branch `issue/<n>-short-description` created from the latest `origin/dev` and open a PR **into `dev`** using the PR template. CI tests it and deploys a preview to `https://pr-<PR number>.zahrada.spis-ai.com/`.
+3. **PR.** Implement on branch `issue/<n>-short-description` created from the latest `origin/dev` (with `gh issue develop`, see *Pull requests*) and open a PR **into `dev`** using the PR template. CI tests it and deploys a preview to `https://pr-<PR number>.zahrada.spis-ai.com/`.
 4. **Review.** The maintainer reviews the code and plays the preview. Address feedback with new commits on the same branch.
 5. **Merge.** Only the maintainer merges, with **rebase** or **squash** (history is linear, merge commits are disabled).
 
@@ -109,7 +109,8 @@ A rough estimate of the effort, including tests, docs and review rounds.
 
 - **One PR per issue**, from branch `issue/<n>-short-description` (lowercase, words separated by `-`), targeting `dev`.
   - ✅ `issue/12-sleep-through-the-night` &nbsp; ❌ `feature/sleep`, `issue-12-sleep`, `issue/12_Sleep`
-- Use the [PR template](.github/pull_request_template.md). The body **must** link the issue with `Closes #<n>` (or `Fixes` / `Resolves`), with the same number as the branch.
+- Create the branch as a **linked branch** of the issue, so the PR shows up in the issue's *Development* section: `gh issue develop <n> --base dev --name issue/<n>-short-description`, then `git fetch origin && git switch issue/<n>-short-description`. (Or use *Create a branch* in the issue's *Development* sidebar with `dev` as the source.) A branch created with plain `git` isn't linked, and `Closes #<n>` doesn't link it either, because GitHub only honours closing keywords for PRs into the default branch (`main`).
+- Use the [PR template](.github/pull_request_template.md). The body **must** link the issue with `Closes #<n>` (or `Fixes` / `Resolves`), with the same number as the branch. The **Kontrola PR** check requires this, but on a PR into `dev` it neither links nor closes the issue. The maintainer closes the issue by hand after merging.
 - The **Kontrola PR** check enforces the issue link, the branch name and the `dev` target. Release PRs `dev` → `main` are exempt.
 - **Testy** and **Docker image** checks must pass.
 - Keep the branch up to date with `git rebase origin/dev`, never `git merge`. Force-push only your own issue branch with `--force-with-lease`.
