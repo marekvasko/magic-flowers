@@ -123,8 +123,8 @@ void main() {
   }
   vec3 col = base * vAo * light;
   col = mix(col, gloomFog, gm * 0.3); // v hustom lese visí opar
-  col = max(col, base * emisColor * vEmis);
   col = mix(col, darkFog, fogK);
+  col = max(col, base * emisColor * vEmis); // svietiace veci (okná, oheň, živica) vidno aj v tme za dohľadom
   gl_FragColor = vec4(col, opacity);
 }`;
 
@@ -1175,6 +1175,7 @@ void main() {
     let sky = mix3(mix3(mix3(SKY_NIGHT, SKY_DAY, dl), SKY_DUSK, dusk * 0.6), fog, gm);
     const dark = D.DARK[S.area];
     material.uniforms.darkOn.value = dark ? 1 : 0;
+    if (dark) material.uniforms.emisColor.value.set(1, 0.95, 0.8); // v Lese divov svieti živica aj cez deň
     material.uniforms.lampColor.value.set(...LAMP_COL.map(v => v * (dark ? dark.lampK : 1)));
     curDark = null;
     if (dark) { // Les divov: málo svetla, slnko len cez koruny, za dohľadom tma (aj obloha)

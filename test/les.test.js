@@ -127,6 +127,9 @@ test('3D: Les divov – obrovské stromy a kmene ako modely, mriežka podľa ve�
   // kmeň obra je pevný (náhrada v hrubej mriežke) – cez stred kmeňa lúč slnka neprejde
   const cx = gi.tile.x + 1, cz = gi.tile.y + 1;
   assert.ok(W3.get(g, cx * W3.R, 3, cz * W3.R), 'kmeň je v mriežke');
+  // svietiaca živica na každom obrovi (aj v zime)
+  assert.ok(W3.EMISSIVE[W3.M.SAP], 'živica svieti');
+  for (const f of g.fine.filter(f => f.type === 'giant')) assert.ok(f.data.includes(W3.M.SAP), 'každý obor má živicu');
   // zima: holé konáre so snehom, bez lístia
   const win = W3.buildGrid(les, 3, LW, 'les').fine.find(f => f.type === 'giant');
   assert.ok(win.data.includes(W3.M.SNOW) && !win.data.includes(W3.M.LEAF_DARK));

@@ -125,6 +125,18 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
   const fairyCol = new Map();
   const colOf = c => { let v = fairyCol.get(c); if (!v) { v = hex(c); fairyCol.set(c, v); } return v; };
 
+  // kvapky živice v modeli obrovského stromu (vrch každého pramienka, v blokoch od rohu modelu) – raz pre každý tvar
+  const sapCache = new WeakMap();
+  function sapDrops(f) {
+    let out = sapCache.get(f.data);
+    if (out) return out;
+    out = [];
+    const { sx, sy, sz, data } = f, SAP = W.M.SAP, F = W.FINE, at = (x, y, z) => data[(z * sy + y) * sx + x];
+    for (let z = 0; z < sz; z++) for (let y = 0; y < sy - 1; y++) for (let x = 0; x < sx; x++)
+      if (at(x, y, z) === SAP && at(x, y + 1, z) !== SAP) out.push([(x + 0.5) / F, (y + 0.5) / F, (z + 0.5) / F, (x * 7 + z * 13 + y) % 6.28]);
+    sapCache.set(f.data, out);
+    return out;
+  }
   const camRight = new THREE.Vector3();
   const tileAt = (x, z) => { const tx = Math.floor(x), tz = Math.floor(z); return tx >= 0 && tz >= 0 && tx < S.W && tz < S.H ? tz * S.W + tx : -1; };
   const groundAt = (grid, x, z) => { const i = tileAt(x, z); return i < 0 || !grid ? 0 : W.surfaceY(grid, i % S.W, (i / S.W) | 0); };
@@ -236,6 +248,15 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
       glow.put(p.x, p.y, p.z, p.c, 0.07 * (1 - u * 0.5), (1 - u) * (0.55 + 0.45 * Math.sin(p.life * 22 + p.ph)), GLOW);
       return true;
     });
+
+    // ---- Les divov: svietiaca živica na obrovských stromoch – jemná žltá žiara okolo každej kvapky, pomaly pulzuje ----
+    if (ctx.fine) for (const f of ctx.fine) {
+      if (f.type !== 'giant' || !near(f.ox + 1.5, f.oz + 1.5, 1)) continue;
+      for (const [x, y, z, ph] of sapDrops(f)) {
+        const pulse = 0.65 + 0.35 * Math.sin(t * 1.3 + ph);
+        glow.put(f.ox + x, f.oy + y, f.oz + z, [1, 0.78, 0.22], 0.8, 0.6 * pulse, GLOW, 0.35);
+      }
+    }
 
     // ---- lístie: na jeseň veľa, v lete občas, na jar okvetné lístky z jabloní, v zime nič ----
     if (se !== 3 && ctx.fine) {

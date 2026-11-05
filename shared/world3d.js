@@ -20,7 +20,7 @@
     LEAF_SPRING: 64, LEAF_SPRING2: 65, LEAF_SUMMER: 66, LEAF_SUMMER2: 67, LEAF_AUT_OR: 68, LEAF_AUT_RED: 69, LEAF_AUT_YEL: 70,
     LEAF_BROWN: 71, LEAF_LIME: 72, BIRCH: 73, BIRCH_MARK: 74, BARK: 75, BARK_DARK: 76, PINE_BARK: 77, NEEDLE: 78, NEEDLE2: 79,
     APPLE: 80, BLOSSOM_W: 81, BLOSSOM_P: 82, MOSS: 83, LICHEN: 84, STONE_LIGHT: 85,
-    LEAF_DARK: 86, LEAF_DARK2: 87, WOOD_END: 88, ROTWOOD: 89, // Les divov: tmavé lístie obrov, čelo a práchnivé drevo kmeňa
+    LEAF_DARK: 86, LEAF_DARK2: 87, WOOD_END: 88, ROTWOOD: 89, SAP: 90, // Les divov: tmavé lístie obrov, čelo a práchnivé drevo kmeňa, svietiaca živica
     INVIS: 63 // neviditeľná náhrada jemného modelu v hrubej mriežke (tieň, zatienenie, výber)
   };
   // Farby podľa ročného obdobia [jar, leto, jeseň, zima]; emis = svieti v noci
@@ -46,9 +46,9 @@
     [M.NEEDLE]: ['#2e6b3a'], [M.NEEDLE2]: ['#24572f'], [M.APPLE]: ['#d62828'], [M.BLOSSOM_W]: ['#fbe7ef'], [M.BLOSSOM_P]: ['#f5a9c8'],
     [M.MOSS]: ['#6f9a3c', '#5f8a34', '#7d7a36', '#6f9a3c'], [M.LICHEN]: ['#c9c27a'], [M.STONE_LIGHT]: ['#b3aea6'],
     [M.LEAF_DARK]: ['#2f5a2c', '#24482a', '#7a4a22', '#24482a'], [M.LEAF_DARK2]: ['#26502a', '#1d3d23', '#5e3a1c', '#1d3d23'],
-    [M.WOOD_END]: ['#a8865a'], [M.ROTWOOD]: ['#4a3826']
+    [M.WOOD_END]: ['#a8865a'], [M.ROTWOOD]: ['#4a3826'], [M.SAP]: ['#ffcf3a']
   };
-  const EMISSIVE = { [M.WINDOW]: '#ffd27a', [M.BREW]: '#9dffb8', [M.LANTERN]: '#ffe9a8', [M.FIRE]: '#ff9a3a', [M.FLAME]: '#ffe07a', [M.BREW_LIGHT]: '#d8ffe4' };
+  const EMISSIVE = { [M.WINDOW]: '#ffd27a', [M.BREW]: '#9dffb8', [M.LANTERN]: '#ffe9a8', [M.FIRE]: '#ff9a3a', [M.FLAME]: '#ffe07a', [M.BREW_LIGHT]: '#d8ffe4', [M.SAP]: '#ffd84a' };
   function colorOf(mat, season) { const p = PALETTE[mat] || ['#ff00ff']; return p[Math.min(season, p.length - 1)] || p[0]; }
 
   function hash(x, y, k) { let h = (x * 374761393 + y * 668265263 + (k || 0) * 2147483647) | 0; h = (h ^ (h >>> 13)) * 1274126177; return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
@@ -597,6 +597,15 @@
       const e = [cx + Math.cos(a) * R, 35 + (i % 2) * 3, cz + Math.sin(a) * R];
       for (const [dx, dy] of [[0, 0], [1, 0], [0, 1]]) C.line(Math.round(cx - 0.5) + dx, y0 + dy, Math.round(cz - 0.5), Math.round(e[0]) + dx, e[1] + dy, Math.round(e[2]), M.BARK_DARK);
       ends.push(e);
+    }
+    // svietiaca živica: sem-tam na povrchu kmeňa kvapka a pod ňou krátky stekajúci pramienok (svieti aj v tme, aj v zime)
+    for (let z = -FM; z < 16 + FM; z++) for (let y = 4; y < 32; y++) for (let x = -FM; x < 16 + FM; x++) {
+      const m = C.getf(x, y, z);
+      if (!m || m === M.SAP || hash(x, y, z + 131 + v) > 0.012) continue;
+      const out = [[1, 0], [-1, 0], [0, 1], [0, -1]].find(([dx, dz]) => !C.getf(x + dx, y, z + dz));
+      if (!out) continue;
+      const len = 1 + Math.floor(hash(x, y, z + 133) * 3);
+      for (let k = 0; k <= len; k++) if (C.getf(x, y - k, z)) C.put(x, y - k, z, M.SAP);
     }
     if (se === 3) return snowOn(C, [M.BARK_DARK, M.BARK, M.MOSS], 0.55, 6);
     const mat = pickOf(GIANT_LEAVES[se]);
