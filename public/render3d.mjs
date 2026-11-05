@@ -132,6 +132,7 @@ void main() {
     float d = mix(distance(vPos, eye.xyz), distance(vPos.xz, eye.xz), darkOn);
     light += vec3(0.8, 0.85, 1.0) * eyeLit.y * darkOn * (1.0 - smoothstep(0.0, eyeLit.x, distance(vPos, eye.xyz))); // slabé svetlo okolo hráča
     fogK = darkOn * smoothstep(eye.w * 0.6, eye.w * 1.15, d) * (1.0 - clamp(lamp * 1.6, 0.0, 1.0));
+    fogK *= 1.0 - groundSun; // zem v slnku vidno aj za dohľadom (pokus)
   }
   vec3 col = base * vAo * light;
   col = mix(col, gloomFog, gm * 0.3 * (1.0 - darkOn)); // v hustom lese visí opar
