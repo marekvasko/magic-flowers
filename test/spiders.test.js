@@ -271,7 +271,8 @@ test('krížiak: kúty pri koncoch stien, najviac 3 pavučiny na plochu, odstrá
     for (const s of list) {
       assert.ok(D.passable(tiles[s.i]) && tiles[s.i].g !== 'gate');
       assert.ok(D.CORNER_WALL[tiles[(s.y + s.dy) * D.W + s.x + s.dx].g], 'vedľa je stena');
-      assert.ok(!D.CORNER_WALL[tiles[(s.y + s.dy + s.ey) * D.W + s.x + s.dx + s.ex].g], 'stena sa tu končí');
+      if (s.faces === 3) assert.ok(D.CORNER_WALL[tiles[(s.y + s.ey) * D.W + s.x + s.ex].g], 'vnútorný kút: aj druhá stena');
+      else assert.ok(!D.CORNER_WALL[tiles[(s.y + s.dy + s.ey) * D.W + s.x + s.dx + s.ex].g], 'stena sa tu končí');
     }
   }
   const room = mkRoom(SEEDS[6]);
@@ -433,5 +434,28 @@ test('pavučina z čiar: rovnaké stredy ako shader, kotvy na kmeňoch ležia v 
   assert.ok(Webs.webThreads({ bow: 0 }, opts).pos.every((v, i) => i % 3 !== 2 || v === 0), 'bez vydutia rovná');
   const torn = Webs.webThreads({}, Object.assign({ keep: 0.42 }, opts));
   assert.ok(torn.count < a.count * 0.8, 'vyťahaná pavučina má menej vlákien');
-  assert.ok(Webs.webThreads({}, { w: 0.7, h: 0.57, seed: 3, corner: true }).count > 40, 'kútová spleť');
+});
+
+test('kútová pavučina: 3 kotvy na 2 alebo 3 plochách kúta, rám vo vzduchu, občas zlom s vláknom k vrcholu', () => {
+  let breaks = 0;
+  for (let seed = 1; seed <= 60; seed++) for (const faces of [2, 3]) {
+    const t = Webs.cornerThreads({}, { seed, faces }), S = Webs.WEB_PARAMS.cornerSize.def;
+    // každá kotva leží na niektorej ploche kúta: stena 1 (X = 0), zem (Y = 0), pri troch plochách aj stena 2 (Z = 0)
+    const on = t.anchors.map(p => p[0] === 0 ? 'w1' : p[1] === 0 ? 'g' : p[2] === 0 ? 'w2' : '?');
+    assert.ok(!on.includes('?'));
+    if (faces === 3) assert.deepStrictEqual(on.slice().sort(), ['g', 'w1', 'w2']);
+    else assert.ok(new Set(on).size === 2 && !on.includes('w2'), 'dve plochy: stena a zem');
+    assert.ok(t.anchors.every(p => p.every(v => v >= 0 && v <= S + 1e-9)), 'do cornerSize od kúta');
+    // všetky vlákna vo vzduchu (v kladnom kvadrante) – nikdy nejdú do steny ani do zeme
+    for (let i = 0; i < t.pos.length; i++) assert.ok(t.pos[i] >= -1e-6, 'vlákno vo vzduchu');
+    // všetky vlákna v rovine troch kotiev
+    const [A, B, C] = t.anchors, u = B.map((v, i) => v - A[i]), w = C.map((v, i) => v - A[i]);
+    const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]], nl = Math.hypot(...n);
+    for (let i = 0; i < t.count; i++) assert.ok(Math.abs(((t.pos[i * 3] - A[0]) * n[0] + (t.pos[i * 3 + 1] - A[1]) * n[1] + (t.pos[i * 3 + 2] - A[2]) * n[2]) / nl) < 1e-6);
+    assert.ok(t.count / 2 > 40, 'vyplnená');
+    if (t.layout.nH === 2) breaks++;
+  }
+  assert.ok(breaks > 30 && breaks < 90, `zlom približne v polovici (${breaks}/120)`);
+  assert.strictEqual(Webs.cornerThreads({ cornerBreak: 0 }, { seed: 5, faces: 2 }).layout.nH, 1);
+  assert.strictEqual(Webs.cornerThreads({ cornerBreak: 1 }, { seed: 5, faces: 2 }).layout.nH, 2);
 });

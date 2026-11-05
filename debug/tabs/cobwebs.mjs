@@ -3,7 +3,7 @@
 // shaderom ako v hre (public/spiders3d.mjs) a pôdorys Lesa divov s miestami, kde môže pavučina visieť (rozpätie span / gladeSpan).
 // Úpravy žijú len v tejto stránke (a v adrese); „Copy parameters“ dá JSON so zmenenými hodnotami (v hre: window.MF_WEB = …).
 import * as THREE from '/vendor/three/three.module.js';
-import { webMaterial, webLines } from '/spiders3d.mjs';
+import { webMaterial, webLines, cornerLines } from '/spiders3d.mjs';
 
 const MAX_LIGHTS = 16;
 export const CSS = `
@@ -22,7 +22,7 @@ const LIGHT = {
   day: { label: 'Garden, day', amb: [0.62, 0.64, 0.72], sun: [0.55, 0.52, 0.44], dark: 0, lamp: false, bg: 0x9ec7e0 },
   night: { label: 'Garden, night + lantern', amb: [0.22, 0.25, 0.42], sun: [0, 0, 0], dark: 0, lamp: true, bg: 0x0d1428 }
 };
-const ANCH = ['tree', 'giant', 'bush', 'log', 'corner'];
+const ANCH = ['tree', 'giant', 'bush', 'log', 'corner', 'corner3'];
 
 export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone }) {
   const Webs = window.Webs;
@@ -71,7 +71,7 @@ export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone })
 
   // ---- posuvníky po skupinách ----
   const rows = {};
-  const GROUP_NAMES = { render: 'Render (0 = shader on a plane, 1 = 3D lines)', placement: 'Placement & size', structure: 'Structure', noise: 'Perlin noise', look: 'Look & light' };
+  const GROUP_NAMES = { corner: 'Corner web (krížiak: corner = end of a wall, corner3 = inner corner)', render: 'Render (0 = shader on a plane, 1 = 3D lines)', placement: 'Placement & size', structure: 'Structure', noise: 'Perlin noise', look: 'Look & light' };
   for (const gr of Object.keys(GROUP_NAMES)) {
     const box = h('div', { class: 'gn-sliders' });
     for (const [k, d] of Object.entries(defs)) {
@@ -132,7 +132,7 @@ export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone })
     cv.ondblclick = resetView;
     new ResizeObserver(() => request()).observe(viewEl);
   }
-  function resetView() { Object.assign(view, st.anchor === 'corner' ? { yaw: 0.5, pitch: 0.45, dist: 1.8 } : { yaw: 0.35, pitch: 0.38, dist: 2.2 + st.n * 1.1 }); request(); }
+  function resetView() { Object.assign(view, st.anchor.startsWith('corner') ? { yaw: 0.8, pitch: 0.45, dist: 2.2 } : { yaw: 0.35, pitch: 0.38, dist: 2.2 + st.n * 1.1 }); request(); }
   const matBark = new THREE.MeshLambertMaterial({ color: 0x7a5236 }), matLeaf = new THREE.MeshLambertMaterial({ color: 0x3f7a36 }), matGround = new THREE.MeshLambertMaterial({ color: 0x5a4a36 });
   const amb = new THREE.AmbientLight(0xffffff, 1), sunL = new THREE.DirectionalLight(0xffffff, 0), lampL = new THREE.PointLight(0xffc878, 0, 3.5, 1.5);
   scene.add(amb, sunL, lampL);
@@ -160,7 +160,7 @@ export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone })
     objs = [];
     const T = tiles(), P = Webs.webParams(over()), g = Webs.webGeom(T.t, T.w, T.hh, T.wb, over());
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(T.w, T.hh), matGround); ground.rotation.x = -Math.PI / 2; ground.position.set(T.w / 2, 0, T.hh / 2); objs.push(ground);
-    if (st.anchor === 'corner') return rebuildCorner(P);
+    if (st.anchor.startsWith('corner')) return rebuildCorner(P);
     for (const o of [g.a, g.b]) if (o) objs.push(anchorMesh(o));
     web = makeWeb(P, { w: g.len, h: g.hgt, seed: st.web, keep: st.silk >= 3 ? 1 : st.silk === 2 ? 0.72 : 0.42 });
     web.position.set((g.u0 + g.u1) / 2, g.hgt / 2 + 0.02, g.line);
@@ -171,20 +171,22 @@ export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone })
     stats.textContent = `web ${st.web}: ${g.len.toFixed(2)} × ${g.hgt.toFixed(2)} tiles between ${g.a ? g.a.g : '–'} and ${g.b ? g.b.g : '–'} · ${inf.render}${inf.render === 'lines' ? ` (${inf.segments} segments × ${inf.copies} copies)` : ''} · ${inf.hubs} centre${inf.hubs > 1 ? 's' : ''} · mooring ${inf.moor[0]} + ${inf.moor[1]} · ${inf.fill ? 'concentric' : 'spiral'} fill · ${Object.keys(changed()).length} changed`;
     placeLamp(); applyLight(); request();
   }
-  // kútová pavučina: stena (kváder) na zemi, pavučina šikmo v kúte pri päte steny a jej konci (ako v hre)
+  // kútová pavučina: v súradniciach kúta (počiatok na zemi v kúte, X von zo steny 1, Z pozdĺž nej / von zo steny 2), ako v hre
   function rebuildCorner(P) {
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(2, 1.6, 1), new THREE.MeshLambertMaterial({ color: 0xd8cbb0 }));
-    wall.position.set(3, 0.8, 2.5); objs.push(wall); // stena x 2…4, z 2…3; pavučina pri jej južnej päte (z = 3) a východnom konci (x = 4)
-    const L = 0.7, up = 0.42, out = 0.4;
-    const top = new THREE.Vector3(4 - L / 2, up, 3), bot = new THREE.Vector3(4 - L / 2, 0.01, 3 + out);
-    const X = new THREE.Vector3(1, 0, 0), Y = top.clone().sub(bot), len = Y.length(); Y.normalize();
-    web = makeWeb(P, { w: L, h: len, seed: st.web, keep: 1, corner: true });
-    web.matrixAutoUpdate = false;
-    web.matrix.makeBasis(X, Y, X.clone().cross(Y)).setPosition(top.clone().add(bot).multiplyScalar(0.5));
+    const three = st.anchor === 'corner3', O = new THREE.Vector3(3, 0, 3);
+    const box = (x0, x1, z0, z1) => { const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 1.4, z1 - z0), new THREE.MeshLambertMaterial({ color: 0xd8cbb0 })); m.position.set(O.x + (x0 + x1) / 2, 0.7, O.z + (z0 + z1) / 2); objs.push(m); };
+    box(-1, 0, three ? -1 : 0, 2);   // stena 1 (X < 0); pri konci steny sa končí v Z = 0
+    if (three) box(0, 2, -1, 0);     // stena 2 (Z < 0)
+    web = cornerLines(THREE, world, viewDir, P, { seed: st.web, faces: three ? 3 : 2, keep: st.silk >= 3 ? 1 : st.silk === 2 ? 0.72 : 0.42 }, MAX_LIGHTS, frame);
+    web.position.copy(O);
     objs.push(web);
+    const hub = web.material.userData.info.hub;
+    const kz = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), new THREE.MeshBasicMaterial({ color: 0xa0682e })); // krížiak
+    kz.position.set(O.x + hub[0], hub[1], O.z + hub[2]); objs.push(kz);
     for (const o of objs) scene.add(o);
-    target.set(4 - L / 2, 0.25, 3.2);
-    stats.textContent = `corner web ${st.web}: ${L} × ${len.toFixed(2)} tiles, tangle + veil ${P.veil} · ${Object.keys(changed()).length} changed`;
+    target.set(O.x + 0.3, 0.3, O.z + 0.3);
+    const inf = web.material.userData.info;
+    stats.textContent = `corner web ${st.web} (${three ? '3 faces: two walls + ground' : '2 faces: wall + ground'}): ${inf.hubs === 2 ? 'with a break – 2 regions' : 'no break – 1 region'} · ${inf.segments} segments × ${inf.copies} copies · ${inf.fill ? 'concentric' : 'spiral'} fill · ${Object.keys(changed()).length} changed`;
     placeLamp(); applyLight(); request();
   }
   function placeLamp() {
