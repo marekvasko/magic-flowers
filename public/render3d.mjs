@@ -1111,9 +1111,9 @@ export function create(api) {
     if (dl < 0.8) {
       const A = api.S.anchors;
       const add = (x, y, z, r, fl) => { if (lights.length < MAX_LIGHTS) lights.push(new THREE.Vector4(x, y, z, r * flicker(t, x * 7.1 + z * 3.3, fl || FL_SOFT))); };
-      // hráč s lampášom v ruke svieti ďaleko viac (svetlo je nižšie, pri ruke, a blčí ako plameň)
-      if (S.sel === 'lamp') add(S.me.x, 1.1, S.me.y, LAMP_R, FL_LANTERN); else add(S.me.x, 1.6, S.me.y, 3.2);
-      for (const o of S.others.values()) if (o.lp) add(o.x, 1.1, o.y, LAMP_R, FL_LANTERN); else add(o.x, 1.6, o.y, 2.6);
+      // hráč svieti, len keď drží lampáš (svetlo pri ruke, blčí ako plameň); bez lampáša je potme
+      if (S.sel === 'lamp') add(S.me.x, 1.1, S.me.y, LAMP_R, FL_LANTERN);
+      for (const o of S.others.values()) if (o.lp) add(o.x, 1.1, o.y, LAMP_R, FL_LANTERN);
       if (A.hut) { add(A.hut.x + 0.5, 2.05, A.hut.y + 2.2, 2.2, FL_WINDOW); add(A.hut.x + 2.4, 2.05, A.hut.y + 2.2, 2.2, FL_WINDOW); }
       if (A.house) { add(A.house.x + 0.62, 2.2, A.house.y + 2.3, 2.2, FL_WINDOW); add(A.house.x + 2.37, 2.2, A.house.y + 2.3, 2.2, FL_WINDOW); add(A.house.x + 2.06, 2.4, A.house.y + 2.06, 1.8, FL_LANTERN); }
       if (A.cauldron) add(A.cauldron.x + 0.5, 1.3, A.cauldron.y + 0.5, 2.6, FL_FIRE);   // oheň pod kotlíkom
