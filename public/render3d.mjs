@@ -61,7 +61,10 @@ float gloomAt(float z) {
 // Temná plocha (Les divov, D.DARK): slnko len v škvrnách cez koruny a na čistinách (canopy = otvorenosť korún podľa políčka),
 // okolo hráča (eye = bod oka, w = dohľad) slabé svetlo a za dohľadom tma (darkFog). Miesta osvetlené lampášom (aj cudzím)
 // ostanú vidno. Stromy sa kreslia celé (aj koruny v tme); čo zakrýva hráča alebo zem pred ním, sa zoslabí ako v tmavom lese.
+// Slnko na zemi v Lese divov tlmené (1 = jas ako v záhrade); viditeľnosť za dohľadom ostáva plná
+const LES_SUN_K = 0.5;
 const DARK_GLSL = `
+#define LES_SUN_K ${LES_SUN_K.toFixed(2)}
 float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p) {
   vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
@@ -116,10 +119,10 @@ void main() {
   float groundSun = sunMode > 0.5 && vTex > 0.5 && darkOn > 0.0 ? sunVisibility(vFacing) : 0.0;
   // slnko len v srdci lesa a kúsok okolo (sunZone: stred a polosi elipsy; z = 0 → všade), na okraji postupne zhasne
   if (sunZone.z > 0.0) groundSun *= 1.0 - smoothstep(0.8, 1.0, length((vPos.xz - sunZone.xy) / sunZone.zw));
-  float darkSun = sunMode > 0.5 ? groundSun : forestSun();
+  float darkSun = sunMode > 0.5 ? groundSun * LES_SUN_K : forestSun();
   float sunV = darkOn >= 1.0 ? darkSun : darkOn > 0.0 ? mix(sunVisibility(vFacing), darkSun, darkOn) : sunVisibility(vFacing);
   // osvetlená zem v tme (pokus): okrem slnka aj denné svetlo záhrady (sunFill) – v slnku je zem jasná ako v záhrade
-  vec3 light = (ambient + sunColor * sunV + sunFill * groundSun) * (1.0 - gm * (1.0 - darkOn));
+  vec3 light = (ambient + sunColor * sunV + sunFill * groundSun * LES_SUN_K) * (1.0 - gm * (1.0 - darkOn));
   // Svetlo lampášov (aj slabé svetlo okolo hráča) je guľa okolo zdroja – na vrchy obrovských stromov nedosiahne.
   // Dohľad v tme (kde začína tma) sa však meria po zemi: vrchy kmeňov pri hráčovi sú tmavé drevo, nie čierne diery.
   float lamp = 0.0;
