@@ -128,7 +128,10 @@
   // ---- Ľad ----
   // Krompáč (náradie, kúpi sa na trhu) vyseká ľad na ľadovci v horách a v zime na zamrznutej vode.
   // Ľadovňa je spoločná stavba v záhrade: drží ľad, ktorý sa topí, a kým v nej nejaký je, sklad chladí viac.
-  const TOOLS = { pick: { name: 'Krompáč', icon: '⛏️', price: 60, rep: 0, desc: 'Vysekáš ním ľad na ľadovci v horách a v zime na zamrznutom jazierku.' } };
+  const TOOLS = {
+    pick: { name: 'Krompáč', icon: '⛏️', price: 60, rep: 0, desc: 'Vysekáš ním ľad na ľadovci v horách a v zime na zamrznutom jazierku.' },
+    lamp: { name: 'Lampáš', icon: '🏮', price: 80, rep: 0, desc: 'Keď ho držíš v ruke, svieti ti v tme na cestu. Jeho svetlo vidia aj ostatní.' }
+  };
   const ICEHOUSE = {
     name: 'Ľadovňa', icon: '🧊', price: 400, rep: 1, cap: 12,
     rate: 0.25,                        // s ľadom v ľadovni kvety v sklade starnú 4× pomalšie
@@ -146,7 +149,7 @@
   // Ľad v batohu: najviac ICE_CARRY kusov, každý spomalí chôdzu o ICE_SLOW a do pol dňa sa roztopí.
   const ICE_CARRY = 6, ICE_SLOW = 0.06, ICE_LIFE = TICKS_PER_DAY / 2;
   const ICE_PRICE = [5, 12, 5, 1]; // výkupná cena ľadu na trhu podľa obdobia
-  const isTool = id => id === 'hoe' || id === 'can' || id === 'pick';
+  const isTool = id => id === 'hoe' || id === 'can' || id === 'pick' || id === 'lamp';
   const WILTED_PER_COMPOST = 4;
 
   const POTIONS = {
@@ -245,6 +248,7 @@
     if (id === 'hoe') return 'Motyka';
     if (id === 'can') return 'Krhla';
     if (id === 'pick') return 'Krompáč';
+    if (id === 'lamp') return 'Lampáš';
     if (id === 'ice') return 'Ľad';
     if (id === 'compost') return 'Kompost';
     if (id === 'wilted') return 'Zvädnuté kvety';
