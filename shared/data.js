@@ -527,7 +527,7 @@
   // Rozloženie je podľa semienka sveta; uloží sa so svetom (areas.js), takže ho nezmení ani neskoršia úprava generátora.
   const LES_CELL = 4;  // bunka bludiska (políčka): v každej je uzol chodníka, chodníky spájajú uzly susedných buniek
   const LES_GLADES = 6; // počet čistín
-  const LES_GIANT = 0.5; // podiel voľných štvorcov 2 × 2, na ktorých rastie obor (inak bežné stromy)
+  const LES_GIANT = 0.25; // podiel voľných štvorcov 2 × 2, na ktorých rastie obor (inak bežné stromy)
   const LES_DECOR = ['moss', 'fern', 'roots', 'fungi']; // priechodná zem medzi stromami
   function buildLes(seed) {
     const w = LES_W, h = LES_H;
