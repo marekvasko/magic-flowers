@@ -95,6 +95,20 @@ test('Les divov: temná plocha – dohľad 3 políčka, s lampášom ďalej; ind
   assert.ok(D.DARK.les.lamp > D.DARK.les.sight);
 });
 
+test('cesta do tmy: na severe Lesa na pomedzí postupne pribúda tma Lesa divov, pri prechode je plná', () => {
+  const { h } = D.areaSize('pomedzie');
+  assert.strictEqual(D.darkAt('les', 0), 1);
+  assert.strictEqual(D.darkAt('les', LH - 1), 1);
+  for (const a of ['garden', 'hory']) assert.strictEqual(D.darkAt(a, 0), 0, a);
+  assert.strictEqual(D.darkAt('pomedzie', h - 1), 0, 'na lúke nič');
+  assert.strictEqual(D.darkAt('pomedzie', D.DARK_RAMP.pomedzie.from), 0);
+  assert.strictEqual(D.darkAt('pomedzie', 1), 1, 'pri prechode do Lesa divov rovnako ako v ňom');
+  assert.strictEqual(D.darkAt('pomedzie', D.arrival('les', 'pomedzie').y), 1, 'aj na príchode z Lesa divov');
+  let prev = 0;
+  for (let y = h - 1; y >= 0; y -= 0.5) { const v = D.darkAt('pomedzie', y); assert.ok(v >= prev, 'na sever stále tmavšie'); prev = v; }
+  assert.ok(D.darkAt('pomedzie', 5) > 0.2 && D.darkAt('pomedzie', 5) < 0.8, 'postupne');
+});
+
 test('Les divov: uloží sa celé rozloženie a načíta sa späť; zlé uloženie → zo semienka', () => {
   const room = { les: Areas.loadLes(null, 77) };
   assert.deepStrictEqual(room.les.map(t => t.g), D.buildLes(77));

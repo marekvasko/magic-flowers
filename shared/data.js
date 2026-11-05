@@ -631,6 +631,14 @@
   // lampR = dosah svetla lampáša v tme (políčka, inde render3d LAMP_R), lampK = jeho sila (1 = ako v záhrade v noci)
   const DARK = { les: { sight: 3, lamp: 4.5, lampR: 4.5, lampK: 0.6 } };
   function isDark(area) { return !!DARK[area]; }
+  // Postupný prechod do tmy Lesa divov: v Lese na pomedzí sa od riadku from (0) po riadok to (1) pridáva svetlo a dohľad
+  // Lesa divov, takže pri prechode na severnom okraji vyzerá les rovnako ako Les divov. V Lese divov všade 1.
+  const DARK_RAMP = { pomedzie: { from: 10, to: 2 } };
+  function darkAt(area, y) {
+    if (DARK[area]) return 1;
+    const r = DARK_RAMP[area];
+    return r ? Math.max(0, Math.min(1, (r.from - y) / (r.from - r.to))) : 0;
+  }
 
   const BLOCK = { tree: 1, water: 1, hut: 1, babka: 1, cauldron: 1, stall: 1, well: 1, boulder: 1, house: 1, cliff: 1, glacier: 1, spruce: 1, icehouse: 1, bush: 1, giant: 1, trunk: 1, log: 1 };
   // Výška terénu v podkockách (pol bloku) podľa typu zeme – zdieľa ju 3D svet (world3d.js) aj chôdza
@@ -695,7 +703,7 @@
     CHAT_MAX, chatText,
     W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
-    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, DARK, isDark,
+    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, DARK, isDark, DARK_RAMP, darkAt,
     sellPrice, itemName, buildMap, buildMountains, buildPomedzie, buildLes, buildArea, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
   };
   root.GameData = api;

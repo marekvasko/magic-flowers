@@ -107,7 +107,9 @@ ${DARK_GLSL}
 void main() {
   vec3 base = vTex > 0.5 ? texture2D(map, vUv).rgb * vColor : vColor;
   float gm = gloomAt(vPos.z);
-  vec3 light = (ambient + sunColor * (darkOn > 0.5 ? forestSun() : sunVisibility(vFacing))) * (1.0 - gm);
+  // darkOn 0–1: koľko tmy Lesa divov (pri severnom okraji Lesa na pomedzí postupne pribúda, opar Lesa na pomedzí ubúda)
+  float sunV = darkOn >= 1.0 ? forestSun() : darkOn > 0.0 ? mix(sunVisibility(vFacing), forestSun(), darkOn) : sunVisibility(vFacing);
+  vec3 light = (ambient + sunColor * sunV) * (1.0 - gm * (1.0 - darkOn));
   float lamp = 0.0;
   for (int i = 0; i < ${MAX_LIGHTS}; i++) {
     if (i >= lightCount) break;
@@ -116,13 +118,13 @@ void main() {
   }
   light += lampColor * lamp;
   float fogK = 0.0;
-  if (darkOn > 0.5) {
+  if (darkOn > 0.0) {
     float d = distance(vPos, eye.xyz);
-    light += vec3(0.8, 0.85, 1.0) * eyeLit.y * (1.0 - smoothstep(0.0, eyeLit.x, d)); // slabé svetlo okolo hráča
-    fogK = smoothstep(eye.w * 0.6, eye.w * 1.15, d) * (1.0 - clamp(lamp * 1.6, 0.0, 1.0));
+    light += vec3(0.8, 0.85, 1.0) * eyeLit.y * darkOn * (1.0 - smoothstep(0.0, eyeLit.x, d)); // slabé svetlo okolo hráča
+    fogK = darkOn * smoothstep(eye.w * 0.6, eye.w * 1.15, d) * (1.0 - clamp(lamp * 1.6, 0.0, 1.0));
   }
   vec3 col = base * vAo * light;
-  col = mix(col, gloomFog, gm * 0.3); // v hustom lese visí opar
+  col = mix(col, gloomFog, gm * 0.3 * (1.0 - darkOn)); // v hustom lese visí opar
   col = mix(col, darkFog, fogK);
   col = max(col, base * emisColor * vEmis); // svietiace veci (okná, oheň, živica) vidno aj v tme za dohľadom
   gl_FragColor = vec4(col, opacity);
@@ -441,6 +443,7 @@ export function create(api) {
     c.inDark = D.isDark(S.area) || D.gloomAt(S.area, S.me.y) >= c.darkFrom;
     if (c.inDark) Object.assign(c, FADE_DEFAULTS.dark, u.dark || {});
     if (D.isDark(S.area)) Object.assign(c, FADE_DEFAULTS.les, u.les || {});
+    else c.outline *= 1 - D.darkAt(S.area, S.me.y); // cestou do Lesa divov obrys postupne mizne
     return c;
   }
   let mesh = null, grid = null, builtSeason = -1, builtGen = -1;
@@ -1173,20 +1176,22 @@ void main() {
     const fog = GLOOM_FOG.map(v => v * (0.35 + 0.65 * dl));
     material.uniforms.gloomFog.value.set(...fog);
     let sky = mix3(mix3(mix3(SKY_NIGHT, SKY_DAY, dl), SKY_DUSK, dusk * 0.6), fog, gm);
-    const dark = D.DARK[S.area];
-    material.uniforms.darkOn.value = dark ? 1 : 0;
-    if (dark) material.uniforms.emisColor.value.set(1, 0.95, 0.8); // v Lese divov svieti živica aj cez deň
-    material.uniforms.lampColor.value.set(...LAMP_COL.map(v => v * (dark ? dark.lampK : 1)));
+    // Les divov (k = 1) a cesta k nemu na severe Lesa na pomedzí (k 0 → 1): málo svetla, slnko len cez koruny, za dohľadom tma (aj obloha)
+    const k = D.darkAt(S.area, S.me.y), dark = D.DARK.les;
+    material.uniforms.darkOn.value = k;
+    if (k > 0) material.uniforms.emisColor.value.set(1, 0.95, 0.8); // v Lese divov svieti živica aj cez deň
+    material.uniforms.lampColor.value.set(...LAMP_COL.map(v => v * lerp(1, dark.lampK, k)));
     curDark = null;
-    if (dark) { // Les divov: málo svetla, slnko len cez koruny, za dohľadom tma (aj obloha)
-      curAmb = mix3(NIGHT_AMB.map(v => v * DARK_AMB_NIGHT), DAY_AMB.map(v => v * DARK_AMB), dl);
-      curSun = curSun.map(v => v * DARK_SUN);
+    if (k > 0) {
+      curAmb = mix3(curAmb, mix3(NIGHT_AMB.map(v => v * DARK_AMB_NIGHT), DAY_AMB.map(v => v * DARK_AMB), dl), k);
+      curSun = curSun.map(v => v * lerp(1, DARK_SUN, k));
       material.uniforms.ambient.value.set(...curAmb);
       material.uniforms.sunColor.value.set(...curSun);
-      sky = mix3(DARK_NIGHT, DARK_DAY, dl);
-      material.uniforms.darkFog.value.set(...sky);
+      const night = mix3(DARK_NIGHT, DARK_DAY, dl);
+      sky = mix3(sky, night, k);
+      material.uniforms.darkFog.value.set(...night);
       material.uniforms.eyeLit.value.set(dark.sight * 1.2, lerp(EYE_LIT[1], EYE_LIT[0], dl));
-      curDark = { fog: sky, eyeLit: material.uniforms.eyeLit.value, eye: material.uniforms.eye.value };
+      curDark = { k, eyeLit: material.uniforms.eyeLit.value, eye: material.uniforms.eye.value };
     }
     renderer.setClearColor(new THREE.Color(sky[0], sky[1], sky[2]));
     waterMaterial.uniforms.skyColor.value.set(sky[0], sky[1], sky[2]);
@@ -1198,7 +1203,8 @@ void main() {
   // V temnej ploche navyše: slnko len na čistinách, slabé svetlo okolo hráča a za dohľadom tma; vis = nakoľko ho vidno (0–1).
   function lightAt(x, y, z, lights, n, out) {
     const cd = curDark;
-    const vis = !curSunDir ? 0 : cd ? 0.5 * canopyAt(x, z) : W.sunVisibility(grid, x, y + 0.3, z, curSunDir, 3), k = 1 - D.gloomAt(S.area, z);
+    const dk = cd ? cd.k : 0;
+    const vis = !curSunDir ? 0 : lerp(dk < 1 ? W.sunVisibility(grid, x, y + 0.3, z, curSunDir, 3) : 0, 0.5 * canopyAt(x, z), dk), k = 1 - D.gloomAt(S.area, z) * (1 - dk);
     let r = (curAmb[0] + curSun[0] * vis) * k, g = (curAmb[1] + curSun[1] * vis) * k, b = (curAmb[2] + curSun[2] * vis) * k;
     const lc = material.uniforms.lampColor.value;
     let lamp = 0;
@@ -1209,9 +1215,9 @@ void main() {
     }
     let seen = 1;
     if (cd) {
-      const d = Math.hypot(cd.eye.x - x, cd.eye.y - y, cd.eye.z - z), e = cd.eyeLit.y * (1 - smooth(0, cd.eyeLit.x, d));
+      const d = Math.hypot(cd.eye.x - x, cd.eye.y - y, cd.eye.z - z), e = dk * cd.eyeLit.y * (1 - smooth(0, cd.eyeLit.x, d));
       r += 0.8 * e; g += 0.85 * e; b += e;
-      seen = 1 - smooth(cd.eye.w * 0.6, cd.eye.w * 1.15, d) * (1 - Math.min(1, lamp * 1.6));
+      seen = 1 - dk * smooth(cd.eye.w * 0.6, cd.eye.w * 1.15, d) * (1 - Math.min(1, lamp * 1.6));
       r *= seen; g *= seen; b *= seen; // do tmy (tá je takmer čierna)
     }
     if (out) out.seen = seen;
@@ -1424,14 +1430,14 @@ void main() {
     const lights = [];
     // v tmavom lese je šero aj cez deň – lampáše svietia podľa svetla tam, kde stojí hráč
     // v Lese divov (temná plocha) je tma aj cez deň – lampáš svieti vždy
-    const dark = D.DARK[S.area];
-    const dl = dark ? 0 : W.daylight(min) * (1 - D.gloomAt(S.area, S.me.y));
+    const dark = D.DARK[S.area], kd = D.darkAt(S.area, S.me.y), DL = D.DARK.les;
+    const dl = W.daylight(min) * (1 - D.gloomAt(S.area, S.me.y)) * (1 - kd);
     const lampState = dl < LAMP_DUSK ? 'lit' : 'on'; // lampáš v ruke horí, len keď je šero
     if (dl < LAMP_DUSK && layerOn('lights')) {
       const A = api.S.anchors;
       const add = (x, y, z, r, fl) => { if (lights.length < MAX_LIGHTS) lights.push(new THREE.Vector4(x, y, z, r * flicker(t, x * 7.1 + z * 3.3, fl || FL_SOFT))); };
       // hráč svieti, len keď drží lampáš (svetlo pri ruke, blčí ako plameň); bez lampáša je potme
-      const lampR = dark ? dark.lampR : LAMP_R; // v Lese divov lampáš svieti slabšie a na kratšiu vzdialenosť
+      const lampR = lerp(LAMP_R, DL.lampR, kd); // v Lese divov (a cestou k nemu) lampáš svieti slabšie a na kratšiu vzdialenosť
       if (S.sel === 'lamp') add(S.me.x, 1.1, S.me.y, lampR, FL_LANTERN);
       for (const o of S.others.values()) if (o.lp) add(o.x, 1.1, o.y, lampR, FL_LANTERN);
       if (A.hut) { add(A.hut.x + 0.5, 2.05, A.hut.y + 2.2, 2.2, FL_WINDOW); add(A.hut.x + 2.4, 2.05, A.hut.y + 2.2, 2.2, FL_WINDOW); }
@@ -1449,11 +1455,9 @@ void main() {
     material.uniforms.lightCount.value = lights.length;
     lastLights = lights;
     // temná plocha: oko hráča (odkiaľ vidí) a dohľad – s lampášom v ruke ďalej
-    const eyeR = dark ? (S.sel === 'lamp' ? dark.lamp : dark.sight) : 0;
-    if (dark) {
-      material.uniforms.eye.value.set(S.me.x, groundY(S.me.x, S.me.y) + 0.9, S.me.y, eyeR);
-      updateShafts(curSunDir, W.daylight(min), eyeR);
-    }
+    const eyeR = kd > 0 ? (S.sel === 'lamp' ? DL.lamp : DL.sight) : 0;
+    if (kd > 0) material.uniforms.eye.value.set(S.me.x, groundY(S.me.x, S.me.y) + 0.9, S.me.y, eyeR);
+    if (dark) updateShafts(curSunDir, W.daylight(min), eyeR);
 
     // sprity
     syncPlants(night);
