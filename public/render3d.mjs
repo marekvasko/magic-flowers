@@ -114,19 +114,19 @@ void main() {
   // darkOn 0–1: koľko tmy Lesa divov (pri severnom okraji Lesa na pomedzí postupne pribúda, opar Lesa na pomedzí ubúda)
   float sunV = darkOn >= 1.0 ? forestSun() : darkOn > 0.0 ? mix(sunVisibility(vFacing), forestSun(), darkOn) : sunVisibility(vFacing);
   vec3 light = (ambient + sunColor * sunV) * (1.0 - gm * (1.0 - darkOn));
-  // v tme (darkOn) sa svetlo lampášov aj dohľad merajú po zemi, nie v priestore: kmeň stromu na osvetlenom mieste je svetlý
-  // celý, nie len dolu – inak by vrchy kmeňov pri hráčovi čierneli a zakrývali osvetlenú zem ako diery v mape
+  // Svetlo lampášov (aj slabé svetlo okolo hráča) je guľa okolo zdroja – na vrchy obrovských stromov nedosiahne.
+  // Dohľad v tme (kde začína tma) sa však meria po zemi: vrchy kmeňov pri hráčovi sú tmavé drevo, nie čierne diery.
   float lamp = 0.0;
   for (int i = 0; i < ${MAX_LIGHTS}; i++) {
     if (i >= lightCount) break;
-    float d = mix(distance(vPos, lights[i].xyz), distance(vPos.xz, lights[i].xz), darkOn);
+    float d = distance(vPos, lights[i].xyz);
     lamp += 1.0 - smoothstep(0.0, lights[i].w, d);
   }
   light += lampColor * lamp;
   float fogK = 0.0;
   if (darkOn > 0.0) {
     float d = mix(distance(vPos, eye.xyz), distance(vPos.xz, eye.xz), darkOn);
-    light += vec3(0.8, 0.85, 1.0) * eyeLit.y * darkOn * (1.0 - smoothstep(0.0, eyeLit.x, d)); // slabé svetlo okolo hráča
+    light += vec3(0.8, 0.85, 1.0) * eyeLit.y * darkOn * (1.0 - smoothstep(0.0, eyeLit.x, distance(vPos, eye.xyz))); // slabé svetlo okolo hráča
     fogK = darkOn * smoothstep(eye.w * 0.6, eye.w * 1.15, d) * (1.0 - clamp(lamp * 1.6, 0.0, 1.0));
   }
   vec3 col = base * vAo * light;
@@ -1248,13 +1248,13 @@ void main() {
     const lc = material.uniforms.lampColor.value;
     let lamp = 0;
     for (let i = 0; i < n; i++) {
-      const L = lights[i], d = lerp(Math.hypot(L.x - x, L.y - y, L.z - z), Math.hypot(L.x - x, L.z - z), dk); // v tme po zemi (ako shader)
+      const L = lights[i], d = Math.hypot(L.x - x, L.y - y, L.z - z); // guľa okolo lampáša (ako shader)
       const f = 1 - Math.min(1, Math.max(0, d / L.w)); const s = f * f * (3 - 2 * f);
       r += lc.x * s; g += lc.y * s; b += lc.z * s; lamp += s;
     }
     let seen = 1;
     if (cd) {
-      const d = lerp(Math.hypot(cd.eye.x - x, cd.eye.y - y, cd.eye.z - z), Math.hypot(cd.eye.x - x, cd.eye.z - z), dk), e = dk * cd.eyeLit.y * (1 - smooth(0, cd.eyeLit.x, d));
+      const d3 = Math.hypot(cd.eye.x - x, cd.eye.y - y, cd.eye.z - z), d = lerp(d3, Math.hypot(cd.eye.x - x, cd.eye.z - z), dk), e = dk * cd.eyeLit.y * (1 - smooth(0, cd.eyeLit.x, d3));
       r += 0.8 * e; g += 0.85 * e; b += e;
       seen = 1 - dk * smooth(cd.eye.w * 0.6, cd.eye.w * 1.15, d) * (1 - Math.min(1, lamp * 1.6));
       r *= seen; g *= seen; b *= seen; // do tmy (tá je takmer čierna)
