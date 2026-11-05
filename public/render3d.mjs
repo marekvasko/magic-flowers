@@ -56,7 +56,7 @@ float gloomAt(float z) {
 }`;
 // Temná plocha (Les divov, D.DARK): slnko len v škvrnách cez koruny a na čistinách (canopy = otvorenosť korún podľa políčka),
 // okolo hráča (eye = bod oka, w = dohľad) slabé svetlo a za dohľadom tma (darkFog). Miesta osvetlené lampášom (aj cudzím)
-// ostanú vidno. Čo je celé v tme, sa nekreslí – vysoké koruny tak nezakryjú pohľad zhora na chodníky.
+// ostanú vidno. Stromy sa kreslia celé (aj koruny v tme); čo zakrýva hráča alebo zem pred ním, sa zoslabí ako v tmavom lese.
 const DARK_GLSL = `
 float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p) {
@@ -120,7 +120,6 @@ void main() {
     float d = distance(vPos, eye.xyz);
     light += vec3(0.8, 0.85, 1.0) * eyeLit.y * (1.0 - smoothstep(0.0, eyeLit.x, d)); // slabé svetlo okolo hráča
     fogK = smoothstep(eye.w * 0.6, eye.w * 1.15, d) * (1.0 - clamp(lamp * 1.6, 0.0, 1.0));
-    if (fogK > 0.985) discard; // celé v tme: nekreslí sa (ani nezakryje, čo je za ním)
   }
   vec3 col = base * vAo * light;
   col = mix(col, gloomFog, gm * 0.3); // v hustom lese visí opar
@@ -433,18 +432,13 @@ export function create(api) {
     speed: 4,          // rýchlosť prechodu (zmena viditeľnosti za sekundu)
     outline: 0.7,      // nepriehľadnosť obrysu
     outlineRamp: 0.15, // obrys je naplno už pri takomto zoslabení – aj slabo zoslabené objekty majú zreteľný obrys
-    dark: { min: 0.2, edge: 0.5, reach: 2 }, // v tmavom lese prepíše hodnoty vyššie a zoslabuje sa aj zem pred hráčom
-    // Les divov (temná plocha): ako tmavý les, ale bez obrysu a obrovské stromy sa nezoslabujú nikdy (solid = typy modelov),
-    // takže niektoré miesta ostanú skryté
-    les: { outline: 0, solid: ['giant'] }
+    dark: { min: 0.2, edge: 0.5, reach: 2 } // v tmavom lese (aj v celom Lese divov) prepíše hodnoty vyššie a zoslabuje sa aj zem pred hráčom
   };
   window.MF_FADE_DEFAULTS = FADE_DEFAULTS;
   function fadeCfg() {
     const u = window.MF_FADE || {}, c = Object.assign({}, FADE_DEFAULTS, u);
-    const les = D.isDark(S.area);
-    c.inDark = les || D.gloomAt(S.area, S.me.y) >= c.darkFrom;
+    c.inDark = D.isDark(S.area) || D.gloomAt(S.area, S.me.y) >= c.darkFrom;
     if (c.inDark) Object.assign(c, FADE_DEFAULTS.dark, u.dark || {});
-    if (les) Object.assign(c, FADE_DEFAULTS.les, u.les || {});
     return c;
   }
   let mesh = null, grid = null, builtSeason = -1, builtGen = -1;
@@ -1243,8 +1237,7 @@ void main() {
     const out = new Map();
     if (window.MF_NOFADE || !grid) return out;
     const toCam = camera.position.clone().sub(camTarget).normalize(), hits = new Set();
-    const solid = cfg.solid || [];
-    const lower = (m, v) => { if (m && !solid.includes(m.userData.type) && !(out.get(m) <= v)) out.set(m, v); };
+    const lower = (m, v) => { if (m && !(out.get(m) <= v)) out.set(m, v); };
     let fx, fz;
     if (cfg.dir === 'camera') { const hl = Math.hypot(toCam.x, toCam.z) || 1; fx = toCam.x / hl; fz = toCam.z / hl; }
     else { const a = S.me.a != null ? S.me.a : DIR_ANGLE[S.me.dir || 0]; fx = Math.cos(a); fz = Math.sin(a); }
@@ -1302,18 +1295,6 @@ void main() {
     }
     return true;
   }
-  // Temná plocha: kreslia sa len modely blízko hráča alebo pri svetle (lampáš) – ďalej je aj tak tma.
-  // Stoviek stromov Lesa divov sa tak naraz kreslí len zopár.
-  function cullDark(eyeR, lights) {
-    const ex = S.me.x, ez = S.me.y;
-    for (const m of fineMeshes) {
-      const b = m.userData.box;
-      const dist = (x, z) => Math.hypot(Math.max(b.min.x - x, 0, x - b.max.x), Math.max(b.min.z - z, 0, z - b.max.z));
-      let on = dist(ex, ez) < eyeR * 1.1 + 0.5;
-      for (let i = 0; !on && i < lights.length; i++) on = dist(lights[i].x, lights[i].z) < lights[i].w + 0.5;
-      m.visible = on;
-    }
-  }
   // Obrys zoslabených objektov cez stencil buffer – v tom istom snímku, bez pomocného obrázka a bez prepínania
   // cieľa vykresľovania (to na mobilných GPU spôsobovalo blikanie celej obrazovky):
   // 1) všetky zoslabené objekty sa označia v stencile, 2) každý sa nakreslí niekoľkokrát posunutý o ~1,5 px do strán
@@ -1331,7 +1312,7 @@ void main() {
   const camRight = new THREE.Vector3(), camUp = new THREE.Vector3();
   function drawOutlines() {
     const cfg = fadeCfg();
-    if (cfg.outline <= 0) return; // Les divov: bez obrysu
+    if (cfg.outline <= 0) return; // obrys vypnutý (MF_FADE = { outline: 0 })
     const cssW = api.glCanvas.getBoundingClientRect().width || 1;
     const px = (camera.right - camera.left) / cssW * 1.5; // ~1,5 CSS px vo svetových jednotkách
     camRight.setFromMatrixColumn(camera.matrixWorld, 0);
@@ -1468,7 +1449,6 @@ void main() {
     const eyeR = dark ? (S.sel === 'lamp' ? dark.lamp : dark.sight) : 0;
     if (dark) {
       material.uniforms.eye.value.set(S.me.x, groundY(S.me.x, S.me.y) + 0.9, S.me.y, eyeR);
-      cullDark(eyeR, lights);
       updateShafts(curSunDir, W.daylight(min), eyeR);
     }
 
