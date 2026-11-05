@@ -64,6 +64,23 @@ test('graf prechodov: každý prechod je na okraji, vedie späť a príchod je v
   assert.deepStrictEqual(D.GATES.les.map(g => D.gateSide('les', g) + g.to), ['spomedzie', 'spomedzie']);
 });
 
+test('príchod: celé telo hráča stojí na priechodnej zemi a odtiaľ sa dá dôjsť k prechodu späť (200 semienok)', () => {
+  for (const [key, a] of Object.entries(D.ARRIVE)) {
+    const [from, to] = key.split('>'), { w, h } = D.areaSize(to);
+    const corners = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sy]) => [Math.floor(a.x + sx * D.BODY.rx), Math.floor(a.y + sy * D.BODY.ry)]);
+    const back = D.GATES[to].filter(g => g.to === from);
+    for (const seed of SEEDS) {
+      const tiles = D.buildArea(to, seed);
+      for (const [x, y] of corners) assert.ok(!D.BLOCK[tiles[y * w + x]], `${key} semienko ${seed}: pod telom na ${x},${y} je ${tiles[y * w + x]}`);
+      const seen = reach(tiles, w, h, corners[0][1] * w + corners[0][0]);
+      for (const [x, y] of corners) assert.ok(seen[y * w + x], `${key} semienko ${seed}: políčka pod telom sú spojené`);
+      assert.ok(back.some(g => seen[g.y * w + g.x]), `${key} semienko ${seed}: z príchodu sa dá dôjsť k prechodu späť`);
+    }
+  }
+  // generátor drží voľné práve políčka pod telom na príchodovom mieste
+  assert.deepStrictEqual([...D.arrivalTiles('les')].map(i => [i % D.LES_W, (i / D.LES_W) | 0]).sort(), [[19, 65], [20, 65]]);
+});
+
 test('prechod záhrada ↔ Les na pomedzí: gateTarget podľa políčka', () => {
   const garden = D.buildMap().map(g => ({ g })), pom = Areas.loadPomedzie(42);
   const ge = D.GATES.garden.find(g => g.to === 'pomedzie'), pw = D.GATES.pomedzie[0];

@@ -305,6 +305,17 @@
     'pomedzie>les': { x: LES_SOUTH[1], y: LES_H - 2.4 }, 'les>pomedzie': { x: POMEDZIE_NORTH[1], y: 1.6 }
   };
   function arrival(from, to) { return ARRIVE[from + '>' + to] || null; }
+  // Telo hráča pri chôdzi: polovičná šírka a hĺbka (políčka) – postava sa pohne, len keď celé telo stojí na priechodnej zemi
+  const BODY = { rx: 0.26, ry: 0.16 };
+  // Indexy políčok plochy area, na ktorých stojí telo hráča na niektorom príchodovom mieste – generátor na ne nič nepostaví
+  function arrivalTiles(area) {
+    const { w } = areaSize(area), out = new Set();
+    for (const [k, a] of Object.entries(ARRIVE)) {
+      if (k.split('>')[1] !== area) continue;
+      for (const dy of [-BODY.ry, BODY.ry]) for (const dx of [-BODY.rx, BODY.rx]) out.add(Math.floor(a.y + dy) * w + Math.floor(a.x + dx));
+    }
+    return out;
+  }
   // Prechod na políčku (x, y) plochy area, alebo null
   function gateAt(area, x, y) { return (GATES[area] || []).find(g => g.x === x && g.y === y) || null; }
   // Na ktorú stranu plochy prechod vedie (podľa okraja, na ktorom leží): 'n', 's', 'w', 'e'
@@ -505,6 +516,8 @@
     // Na severe už len stromy a chodník
     for (let yy = 0; yy <= 2; yy++) for (let xx = 0; xx < w; xx++) if (at(xx, yy) !== 'path') set(xx, yy, 'tree');
     for (const gt of GATES.pomedzie) set(gt.x, gt.y, 'gate');
+    // Pod telom hráča na príchodovom mieste nič nerastie
+    for (const i of arrivalTiles('pomedzie')) if (BLOCK[g[i]]) g[i] = 'path';
     // Každé priechodné políčko musí byť dosiahnuteľné od prechodu – uzavreté kúty zarastú
     const seen = new Uint8Array(w * h), q = [gy * w];
     seen[gy * w] = 1;
@@ -624,10 +637,11 @@
     }
     for (const gt of GATES.les) g[gt.y * w + gt.x] = 'gate';
     // Chodníky ostanú úzke (1–2 políčka): kde je mimo čistiny voľné miesto 3 × 3, jeho stred zarastie krom.
-    // Nič sa tým neodreže – okolo stredu ostane voľný kruh ôsmich políčok. Príchodové miesto ostane voľné.
-    const arrive = ARRIVE['pomedzie>les'], ai = Math.floor(arrive.y) * w + Math.floor(arrive.x);
+    // Nič sa tým neodreže – okolo stredu ostane voľný kruh ôsmich políčok. Políčka pod telom hráča na príchodovom mieste ostanú voľné.
+    const arrive = arrivalTiles('les');
+    for (const i of arrive) if (BLOCK[g[i]]) g[i] = 'path';
     for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
-      if (y * w + x === ai) continue;
+      if (arrive.has(y * w + x)) continue;
       let all = true, gl = false;
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const i = (y + dy) * w + x + dx; all = all && !BLOCK[g[i]]; gl = gl || glade[i]; }
       if (all && !gl && rnd() >= sparse[y * w + x] * 1.5) g[y * w + x] = 'bush';
@@ -740,7 +754,7 @@
     CHAT_MAX, chatText,
     W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
-    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_HEART, sunZone, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt, viewDiagAt,
+    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, BODY, arrivalTiles, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_HEART, sunZone, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt, viewDiagAt,
     sellPrice, itemName, buildMap, buildMountains, buildPomedzie, buildLes, buildArea, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
   };
   root.GameData = api;

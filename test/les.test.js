@@ -77,7 +77,7 @@ test('Les divov: obrovské stromy na 2 × 2 políčkach, úzke chodníky, čisti
     for (let y = 0; y < LH - 2; y++) for (let x = 0; x < LW - 2; x++) {
       let open = true, glade = false;
       for (let dy = 0; dy < 3; dy++) for (let dx = 0; dx < 3; dx++) { const t = at(x + dx, y + dy); if (D.BLOCK[t]) open = false; if (t === 'glade' || t === 'fern' || t === 'fungi') glade = true; }
-      const a = D.arrival('pomedzie', 'les'), atArrival = x + 1 === Math.floor(a.x) && y + 1 === Math.floor(a.y); // pri vstupe môže byť rázcestie
+      const atArrival = D.arrivalTiles('les').has((y + 1) * LW + x + 1); // pri vstupe (pod telom hráča) môže byť rázcestie
       const H = D.LES_HEART, heart = Math.hypot((x + 1 - (LW - 1) / 2) / H.rx, (y + 1 - (LH - 1) / 2) / H.ry) < H.ring + 0.1; // riedky les okolo srdca
       if (open && !atArrival && !heart) assert.ok(glade, `semienko ${seed}: široké miesto ${x},${y} mimo čistiny`);
     }
