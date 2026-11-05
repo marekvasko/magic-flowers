@@ -1,4 +1,4 @@
-// 3D častice: dážď (kvapky s čľapnutím a kruhmi na vode), oheň pod kotlíkom (plamene, iskry, dym),
+// 3D častice: dážď (kvapky s čľapnutím a kruhmi na vode), sneh (vločky dopadnú na konkrétne miesto a roztopia sa), oheň pod kotlíkom (plamene, iskry, dym),
 // víly s trblietavou stopou, padajúce lístie zo stromov a hlinka pri hľadaní semienok v tráve. Všetko je vo svete (nie na obrazovke),
 // takže častice sa hýbu s kamerou, zakrývajú ich budovy a padajú na zem.
 import * as THREE from '/vendor/three/three.module.js';
@@ -76,6 +76,7 @@ function pointPool(scene, cap, blending) {
 export function createParticles({ scene, camera, renderer, W, D, S, api, ripple }) {
   const glow = pointPool(scene, 1400, THREE.AdditiveBlending);
   const soft = pointPool(scene, 900, THREE.NormalBlending);
+  const snowPool = pointPool(scene, 700, THREE.NormalBlending);
 
   // ---------- Kvalita (nastavenie zariadenia): na telefóne predvolene menej častíc ----------
   const QUALITY = ['low', 'high'];
@@ -100,6 +101,11 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
   const drops = [];
   const WIND = 1.6, FALL = 13, TOP = 8;
   let lastRipple = 0;
+
+  // ---------- Sneh: vločky padajú pomaly, kolíšu sa, dopadnú na zem a chvíľu na nej ležia ----------
+  const SNOW_MAX = 520, SNOW_FALL = 1.1, SNOW_WIND = 0.35, SNOW_TOP = 9, SNOW_REST = 2.5;
+  const SNOW_COL = [0.97, 0.98, 1];
+  let flakes = [];
 
   // ---------- Stav častíc ----------
   let flames = [], embers = [], smoke = [], sparks = [], leaves = [], splashes = [], digs = [];
@@ -145,9 +151,9 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
     const litC = c => [c[0] * lit[0], c[1] * lit[1], c[2] * lit[2]];
     camRight.setFromMatrixColumn(camera.matrixWorld, 0);
     const buf = renderer.getDrawingBufferSize(new THREE.Vector2());
-    glow.mat.uniforms.pxPerUnit.value = soft.mat.uniforms.pxPerUnit.value = buf.y / (camera.top - camera.bottom);
+    glow.mat.uniforms.pxPerUnit.value = soft.mat.uniforms.pxPerUnit.value = snowPool.mat.uniforms.pxPerUnit.value = buf.y / (camera.top - camera.bottom);
     glow.toCam.copy(camera.position).sub(target).normalize(); soft.toCam.copy(glow.toCam);
-    glow.begin(); soft.begin();
+    glow.begin(); soft.begin(); snowPool.begin();
 
     // ---- oheň pod kotlíkom: plamene (krátke, olizujú hrniec zospodu), iskry, dym ----
     const fc = ctx.cauldron;
@@ -330,6 +336,44 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
       return true;
     });
 
+    // ---- sneh: počasie „sneh“ alebo v zime občasné sneženie (nie počas dažďa) ----
+    const snowing = !raining && (S.weather === 'snow' || (se === 3 && Math.sin(t * 0.1) > 0.5));
+    const snowWant = snowing ? Math.round(SNOW_MAX * q) : 0;
+    // nové vločky sa objavia v rôznej výške, aby sneženie nezačalo naraz celou vrstvou
+    while (flakes.length < snowWant) flakes.push(newFlake(rnd(0, SNOW_TOP)));
+    function newFlake(h) {
+      const x = target.x + rnd(-span, span), z = target.z + rnd(-span, span);
+      return { x, z, y: groundAt(grid, x, z) + h, v: rnd(0.7, 1.3), ph: Math.random() * 9, sw: rnd(0.15, 0.4), s: rnd(0.13, 0.2), rest: -1, out: false };
+    }
+    // keď prestane snežiť, vločky dopadajú ďalej, len sa už nevracajú hore
+    for (let i = snowWant; i < flakes.length; i++) flakes[i].out = true;
+    const sc = litC(SNOW_COL);
+    flakes = flakes.filter(p => {
+      if (p.rest < 0) {
+        p.y -= SNOW_FALL * p.v * dt;
+        p.x += (SNOW_WIND + Math.sin(t * 1.3 + p.ph) * p.sw) * dt;
+        p.z += Math.cos(t * 0.9 + p.ph * 1.7) * p.sw * 0.7 * dt;
+        // vločka mimo štvorca okolo hráča sa objaví na druhej strane
+        if (p.x - target.x > span) p.x -= 2 * span; else if (p.x - target.x < -span) p.x += 2 * span;
+        if (p.z - target.z > span) p.z -= 2 * span; else if (p.z - target.z < -span) p.z += 2 * span;
+        const ti = tileAt(p.x, p.z), water = ti >= 0 && S.tiles[ti].g === 'water';
+        const g = water ? W.WATER_Y : groundAt(grid, p.x, p.z);
+        // za okrajom ostrova niet kam dopadnúť – vločka padá ďalej dolu a potom sa vráti hore
+        if (ti < 0) { if (p.y < target.y - 8) p.rest = SNOW_REST; }
+        else if (p.y <= g + 0.01) {
+          p.y = g + 0.01;
+          p.rest = water ? SNOW_REST - 0.3 : 0; // na vode sa roztopí hneď
+        }
+      } else p.rest += dt;
+      if (p.rest >= SNOW_REST) {
+        if (p.out) return false;
+        Object.assign(p, newFlake(SNOW_TOP + rnd(0, 2)));
+      }
+      const a = p.rest < 0 ? 0.95 : 0.95 * Math.min(1, (SNOW_REST - p.rest) / 1.2);
+      snowPool.put(p.x, p.y, p.z, sc, p.rest < 0 ? p.s : p.s * 1.15, a, SOFT);
+      return true;
+    });
+
     // ---- hľadanie semienok: zo stredu hľadaného políčka jemne odletuje hlinka a tráva sprava doľava (na obrazovke) ----
     const diggers = [S.mySi].concat([...S.others.values()].map(o => o.si)).filter(si => si != null && si >= 0);
     for (const si of diggers) {
@@ -349,7 +393,7 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
       return true;
     });
 
-    glow.end(); soft.end();
+    glow.end(); soft.end(); snowPool.end();
   }
 
   return { update, fairyLights, setQuality, get quality() { return quality; } };
