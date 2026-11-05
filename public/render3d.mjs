@@ -14,6 +14,7 @@ const MAX_LIGHTS = 16;
 // blčanie svetiel (pomerná zmena dosahu): oheň, lampáš, okno, ostatné (hráči, kvety, víly)
 const FL_FIRE = 0.16, FL_LANTERN = 0.08, FL_WINDOW = 0.035, FL_SOFT = 0.03;
 const LAMP_R = 6.5; // dosah svetla lampáša v ruke (políčka)
+const LAMP_DUSK = 0.8; // lampáš (aj okná, oheň…) horí, keď je svetla menej než toto (deň × stmavnutie lesa)
 // plynulý „plameňový“ šum zo súčtu sínusov s nesúdeliteľnými frekvenciami
 function flicker(t, seed, amt) {
   const n = 0.5 * Math.sin(t * 7.3 + seed) + 0.3 * Math.sin(t * 13.7 + seed * 2.1) + 0.2 * Math.sin(t * 23.9 + seed * 3.7);
@@ -364,14 +365,14 @@ export function create(api) {
   const depthOnlyMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: 'void main() { gl_FragColor = vec4(0.0); }', uniforms: material.uniforms, transparent: true, depthWrite: true, colorWrite: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 });
   // svet v zrkadle pod hladinou: rovnaký shader, stačia 4 vzorky tieňa
   const reflMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { SHADOW_TAPS: 4 }, uniforms: material.uniforms });
-  // Zoslabovanie objektov: všade sa zoslabí objekt, za ktorým stojí hráč (zakrýva ho). V lese (fanAreas) navyše tak,
-  // aby bolo vidno zem v smere pohľadu: vejár bodov na zemi pred hráčom (do reach blokov, rozširuje sa) – z každého bodu
+  // Zoslabovanie objektov: všade sa zoslabí objekt, za ktorým stojí hráč (zakrýva ho). V tmavom lese (od miesta, kde les
+  // berie toľko svetla, že sa aj cez deň rozsvieti lampáš) navyše tak, aby bolo vidno zem v smere pohľadu: vejár bodov na zemi pred hráčom (do reach blokov, rozširuje sa) – z každého bodu
   // sa vedie lúč ku kamere a objekty, ktoré ho zakrývajú, sa zoslabia: pri hráčovi najviac, ďalej menej.
   // Objekty vedľa a za touto zemou nič nezakrývajú, ostanú plné. Obrys majú všetky zoslabené.
-  // Ladí sa za behu v konzole: window.MF_FADE = { reach: 5, edge: 0.7 } prepíše len uvedené hodnoty
+  // Ladí sa za behu v konzole: window.MF_FADE = { min: 0.25, dark: { reach: 3 } } prepíše len uvedené hodnoty
   // (predvolené sú v window.MF_FADE_DEFAULTS); window.MF_NOFADE = true zoslabovanie vypne.
   const FADE_DEFAULTS = {
-    fanAreas: ['pomedzie'], // plochy, kde sa zoslabuje aj zem pred hráčom (inde len objekty, za ktorými hráč stojí)
+    darkFrom: 1 - LAMP_DUSK, // od akého stmavnutia (D.gloomAt) je les tmavý – tam, kde sa cez deň rozsvieti lampáš
     dir: 'facing',     // smer pohľadu: 'facing' = kam sa pozerá postavička, 'camera' = smerom ku kamere (dolu na obrazovke)
     min: 0.3,          // viditeľnosť objektu, ktorý zakrýva zem pri hráčovi alebo samého hráča (0 = neviditeľný, 1 = plný)
     edge: 0.8,         // viditeľnosť objektu, ktorý zakrýva zem na konci vejára (vo vzdialenosti reach)
@@ -383,10 +384,16 @@ export function create(api) {
     hold: 400,         // ms – ako dlho ostane objekt zoslabený, keď už nič nezakrýva (pri otáčaní nebliká)
     speed: 4,          // rýchlosť prechodu (zmena viditeľnosti za sekundu)
     outline: 0.7,      // nepriehľadnosť obrysu
-    outlineRamp: 0.15  // obrys je naplno už pri takomto zoslabení – aj slabo zoslabené objekty majú zreteľný obrys
+    outlineRamp: 0.15, // obrys je naplno už pri takomto zoslabení – aj slabo zoslabené objekty majú zreteľný obrys
+    dark: { min: 0.2, edge: 0.5, reach: 2 } // v tmavom lese prepíše hodnoty vyššie a zoslabuje sa aj zem pred hráčom
   };
   window.MF_FADE_DEFAULTS = FADE_DEFAULTS;
-  const fadeCfg = () => Object.assign({}, FADE_DEFAULTS, window.MF_FADE || {});
+  function fadeCfg() {
+    const u = window.MF_FADE || {}, c = Object.assign({}, FADE_DEFAULTS, u);
+    c.inDark = D.gloomAt(S.area, S.me.y) >= c.darkFrom;
+    if (c.inDark) Object.assign(c, FADE_DEFAULTS.dark, u.dark || {});
+    return c;
+  }
   let mesh = null, grid = null, builtSeason = -1, builtGen = -1;
   const AXES = [[0, 1, 2], [1, 2, 0], [2, 0, 1]]; // [normálová os, u, v] – u × v = normála
 
@@ -1051,7 +1058,7 @@ export function create(api) {
     if (cfg.dir === 'camera') { const hl = Math.hypot(toCam.x, toCam.z) || 1; fx = toCam.x / hl; fz = toCam.z / hl; }
     else { const a = S.me.a != null ? S.me.a : DIR_ANGLE[S.me.dir || 0]; fx = Math.cos(a); fz = Math.sin(a); }
     const px = S.me.x, pz = S.me.y, step = Math.max(0.1, cfg.step);
-    if ((cfg.fanAreas || []).includes(S.area)) for (let d = 0; d <= cfg.reach + 1e-6; d += step) {
+    if (cfg.inDark) for (let d = 0; d <= cfg.reach + 1e-6; d += step) {
       const hw = cfg.width + cfg.spread * d;
       const vis = cfg.min + (cfg.edge - cfg.min) * Math.max(0, Math.min(1, (d - cfg.near) / Math.max(0.01, cfg.reach - cfg.near)));
       for (let k = -hw; k <= hw + 1e-6; k += step) {
@@ -1210,8 +1217,8 @@ export function create(api) {
     const lights = [];
     // v tmavom lese je šero aj cez deň – lampáše svietia podľa svetla tam, kde stojí hráč
     const dl = W.daylight(min) * (1 - D.gloomAt(S.area, S.me.y));
-    const lampState = dl < 0.8 ? 'lit' : 'on'; // lampáš v ruke horí, len keď je šero
-    if (dl < 0.8) {
+    const lampState = dl < LAMP_DUSK ? 'lit' : 'on'; // lampáš v ruke horí, len keď je šero
+    if (dl < LAMP_DUSK) {
       const A = api.S.anchors;
       const add = (x, y, z, r, fl) => { if (lights.length < MAX_LIGHTS) lights.push(new THREE.Vector4(x, y, z, r * flicker(t, x * 7.1 + z * 3.3, fl || FL_SOFT))); };
       // hráč svieti, len keď drží lampáš (svetlo pri ruke, blčí ako plameň); bez lampáša je potme
