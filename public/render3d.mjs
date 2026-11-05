@@ -1152,6 +1152,17 @@ void main() {
       small.push(q.length <= RAY_PATCH * RAY_RES * RAY_RES);
     }
     const lit = (i, j) => sun(i, j) && small[patch[j * nx + i]];
+    // špička tieňa: úzky koniec tieňa vybiehajúci do slnka (tieň s najviac 3 tienistými susedmi z 8) – lúč od nej ide
+    // po vrchol stromu, ktorý ju vrhá (posledný lúč, čo ho ešte obíde)
+    const inMask = (i, j) => i >= 0 && j >= 0 && i < nx && j < nz;
+    const tip = (i, j) => {
+      if (!inMask(i, j) || sun(i, j)) return false;
+      let n = 0;
+      for (let b = -1; b <= 1; b++) for (let a = -1; a <= 1; a++) if ((a || b) && inMask(i + a, j + b) && !sun(i + a, j + b)) n++;
+      return n <= 3;
+    };
+    // hrana medzi bunkami (ai, aj) a (bi, bj) má lúč: svetlo / tieň a buď malá škvrna svetla, alebo špička tieňa
+    const ray = (ai, aj, bi, bj) => sun(ai, aj) !== sun(bi, bj) && (lit(ai, aj) || lit(bi, bj) || tip(ai, aj) || tip(bi, bj));
     // vzdialenosť od zeme po to, čo tieň vrhá (len v tieni; mimo masky nič)
     const casterAt = (i, j) => i >= 0 && j >= 0 && i < nx && j < nz ? buf[(j * nx + i) * 4 + 1] / 255 * RAY_MAX : 0;
     // váha okraja zóny – rovnaká ako stmavnutie slnka v shaderi
@@ -1168,17 +1179,17 @@ void main() {
     // hrany medzi svetlom a tieňom, zlúčené do úsekov najviac jedného políčka (váha okraja sa medzi koncami len lineárne mieša);
     // dĺžka lúča = vzdialenosť tieniacej hrany nad tienistou stranou (úsek sa rozdelí, keď sa výrazne zmení)
     for (let i = 0; i <= nx; i++) for (let j = 0; j < nz;) {
-      if (lit(i - 1, j) === lit(i, j)) { j++; continue; }
-      const k = lit(i, j), sh = k ? i - 1 : i, L0 = casterAt(sh, j), j0 = j;
+      if (!ray(i - 1, j, i, j)) { j++; continue; }
+      const k = sun(i, j), sh = k ? i - 1 : i, L0 = casterAt(sh, j), j0 = j;
       let sum = 0;
-      while (j < nz && j - j0 < RAY_RES && lit(i - 1, j) !== lit(i, j) && lit(i, j) === k && Math.abs(casterAt(sh, j) - L0) < 1) sum += casterAt(sh, j++);
+      while (j < nz && j - j0 < RAY_RES && ray(i - 1, j, i, j) && sun(i, j) === k && Math.abs(casterAt(sh, j) - L0) < 1) sum += casterAt(sh, j++);
       quad(x0 + i * c, z0 + j0 * c, x0 + i * c, z0 + j * c, sum / (j - j0));
     }
     for (let j = 0; j <= nz; j++) for (let i = 0; i < nx;) {
-      if (lit(i, j - 1) === lit(i, j)) { i++; continue; }
-      const k = lit(i, j), sh = k ? j - 1 : j, L0 = casterAt(i, sh), i0 = i;
+      if (!ray(i, j - 1, i, j)) { i++; continue; }
+      const k = sun(i, j), sh = k ? j - 1 : j, L0 = casterAt(i, sh), i0 = i;
       let sum = 0;
-      while (i < nx && i - i0 < RAY_RES && lit(i, j - 1) !== lit(i, j) && lit(i, j) === k && Math.abs(casterAt(i, sh) - L0) < 1) sum += casterAt(i++, sh);
+      while (i < nx && i - i0 < RAY_RES && ray(i, j - 1, i, j) && sun(i, j) === k && Math.abs(casterAt(i, sh) - L0) < 1) sum += casterAt(i++, sh);
       quad(x0 + i0 * c, z0 + j * c, x0 + i * c, z0 + j * c, sum / (i - i0));
     }
     sunRays.geometry.dispose();
