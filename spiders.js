@@ -436,7 +436,7 @@ function websView(room) {
   return { t: 'webs', webs: room.spid.webs.map(wb => ({ id: wb.id, x: wb.x, y: wb.y, ax: wb.ax, n: wb.n, silk: wb.silk })), homes: f.homes.map(h => ({ k: h.k, x: h.x, y: h.y })) };
 }
 function websMsg(room) { io.broadcastArea(room, 'les', websView(room)); }
-function cornerView(room, area) { return { t: 'corner', area, list: cornerList(room, area).map(s => ({ x: s.x, y: s.y, dx: s.dx, dy: s.dy, ex: s.ex, ey: s.ey })) }; }
+function cornerView(room, area) { return { t: 'corner', area, list: cornerList(room, area).map(s => ({ x: s.x, y: s.y, dx: s.dx, dy: s.dy, ex: s.ex, ey: s.ey, f: s.faces })) }; }
 function cornerMsg(room, area) { io.broadcastArea(room, area, cornerView(room, area)); }
 // Čo hráč na ploche dostane pri príchode (pavučiny lesa alebo kúty)
 function areaViews(room, area) {

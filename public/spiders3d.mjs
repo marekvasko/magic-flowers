@@ -62,10 +62,10 @@ export const WEB_FRAG = (MAX) => `
 precision highp float;
 #define TAU 6.28318530718
 uniform vec2 uSize; uniform float uKeep;
-uniform vec4 uMode; // x výplň (0 špirála, 1 kruhy), y kútová (spleť), z počet lúčov, w rozostup závitov
+uniform vec4 uMode; // x výplň (0 špirála, 1 kruhy), z počet lúčov, w rozostup závitov
 uniform vec4 uA;    // ohnutie lúčov, jeho frekvencia, zvlnenie závitov, jeho frekvencia
 uniform vec4 uB;    // stred, voľná zóna, polomer, šum okraja
-uniform vec4 uD;    // šum rozostupu, prehnutie nosných vlákien, závoj kútovej pavučiny
+uniform vec4 uD;    // šum rozostupu, prehnutie nosných vlákien
 uniform vec4 uE;    // rozptyl počtu lúčov, počet stredov, kotviace vlákna na ľavom a pravom kmeni
 uniform vec4 uHX; uniform vec4 uHY; // stredy (najviac 4)
 ${SILK_GLSL(MAX)}
@@ -88,34 +88,6 @@ float thread(float d, float w) {
 }
 float segDist(vec2 p, vec2 a, vec2 b) { vec2 ab = b - a; float t = clamp(dot(p - a, ab) / dot(ab, ab), 0.0, 1.0); return length(p - a - ab * t); }
 vec2 hub(int i) { return vec2(uHX[i], uHY[i]); }
-
-// Kútová pavučina (krížiak, zaprášený kút): šikmá plocha od steny (hore, y = výška) k zemi (dole) pri päte steny;
-// x = šírka je koniec steny. Pavučina je trojuholníková blana vtlačená do kúta pri konci steny: veľa krátkych vlákien
-// krížom-krážom, pár dlhých nosných a zaprášený závoj (Perlinov šum), najhustejší pri samom kúte.
-float tangle(vec2 p, out vec2 tl, out float veil) {
-  vec2 S = uSize, q = p / S; float m = 0.0, w = uC.x * 0.55; tl = vec2(0.0, 1.0);
-  float tri = q.x + q.y; // trojuholník pri konci steny: q.x + q.y ≥ 1
-  if (tri < 0.85) { veil = 0.0; return 0.0; }
-  for (int i = 0; i < 36; i++) { // krátke vlákna krížom-krážom
-    float fi = float(i);
-    vec2 u = vec2(h11(fi), h11(fi + 7.0)); if (u.x + u.y < 1.0) u = 1.0 - u; // náhodný bod v trojuholníku
-    float an = h11(fi + 13.0) * TAU, ln = (0.12 + 0.3 * h11(fi + 19.0)) * S.x;
-    vec2 a = u * S, b = a + vec2(cos(an), sin(an)) * ln;
-    float t = thread(segDist(p, a, b), w) * (0.4 + 0.5 * h11(fi + 23.0));
-    if (t > m) { m = t; tl = normalize(b - a); }
-  }
-  for (int i = 0; i < 7; i++) { // nosné: z konca steny (x = šírka) na stenu (y = výška), mierne prehnuté
-    float fi = float(i) + 90.0;
-    vec2 a = vec2(S.x, h11(fi) * S.y), b = vec2((0.05 + 0.9 * h11(fi + 5.0)) * S.x, S.y);
-    vec2 c = mix(a, b, 0.5) - vec2(0.06, 0.06) * S * h11(fi + 9.0);
-    float t = thread(min(segDist(p, a, c), segDist(p, c, b)), w * 1.2);
-    if (t > m) { m = t; tl = normalize(b - a); }
-  }
-  m *= smoothstep(0.85, 1.0, tri);
-  float n = perlin(p * 14.0 + gSeed) * 0.6 + perlin(p * 37.0) * 0.4;
-  veil = uD.z * smoothstep(0.9, 1.45, tri) * smoothstep(-0.3, 0.3, n);
-  return m;
-}
 
 // Kruhová (orb) pavučina okolo stredu c (jeden z viacerých stredov veľkej pavučiny)
 float orb(vec2 p, vec2 c, float cellW, bool inside, out vec2 tl) {
@@ -143,9 +115,7 @@ void main() {
   gSeed = uSeed;
   vec2 tl = vec2(1.0, 0.0);
   float mask = 0.0, veil = 0.0, W = uC.x;
-  if (uMode.y > 0.5) {
-    mask = tangle(vP, tl, veil);
-  } else {
+  {
     float nH = uE.y;
     // najbližší stred (každý stred je samostatná kruhová pavučina, susedné zdieľajú deliace vlákno)
     float d1 = 1e9, d2 = 1e9; int bi = 0; vec2 c1 = hub(0), c2 = hub(0);
@@ -190,22 +160,22 @@ void main() {
   if (max(mask, veil) < 0.003) discard;
   gl_FragColor = silkShade(normalize(vAx * tl.x + vAy * tl.y), vPos, mask, veil);
 }`;
-// Materiál jednej pavučiny: P = Webs.webParams(...), opts = { w, h, seed, keep (0–1 koľko vlákien ostalo), corner }.
+// Materiál jednej pavučiny: P = Webs.webParams(...), opts = { w, h, seed, keep (0–1 koľko vlákien ostalo) }.
 // Veľká pavučina má náhodne veľa stredov (1 … P.hubs, na každý aspoň P.hubSpan políčka šírky) a na každom kmeni
 // náhodne veľa kotviacich vlákien (P.moorMin … P.moor).
 // world = uniformy svetla (svet v hre, vlastné v ladiacej stránke), view = { value: Vector3 } smer ku kamere.
 export function webMaterial(THREE, world, view, P, opts, maxLights) {
-  const { w, h, corner } = opts, L = window.Webs.webLayout(P, opts);
+  const { w, h } = opts, L = window.Webs.webLayout(P, opts);
   const hx = [0, 0, 0, 0], hy = [0, 0, 0, 0];
   L.hubs.forEach((c, i) => { hx[i] = c.x; hy[i] = c.y; });
   const mat = new THREE.ShaderMaterial({
     vertexShader: WEB_VERT, fragmentShader: WEB_FRAG(maxLights), transparent: true, depthWrite: false, side: THREE.DoubleSide,
-    uniforms: Object.assign(silkUniforms(THREE, world, view, P, L.seed, corner), {
+    uniforms: Object.assign(silkUniforms(THREE, world, view, P, L.seed), {
       uSize: { value: new THREE.Vector2(w, h) }, uKeep: { value: opts.keep == null ? 1 : opts.keep },
-      uMode: { value: new THREE.Vector4(L.fill, corner ? 1 : 0, P.rays, L.pitch) },
+      uMode: { value: new THREE.Vector4(L.fill, 0, P.rays, L.pitch) },
       uA: { value: new THREE.Vector4(P.bend, P.bendFreq, P.wobble, P.wobbleFreq) },
       uB: { value: new THREE.Vector4(P.hub, P.free, P.radius, P.edgeNoise) },
-      uD: { value: new THREE.Vector4(P.pitchNoise, P.sag, corner ? P.veil : 0, 0) },
+      uD: { value: new THREE.Vector4(P.pitchNoise, P.sag, 0, 0) },
       uE: { value: new THREE.Vector4(P.raysVar, L.nH, L.moor[0], L.moor[1]) },
       uHX: { value: new THREE.Vector4(...hx) }, uHY: { value: new THREE.Vector4(...hy) }
     })
@@ -213,11 +183,11 @@ export function webMaterial(THREE, world, view, P, opts, maxLights) {
   mat.userData.info = { hubs: L.nH, moor: L.moor, fill: L.fill, render: 'shader' };
   return mat;
 }
-function silkUniforms(THREE, world, view, P, seed, corner) {
+function silkUniforms(THREE, world, view, P, seed) {
   return {
     ambient: world.ambient, sunColor: world.sunColor, sunDir: world.sunDir, lampColor: world.lampColor, lights: world.lights, lightCount: world.lightCount,
     darkOn: world.darkOn, eye: world.eye, eyeLit: world.eyeLit, uView: view, uSeed: { value: seed % 97 },
-    uC: { value: new THREE.Vector4(P.width * (corner ? 1.2 : 1), P.glint, P.iri, P.alpha) }
+    uC: { value: new THREE.Vector4(P.width, P.glint, P.iri, P.alpha) }
   };
 }
 
@@ -254,20 +224,26 @@ void main() {
 // posuny kópií v pixeloch (z = sila kópie): 1 = len vlákno, 2–4 = hrubšie
 const COPIES = [[0, 0, 1], [1, 0, 0.6], [0, 1, 0.6], [1, 1, 0.35]];
 export function webLines(THREE, world, view, P, opts, maxLights, frame) {
-  const th = window.Webs.webThreads(P, opts), L = th.layout;
-  const g = new THREE.InstancedBufferGeometry();
+  return linesMesh(THREE, world, view, P, window.Webs.webThreads(P, opts), { w: opts.w, h: opts.h, sway: P.sway }, maxLights, frame);
+}
+// Kútová pavučina (krížiak): 3D trojuholník v kúte (Webs.cornerThreads) – vždy z čiar; súradnice kúta (pozri webs.js)
+export function cornerLines(THREE, world, view, P, opts, maxLights, frame) {
+  return linesMesh(THREE, world, view, P, window.Webs.cornerThreads(P, opts), { w: 1, h: 1, sway: 0 }, maxLights, frame);
+}
+function linesMesh(THREE, world, view, P, th, o, maxLights, frame) {
+  const L = th.layout, g = new THREE.InstancedBufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(th.pos, 3));
   g.setAttribute('aT', new THREE.BufferAttribute(th.tan, 3));
-  const n = P.copies, off = COPIES.slice(0, n), cx = off.reduce((s, o) => s + o[0], 0) / n, cy = off.reduce((s, o) => s + o[1], 0) / n;
-  g.setAttribute('aOff', new THREE.InstancedBufferAttribute(new Float32Array(off.flatMap(o => [o[0] - cx, o[1] - cy, o[2]])), 3));
+  const n = P.copies, off = COPIES.slice(0, n), cx = off.reduce((s, q) => s + q[0], 0) / n, cy = off.reduce((s, q) => s + q[1], 0) / n;
+  g.setAttribute('aOff', new THREE.InstancedBufferAttribute(new Float32Array(off.flatMap(q => [q[0] - cx, q[1] - cy, q[2]])), 3));
   g.instanceCount = n;
   const mat = new THREE.ShaderMaterial({
     vertexShader: LINE_VERT, fragmentShader: LINE_FRAG(maxLights), transparent: true, depthWrite: false,
-    uniforms: Object.assign(silkUniforms(THREE, world, view, P, L.seed, opts.corner), {
-      uSize: { value: new THREE.Vector2(opts.w, opts.h) }, uRes: frame.res, uTime: frame.time, uSway: { value: P.sway }, uPhase: { value: (L.seed % 97) * 0.6 }
+    uniforms: Object.assign(silkUniforms(THREE, world, view, P, L.seed), {
+      uSize: { value: new THREE.Vector2(o.w, o.h) }, uRes: frame.res, uTime: frame.time, uSway: { value: o.sway }, uPhase: { value: (L.seed % 97) * 0.6 }
     })
   });
-  mat.userData.info = { hubs: L.nH, moor: L.moor, fill: L.fill, render: 'lines', segments: th.count / 2, copies: n };
+  mat.userData.info = { hubs: L.nH, moor: L.moor, fill: L.fill, render: 'lines', segments: th.count / 2, copies: n, hub: th.hub };
   const m = new THREE.LineSegments(g, mat);
   m.frustumCulled = false; // vydutie a kývanie mení tvar mimo pôvodnej rovinky
   return m;
@@ -285,8 +261,8 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
   const view = { value: new THREE.Vector3(0, 1, 0) };
   const params = () => window.Webs.webParams(window.MF_WEB);
   const frame = { res: { value: new THREE.Vector2(1, 1) }, time: { value: 0 } }; // pre pavučiny z čiar
-  function webPlane(w, h, seed, keep, corner) {
-    const P = params(), opts = { w, h, seed, keep, corner };
+  function webPlane(w, h, seed, keep) {
+    const P = params(), opts = { w, h, seed, keep };
     const m = P.render === 1 ? webLines(THREE, world, view, P, opts, maxLights, frame)
       : new THREE.Mesh(new THREE.PlaneGeometry(w, h), webMaterial(THREE, world, view, P, opts, maxLights));
     m.renderOrder = 2;
@@ -303,7 +279,7 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
     for (const wb of S.webs) {
       // od kmeňa po kmeň (vlákna začínajú na oporách), pri nízkom kríku či spadnutom kmeni nižšia
       const g = window.Webs.webGeom(S.tiles, S.W, S.H, wb, window.MF_WEB);
-      const m = webPlane(g.len, g.hgt, wb.id, wb.silk >= 3 ? 1 : wb.silk === 2 ? 0.72 : 0.42, false);
+      const m = webPlane(g.len, g.hgt, wb.id, wb.silk >= 3 ? 1 : wb.silk === 2 ? 0.72 : 0.42);
       const mid = (g.u0 + g.u1) / 2, cx = wb.ax ? g.line : mid, cz = wb.ax ? mid : g.line;
       m.position.set(cx, groundY(Math.floor(cx), Math.floor(cz)) + g.hgt / 2 + 0.02, cz);
       if (wb.ax) m.rotation.y = Math.PI / 2;
@@ -318,26 +294,26 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
     }
   }
   // ---- kútové pavučiny krížiaka: vejár na hrane steny pri zemi, kolmo na stenu ----
+  // Súradnice kúta (Webs.cornerThreads) → svet: počiatok na zemi v kúte, X von zo steny d, Y hore, Z pozdĺž steny
+  // (pri konci steny od jej konca dozadu, pri vnútornom kúte von zo steny e)
+  function cornerMatrix(k) {
+    const gy = groundY(k.x, k.y);
+    const ox = k.x + 0.5 + k.dx * 0.5 + k.ex * 0.5, oz = k.y + 0.5 + k.dy * 0.5 + k.ey * 0.5;
+    return new THREE.Matrix4().makeBasis(new THREE.Vector3(-k.dx, 0, -k.dy), new THREE.Vector3(0, 1, 0), new THREE.Vector3(-k.ex, 0, -k.ey)).setPosition(ox, gy + 0.005, oz);
+  }
   function buildCorners() {
     for (const m of cornerMeshes) drop(m);
     cornerMeshes.length = 0;
-    // šikmo v kúte medzi pätou steny a zemou, pri konci steny: hore sa drží steny, dole zeme
-    const L = 0.7, up = 0.42, out = 0.4;
+    const P = params();
     for (const k of S.corner) {
-      const gy = groundY(k.x, k.y);
-      const fx = k.x + 0.5 + k.dx * 0.5, fz = k.y + 0.5 + k.dy * 0.5; // stred päty steny na hranici políčok
-      const ex = fx + k.ex * 0.5, ez = fz + k.ey * 0.5;                 // koniec steny
-      const top = new THREE.Vector3(ex - k.ex * L / 2, gy + up, ez - k.ey * L / 2);
-      const bot = new THREE.Vector3(top.x - k.dx * out, gy + 0.01, top.z - k.dy * out);
-      const X = new THREE.Vector3(k.ex, 0, k.ey), Y = top.clone().sub(bot), len = Y.length();
-      Y.normalize();
-      const m = webPlane(L, len, k.x * 31 + k.y * 7 + k.dx * 3 + k.ey, 1, true);
-      m.matrixAutoUpdate = false;
-      m.matrix.makeBasis(X, Y, X.clone().cross(Y)).setPosition(top.clone().add(bot).multiplyScalar(0.5));
+      const M = cornerMatrix(k);
+      const m = add(cornerLines(THREE, world, view, P, { seed: k.x * 31 + k.y * 7 + k.dx * 3 + k.ey, faces: k.f || 2 }, maxLights, frame));
+      m.renderOrder = 2; m.matrixAutoUpdate = false; m.matrix.copy(M); m.matrixWorldNeedsUpdate = true;
       cornerMeshes.push(m);
-      // krížiak sedí v pavučine
-      const sp = makeSprite(0.26, 0.13); sp.material.map = frameTex('k', 0); sp.layers.set(1);
-      sp.position.set(top.x * 0.7 + bot.x * 0.3 + k.ex * 0.2, gy + up * 0.55, top.z * 0.7 + bot.z * 0.3 + k.ey * 0.2);
+      // krížiak sedí v strede prvej oblasti pavučiny
+      const hub = m.material.userData.info.hub, at = new THREE.Vector3(...hub).applyMatrix4(M);
+      const sp = makeSprite(0.24, 0.12); sp.material.map = frameTex('k', 0); sp.layers.set(1);
+      sp.position.set(at.x, at.y - 0.06, at.z);
       cornerMeshes.push(sp);
     }
   }
