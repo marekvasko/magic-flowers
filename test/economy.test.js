@@ -168,3 +168,20 @@ test('stratená periodická udalosť (napr. po chybe alebo zo starého uloženia
   run(3);
   assert.ok(fero >= 2, 'Fero chodí znova: ' + fero);
 });
+
+test('trh ukazuje začiatok najbližšieho sviatku aj pred jeho ohlásením a po ňom (#86)', () => {
+  const { room, spec, run } = makeWorld(7);
+  E.reconcile(room, spec);
+  const yearDays = 4 * D.DAYS_PER_SEASON;
+  let announced = 0;
+  for (let d = 0; d < yearDays; d++) {
+    const up = Econ.marketView(room).upcoming;
+    assert.ok(Number.isFinite(up.start) && up.start > room.tick, `deň ${d}: ${up.start}`);
+    const f = D.FESTIVALS.find(x => x.id === up.id);
+    assert.strictEqual(up.start % (yearDays * TPD), Econ.festStartTick(f) % (yearDays * TPD));
+    assert.strictEqual(up.name, f.name);
+    if (up.announced) announced++;
+    run(1);
+  }
+  assert.ok(announced > 0, 'aspoň raz bol najbližší sviatok už ohlásený');
+});
