@@ -432,13 +432,15 @@ export function create(api) {
     speed: 4,          // rýchlosť prechodu (zmena viditeľnosti za sekundu)
     outline: 0.7,      // nepriehľadnosť obrysu
     outlineRamp: 0.15, // obrys je naplno už pri takomto zoslabení – aj slabo zoslabené objekty majú zreteľný obrys
-    dark: { min: 0.2, edge: 0.5, reach: 2 } // v tmavom lese (aj v celom Lese divov) prepíše hodnoty vyššie a zoslabuje sa aj zem pred hráčom
+    dark: { min: 0.2, edge: 0.5, reach: 2 }, // v tmavom lese (aj v celom Lese divov) prepíše hodnoty vyššie a zoslabuje sa aj zem pred hráčom
+    les: { outline: 0 } // Les divov: zoslabené stromy bez obrysu, nech hráča v tme nerozptyľuje
   };
   window.MF_FADE_DEFAULTS = FADE_DEFAULTS;
   function fadeCfg() {
     const u = window.MF_FADE || {}, c = Object.assign({}, FADE_DEFAULTS, u);
     c.inDark = D.isDark(S.area) || D.gloomAt(S.area, S.me.y) >= c.darkFrom;
     if (c.inDark) Object.assign(c, FADE_DEFAULTS.dark, u.dark || {});
+    if (D.isDark(S.area)) Object.assign(c, FADE_DEFAULTS.les, u.les || {});
     return c;
   }
   let mesh = null, grid = null, builtSeason = -1, builtGen = -1;
@@ -1312,7 +1314,7 @@ void main() {
   const camRight = new THREE.Vector3(), camUp = new THREE.Vector3();
   function drawOutlines() {
     const cfg = fadeCfg();
-    if (cfg.outline <= 0) return; // obrys vypnutý (MF_FADE = { outline: 0 })
+    if (cfg.outline <= 0) return; // obrys vypnutý (Les divov, alebo MF_FADE = { outline: 0 })
     const cssW = api.glCanvas.getBoundingClientRect().width || 1;
     const px = (camera.right - camera.left) / cssW * 1.5; // ~1,5 CSS px vo svetových jednotkách
     camRight.setFromMatrixColumn(camera.matrixWorld, 0);
