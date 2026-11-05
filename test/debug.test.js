@@ -14,6 +14,10 @@ async function setup() {
   const dataDir = path.join(dir, 'data'), debugDir = path.join(dir, 'debug');
   fs.mkdirSync(dataDir); fs.mkdirSync(debugDir);
   fs.writeFileSync(path.join(debugDir, 'index.html'), '<h1>debug</h1>');
+  fs.mkdirSync(path.join(debugDir, 'api'));
+  // rozšírenie API: vráti kľúče a mince zo sveta – kľúč sa z odpovede musí stratiť sám
+  fs.writeFileSync(path.join(debugDir, 'api', 'coins.js'), `module.exports = (q, t) => { const r = t.load(q.get('id')); if (!r) return null; r.state.saves = {}; return { source: r.source, coins: Object.entries(JSON.parse(JSON.stringify(t.load(q.get('id')).state.saves))).map(([k, v]) => [k, v.coins]) }; };`);
+  fs.writeFileSync(path.join(debugDir, 'api', 'boom.js'), 'module.exports = () => { throw new Error("bum"); };');
   fs.writeFileSync(path.join(dir, 'secret.txt'), 'nie');
   const saved = JSON.stringify({ v: 1, tick: 100, rng: 1, events: [{ at: 150, seq: 1, type: 'stary', data: null }, { at: 130, seq: 2, type: 'dawn', data: null, key: 'dawn', periodic: true }], saves: { [KEY]: { coins: 5 } }, contracts: { list: [{ by: KEY }] } });
   fs.writeFileSync(path.join(dataDir, 'room-stary.json'), saved);
@@ -92,5 +96,23 @@ test('debug: stav reconcilera – naplánované, chýbajúce a zahodené udalost
     ]);
     assert.deepStrictEqual(r.drop, [{ key: null, type: 'stary', at: 150, why: 'unknown type (no handler)' }]);
     assert.strictEqual(fs.readFileSync(path.join(s.dataDir, 'room-stary.json'), 'utf8'), s.saved);
+  } finally { s.close(); }
+});
+
+test('debug: rozšírenia API z debug/api/<name>.js dostanú len kópiu sveta, bez kľúčov hráčov', async () => {
+  const s = await setup();
+  try {
+    const f = await s.get('/api/debug/coins?id=stary');
+    assert.strictEqual(f.status, 200);
+    assert.ok(!f.body.includes(KEY));
+    assert.deepStrictEqual(JSON.parse(f.body), { source: 'file', coins: [[Debug.keyId(KEY), 5]] });
+    const m = await s.get('/api/debug/coins?id=zivy');
+    assert.deepStrictEqual(JSON.parse(m.body), { source: 'memory', coins: [[Debug.keyId(KEY), 9]] });
+    assert.strictEqual(s.rooms.get('zivy').state.saves[KEY].coins, 9, 'živý svet ostal nedotknutý (rozšírenie zmenilo len kópiu)');
+    assert.strictEqual((await s.get('/api/debug/coins?id=nie')).status, 404);
+    assert.strictEqual((await s.get('/api/debug/neexistuje')).status, 404);
+    assert.strictEqual((await s.get('/api/debug/..%2Fx')).status, 404);
+    const warn = console.error; console.error = () => {};
+    try { assert.strictEqual((await s.get('/api/debug/boom')).status, 500); } finally { console.error = warn; }
   } finally { s.close(); }
 });

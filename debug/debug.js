@@ -16,6 +16,7 @@
   const ISSUE = 'https://github.com/marekvasko/magic-flowers/issues/64';
   const TABS = [
     { id: 'room', label: 'Room' },
+    { id: 'map', label: 'Map', todo: 'A top-down plan of every area: ground heights, paths, objects, gates and a grid as layers, a tile inspector and area stats, for any seed or for the selected room.' },
     { id: 'world', label: 'World', todo: 'A free camera over the whole rendered world of the selected room and area, with time, season and layer controls and visual debug helpers (bounding boxes, tile grid, tap areas, lights).' },
     { id: 'assets', label: 'Assets', todo: 'A 3D viewer with a list of every model (buildings, market stall, well, cauldron, icehouse, trees, bushes, rocks, flowers…), switchable season and rotation.' },
     { id: 'generators', label: 'Generators', todo: 'Seeds and parameter sliders for the procedural generators (trees first, their parameters already exist in World3D.TREE_PARAMS), area layouts side by side, and “copy parameters”.' },
@@ -23,12 +24,12 @@
   ];
   const SEASON_EN = ['Spring', 'Summer', 'Autumn', 'Winter'];
 
-  // stav v adrese: #tab=room&room=zahrada&area=garden
+  // stav v adrese: #tab=room&room=zahrada&area=garden (+ vlastné parametre záložiek, napr. seed)
   const st = Object.assign({ tab: 'room', room: '', area: 'garden' }, Object.fromEntries(new URLSearchParams(location.hash.slice(1))));
   if (!TABS.some(t => t.id === st.tab)) st.tab = 'room';
   if (!D.AREAS.includes(st.area)) st.area = 'garden';
   let rooms = [], roomsErr = null, snap = null, snapErr = null, serverNow = Date.now();
-  const saveHash = () => history.replaceState(null, '', '#' + new URLSearchParams({ tab: st.tab, room: st.room, area: st.area }));
+  const saveHash = () => history.replaceState(null, '', '#' + new URLSearchParams(st));
 
   async function api(p) {
     const r = await fetch(p, { cache: 'no-store' });
@@ -80,21 +81,52 @@
   function renderTabs() {
     $('tabs').replaceChildren(...TABS.map(t => h('button', { class: t.id === st.tab ? 'on' : null, onclick: () => { st.tab = t.id; saveHash(); renderTabs(); render(); } }, t.label)));
   }
+  // Záložky okrem Room sú samostatné moduly debug/tabs/<id>.mjs (načítajú sa až pri otvorení):
+  //   export function mount(el, ctx) → { update?(ctx), unmount?() }
+  // ctx: { room, area, snap, rooms, param(k), setParam(k, v), setArea(a), api(path), h, D, fmt }
+  // update(ctx) príde pri zmene sveta, plochy alebo po obnovení; unmount pri prepnutí záložky.
+  // Keď modul ešte neexistuje, ukáže sa popis, čo v záložke bude.
+  const mods = {};
+  let mounted = null, renderSeq = 0;
+  const fmt = { when: t => when(t), hhmm, inTicks, ago: ms => ago(ms), size: fmtSize, short, SEASON_EN };
+  function ctx() {
+    return {
+      room: st.room, area: st.area, snap, rooms, h, D, fmt,
+      api: p => api(p),
+      param: k => st[k] == null ? null : st[k],
+      setParam: (k, v) => { if (v == null || v === '') delete st[k]; else st[k] = String(v); saveHash(); },
+      setArea: a => { if (D.AREAS.includes(a)) { st.area = a; $('area').value = a; saveHash(); render(); } }
+    };
+  }
+  function unmountTab() {
+    if (mounted && mounted.inst && mounted.inst.unmount) try { mounted.inst.unmount(); } catch (e) { console.error(e); }
+    mounted = null;
+  }
   function render() {
-    const main = $('main'), tab = TABS.find(t => t.id === st.tab);
-    if (tab.todo) {
-      main.replaceChildren(h('div', { class: 'placeholder' }, h('h2', null, tab.label), h('p', null, tab.todo),
-        h('p', { class: 'muted' }, 'Not built yet. It’s a later part of ', h('a', { href: ISSUE, target: '_blank', rel: 'noopener' }, '#64'), '.'),
-        h('p', { class: 'muted' }, `Selected: room ${st.room || '–'}, area ${D.AREA_NAMES[st.area] || st.area}.`)));
+    const main = $('main'), tab = TABS.find(t => t.id === st.tab), seq = ++renderSeq;
+    if (tab.id !== 'room') {
+      if (mounted && mounted.id === tab.id) { if (mounted.inst && mounted.inst.update) mounted.inst.update(ctx()); return; }
+      unmountTab();
+      if (!(tab.id in mods)) mods[tab.id] = import(`/debug/tabs/${tab.id}.mjs`).catch(() => null);
+      mods[tab.id].then(m => {
+        if (seq !== renderSeq) return;
+        if (m && m.mount) { main.replaceChildren(); mounted = { id: tab.id, inst: m.mount(main, ctx()) || {} }; }
+        else placeholder(main, tab);
+      });
       return;
     }
+    unmountTab();
     if (roomsErr) return main.replaceChildren(h('div', { class: 'empty err' }, roomsErr));
     if (!st.room) return main.replaceChildren(h('div', { class: 'empty' }, 'Pick a room on the left.'));
     if (snapErr) return main.replaceChildren(h('div', { class: 'empty err' }, `Room ${st.room}: ${snapErr}`));
     if (!snap) return main.replaceChildren(h('div', { class: 'empty' }, 'Loading…'));
     main.replaceChildren(...roomView(snap));
   }
-
+  function placeholder(main, tab) {
+      main.replaceChildren(h('div', { class: 'placeholder' }, h('h2', null, tab.label), h('p', null, tab.todo),
+        h('p', { class: 'muted' }, 'Not built yet. It’s a later part of ', h('a', { href: ISSUE, target: '_blank', rel: 'noopener' }, '#64'), '.'),
+        h('p', { class: 'muted' }, `Selected: room ${st.room || '–'}, area ${D.AREA_NAMES[st.area] || st.area}.`)));
+  }
   // ---------- záložka Room: prehľad sveta ----------
   function roomView(s) {
     const w = s.state, tick = w.tick || 0, day = D.dayOfTick(tick), se = D.seasonOf(day), meta = rooms.find(r => r.id === s.id);
