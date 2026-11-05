@@ -270,3 +270,14 @@ test('ladiaca stránka: Les divov zo semienka aj z uloženého rozloženia sveta
   assert.strictEqual(r.seed, 999);
   assert.deepStrictEqual(r.tiles.map(t => t.g), D.buildLes(5));
 });
+
+test('Les divov: pohľad bližšie na hráča (cestou k nemu postupne)', () => {
+  assert.strictEqual(D.viewDiagAt('garden', 10), D.VIEW_DIAG);
+  assert.strictEqual(D.viewDiagAt('les', 10), D.DARK.les.viewDiag);
+  assert.ok(D.VIEW_DIAG - D.DARK.les.viewDiag >= 4 && D.VIEW_DIAG - D.DARK.les.viewDiag <= 5, 'o 4–5 blokov menej');
+  const mid = D.viewDiagAt('pomedzie', 6);
+  assert.ok(mid < D.VIEW_DIAG && mid > D.DARK.les.viewDiag, 'cestou do Lesa divov postupne');
+  assert.strictEqual(D.viewDiagAt('pomedzie', 1), D.DARK.les.viewDiag);
+  const v = D.viewSize(390, 780, D.DARK.les.viewDiag), n = D.viewSize(390, 780);
+  assert.ok(Math.abs(Math.hypot(v.w, v.h) - D.DARK.les.viewDiag) < 1e-9 && v.w < n.w);
+});

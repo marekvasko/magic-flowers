@@ -5,9 +5,10 @@
   // má vždy presne VIEW_DIAG blokov – na mobile na výšku aj na počítači na šírku, hráč je v strede.
   // Rozmery výrezu v blokoch pre obrazovku pxW × pxH vráti viewSize (3D kamera).
   const VIEW_DIAG = 22;
-  function viewSize(pxW, pxH) {
-    const d = Math.hypot(pxW, pxH) || 1;
-    return { w: VIEW_DIAG * pxW / d, h: VIEW_DIAG * pxH / d };
+  // diag = iná uhlopriečka (napr. bližší pohľad v Lese divov), inak VIEW_DIAG
+  function viewSize(pxW, pxH, diag) {
+    const d = Math.hypot(pxW, pxH) || 1, v = diag || VIEW_DIAG;
+    return { w: v * pxW / d, h: v * pxH / d };
   }
   const DAYS_PER_SEASON = 4;
   // Diskrétny čas: deň má vždy presne TICKS_PER_DAY krokov, jeden krok = MIN_PER_TICK herných minút.
@@ -641,7 +642,11 @@
   // Temné plochy: vidno len kúsok okolo seba (sight políčok, s lampášom v ruke lamp), objekty sa za hráčom nezoslabujú
   // ani nezvýrazňujú a lampáš svieti aj cez deň. Svetlo lampášov (aj cudzích) presvetlí tmu okolo nich.
   // lampR = dosah svetla lampáša v tme (políčka, inde render3d LAMP_R), lampK = jeho sila (1 = ako v záhrade v noci)
-  const DARK = { les: { sight: 3, lamp: 4.5, lampR: 4.5, lampK: 0.6 } };
+  // viewDiag = uhlopriečka výrezu v blokoch (pohľad bližšie na hráča, inak VIEW_DIAG)
+  const DARK = { les: { sight: 3, lamp: 4.5, lampR: 4.5, lampK: 0.6, viewDiag: 17.5 } };
+  // Uhlopriečka výrezu na ploche area, keď hráč stojí na riadku y: v Lese divov bližšie, cestou k nemu postupne
+  function viewDiagAt(area, y) { return VIEW_DIAG + (DARK.les.viewDiag - VIEW_DIAG) * darkAt(area, y); }
+
   function isDark(area) { return !!DARK[area]; }
   // Postupný prechod do tmy Lesa divov: v Lese na pomedzí sa od riadku from (0) po riadok to (1) pridáva svetlo a dohľad
   // Lesa divov, takže pri prechode na severnom okraji vyzerá les rovnako ako Les divov. V Lese divov všade 1.
@@ -715,7 +720,7 @@
     CHAT_MAX, chatText,
     W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
-    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt,
+    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt, viewDiagAt,
     sellPrice, itemName, buildMap, buildMountains, buildPomedzie, buildLes, buildArea, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
   };
   root.GameData = api;

@@ -1353,12 +1353,13 @@ void main() {
     renderer.autoClear = true;
   }
 
+  let viewDiag = D.VIEW_DIAG;
   function resize() {
     const r = api.glCanvas.getBoundingClientRect();
     renderer.setSize(r.width, r.height, false);
-    // uhlopriečka zobrazovacej plochy má vždy D.VIEW_DIAG blokov, hráč v strede
-    viewW = D.viewSize(r.width, r.height).w;
-    const vh = D.viewSize(r.width, r.height).h;
+    // uhlopriečka zobrazovacej plochy má vždy viewDiag blokov (D.VIEW_DIAG, v Lese divov menej), hráč v strede
+    viewW = D.viewSize(r.width, r.height, viewDiag).w;
+    const vh = D.viewSize(r.width, r.height, viewDiag).h;
     viewTop = vh / 2;
     camera.left = -viewW / 2; camera.right = viewW / 2; camera.top = viewTop; camera.bottom = viewTop - vh;
     camera.updateProjectionMatrix();
@@ -1423,6 +1424,9 @@ void main() {
     if (builtSeason !== se || builtGen !== S.tilesGen) { builtGen = S.tilesGen; buildMesh(se); holesSig = null; refreshGround(se, t, true); drawnSeason = se; }
     S.worldGen = builtGen; // svet tejto verzie políčok je postavený (prechod medzi plochami čaká, kým je, a až potom ukáže meno)
     if (now - lastGround > 600) { refreshGround(se, t, false); lastGround = now; }
+    // v Lese divov (a cestou k nemu) je pohľad bližšie na hráča
+    const vd = D.viewDiagAt(S.area, S.me.y);
+    if (Math.abs(vd - viewDiag) > 0.01) { viewDiag = vd; resize(); }
     lighting(min, se);
     let tp = statsOn ? performance.now() : 0;
     updateShadowMap(min, se);
@@ -1609,7 +1613,14 @@ void main() {
   resize();
   // ladenie: priehľadnosť jemných modelov (1 = plne viditeľný)
   const debugFades = () => fineMeshes.map(m => ({ type: grid.fine[fineMeshes.indexOf(m)].type, fade: +m.userData.fade.toFixed(2), want: fadeWant.has(m) ? +fadeWant.get(m).toFixed(2) : null }));
-  return { frame, resize, pick, screenToWorld, rotate, sunHoursAt, dir8, debugFades, ripple, setWaterQuality, get waterQuality() { return waterQuality; }, setParticleQuality: particles.setQuality, get particleQuality() { return particles.quality; }, setStats, stats, get yaw() { return yaw; }, debugView, invalidateShadows, dispose };
+  // Nakoľko je bod (x, z) na zemi vidno (0 = tma, 1 = celý) – v temnej ploche podľa dohľadu a svetla lampášov, inde 1
+  function seenAt(x, z) {
+    if (!curDark || !grid) return 1;
+    const o = {};
+    lightAt(x, groundY(x, z), z, lastLights, lastLights.length, o);
+    return o.seen;
+  }
+  return { frame, resize, pick, seenAt, screenToWorld, rotate, sunHoursAt, dir8, debugFades, ripple, setWaterQuality, get waterQuality() { return waterQuality; }, setParticleQuality: particles.setQuality, get particleQuality() { return particles.quality; }, setStats, stats, get yaw() { return yaw; }, debugView, invalidateShadows, dispose };
 }
 
 window.Render3D = { create };
