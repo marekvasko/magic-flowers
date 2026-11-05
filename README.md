@@ -40,7 +40,7 @@ The branching model, worktrees and the release procedure are described in [AGENT
 ## Time and world settings
 
 - Game time is **discrete**: every day has exactly 288 steps (1 step = 5 game minutes). Day, hour and season are always derived from a single integer counter, so there is no drift, and a delayed timer catches up the missed steps.
-- Everything that should happen in the future (dawn, end of potion effects, …) is an **event in a scheduler** (`engine.js`). The queue, the step counter and the random generator's state are saved with the world, so they survive a server restart.
+- Everything that should happen in the future (dawn, end of potion effects, …) is an **event in a scheduler** (`engine.js`). The queue, the step counter and the random generator's state are saved with the world, so they survive a server restart. Periodic events (dawn, hourly, deliveries, NPCs, festivals) are only declared; the engine makes sure each one is always planned. Time jumps from event to event instead of stepping through empty steps. See [docs/engine.md](docs/engine.md).
 - One game day lasts **20 minutes** of real time (fixed: `BASE_DAY_SECONDS` in `shared/data.js`; the `DAY_SECONDS` env variable is only for testing). A season is 4 days (~80 min), a year ~5.3 hours.
 - **World setting** (Menu → ⚙️, per garden): whether the world keeps running when nobody is playing.
 - A running world catches up the time the server was down (at most `MAX_CATCHUP_DAYS` game days, default 30).

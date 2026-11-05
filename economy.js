@@ -126,9 +126,6 @@ function initEconomy(room) {
       m.flowers[sp] = { stock: 0 };
     }
     room.market = m;
-    E.schedule(room, E.nextDailyTick(room.tick + 1, 84), 'delivery'); // 7:00
-    for (const n of ['jano', 'fero', 'zuzka']) E.schedule(room, E.nextDailyTick(room.tick + 1, 96 + E.randInt(room, 120)), 'npc_' + n);
-    for (const f of D.FESTIVALS) scheduleFestival(room, f);
     recordHistory(room);
   }
   if (!room.contracts) { room.contracts = { list: [], nextId: 1 }; fillBoard(room); }
@@ -161,13 +158,21 @@ function onDawn(room) {
 }
 
 // ---------- Udalosti: veľkoobchodník, NPC, sviatky ----------
-function scheduleFestival(room, f) {
-  // najbližší začiatok sviatku (6:00 jeho dňa), ktorého ohlásenie (2 dni vopred) je ešte v budúcnosti
-  const yearStart = Math.floor((day(room) - 1) / YEAR_DAYS) * YEAR_DAYS;
-  let start = (yearStart + f.season * DPS + f.day - 1) * TPD + D.DAWN_TICK;
-  while (start - 2 * TPD <= room.tick) start += YEAR_DAYS * TPD;
-  E.schedule(room, start - 2 * TPD, 'festAnnounce', { id: f.id, start });
-}
+// Periodické udalosti ekonomiky. Plánuje ich engine (E.reconcile), handlery sa samy znova neplánujú.
+// NPC prídu raz za deň medzi 8:00 a 18:00, najskôr pol dňa po predchádzajúcej návšteve.
+const npcVisit = (room, from) => E.nextDailyTick(from + TPD / 2, 96 + E.randInt(room, 120));
+// Sviatok začína o 6:00 svojho dňa v roku; ohlásenie je 2 dni vopred, koniec po f.len dňoch.
+const festStartTick = f => (f.season * DPS + f.day - 1) * TPD + D.DAWN_TICK;
+const yearly = at => E.every(YEAR_DAYS * TPD, at);
+const PERIODIC = [
+  { key: 'delivery', type: 'delivery', next: E.every(2 * TPD, 84) }, // každé 2 dni o 7:00
+  ...['jano', 'fero', 'zuzka'].map(n => ({ key: 'npc_' + n, type: 'npc_' + n, next: npcVisit })),
+  ...D.FESTIVALS.flatMap(f => [
+    { key: 'festAnnounce:' + f.id, type: 'festAnnounce', data: { id: f.id }, next: yearly(festStartTick(f) - 2 * TPD) },
+    { key: 'festStart:' + f.id, type: 'festStart', data: { id: f.id }, next: yearly(festStartTick(f)) },
+    { key: 'festEnd:' + f.id, type: 'festEnd', data: { id: f.id }, next: yearly(festStartTick(f) + f.len * TPD) }
+  ])
+];
 
 const HANDLERS = {
   delivery(room) {
@@ -185,7 +190,6 @@ const HANDLERS = {
     }
     m.compost.stock = Math.min(COMPOST_CAP, m.compost.stock + 6 + E.randInt(room, 5));
     news(room, `🚚 Veľkoobchodník priviezol ${total} vrecúšok semienok – hlavne na ďalšie obdobie.`);
-    E.schedule(room, room.tick + 2 * TPD, 'delivery');
   },
 
   // Záhradník Jano: kúpi semienka s najlepším očakávaným ziskom za deň, vypestuje ich a kvety predá na trhu.
@@ -204,7 +208,6 @@ const HANDLERS = {
         news(room, `🧑‍🌾 Záhradník Jano nakúpil ${k}× semienka ${D.SPECIES[c.sp].name}.`);
       }
     }
-    E.schedule(room, E.nextDailyTick(room.tick + TPD / 2, 96 + E.randInt(room, 120)), 'npc_jano');
   },
   jano_sell(room, d) {
     const m = room.market;
@@ -236,7 +239,6 @@ const HANDLERS = {
         }
       }
     }
-    E.schedule(room, E.nextDailyTick(room.tick + TPD / 2, 96 + E.randInt(room, 120)), 'npc_fero');
   },
 
   // Kvetinárka Zuzka: vykupuje kvety z trhu (viac počas sviatkov) – trh sa tým uvoľňuje a ceny rastú.
@@ -253,7 +255,6 @@ const HANDLERS = {
     }
     if (best && best.k >= 3) news(room, `💐 Kvetinárka Zuzka vykúpila z trhu ${bought} kvetov (najviac ${D.SPECIES[best.sp].name}).`);
     else hooks.market(room);
-    E.schedule(room, E.nextDailyTick(room.tick + TPD / 2, 96 + E.randInt(room, 120)), 'npc_zuzka');
   },
 
   festAnnounce(room, d) {
@@ -261,9 +262,6 @@ const HANDLERS = {
     const list = Object.entries(f.mult).map(([sp, x]) => `${D.SPECIES[sp].name} ×${String(x).replace('.', ',')}`).join(', ');
     news(room, `📅 O 2 dni: ${f.icon} ${f.name}! Výkupné ceny: ${list}.`);
     hooks.toastAll(room, `📅 O 2 dni bude ${f.icon} ${f.name} – kvetinárka bude platiť viac za: ${list}. Stihneš to vypestovať?`, 'day');
-    E.schedule(room, d.start, 'festStart', { id: f.id });
-    E.schedule(room, d.start + f.len * TPD, 'festEnd', { id: f.id });
-    E.schedule(room, d.start + YEAR_DAYS * TPD - 2 * TPD, 'festAnnounce', { id: f.id, start: d.start + YEAR_DAYS * TPD });
   },
   festStart(room, d) {
     const f = D.FESTIVALS.find(x => x.id === d.id);
@@ -330,8 +328,8 @@ function genContract(room, kind) {
     posted: room.tick, openUntil: Math.min(due - TPD, room.tick + 2 * TPD), due, takenBy: null
   };
   room.contracts.list.push(c);
-  E.schedule(room, c.openUntil, 'cExpire', { id: c.id });
-  E.schedule(room, c.due, 'cDue', { id: c.id });
+  E.scheduleUnique(room, 'cExpire:' + c.id, c.openUntil, 'cExpire', { id: c.id });
+  E.scheduleUnique(room, 'cDue:' + c.id, c.due, 'cDue', { id: c.id });
   return c;
 }
 
@@ -374,7 +372,7 @@ function deliverContract(room, key, id) {
     sv.coins += c.reward; sv.rep = (sv.rep || 0) + c.rep;
     if (c.item) I.addItems(I.playerC(sv), c.item.id, c.item.n, room.tick);
     room.contracts.list = room.contracts.list.filter(x => x !== c);
-    E.cancel(room, e => (e.type === 'cDue' || e.type === 'cExpire') && e.data.id === c.id);
+    E.cancel(room, 'cExpire:' + c.id); E.cancel(room, 'cDue:' + c.id);
     msg = `✅ ${D.GIVERS[c.giver]}: „Ďakujem!“ Dostávaš ${c.reward} 🪙` + (c.item ? ` a ${c.item.n}× ${D.itemName(c.item.id)}` : '') + ` · +${c.rep} reputácie.`;
     const lvl = D.repLevel(sv.rep);
     if (lvl > lvlBefore) msg += ` 🎉 Reputácia úroveň ${lvl}!`;
@@ -433,6 +431,6 @@ function startCapital(env) {
 }
 
 module.exports = {
-  startCapital, setHooks, initEconomy, onDawn, HANDLERS, buy, sell, sellQuote, buyQuote, seedPrice, flowerPrice,
+  startCapital, setHooks, initEconomy, onDawn, HANDLERS, PERIODIC, buy, sell, sellQuote, buyQuote, seedPrice, flowerPrice,
   takeContract, deliverContract, upgrade, canCap, plotLimit, maxActive, marketView, boardView, phase, PLANTABLE
 };

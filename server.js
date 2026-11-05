@@ -61,7 +61,7 @@ const server = http.createServer((req, res) => {
 // ---------- Svety (miestnosti) ----------
 // Čas je diskrétny: svet má celé počítadlo `tick` (D.TICKS_PER_DAY krokov na deň), deň a minúta sa z neho
 // len odvodzujú. Všetko, čo sa má stať v budúcnosti, je udalosť v plánovači (room.events) a ukladá sa so svetom.
-const SAVE_VERSION = 4; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí
+const SAVE_VERSION = 5; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické)
 const TPD = D.TICKS_PER_DAY, MPT = D.MIN_PER_TICK;
 const DEFAULT_MODE = process.env.DEFAULT_MODE === 'paused' ? 'paused' : 'running';
 const MAX_CATCHUP_DAYS = +process.env.MAX_CATCHUP_DAYS || 30; // koľko herných dní najviac dobehneme po výpadku servera
@@ -97,6 +97,15 @@ function migrate(saved) {
   if (from < 4) { // Les na pomedzí: nová plocha, rozloženie zo semienka sveta (záhrada ani polohy hráčov sa nemenia)
     out.pomedzieSeed = Areas.newSeed();
   }
+  if (from < 5) { // udalosti dostanú kľúče – reconcile potom nič nezdvojí a nič nestratí
+    for (const e of out.events || []) {
+      const d = e.data || {};
+      if (['dawn', 'hourly', 'delivery', 'npc_jano', 'npc_fero', 'npc_zuzka'].includes(e.type)) { e.key = e.type; e.periodic = true; }
+      else if (['festAnnounce', 'festStart', 'festEnd'].includes(e.type)) { e.key = e.type + ':' + d.id; e.periodic = true; e.data = { id: d.id }; }
+      else if (e.type === 'cDue' || e.type === 'cExpire') e.key = e.type + ':' + d.id;
+      else if (e.type === 'vilyEnd' || e.type === 'scavDone') e.key = e.type + ':' + d.key;
+    }
+  }
   out.v = SAVE_VERSION; out.migratedFrom = saved.migratedFrom || from;
   return out;
 }
@@ -122,17 +131,16 @@ function getRoom(id) {
   Object.defineProperty(room, 'day', { get() { return D.dayOfTick(this.tick); } });
   Object.defineProperty(room, 'min', { get() { return D.minOfTick(this.tick); } });
   room.daySeconds = DAY_SECONDS;
-  if (!E.nextOf(room, 'dawn')) E.schedule(room, E.nextDailyTick(room.tick + 1, D.DAWN_TICK), 'dawn');
-  if (!E.nextOf(room, 'hourly')) E.schedule(room, room.tick + 12, 'hourly');
   room.storage = room.storage || {};
   I.syncAll(I.storageC(room), room.tick);
   for (const sv of Object.values(room.saves)) if (sv.inv) I.syncAll(I.playerC(sv), room.tick);
   Econ.initEconomy(room);
+  E.reconcile(room, SIM); // doplní chýbajúce periodické udalosti, zahodí udalosti obsahu, ktorý už v hre nie je
   if (room.mode === 'running') {
     // Svet beží aj bez hráčov – dobehneme čas, kým bol server vypnutý (najviac MAX_CATCHUP_DAYS dní).
     const cap = MAX_CATCHUP_DAYS * TPD * E.tickMs(room);
     room.wall = Math.max(room.wall, Date.now() - cap);
-    const n = E.advance(room, Date.now(), HANDLERS);
+    const n = E.advance(room, Date.now(), SIM);
     if (n) console.log(`[${id}] dobehnutých ${n} krokov (${(n / TPD).toFixed(1)} dňa)`);
   } else room.wall = Date.now();
   rooms.set(id, room);
@@ -287,12 +295,9 @@ function dawn(room) {
 
 function playerByKey(room, key) { for (const p of room.players.values()) if (p.key === key) return p; return null; }
 
-// Obsluha naplánovaných udalostí. Každá udalosť je {at, seq, type, data} v room.events.
+// Obsluha naplánovaných udalostí (obyčajné callbacky, pozri engine.js a docs/engine.md).
 const HANDLERS = {
-  dawn(room) {
-    dawn(room);
-    E.schedule(room, room.tick + TPD, 'dawn');
-  },
+  dawn,
   // Každú hernú hodinu: kvety staršie než ich životnosť zvädnú (v batohoch aj v sklade, aj u offline hráčov).
   hourly(room) {
     for (const key in room.saves) {
@@ -313,7 +318,6 @@ const HANDLERS = {
     if (Ice.meltHourly(room, season(room))) toastAll(room, '💧 Ľad v ľadovni sa roztopil. Sklad už nechladí tak dobre – doplň ľad z hôr alebo v zime z jazierka. 🧊');
     if (room.icehouse.ice !== had) { info = true; room.dirty = true; }
     if (info) broadcast(room, roomInfo(room));
-    E.schedule(room, room.tick + 12, 'hourly');
   },
   scavDone(room, d) {
     const pl = playerByKey(room, d.key);
@@ -326,6 +330,13 @@ const HANDLERS = {
 };
 
 Object.assign(HANDLERS, Econ.HANDLERS);
+// Periodické udalosti plánuje engine sám (E.reconcile): ráno o 6:00 a každú celú hodinu, plus ekonomika.
+const PERIODIC = [
+  { key: 'dawn', type: 'dawn', next: E.daily(D.DAWN_TICK) },
+  { key: 'hourly', type: 'hourly', next: E.every(TPD / 24) },
+  ...Econ.PERIODIC
+];
+const SIM = { handlers: HANDLERS, periodic: PERIODIC };
 Econ.setHooks({
   market(room) { room.marketDirty = true; room.dirty = true; },
   board(room) { room.boardDirty = true; room.dirty = true; },
@@ -356,7 +367,7 @@ function checkSleep(room) {
   broadcast(room, sleepMsg(room));
 }
 function fastForward(room, now) {
-  for (let k = 0; k < FF_STEPS && room.tick < room.ff.until; k++) E.step(room, HANDLERS);
+  E.advanceTo(room, Math.min(room.ff.until, room.tick + FF_STEPS), SIM);
   room.wall = now; // pretočený čas sa nedobieha – po prebudení beží svet zase normálnym tempom
   room.dirty = true;
   if (room.tick >= room.ff.until) {
@@ -527,12 +538,11 @@ function startScavenge(pl, i, item) {
   const room = pl.room;
   pl.scavN = (pl.scavN | 0) + 1;
   pl.scav = { i, n: pl.scavN, px: pl.x, py: pl.y, seeds: !!item && (item.startsWith('seed_') || D.isWild(item)) };
-  E.schedule(room, room.tick + D.SCAVENGE.ticks, 'scavDone', { key: pl.key, n: pl.scav.n });
+  E.scheduleUnique(room, 'scavDone:' + pl.key, room.tick + D.SCAVENGE.ticks, 'scavDone', { key: pl.key, n: pl.scav.n });
 }
 function stopScavenge(pl, msg) {
-  const room = pl.room, n = pl.scav.n;
   pl.scav = null;
-  E.cancel(room, e => e.type === 'scavDone' && e.data.key === pl.key && e.data.n === n);
+  E.cancel(pl.room, 'scavDone:' + pl.key);
   if (msg) toast(pl, msg);
 }
 function finishScavenge(pl) {
@@ -573,8 +583,7 @@ function usePotion(pl, k, x, y) {
     fx(room, 'sparkle', x + 0.5, y + 0.5, { c: '#ffd54f' });
   } else if (k === 'vily') {
     sv.vily = room.tick + TPD;
-    E.cancel(room, e => e.type === 'vilyEnd' && e.data.key === pl.key);
-    E.schedule(room, sv.vily, 'vilyEnd', { key: pl.key });
+    E.scheduleUnique(room, 'vilyEnd:' + pl.key, sv.vily, 'vilyEnd', { key: pl.key });
     toast(pl, 'Svet sa zatrblietal… Teraz vidíš víly. Možno by si v noci mal(a) zájsť do lesa ku kruhu z húb. 🧚', 'magic');
   } else if (k === 'duha') {
     for (const o of room.players.values()) o.save.coins += 300;
@@ -922,7 +931,7 @@ setInterval(() => {
   for (const room of rooms.values()) {
     if (room.ff) { fastForward(room, now); flushEconomy(room); continue; }
     if (room.mode === 'paused' && !room.players.size) { room.wall = now; continue; }
-    const n = E.advance(room, now, HANDLERS, 50000);
+    const n = E.advance(room, now, SIM, 50000);
     if (n) { room.dirty = true; if (room.players.size) broadcast(room, timeMsg(room)); }
     flushEconomy(room);
   }

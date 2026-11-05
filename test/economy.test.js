@@ -7,10 +7,13 @@ const TPD = D.TICKS_PER_DAY;
 
 function makeWorld(seed) {
   const room = { tick: D.DAWN_TICK + 6, wall: 0, daySeconds: 1200, rng: seed, seq: 0, events: [], saves: {}, market: null, contracts: null };
-  const handlers = Object.assign({ dawn(r) { Econ.onDawn(r); E.schedule(r, r.tick + TPD, 'dawn'); } }, Econ.HANDLERS);
-  E.schedule(room, E.nextDailyTick(room.tick + 1, D.DAWN_TICK), 'dawn');
+  const spec = {
+    handlers: Object.assign({ dawn: Econ.onDawn }, Econ.HANDLERS),
+    periodic: [{ key: 'dawn', type: 'dawn', next: E.daily(D.DAWN_TICK) }, ...Econ.PERIODIC],
+    onError(err) { throw err; } // v testoch chyba v handleri nesmie prejsť potichu
+  };
   Econ.initEconomy(room);
-  return { room, run(days) { for (let i = 0; i < days * TPD; i++) E.step(room, handlers); } };
+  return { room, spec, run(days) { E.advanceTo(room, room.tick + days * TPD, spec); } };
 }
 
 test('64 dní simulácie bez hráčov: zásoby, ceny a fronta udalostí zostávajú v medziach', () => {
@@ -137,4 +140,31 @@ test('štartovný kapitál: chudobný začiatok, v testovacích prostrediach via
   assert.strictEqual(t.coins, 5000);
   assert.strictEqual(D.repLevel(t.rep), 3);
   assert.strictEqual(D.repLevel(Econ.startCapital({ START_REP: '99' }).rep), D.REP_LEVELS.length - 1);
+});
+
+test('periodické udalosti ekonomiky: za rok každý sviatok raz ohlásený, začatý a skončený; NPC chodia denne', () => {
+  const { room, spec, run } = makeWorld(5);
+  const count = {};
+  for (const type of ['festAnnounce', 'festStart', 'festEnd', 'npc_fero', 'delivery']) {
+    const h = spec.handlers[type];
+    spec.handlers[type] = (r, d, ev) => { count[ev.key] = (count[ev.key] || 0) + 1; h(r, d, ev); };
+  }
+  const yearDays = 4 * D.DAYS_PER_SEASON;
+  run(yearDays);
+  for (const f of D.FESTIVALS) for (const k of ['festAnnounce', 'festStart', 'festEnd']) assert.strictEqual(count[k + ':' + f.id], 1, k + ':' + f.id);
+  assert.ok(Math.abs(count.npc_fero - yearDays) <= 1, 'Fero: ' + count.npc_fero);
+  assert.ok(Math.abs(count.delivery - yearDays / 2) <= 1, 'dodávky: ' + count.delivery);
+  // každá deklarovaná periodická udalosť je vo fronte práve raz
+  for (const def of Econ.PERIODIC) assert.strictEqual(room.events.filter(e => e.key === def.key).length, 1, def.key);
+});
+
+test('stratená periodická udalosť (napr. po chybe alebo zo starého uloženia) sa znova naplánuje', () => {
+  const { room, spec, run } = makeWorld(6);
+  run(1);
+  room.events = room.events.filter(e => e.key !== 'npc_fero');
+  let fero = 0;
+  const h = spec.handlers.npc_fero;
+  spec.handlers.npc_fero = (r, d, ev) => { fero++; h(r, d, ev); };
+  run(3);
+  assert.ok(fero >= 2, 'Fero chodí znova: ' + fero);
 });

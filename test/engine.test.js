@@ -4,19 +4,22 @@ const E = require('../engine.js');
 const TPD = E.TICKS_PER_DAY;
 
 function world(extra) { return Object.assign({ tick: 0, wall: 0, daySeconds: 300, rng: 12345, seq: 0, events: [] }, extra); }
+// V testoch chyba v handleri nesmie prejsť potichu, ak ju test nečaká.
+const rethrow = err => { throw err; };
 
 test('každý deň má presne TICKS_PER_DAY krokov, aj pri nepravidelnom časovači', () => {
   const w = world();
   const dayTicks = [];
   let last = 0;
-  const handlers = { dawn(w) { dayTicks.push(w.tick - last); last = w.tick; E.schedule(w, w.tick + TPD, 'dawn'); } };
-  E.schedule(w, TPD, 'dawn');
-  last = 0;
+  const spec = {
+    handlers: { dawn(w) { dayTicks.push(w.tick - last); last = w.tick; } },
+    periodic: [{ key: 'dawn', type: 'dawn', next: E.daily(0) }], onError: rethrow
+  };
   let now = 0;
   // časovač s rozptylom 0–2500 ms a občasnými veľkými výpadkami
   while (dayTicks.length < 100) {
     now += Math.floor(Math.random() * 2500) + (Math.random() < 0.01 ? 60000 : 0);
-    E.advance(w, now, handlers);
+    E.advance(w, now, spec);
   }
   assert.ok(dayTicks.every(n => n === TPD), 'počty krokov: ' + [...new Set(dayTicks)].join(','));
   // reálny čas a herný čas sa nerozchádzajú o viac než jeden krok
@@ -26,37 +29,131 @@ test('každý deň má presne TICKS_PER_DAY krokov, aj pri nepravidelnom časova
 
 test('udalosti sa spracujú v poradí (at, seq) a môžu plánovať ďalšie', () => {
   const w = world(), log = [];
-  const h = {
-    a(w, d) { log.push('a' + d); if (d === 1) E.scheduleIn(w, 2, 'a', 3); },
-    b(w, d) { log.push('b' + d); }
+  const spec = {
+    handlers: {
+      a(w, d) { log.push('a' + d); if (d === 1) E.scheduleIn(w, 2, 'a', 3); },
+      b(w, d) { log.push('b' + d); }
+    }, onError: rethrow
   };
   E.schedule(w, 5, 'b', 1);
   E.schedule(w, 5, 'a', 2);
   E.schedule(w, 1, 'a', 1);
   E.schedule(w, 0, 'b', 0); // minulosť → najbližší krok
-  for (let i = 0; i < 6; i++) E.step(w, h);
+  E.advanceTo(w, 6, spec);
   assert.deepStrictEqual(log, ['a1', 'b0', 'a3', 'b1', 'a2']);
+  assert.strictEqual(w.tick, 6);
+});
+
+test('dávka v jednom kroku je uzavretá: čo naplánuje „teraz“, príde až v ďalšom kroku', () => {
+  const w = world(), log = [];
+  const spec = {
+    handlers: { a(w) { log.push('a@' + w.tick); E.schedule(w, w.tick, 'b'); }, b(w) { log.push('b@' + w.tick); } },
+    onError: rethrow
+  };
+  E.schedule(w, 3, 'a');
+  E.advanceTo(w, 10, spec);
+  assert.deepStrictEqual(log, ['a@3', 'b@4']);
+});
+
+test('skok na ďalšiu udalosť dá ten istý svet ako posun po jednom kroku', () => {
+  const mk = () => world({ rng: 99 });
+  const spec = {
+    handlers: {
+      roll(w) { w.sum = (w.sum || 0) + E.randInt(w, 1000); if (E.rand(w) < 0.5) E.scheduleIn(w, 1 + E.randInt(w, 40), 'one'); },
+      one(w) { w.ones = (w.ones || 0) + 1; }
+    },
+    periodic: [{ key: 'roll', type: 'roll', next: (w, from) => from + E.randInt(w, 30) }], onError: rethrow
+  };
+  const a = mk(); E.advanceTo(a, 20 * TPD, spec);
+  const b = mk(); while (b.tick < 20 * TPD) E.advanceTo(b, b.tick + 1, spec);
+  assert.deepStrictEqual(b, a);
+  assert.ok(a.ones > 0);
 });
 
 test('uloženie do JSON a pokračovanie dá rovnaký výsledok ako nepretržitý beh', () => {
   const mk = () => world({ rng: 777 });
-  const handlers = {
-    roll(w) { w.sum = (w.sum || 0) + E.randInt(w, 1000); E.scheduleIn(w, 1 + E.randInt(w, 50), 'roll'); }
+  const spec = {
+    handlers: { roll(w) { w.sum = (w.sum || 0) + E.randInt(w, 1000); } },
+    periodic: [{ key: 'roll', type: 'roll', next: (w, from) => from + E.randInt(w, 50) }], onError: rethrow
   };
-  const a = mk(); E.schedule(a, 1, 'roll');
-  E.advance(a, 10 * TPD * E.tickMs(a), handlers);
-  const b = mk(); E.schedule(b, 1, 'roll');
-  E.advance(b, 4 * TPD * E.tickMs(b) + 123, handlers);
+  const a = mk();
+  E.advance(a, 10 * TPD * E.tickMs(a), spec);
+  const b = mk();
+  E.advance(b, 4 * TPD * E.tickMs(b) + 123, spec);
   const restored = JSON.parse(JSON.stringify(b)); // ako uloženie na disk a načítanie
-  E.advance(restored, 10 * TPD * E.tickMs(restored), handlers);
+  E.advance(restored, 10 * TPD * E.tickMs(restored), spec);
   assert.strictEqual(restored.tick, a.tick);
   assert.strictEqual(restored.sum, a.sum);
   assert.strictEqual(restored.rng, a.rng);
   assert.deepStrictEqual(restored.events, a.events);
 });
 
-test('nextDailyTick nájde najbližšiu dennú hodinu', () => {
+test('periodická udalosť: handler sa neplánuje sám, engine ju naplánuje znova po každom vykonaní', () => {
+  const w = world(), at = [];
+  const spec = { handlers: { hour(w) { at.push(w.tick); } }, periodic: [{ key: 'hour', type: 'hour', next: E.every(12, 5) }], onError: rethrow };
+  E.advanceTo(w, 60, spec);
+  assert.deepStrictEqual(at, [5, 17, 29, 41, 53]);
+  assert.strictEqual(w.events.length, 1);
+  assert.strictEqual(E.pending(w, 'hour').at, 65);
+});
+
+test('chyba v handleri nezastaví periodickú udalosť ani simuláciu', () => {
+  const w = world(), errors = [];
+  let ok = 0;
+  const spec = {
+    handlers: { boom() { throw new Error('bum'); }, fine() { ok++; } },
+    periodic: [{ key: 'boom', type: 'boom', next: E.every(10) }, { key: 'fine', type: 'fine', next: E.every(10) }],
+    onError(err, ev) { errors.push(ev.key + ':' + err.message); }
+  };
+  E.advanceTo(w, 35, spec);
+  assert.deepStrictEqual(errors, ['boom:bum', 'boom:bum', 'boom:bum']);
+  assert.strictEqual(ok, 3);
+  assert.ok(E.pending(w, 'boom'), 'periodická udalosť je stále naplánovaná');
+});
+
+test('reconcile: doplní chýbajúce, zahodí duplicity, nedeklarované a neznáme udalosti', () => {
+  const w = world({ tick: 100 });
+  w.events = [ // ako staré uloženie
+    { at: 110, seq: 1, type: 'dawn', data: null, key: 'dawn', periodic: true },
+    { at: 120, seq: 2, type: 'dawn', data: null, key: 'dawn', periodic: true },
+    { at: 130, seq: 3, type: 'fest', data: { id: 'zruseny' }, key: 'fest:zruseny', periodic: true },
+    { at: 140, seq: 4, type: 'odstraneny', data: null },
+    { at: 150, seq: 5, type: 'fest', data: { id: 'x' }, key: 'cExpire:7' } // unikátna, nie periodická – ostane
+  ];
+  w.seq = 5;
+  const spec = {
+    handlers: { dawn() {}, fest() {}, novy() {} },
+    periodic: [
+      { key: 'dawn', type: 'dawn', next: E.daily(72) },
+      { key: 'novy', type: 'novy', data: { a: 1 }, next: E.daily(84) }
+    ]
+  };
+  const warn = console.warn; console.warn = () => {};
+  try { E.reconcile(w, spec); } finally { console.warn = warn; }
+  assert.deepStrictEqual(w.events.map(e => [e.key || e.type, e.at]), [['dawn', 110], ['cExpire:7', 150], ['novy', 84 + TPD]]);
+  assert.deepStrictEqual(E.pending(w, 'novy').data, { a: 1 });
+  E.reconcile(w, spec); // druhý reconcile už nič nemení
+  assert.strictEqual(w.events.length, 3);
+});
+
+test('unikátna udalosť: nová nahradí čakajúcu s rovnakým kľúčom, cancel ruší podľa kľúča', () => {
+  const w = world(), log = [];
+  const spec = { handlers: { end(w, d) { log.push(d.who + '@' + w.tick); } }, onError: rethrow };
+  E.scheduleUnique(w, 'end:ana', 10, 'end', { who: 'ana' });
+  E.scheduleUnique(w, 'end:ana', 20, 'end', { who: 'ana' });
+  E.scheduleUnique(w, 'end:bob', 15, 'end', { who: 'bob' });
+  E.scheduleUnique(w, 'end:cyril', 12, 'end', { who: 'cyril' });
+  assert.strictEqual(E.cancel(w, 'end:cyril'), 1);
+  assert.strictEqual(E.cancel(w, 'end:nikto'), 0);
+  E.advanceTo(w, 30, spec);
+  assert.deepStrictEqual(log, ['bob@15', 'ana@20']);
+});
+
+test('nextEvery a nextDailyTick nájdu najbližší vhodný krok', () => {
   assert.strictEqual(E.nextDailyTick(0, 72), 72);
   assert.strictEqual(E.nextDailyTick(72, 72), 72);
   assert.strictEqual(E.nextDailyTick(73, 72), TPD + 72);
+  assert.strictEqual(E.nextEvery(0, 12), 0);
+  assert.strictEqual(E.nextEvery(1, 12), 12);
+  assert.strictEqual(E.nextEvery(100, 1000, -2), 998); // záporný posun (napr. ohlásenie 2 dni pred začiatkom roka)
 });
