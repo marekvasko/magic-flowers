@@ -364,12 +364,14 @@ export function create(api) {
   const depthOnlyMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: 'void main() { gl_FragColor = vec4(0.0); }', uniforms: material.uniforms, transparent: true, depthWrite: true, colorWrite: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 });
   // svet v zrkadle pod hladinou: rovnaký shader, stačia 4 vzorky tieňa
   const reflMaterial = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { SHADOW_TAPS: 4 }, uniforms: material.uniforms });
-  // Zoslabovanie objektov tak, aby bolo vidno zem v smere pohľadu: vejár bodov na zemi pred hráčom (do reach blokov,
-  // rozširuje sa) – z každého bodu sa vedie lúč ku kamere a objekty, ktoré ho zakrývajú, sa zoslabia: pri hráčovi najviac,
-  // ďalej menej. Objekty vedľa a za touto zemou nič nezakrývajú, ostanú plné. Obrys majú všetky zoslabené.
+  // Zoslabovanie objektov: všade sa zoslabí objekt, za ktorým stojí hráč (zakrýva ho). V lese (fanAreas) navyše tak,
+  // aby bolo vidno zem v smere pohľadu: vejár bodov na zemi pred hráčom (do reach blokov, rozširuje sa) – z každého bodu
+  // sa vedie lúč ku kamere a objekty, ktoré ho zakrývajú, sa zoslabia: pri hráčovi najviac, ďalej menej.
+  // Objekty vedľa a za touto zemou nič nezakrývajú, ostanú plné. Obrys majú všetky zoslabené.
   // Ladí sa za behu v konzole: window.MF_FADE = { reach: 5, edge: 0.7 } prepíše len uvedené hodnoty
   // (predvolené sú v window.MF_FADE_DEFAULTS); window.MF_NOFADE = true zoslabovanie vypne.
   const FADE_DEFAULTS = {
+    fanAreas: ['pomedzie'], // plochy, kde sa zoslabuje aj zem pred hráčom (inde len objekty, za ktorými hráč stojí)
     dir: 'facing',     // smer pohľadu: 'facing' = kam sa pozerá postavička, 'camera' = smerom ku kamere (dolu na obrazovke)
     min: 0.3,          // viditeľnosť objektu, ktorý zakrýva zem pri hráčovi alebo samého hráča (0 = neviditeľný, 1 = plný)
     edge: 0.8,         // viditeľnosť objektu, ktorý zakrýva zem na konci vejára (vo vzdialenosti reach)
@@ -378,7 +380,6 @@ export function create(api) {
     width: 1,          // polovičná šírka vejára pri hráčovi (bloky)
     spread: 0.5,       // o koľko sa vejár rozšíri na každý blok pred hráčom
     step: 0.5,         // hustota bodov na zemi (bloky medzi bodmi)
-    ray: true,         // objekt, ktorý zakrýva samého hráča, zoslabiť naplno (aj mimo vejára, napr. vysoký strom)
     hold: 400,         // ms – ako dlho ostane objekt zoslabený, keď už nič nezakrýva (pri otáčaní nebliká)
     speed: 4,          // rýchlosť prechodu (zmena viditeľnosti za sekundu)
     outline: 0.7,      // nepriehľadnosť obrysu
@@ -1050,7 +1051,7 @@ export function create(api) {
     if (cfg.dir === 'camera') { const hl = Math.hypot(toCam.x, toCam.z) || 1; fx = toCam.x / hl; fz = toCam.z / hl; }
     else { const a = S.me.a != null ? S.me.a : DIR_ANGLE[S.me.dir || 0]; fx = Math.cos(a); fz = Math.sin(a); }
     const px = S.me.x, pz = S.me.y, step = Math.max(0.1, cfg.step);
-    for (let d = 0; d <= cfg.reach + 1e-6; d += step) {
+    if ((cfg.fanAreas || []).includes(S.area)) for (let d = 0; d <= cfg.reach + 1e-6; d += step) {
       const hw = cfg.width + cfg.spread * d;
       const vis = cfg.min + (cfg.edge - cfg.min) * Math.max(0, Math.min(1, (d - cfg.near) / Math.max(0.01, cfg.reach - cfg.near)));
       for (let k = -hw; k <= hw + 1e-6; k += step) {
@@ -1061,7 +1062,7 @@ export function create(api) {
         for (const i of hits) lower(fineMeshes[i], vis);
       }
     }
-    if (cfg.ray) for (const m of computeOccluders(meH)) lower(m, cfg.min); // tie zakrývajú samého hráča
+    for (const m of computeOccluders(meH)) lower(m, cfg.min); // objekty, za ktorými hráč stojí – všade
     return out;
   }
   function updateFades(dt, meH) {
