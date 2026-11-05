@@ -8,6 +8,17 @@ const TPD = D.TICKS_PER_DAY, DPS = D.DAYS_PER_SEASON, YEAR_DAYS = 4 * DPS;
 const PLANTABLE = Object.keys(D.SPECIES).filter(k => !D.SPECIES[k].magic);
 const SEED_TARGET = 10, COMPOST_TARGET = 15, HIST_LEN = 16;
 const SEED_CAP = 40, COMPOST_CAP = 30;
+// Koeficienty cien (exportované aj pre ladiacu stránku, aby vysvetlenie sedelo s hrou)
+const PRICING = {
+  seedDemand: { now: 1.35, next: 1.0, off: 0.8 }, // dopyt po semienkach podľa toho, kedy sa druh sadí
+  seedScarcity: [0.75, 3], seedMin: 2,              // vzácnosť sqrt(SEED_TARGET / zásoba) v medziach, najnižšia cena
+  seedSellBack: 0.4,                                // výkup semienok = 40 % predajnej ceny
+  compostBase: 15, compostScarcity: [0.7, 3], compostMin: 5, compostSellBack: 0.5,
+  flowerOffSeason: 1.6,                             // kvet mimo svojej sezóny je vzácnejší
+  flowerSat: { start: 1.3, perUnit: 0.06, min: 0.35 }, // nasýtenie trhu: 1,3 − 0,06 × zásoba, najmenej 0,35
+  flowerMin: 1, flowerCap: 99,
+  flowerOvernight: 0.6, seedOffSeasonDecay: 0.9     // každé ráno: zostane 60 % kvetov, 90 % semienok mimo sezóny
+};
 
 // Server dodá funkcie na komunikáciu s hráčmi; v testoch zostanú prázdne.
 let hooks = {
@@ -37,29 +48,44 @@ function news(room, text) {
 }
 
 // ---------- Ceny ----------
-function seedPrice(room, sp) {
-  const st = room.market.seeds[sp].stock;
-  const ph = phase(sp, season(room));
-  const demand = ph === 'now' ? 1.35 : ph === 'next' ? 1.0 : 0.8;
-  const scarcity = clamp(Math.sqrt(SEED_TARGET / Math.max(1, st)), 0.75, 3);
-  return Math.max(2, Math.round(D.SPECIES[sp].seed * demand * scarcity));
+// Každá cena sa skladá z činiteľov; *PriceParts vrátia všetky (pre ladiacu stránku) aj výslednú cenu,
+// takže vysvetlenie sa nemôže rozísť s hrou. Funkcie len čítajú stav, nič nemenia.
+function seedPriceParts(room, sp) {
+  const P = PRICING, base = D.SPECIES[sp].seed, stock = room.market.seeds[sp].stock;
+  const se = season(room), ph = phase(sp, se);
+  const demand = P.seedDemand[ph];
+  const scarcityRaw = Math.sqrt(SEED_TARGET / Math.max(1, stock));
+  const scarcity = clamp(scarcityRaw, P.seedScarcity[0], P.seedScarcity[1]);
+  const raw = base * demand * scarcity;
+  return { base, stock, season: se, phase: ph, demand, scarcityRaw, scarcity, raw, min: P.seedMin, price: Math.max(P.seedMin, Math.round(raw)) };
 }
-function compostPrice(room) {
-  return Math.max(5, Math.round(15 * clamp(Math.sqrt(COMPOST_TARGET / Math.max(1, room.market.compost.stock)), 0.7, 3)));
+function seedPrice(room, sp) { return seedPriceParts(room, sp).price; }
+function compostPriceParts(room) {
+  const P = PRICING, base = P.compostBase, stock = room.market.compost.stock;
+  const scarcityRaw = Math.sqrt(COMPOST_TARGET / Math.max(1, stock));
+  const scarcity = clamp(scarcityRaw, P.compostScarcity[0], P.compostScarcity[1]);
+  const raw = base * scarcity;
+  return { base, stock, scarcityRaw, scarcity, raw, min: P.compostMin, price: Math.max(P.compostMin, Math.round(raw)) };
 }
+function compostPrice(room) { return compostPriceParts(room).price; }
 // Výkupná cena kvetu: mimo sezóny vzácnejší, počas sviatku vyšší dopyt, plný trh cenu tlačí dole.
-function flowerPrice(room, sp) {
-  const s = D.SPECIES[sp], st = room.market.flowers[sp].stock;
-  const rare = s.seasons.includes(season(room)) ? 1 : 1.6;
-  const fest = (room.market.festival && room.market.festival.mult[sp]) || 1;
-  const sat = Math.max(0.35, 1.3 - 0.06 * st);
-  return Math.max(1, Math.round(s.sell * rare * fest * sat));
+function flowerPriceParts(room, sp) {
+  const P = PRICING, s = D.SPECIES[sp], base = s.sell, stock = room.market.flowers[sp].stock, se = season(room);
+  const inSeason = s.seasons.includes(se);
+  const rare = inSeason ? 1 : P.flowerOffSeason;
+  const festival = room.market.festival;
+  const fest = (festival && festival.mult[sp]) || 1;
+  const satRaw = P.flowerSat.start - P.flowerSat.perUnit * stock;
+  const sat = Math.max(P.flowerSat.min, satRaw);
+  const raw = base * rare * fest * sat;
+  return { base, stock, season: se, inSeason, rare, fest, festival: fest !== 1 ? festival.id : null, satRaw, sat, raw, min: P.flowerMin, price: Math.max(P.flowerMin, Math.round(raw)) };
 }
+function flowerPrice(room, sp) { return flowerPriceParts(room, sp).price; }
 // Cena, za ktorú trh od hráča vykúpi 1 kus (null = nevykupuje)
 function sellQuote(room, id) {
   if (id.startsWith('fl_')) { const sp = id.slice(3); return room.market.flowers[sp] ? flowerPrice(room, sp) : null; }
-  if (id.startsWith('seed_')) { const sp = id.slice(5); return room.market.seeds[sp] ? Math.max(1, Math.round(seedPrice(room, sp) * 0.4)) : D.sellPrice(id); }
-  if (id === 'compost') return Math.max(1, Math.round(compostPrice(room) * 0.5));
+  if (id.startsWith('seed_')) { const sp = id.slice(5); return room.market.seeds[sp] ? Math.max(1, Math.round(seedPrice(room, sp) * PRICING.seedSellBack)) : D.sellPrice(id); }
+  if (id === 'compost') return Math.max(1, Math.round(compostPrice(room) * PRICING.compostSellBack));
   if (id.startsWith('po_') || id === 'wilted') return D.sellPrice(id);
   if (id === 'ice') return D.ICE_PRICE[season(room)]; // v lete drahý, v zime takmer zadarmo
   return null;
@@ -107,7 +133,7 @@ function sell(room, sv, id, n) {
     const f = sp ? D.freshness(sp, b.age) : 1;
     earned += Math.max(1, Math.round(sellQuote(room, id) * f)); fresh += f;
     const st = stockOf(room, id);
-    if (st) st.stock = Math.min(sp ? 99 : SEED_CAP, st.stock + 1);
+    if (st) st.stock = Math.min(sp ? PRICING.flowerCap : SEED_CAP, st.stock + 1);
   }
   sv.coins += earned;
   hooks.market(room);
@@ -143,8 +169,8 @@ function onDawn(room) {
   const m = room.market, se = season(room);
   // zákazníci počas noci rozkúpili časť kvetov; staré semienka mimo sezóny sa kazia
   for (const sp of PLANTABLE) {
-    m.flowers[sp].stock = Math.floor(m.flowers[sp].stock * 0.6);
-    if (phase(sp, se) === 'off') m.seeds[sp].stock = Math.floor(m.seeds[sp].stock * 0.9);
+    m.flowers[sp].stock = Math.floor(m.flowers[sp].stock * PRICING.flowerOvernight);
+    if (phase(sp, se) === 'off') m.seeds[sp].stock = Math.floor(m.seeds[sp].stock * PRICING.seedOffSeasonDecay);
   }
   // kompostéry hráčov (aj offline hráčov)
   for (const key in room.saves) {
@@ -438,6 +464,8 @@ function startCapital(env) {
 }
 
 module.exports = {
-  startCapital, setHooks, initEconomy, onDawn, HANDLERS, PERIODIC, buy, sell, sellQuote, buyQuote, seedPrice, flowerPrice,
-  takeContract, deliverContract, upgrade, canCap, plotLimit, plotsUsed, maxActive, marketView, boardView, phase, PLANTABLE
+  startCapital, setHooks, initEconomy, onDawn, HANDLERS, PERIODIC, buy, sell, sellQuote, buyQuote, seedPrice, flowerPrice, compostPrice,
+  seedPriceParts, flowerPriceParts, compostPriceParts, festStartTick,
+  takeContract, deliverContract, upgrade, canCap, plotLimit, plotsUsed, maxActive, marketView, boardView, phase, PLANTABLE,
+  PRICING, SEED_TARGET, COMPOST_TARGET, HIST_LEN, SEED_CAP, COMPOST_CAP, YEAR_DAYS
 };
