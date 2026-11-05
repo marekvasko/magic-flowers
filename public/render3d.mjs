@@ -692,6 +692,7 @@ void main() {
   float a = op * pow(vEdge, 1.5) * smoothstep(0.0, 0.08, vY) * (1.0 - vY);
   gl_FragColor = vec4(col * a, 1.0);
 }`;
+  const RAY_OP = 0.035; // jas stien lúčov z mapy tieňov
   const shaftGeo = new THREE.CylinderGeometry(0.42, 0.3, 1, 12, 1, true);
   let shafts = [];
   const UP = new THREE.Vector3(0, 1, 0);
@@ -724,8 +725,10 @@ void main() {
   // poloha a jas lúčov podľa slnka (dir), dňa (dl) a vzdialenosti od hráča
   function updateShafts(dir, dl, eyeR) {
     const rain = S.weather === 'rain' ? 0.3 : S.weather === 'snow' ? 0.5 : 1;
+    sunRays.material.uniforms.op.value = dir && dir.y > 0.05 ? RAY_OP * Math.min(1, dir.y * 3) * dl * rain : 0;
     for (const m of shafts) {
       const b = m.userData.base;
+      if (lesSunMode()) { m.visible = false; continue; } // lúče sú z mapy tieňov (sunRays)
       if (!dir || dir.y < 0.08 || dl <= 0) { m.visible = false; continue; }
       const dist = Math.hypot(b.x - S.me.x, b.z - S.me.y), near = 1 - smooth(eyeR * 0.6, eyeR + 2, dist);
       const op = 0.13 * b.k * Math.min(1, dir.y * 3) * dl * rain * near;
@@ -1040,6 +1043,7 @@ void main() {
     const key = se + ':' + stepMin + (layerOn('shadows') ? '' : ':off') + ':' + lesSunMode();
     if (!shadowDirty && key === lastShadowKey) return;
     shadowDirty = false; lastShadowKey = key;
+    clearSunRays();
     const dir = W.sunDir(stepMin, se);
     if (!dir || !layerOn('shadows')) { u.shadowOn.value = 0; return; }
     u.sunDir.value.set(dir.x, dir.y, dir.z); // rovnaké slnko ako mapa – odvrátené steny sedia s tieňom
@@ -1070,6 +1074,90 @@ void main() {
     renderer.setRenderTarget(null);
     renderer.setClearColor(oldClear, oldAlpha);
     scene.overrideMaterial = oldOverride;
+    if (zone && D.isDark(S.area)) buildSunRays(zone, dir);
+  }
+
+  // ---------- Lúče slnka z mapy tieňov (Les divov, MF_LES_SUN ≠ 'dapple') ----------
+  // Mapu tieňov premietneme na zem zóny slnka do malej masky (RAY_RES vzoriek na políčko) a prečítame ju späť.
+  // Na hranách osvetlených škvŕn (svetlo / tieň) postavíme zvislé pruhy smerom k slnku: steny hranola svetla,
+  // ktorý ide od škvrny na zemi hore cez medzeru v korunách. Aditívne, smerom hore a na okraji zóny slabnú.
+  const RAY_RES = 2, RAY_TOP = 9; // vzoriek na políčko; výška (bloky), kam lúč siaha
+  const rayMaskMat = new THREE.ShaderMaterial({
+    uniforms: { shadowMap: material.uniforms.shadowMap, shadowMatrix: material.uniforms.shadowMatrix, box: { value: new THREE.Vector4() }, gy: { value: 1 } },
+    vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+    fragmentShader: `uniform sampler2D shadowMap; uniform mat4 shadowMatrix; uniform vec4 box; uniform float gy; varying vec2 vUv;
+void main() {
+  vec4 s = shadowMatrix * vec4(mix(box.x, box.z, vUv.x), gy + 0.05, mix(box.y, box.w, vUv.y), 1.0);
+  vec3 sc = s.xyz / s.w * 0.5 + 0.5;
+  gl_FragColor = vec4(sc.z - 0.0008 <= texture2D(shadowMap, sc.xy).r ? 1.0 : 0.0, 0.0, 0.0, 1.0);
+}`, depthTest: false, depthWrite: false
+  });
+  const rayMaskScene = new THREE.Scene(), rayMaskQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), rayMaskMat);
+  rayMaskQuad.frustumCulled = false; rayMaskScene.add(rayMaskQuad);
+  let rayMaskRT = null;
+  const RAY_VERT = `
+attribute float rayY; attribute float rayW;
+varying float vY; varying float vW;
+void main() { vY = rayY; vW = rayW; gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0); }`;
+  const RAY_FRAG = `
+uniform float op; uniform vec3 col;
+varying float vY; varying float vW;
+void main() {
+  float a = op * vW * smoothstep(0.0, 0.05, vY) * pow(1.0 - vY, 1.6);
+  gl_FragColor = vec4(col * a, 1.0);
+}`;
+  const sunRays = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.ShaderMaterial({
+    vertexShader: RAY_VERT, fragmentShader: RAY_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+    uniforms: { op: { value: 0 }, col: { value: new THREE.Vector3(1, 0.93, 0.7) } }
+  }));
+  sunRays.layers.set(1); sunRays.renderOrder = 5e5; sunRays.frustumCulled = false; sunRays.visible = false;
+  scene.add(sunRays);
+  function clearSunRays() { sunRays.visible = false; }
+  function buildSunRays(zone, dir) {
+    const x0 = zone.cx - zone.rx, z0 = zone.cz - zone.rz, nx = Math.round(zone.rx * 2 * RAY_RES), nz = Math.round(zone.rz * 2 * RAY_RES), c = 1 / RAY_RES;
+    if (!rayMaskRT || rayMaskRT.width !== nx || rayMaskRT.height !== nz) {
+      if (rayMaskRT) rayMaskRT.dispose();
+      rayMaskRT = new THREE.WebGLRenderTarget(nx, nz, { depthBuffer: false });
+    }
+    const gy = W.surfaceY(grid, Math.floor(zone.cx), Math.floor(zone.cz));
+    rayMaskMat.uniforms.box.value.set(x0, z0, x0 + nx * c, z0 + nz * c);
+    rayMaskMat.uniforms.gy.value = gy;
+    const buf = new Uint8Array(nx * nz * 4);
+    renderer.setRenderTarget(rayMaskRT);
+    renderer.render(rayMaskScene, camera);
+    renderer.readRenderTargetPixels(rayMaskRT, 0, 0, nx, nz, buf);
+    renderer.setRenderTarget(null);
+    const lit = (i, j) => i >= 0 && j >= 0 && i < nx && j < nz && buf[(j * nx + i) * 4] > 127;
+    // váha okraja zóny – rovnaká ako stmavnutie slnka v shaderi
+    const zw = (x, z) => 1 - smooth(0.8, 1, Math.hypot((x - zone.cx) / zone.rx, (z - zone.cz) / zone.rz));
+    const L = Math.min(16, RAY_TOP / Math.max(0.15, dir.y)), dx = dir.x * L, dy = dir.y * L, dz = dir.z * L;
+    const P = [], Y = [], Wt = [];
+    const quad = (ax, az, bx, bz) => {
+      const wa = zw(ax, az), wb = zw(bx, bz);
+      if (wa < 0.01 && wb < 0.01) return;
+      P.push(ax, gy, az, bx, gy, bz, bx + dx, gy + dy, bz + dz, ax, gy, az, bx + dx, gy + dy, bz + dz, ax + dx, gy + dy, az + dz);
+      Y.push(0, 0, 1, 0, 1, 1); Wt.push(wa, wb, wb, wa, wb, wa);
+    };
+    // hrany medzi svetlom a tieňom, zlúčené do úsekov najviac jedného políčka (váha okraja sa medzi koncami len lineárne mieša)
+    for (let i = 0; i <= nx; i++) for (let j = 0; j < nz;) {
+      if (lit(i - 1, j) === lit(i, j)) { j++; continue; }
+      const k = lit(i, j), j0 = j;
+      while (j < nz && j - j0 < RAY_RES && lit(i - 1, j) !== lit(i, j) && lit(i, j) === k) j++;
+      quad(x0 + i * c, z0 + j0 * c, x0 + i * c, z0 + j * c);
+    }
+    for (let j = 0; j <= nz; j++) for (let i = 0; i < nx;) {
+      if (lit(i, j - 1) === lit(i, j)) { i++; continue; }
+      const k = lit(i, j), i0 = i;
+      while (i < nx && i - i0 < RAY_RES && lit(i, j - 1) !== lit(i, j) && lit(i, j) === k) i++;
+      quad(x0 + i0 * c, z0 + j * c, x0 + i * c, z0 + j * c);
+    }
+    sunRays.geometry.dispose();
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+    geo.setAttribute('rayY', new THREE.Float32BufferAttribute(Y, 1));
+    geo.setAttribute('rayW', new THREE.Float32BufferAttribute(Wt, 1));
+    sunRays.geometry = geo;
+    sunRays.visible = P.length > 0;
   }
 
   // ---------- Sprity: kvety, huby, babka, hráči ----------
