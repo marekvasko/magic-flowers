@@ -247,7 +247,7 @@ function linesMesh(THREE, world, view, P, th, o, maxLights, frame) {
       uSize: { value: new THREE.Vector2(o.w, o.h) }, uRes: frame.res, uTime: frame.time, uSway: { value: o.sway }, uPhase: { value: (L.seed % 97) * 0.6 }
     })
   });
-  mat.userData.info = { hubs: L.nH, moor: L.moor, fill: L.fill, render: 'lines', segments: th.count / 2, copies: n, hub: th.hub };
+  mat.userData.info = { hubs: L.nH, moor: L.moor, fill: L.fill, render: 'lines', segments: th.count / 2, copies: n, hub: th.hub, anchors: th.anchors };
   const m = new THREE.LineSegments(g, mat);
   m.frustumCulled = false; // vydutie a kývanie mení tvar mimo pôvodnej rovinky
   return m;
@@ -339,22 +339,46 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
       const m = add(vc ? threadLines(THREE, world, view, P, vc.th, maxLights, frame) : cornerLines(THREE, world, view, P, { seed, faces: k.f || 2 }, maxLights, frame));
       m.renderOrder = 2; m.matrixAutoUpdate = false; m.matrix.copy(M); m.matrixWorldNeedsUpdate = true;
       cornerMeshes.push(m);
-      // krížiak sedí v strede prvej oblasti pavučiny (v malej pavučine budovy menší)
-      const hub = m.material.userData.info.hub, at = new THREE.Vector3(...hub).applyMatrix4(M), ks = vc ? Math.min(1, Math.max(...vc.size) * 1.6) : 1;
-      const sp = makeSprite(0.24 * ks, 0.12 * ks); sp.material.map = frameTex('k', 0); sp.layers.set(1);
-      sp.position.set(at.x, at.y - 0.06 * ks, at.z);
+      // krížiak visí v strede prvej oblasti pavučiny hlavou dole; chrbtom alebo bruchom ku kamere podľa strany
+      // (strana chrbta je daná semienkom); v malej pavučine budovy je menší
+      const info = m.material.userData.info, at = new THREE.Vector3(...info.hub).applyMatrix4(M), ks = vc ? Math.min(1, Math.max(...vc.size) * 1.6) : 1;
+      let nrm = null;
+      if (info.anchors && info.anchors.length >= 3) {
+        const A = info.anchors.slice(0, 3).map(a => new THREE.Vector3(...a).applyMatrix4(M));
+        nrm = A[1].clone().sub(A[0]).cross(A[2].clone().sub(A[0])).normalize();
+        if (seed % 2) nrm.negate();
+      }
+      const sp = makeSprite(1, 1); sp.layers.set(1);
+      sp.userData.web = { at, nrm, ks };
+      cornerMeshes.push(sp);
       cornerMeshes.push(sp);
     }
   }
 
   // ---- pavúky ----
-  const SIZE = { v: [1.0, 0.5], p: [2.3, 1.15], k: [0.42, 0.21] };
+  // Sprity z modelu (shared/spidermodel.js): na zemi 8 pohľadov podľa smeru hlavy voči kamere, na zvislej ploche
+  // (pavučina, chrbát hráča) hlavou hore/dole chrbtom alebo bruchom ku kamere; 4 snímky chôdze. Pravá veľkosť:
+  // krížiak 1/4 políčka, vlčiak 1, pradlena 1,5 a výška hráča.
+  const SM = window.SpiderModel;
+  const sinP = Math.sin(SM.PITCH);
   function spriteFor(o) {
     let sp = sprites.get(o.id);
-    if (!sp) { const [w, h] = SIZE[o.k] || SIZE.v; sp = makeSprite(w, h); sp.userData.k = o.k; sprites.set(o.id, sp); }
+    if (!sp) { sp = makeSprite(1, 1); sp.userData.k = o.k; sprites.set(o.id, sp); }
     return sp;
   }
-  function frameTex(k, f) { return spriteTex(`spider:${k}:${f}`, 128, 64, c => Art.spider(c, k, 64, 62, 100, f * Math.PI / 2)); }
+  // nastaví snímku a umiestni sprite: na zemi je spodok obrázka na zemi bližšie ku kamere (inak by predné nohy
+  // zapadli pod zem), na ploche je počiatok modelu presne v bode (x, y, z)
+  const toCam = new THREE.Vector3();
+  function pose(sp, k, view, f, x, y, z, ks) {
+    const L = SM.layout(k, view), key = k + view + f;
+    if (sp.userData.key !== key) { sp.material.map = spriteTex(`spider:${k}:${view}:${f}`, L.w, L.h, c => SM.sprite(c, k, view, f)); sp.material.needsUpdate = true; sp.userData.key = key; }
+    const s = ks || 1;
+    sp.scale.set(L.w / L.ppu * s, L.h / L.ppu * s, 1);
+    if (SM.isSurface(view)) { sp.center.set(L.ox / L.w, 1 - L.oy / L.h); sp.position.set(x, y, z); return; }
+    const t = (L.h - L.oy) / L.ppu * s / sinP;
+    sp.center.set(L.ox / L.w, 0);
+    sp.position.set(x + toCam.x * t, y, z + toCam.z * t);
+  }
 
   const lastSeen = new Map(); // id → { x, y, z, seen, d } pre oči v prekrytí
   function update(dt, t, lights) {
@@ -367,7 +391,13 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
     view.value.copy(camera.position).sub(camTarget).normalize();
     frame.time.value = t;
     if (renderer) renderer.getDrawingBufferSize(frame.res.value);
-    for (const m of cornerMeshes) if (m.isSprite) m.material.color.setRGB(...lightAt(m.position.x, m.position.y, m.position.z, lights, lights.length));
+    toCam.copy(camera.position).sub(camTarget).setY(0).normalize();
+    for (const m of cornerMeshes) if (m.isSprite) {
+      const w = m.userData.web, n = w.nrm;
+      const view = !n || Math.abs(n.y) > 0.8 ? SM.planarView(0, 1, toCam.x, toCam.z) : n.dot(toCam) >= 0 ? 'down' : 'down-b';
+      pose(m, 'k', view, 0, w.at.x, w.at.y, w.at.z, w.ks);
+      m.material.color.setRGB(...lightAt(w.at.x, w.at.y, w.at.z, lights, lights.length));
+    }
     for (const m of burrowMeshes) { const p = m.position; lightAt(p.x, p.y, p.z, lights, lights.length, lo); m.material.opacity = 0.85 * lo.seen; m.visible = lo.seen > 0.02; }
     const alive = new Set();
     lastSeen.clear();
@@ -380,10 +410,9 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
         lift = 0.45;
       }
       const f = o.m ? Math.floor(o.phase / (Math.PI / 2)) % 4 : 0;
-      const key = o.k + f;
-      if (sp.userData.key !== key) { sp.material.map = frameTex(o.k, f); sp.material.needsUpdate = true; sp.userData.key = key; }
       const y = groundY(x, z) + lift;
-      sp.position.set(x, y, z);
+      // na chrbte hráča lezie hore (chrbtom ku kamere), inak podľa smeru hlavy
+      pose(sp, o.k, o.c ? 'up' : SM.planarView(Math.cos(o.a || 0), Math.sin(o.a || 0), toCam.x, toCam.z), f, x, o.c ? y + 0.25 : y, z, o.c ? 0.6 : 1); // na hráčovi menší, nech ho nezakryje celého
       const c = lightAt(x, y + 0.2, z, lights, lights.length, lo);
       if (o.c) for (let i = 0; i < 3; i++) c[i] = Math.max(c[i], 0.8); // na sebe ho vidíš aj v tme
       sp.material.color.setRGB(...c);
@@ -391,7 +420,7 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
       if (sp.userData.top !== !!o.c) { const m = sp.material; sp.userData.top = !!o.c; m.depthTest = !o.c; m.transparent = !!o.c; sp.renderOrder = o.c ? 1e6 + 1 : 0; m.needsUpdate = true; } // až po siluete hráča
       const inBurrow = o.k === 'v' && o.h;
       sp.visible = lo.seen > 0.02 && !inBurrow;
-      lastSeen.set(o.id, { x, y: y + (SIZE[o.k] || SIZE.v)[1] * 0.4, z, seen: inBurrow ? 0 : lo.seen, d: Math.hypot(x - me.x, z - me.y), k: o.k });
+      lastSeen.set(o.id, { x, y: y + SM.eyeHeight(o.k), z, seen: inBurrow ? 0 : lo.seen, d: Math.hypot(x - me.x, z - me.y), k: o.k });
     }
     for (const [id, sp] of sprites) if (!alive.has(id)) { scene.remove(sp); sp.material.dispose(); sprites.delete(id); }
   }

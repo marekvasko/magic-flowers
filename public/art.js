@@ -579,36 +579,6 @@ const Art = (() => {
   }
 
   // ---- Pavúky a pavučiny (#57) ----
-  // Pavúk spredu-zhora (ako ho vidí izometrická kamera): kind 'v' vlčiak (hnedosivý, chlpatý), 'p' stará pradlena
-  // (veľká, tmavá so svetlou kresbou), 'k' krížiak (malý s krížom). phase = krok nôh. (x, y) = stred pod bruchom.
-  function spider(c, kind, x, y, s, phase) {
-    const P = {
-      v: { body: '#5a4a3c', dark: '#3a2f26', leg: '#4a3c30', mark: '#8a7660', eye: '#ffcf6a' },
-      p: { body: '#2a2230', dark: '#17121c', leg: '#231c29', mark: '#c9b8d8', eye: '#ff6a4a' },
-      k: { body: '#a0682e', dark: '#6e4519', leg: '#7a5226', mark: '#fff4dc', eye: '#222' }
-    }[kind] || {};
-    const r = s * 0.22;
-    c.lineCap = 'round'; c.lineJoin = 'round';
-    // nohy: 4 páry, kolená hore, končeky na zemi; pri chôdzi sa striedajú
-    for (let side = -1; side <= 1; side += 2) for (let k = 0; k < 4; k++) {
-      const sw = Math.sin(phase + k * 1.6 + (side > 0 ? Math.PI : 0)) * s * 0.05;
-      const bx = x + side * r * 0.5, by = y - r * 0.9 + (k - 1.5) * r * 0.22;
-      const kx = x + side * (r * 1.25 + k * r * 0.12), ky = y - r * 1.9 + k * r * 0.3 + sw * 0.5;
-      const fx = x + side * (r * 1.6 + k * r * 0.35) + sw, fy = y - (k === 3 ? 0 : r * 0.1 * (2 - k));
-      c.strokeStyle = P.leg; c.lineWidth = Math.max(1, s * (kind === 'p' ? 0.034 : 0.028));
-      c.beginPath(); c.moveTo(bx, by); c.lineTo(kx, ky); c.lineTo(fx, fy); c.stroke();
-    }
-    // zadoček a hlavohruď
-    ell(c, x, y - r * 1.25, r * 1.05, r * 0.85, 0, P.body);
-    ell(c, x, y - r * 1.45, r * 0.75, r * 0.5, 0, shade(P.body, 0.12));
-    if (kind === 'k') { c.fillStyle = P.mark; c.fillRect(x - r * 0.08, y - r * 1.85, r * 0.16, r * 0.9); c.fillRect(x - r * 0.4, y - r * 1.5, r * 0.8, r * 0.14); }
-    else if (kind === 'p') { for (let i = 0; i < 3; i++) ell(c, x, y - r * (1.75 - i * 0.28), r * (0.36 - i * 0.07), r * 0.08, 0, P.mark); }
-    else { for (let i = -1; i <= 1; i += 2) ell(c, x + i * r * 0.35, y - r * 1.35, r * 0.12, r * 0.5, i * 0.2, P.mark); }
-    ell(c, x, y - r * 0.55, r * 0.55, r * 0.42, 0, P.dark);
-    // oči (vlčiak a pradlena majú veľké, v tme sa lesknú)
-    const er = r * (kind === 'k' ? 0.08 : 0.12);
-    for (let i = -1; i <= 1; i += 2) { circ(c, x + i * r * 0.2, y - r * 0.62, er, P.eye); circ(c, x + i * r * 0.2 - er * 0.3, y - r * 0.66, er * 0.35, '#fff'); }
-  }
   // Pavučina do obdĺžnika w × h: lúče z mierne posunutého stredu a špirála; silk 1–3 = koľko z nej ešte ostalo
   // (vyťahaná je rozpadnutá). k = semienko tvaru, a = krytie.
   function web(c, w, h, silk, k, a) {
@@ -670,6 +640,6 @@ const Art = (() => {
     c.textBaseline = 'alphabetic';
   }
 
-  return { plant, char, ground, soil, shroom, icon, hash, circ, bubble, spider, web };
+  return { plant, char, ground, soil, shroom, icon, hash, circ, bubble, web };
 })();
 window.Art = Art; // pre 3D modul (render3d.mjs)
