@@ -45,7 +45,7 @@ export function spiderView({ h, ctx, mainEl, save, seg }) {
   const sun = new THREE.DirectionalLight(0xffffff, 1.8); sun.position.set(-0.35, 1, 0.45); scene.add(sun);
   const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 100);
   cam.up.set(...SM.CAM.u); cam.position.set(...SM.CAM.c.map(v => v * 20)); cam.lookAt(0, 0, 0);
-  const VIEWS = SM.VIEWS.concat(['dorsal', 'ventral']);
+  const VIEWS = SM.VIEWS.concat(SM.TRUNK, ['dorsal', 'ventral']);
   let raf = 0, last = 0;
 
   function renderBar() {
@@ -86,7 +86,7 @@ export function spiderView({ h, ctx, mainEl, save, seg }) {
       const r = cell(v, phase);
       sum += r.score; out.push(v + ' ' + r.score.toFixed(2));
       return h('div', { class: 'spd-cell', 'data-view': v, 'data-iou': r.score.toFixed(3) },
-        h('h6', null, h('span', null, v + (SM.PLANAR.includes(v) ? '' : v.startsWith('dorsal') || v.startsWith('ventral') ? ' (reference)' : ' (on surface)')), h('span', { class: 'muted' }, 'IoU ' + r.score.toFixed(2))),
+        h('h6', null, h('span', null, v + (SM.PLANAR.includes(v) ? '' : v.startsWith('dorsal') || v.startsWith('ventral') ? ' (reference)' : SM.TRUNK.includes(v) ? ' (on trunk)' : ' (on surface)')), h('span', { class: 'muted' }, 'IoU ' + r.score.toFixed(2))),
         h('div', { class: 'spd-pair' }, r.c3, r.c2), h('div', { class: 'muted', style: 'font-size:11px;text-align:center' }, `3D model · 2D sprite ${r.L.w}×${r.L.h}px`));
     }));
     const K = SM.SPECIES[st.kind];

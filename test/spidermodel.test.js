@@ -58,3 +58,20 @@ test('nohy za veľkým zadočkom krížiaka sa kreslia pred ním (zakryje ich)',
   const front = items.filter(i => i.k === 'seg' && i.tip && i.d < items[abd].d - 0.03);
   assert.ok(front.length > 0 && front.every(s => items.indexOf(s) < abd));
 });
+
+test('na kmeni: 10 pohľadov podľa strany kmeňa voči kamere, zo zadnej strany žiaden', () => {
+  assert.strictEqual(SM.TRUNK.length, 10);
+  for (const k of Object.keys(SM.SPECIES)) for (const v of SM.TRUNK) {
+    const L = SM.layout(k, v);
+    assert.ok(L.w > 10 && L.h > 10 && L.frames[0].length > 20, `${k} ${v}`);
+  }
+  // kamera na +z (gx 0, gz 1); kmeň s pavúkom na strane ku kamere = 0°, vpravo = +90°
+  assert.strictEqual(SM.trunkView(0, 1, 0, 1, false), 't0d');
+  assert.strictEqual(SM.trunkView(1, 0, 0, 1, true), 't90u');
+  assert.strictEqual(SM.trunkView(-1, 1, 0, 1, false), 't-45d');
+  assert.strictEqual(SM.trunkView(1, -0.3, 0, 1, false), 't90d');
+  assert.strictEqual(SM.trunkView(0, -1, 0, 1, false), null, 'za kmeňom');
+  // t0 = rovnaký ako starý pohľad 'down'
+  const a = SM.layout('v', 't0d'), b = SM.layout('v', 'down');
+  assert.deepStrictEqual([a.w, a.h], [b.w, b.h]);
+});

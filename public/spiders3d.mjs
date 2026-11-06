@@ -414,7 +414,8 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
       // na kmeni: chrbtom von zo stromu, hlavou dole (čaká) alebo hore (lezie); zo strany od kamery ho kmeň zakryje
       if (o.n) { x += o.n[0] * 0.05; z += o.n[1] * 0.05; }
       // na chrbte hráča lezie hore (chrbtom ku kamere), inak podľa smeru hlavy
-      const view = o.n ? (o.u ? 'up' : 'down') : o.c ? 'up' : SM.planarView(Math.cos(o.a || 0), Math.sin(o.a || 0), toCam.x, toCam.z);
+      const tv = o.n ? SM.trunkView(o.n[0], o.n[1], toCam.x, toCam.z, o.u) : null; // na kmeni: podľa strany kmeňa voči kamere
+      const view = o.n ? tv || 't0d' : o.c ? 'up' : SM.planarView(Math.cos(o.a || 0), Math.sin(o.a || 0), toCam.x, toCam.z);
       pose(sp, o.k, view, f, x, o.c ? y + 0.25 : o.n ? y + (o.z || 0) : y, z, o.c ? 0.6 : 1); // na hráčovi menší, nech ho nezakryje celého
       const c = lightAt(x, y + 0.2 + (o.n ? o.z || 0 : 0), z, lights, lights.length, lo);
       if (o.c) for (let i = 0; i < 3; i++) c[i] = Math.max(c[i], 0.8); // na sebe ho vidíš aj v tme
@@ -422,8 +423,8 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
       // pavúk na chrbte hráča sa kreslí navrch (inak by ho zakryla postavička)
       if (sp.userData.top !== !!o.c) { const m = sp.material; sp.userData.top = !!o.c; m.depthTest = !o.c; m.transparent = !!o.c; sp.renderOrder = o.c ? 1e6 + 1 : 0; m.needsUpdate = true; } // až po siluete hráča
       const inBurrow = o.k === 'v' && o.h;
-      sp.visible = lo.seen > 0.02 && !inBurrow;
-      lastSeen.set(o.id, { x, y: y + (o.n ? o.z || 0 : SM.eyeHeight(o.k)), z, seen: inBurrow ? 0 : lo.seen, d: Math.hypot(x - me.x, z - me.y), k: o.k });
+      sp.visible = lo.seen > 0.02 && !inBurrow && !(o.n && !tv); // za kmeňom ho nevidno
+      lastSeen.set(o.id, { x, y: y + (o.n ? o.z || 0 : SM.eyeHeight(o.k)), z, seen: inBurrow || (o.n && !tv) ? 0 : lo.seen, d: Math.hypot(x - me.x, z - me.y), k: o.k });
     }
     for (const [id, sp] of sprites) if (!alive.has(id)) { scene.remove(sp); sp.material.dispose(); sprites.delete(id); }
   }
