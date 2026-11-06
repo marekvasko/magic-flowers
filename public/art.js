@@ -537,6 +537,11 @@ const Art = (() => {
       c.beginPath(); c.moveTo(36, 60); c.quadraticCurveTo(38, 36, 50, 42); c.stroke();
       ell(c, 46, 34, 9, 6, 0.6, '#8d6a44'); ell(c, 51, 46, 7, 5, 0.9, '#a07a4a');
       leaf(c, 27, 48, 12, Math.PI + 0.9, '#8a7a45');
+    } else if (id === 'silk') { // klbko pavúčieho hodvábu
+      web(c, 64, 64, 3, 7, 0.55);
+      ell(c, 32, 40, 15, 13, 0, '#e9eef2'); ell(c, 28, 36, 8, 6, -0.4, '#ffffff');
+      c.strokeStyle = '#b7c3cc'; c.lineWidth = 1.5;
+      for (let i = 0; i < 5; i++) { c.beginPath(); c.ellipse(32, 40, 15 - i * 2, 6 + i * 1.5, 0.6 + i * 0.5, 0, TAU); c.stroke(); }
     } else if (/^wild_[0-3]$/.test(id)) { // divé semienko: hrsť semien v tráve s otáznikom
       for (let i = 0; i < 7; i++) leaf(c, 10 + i * 7, 58, 14 + (i % 3) * 4, -Math.PI / 2 + (i - 3) * 0.12, i % 2 ? '#7cb342' : '#558b2f');
       ell(c, 30, 40, 7, 4, 0.5, '#8d6e3f'); ell(c, 38, 44, 6, 3.5, -0.4, '#a1824a'); ell(c, 26, 47, 5, 3, 0.2, '#7a5a30');
@@ -573,6 +578,33 @@ const Art = (() => {
     return iconCache[id];
   }
 
+  // ---- Pavúky a pavučiny (#57) ----
+  // Pavučina do obdĺžnika w × h: lúče z mierne posunutého stredu a špirála; silk 1–3 = koľko z nej ešte ostalo
+  // (vyťahaná je rozpadnutá). k = semienko tvaru, a = krytie.
+  function web(c, w, h, silk, k, a) {
+    const cx = w * (0.45 + hash(k, 1) * 0.1), cy = h * (0.42 + hash(k, 2) * 0.1);
+    const rays = 12, R = Math.hypot(w, h) * 0.6;
+    c.save();
+    c.beginPath(); c.rect(1, 1, w - 2, h - 2); c.clip();
+    c.strokeStyle = `rgba(236,243,248,${a == null ? 0.95 : a})`; c.lineWidth = Math.max(1.5, Math.min(w, h) / 50);
+    const keep = i => silk >= 3 || hash(k, i + 10) < (silk === 2 ? 0.75 : 0.45);
+    for (let i = 0; i < rays; i++) {
+      if (!keep(i)) continue;
+      const ang = i / rays * TAU + hash(k, i) * 0.2;
+      c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx + Math.cos(ang) * R, cy + Math.sin(ang) * R); c.stroke();
+    }
+    const turns = silk >= 3 ? 9 : silk === 2 ? 6 : 3;
+    c.beginPath();
+    for (let t = 0; t < turns * rays; t++) {
+      const i = t % rays, ang = i / rays * TAU + hash(k, i) * 0.2, rr = (t / rays + 0.6) / (turns + 0.6) * Math.min(w, h) * 0.62;
+      const px = cx + Math.cos(ang) * rr, py = cy + Math.sin(ang) * rr;
+      if (!keep(i) || !keep((i + rays - 1) % rays)) { c.moveTo(px, py); continue; }
+      if (t) c.lineTo(px, py); else c.moveTo(px, py);
+    }
+    c.stroke();
+    c.strokeStyle = 'rgba(232,240,246,0.7)'; c.strokeRect(1, 1, w - 2, h - 2); // nosné vlákna k oporám
+    c.restore();
+  }
   // Bublina chatu nad hráčom: zalomí slová do max. 4 riadkov (šírka ~4,5 políčka), zvyšok skončí „…“.
   // (x, y) = účiarie menovky; bublina (biely obdĺžnik) sa kreslí nad ňu.
   function wrapText(c, text, maxW, maxLines) {
@@ -608,6 +640,6 @@ const Art = (() => {
     c.textBaseline = 'alphabetic';
   }
 
-  return { plant, char, ground, soil, shroom, icon, hash, circ, bubble };
+  return { plant, char, ground, soil, shroom, icon, hash, circ, bubble, web };
 })();
 window.Art = Art; // pre 3D modul (render3d.mjs)

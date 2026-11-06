@@ -45,7 +45,7 @@ test('server: udalosti zo svetu verzie 4 dostanú kľúče, duplicity a odstrán
     ws.close();
   } finally { await stopServer(proc); }
   const saved = JSON.parse(fs.readFileSync(path.join(dir, 'room-stary.json'), 'utf8'));
-  assert.strictEqual(saved.v, 7);
+  assert.strictEqual(saved.v, 8);
   const byKey = k => saved.events.filter(e => e.key === k);
   // pôvodné udalosti ostali tam, kde boli
   assert.deepStrictEqual(byKey('hourly').map(e => e.at), [1012]);

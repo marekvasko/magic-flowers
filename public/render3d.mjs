@@ -3,6 +3,7 @@
 // Herná logika, sieť aj ovládanie zostávajú v game.js – toto je len iný pohľad na ten istý svet.
 import * as THREE from '/vendor/three/three.module.js';
 import { createParticles } from '/particles3d.mjs';
+import { createSpiders3d } from '/spiders3d.mjs';
 
 const D = window.GameData, W = window.World3D, Art = window.Art, MS = window.Mesher;
 const R = W.R;
@@ -1708,6 +1709,7 @@ void main() {
       o.ghost.visible = !dark || id === 'me';
     }
     void meO;
+    spiders3d.update(dt, t, lights); // pavučiny, nory a pavúky (#57)
 
     const fading = updateFades(dt, meO ? meO.h : 1);
     const lit = curAmb.map((v, i) => Math.min(1.2, v + curSun[i] * 0.7));
@@ -1771,6 +1773,7 @@ void main() {
       if (bubble && bubble.until > performance.now()) Art.bubble(c, bubble.text, P.x, P.y, ts);
       c.globalAlpha = 1;
     };
+    spiders3d.overlay(c, ppb, t); // oči pavúkov v tme
     for (const o of S.others.values()) { const co = chars.get(o.id); if (co) label(co, o.name, o.e, S.bubbles[o.id]); }
     const mo = chars.get('me'); if (mo) label(mo, S.name, S.myEmote, S.bubbles[S.id]);
     if (babka) label(babka, 'Babka', null, null);
@@ -1797,6 +1800,7 @@ void main() {
   const sceneBefore = new Set(scene.children);
   const particles = createParticles({ scene, camera, renderer, W, D, S, api, ripple });
   const particleObjs = scene.children.filter(o => !sceneBefore.has(o)); // objekty častíc (ladiaca stránka ich vie skryť)
+  const spiders3d = createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, renderer, world: material.uniforms, maxLights: MAX_LIGHTS, fine: () => grid && grid.fine });
   // stred ohniska pod kotlíkom (model má okraj FM minikociek, ohnisko je v strede políčka nad zemou)
   function fireCenter() {
     const f = grid && grid.fine.find(m => m.type === 'cauldron');
@@ -1816,6 +1820,7 @@ void main() {
   }
   function invalidateShadows() { shadowDirty = true; }
   function dispose() {
+    spiders3d.dispose();
     scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material && o.material.dispose) o.material.dispose(); });
     for (const t of texCache.values()) t.dispose();
     groundTex.dispose(); shadowRT.dispose(); if (reflRT) reflRT.dispose(); if (maskTex) maskTex.dispose();
