@@ -38,6 +38,34 @@ function pick(world, list) { return list[randInt(world, list.length)]; }
 
 // Vloží udalosť na správne miesto (binárne hľadanie podľa (at, seq)).
 // Udalosť nikdy nepadne do minulosti ani do práve spracúvaného kroku: najskôr world.tick + 1.
+// ---- Denník udalostí (pre /debug) ----
+// Každý svet má v pamäti denník posledných JOURNAL_MAX zmien plánovača: naplánovaná (add), nahradená udalosťou
+// s rovnakým kľúčom (replace), zrušená (cancel), vykonaná (run, pri chybe s err) a zahodená reconcilerom (drop).
+// Neukladá sa so svetom a na simuláciu nemá vplyv; dáta sú obmedzená kópia z chvíle zápisu (handler ich môže meniť).
+const JOURNAL_MAX = 5000;
+const journals = new WeakMap();
+function journal(world) {
+  let j = journals.get(world);
+  if (!j) journals.set(world, j = { n: 0, list: [] });
+  return j;
+}
+function snap(v, depth) {
+  if (v == null || typeof v !== 'object') return typeof v === 'string' && v.length > 200 ? v.slice(0, 200) + '…' : v;
+  if (depth > 3) return Array.isArray(v) ? `[${v.length}]` : '{…}';
+  if (Array.isArray(v)) { const out = v.slice(0, 20).map(x => snap(x, depth + 1)); if (v.length > 20) out.push(`… ${v.length - 20} more`); return out; }
+  const out = {};
+  for (const k of Object.keys(v).slice(0, 40)) out[k] = snap(v[k], depth + 1);
+  return out;
+}
+function note(world, kind, ev) {
+  const j = journal(world);
+  const e = { n: ++j.n, tick: world.tick, ms: Date.now(), kind, type: ev.type, at: ev.at, key: ev.key == null ? null : ev.key, data: snap(ev.data, 0) };
+  if (ev.periodic) e.periodic = true;
+  j.list.push(e);
+  if (j.list.length > JOURNAL_MAX * 1.2) j.list.splice(0, j.list.length - JOURNAL_MAX);
+  return e;
+}
+
 function insert(world, at, type, data, key, periodic) {
   world.seq = (world.seq || 0) + 1;
   const ev = { at: Math.max(at, world.tick + 1), seq: world.seq, type, data: data === undefined ? null : data };
@@ -51,6 +79,7 @@ function insert(world, at, type, data, key, periodic) {
     if (m.at < ev.at || (m.at === ev.at && m.seq < ev.seq)) lo = mid + 1; else hi = mid;
   }
   q.splice(lo, 0, ev);
+  note(world, 'add', ev);
   return ev;
 }
 
@@ -60,13 +89,13 @@ function schedule(world, at, type, data) { return insert(world, at, type, data);
 function scheduleIn(world, ticks, type, data) { return insert(world, world.tick + Math.max(1, ticks), type, data); }
 // Unikátna udalosť: zruší čakajúcu udalosť s rovnakým kľúčom a naplánuje novú.
 function scheduleUnique(world, key, at, type, data) {
-  cancel(world, key);
+  cancel(world, key, 'replace');
   return insert(world, at, type, data, key);
 }
-// Zruší všetky čakajúce udalosti s daným kľúčom. Vráti, koľko ich zrušil.
-function cancel(world, key) {
+// Zruší všetky čakajúce udalosti s daným kľúčom. Vráti, koľko ich zrušil. (kind = ako sa to zapíše do denníka)
+function cancel(world, key, kind) {
   const before = world.events.length;
-  world.events = world.events.filter(e => e.key !== key);
+  world.events = world.events.filter(e => e.key !== key || (note(world, kind || 'cancel', e), false));
   return before - world.events.length;
 }
 // Najskoršia čakajúca udalosť s daným kľúčom alebo null.
@@ -106,6 +135,7 @@ function reconcile(world, spec) {
   if (drop.length) {
     const gone = new Set(drop.map(d => d.ev));
     for (const d of drop) console.warn(`[engine] zahodená udalosť ${d.ev.key || d.ev.type} (${d.why})`);
+    for (const d of drop) note(world, 'drop', d.ev).why = d.why;
     world.events = world.events.filter(e => !gone.has(e));
   }
   for (const def of missing) insert(world, def.next(world, world.tick + 1), def.type, def.data, def.key, true);
@@ -120,7 +150,8 @@ function runBatch(world, spec) {
   let n = 0;
   while (world.events.length && world.events[0].at <= world.tick) {
     const ev = world.events.shift();
-    try { spec.handlers[ev.type](world, ev.data, ev); } catch (err) { (spec.onError || logError)(err, ev, world); }
+    const rec = note(world, 'run', ev); // pred handlerom – dáta, s ktorými sa vykonal (handler ich môže zmeniť)
+    try { spec.handlers[ev.type](world, ev.data, ev); } catch (err) { rec.err = String(err && err.message || err); (spec.onError || logError)(err, ev, world); }
     n++;
   }
   return n;
@@ -172,6 +203,7 @@ function daily(tickOfDay) { return (world, from) => nextDailyTick(from, tickOfDa
 function every(period, offset) { return (world, from) => nextEvery(from, period, offset); }
 
 module.exports = {
+  journal, JOURNAL_MAX,
   TICKS_PER_DAY, TICKS_PER_MIN, MIN_PER_TICK, DAWN_TICK, dayOfTick, minOfTick, minutes, hours, days,
   tickMs, msTicks, rand, randInt, pick,
   schedule, scheduleIn, scheduleUnique, cancel, pending, nextAt,

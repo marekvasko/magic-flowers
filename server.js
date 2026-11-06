@@ -15,6 +15,7 @@ const Spiders = require('./spiders.js');
 const Moves = require('./moves.js');
 const P = require('./presence.js');
 const Debug = require('./debug.js');
+const Journal = require('./journal.js');
 
 const PORT = +process.env.PORT || 3000;
 // Dĺžka herného dňa je napevno D.BASE_DAY_SECONDS (15 min, 8 krokov za sekundu); DAY_SECONDS v prostredí slúži len na testovanie.
@@ -207,7 +208,9 @@ function serialize(room) {
   });
 }
 // Ladiaca stránka /debug: svety len číta (z pamäte alebo zo súboru), nič nenačíta ani neuloží
-const debugHandle = Debug.create({ dataDir: DATA_DIR, debugDir: path.join(__dirname, 'debug'), rooms, serialize, migrate, sim: () => SIM });
+// Denník udalostí plánovača: append-only JSONL na svet (journal.js), /debug ho číta
+const journal = Journal.create(DATA_DIR);
+const debugHandle = Debug.create({ dataDir: DATA_DIR, debugDir: path.join(__dirname, 'debug'), rooms, serialize, migrate, sim: () => SIM, journal: id => journal.read(id, rooms.get(id)) });
 let saveSeq = 0;
 // Atómový zápis: najprv dočasný súbor, potom premenovanie – pri páde nezostane rozbitý JSON.
 function saveRoom(room, sync) {
@@ -1100,9 +1103,10 @@ setInterval(() => {
   for (const room of rooms.values()) { for (const p of room.players.values()) p.save.lastTick = room.tick; saveRoom(room); }
 }, 15000);
 setInterval(() => P.heartbeat(wss.clients), HEARTBEAT_MS);
+setInterval(() => { for (const room of rooms.values()) journal.flush(room); }, 1000);
 
 function shutdown() {
-  for (const room of rooms.values()) { for (const p of room.players.values()) p.save.lastTick = room.tick; saveRoom(room, true); }
+  for (const room of rooms.values()) { for (const p of room.players.values()) p.save.lastTick = room.tick; saveRoom(room, true); journal.flush(room); }
   process.exit(0);
 }
 process.on('SIGINT', shutdown);

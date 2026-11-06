@@ -105,6 +105,34 @@ function create(ctx) {
     return body == null ? json(res, 404, { error: 'not found' }) : json(res, 200, redact(body, keys));
   }
 
+  // Denník udalostí (journal.js): koniec súboru sveta, kľúče hráčov nahradené odtlačkom, až potom filtre
+  // (filter kľúča teda píše odtlačok, ako ho stránka ukazuje). Najnovšie prvé.
+  //   key  = presný kľúč alebo predpona s * na konci (move:*, spider:*), viac oddelených čiarkou; '-' = udalosti bez kľúča
+  //   kind = add, replace, cancel, run, drop (čiarkou); type = typ udalosti (čiarkou); q = text kdekoľvek v zázname
+  const KINDS = ['add', 'replace', 'cancel', 'run', 'drop'];
+  const family = k => k == null ? '-' : k.includes(':') ? k.slice(0, k.indexOf(':') + 1) + '*' : k;
+  async function journalView(id, query) {
+    const r = loadState(id);
+    const all = redact(await ctx.journal(id), r ? Object.keys(r.state.saves || {}) : []);
+    const list = v => (query.get(v) || '').split(',').map(x => x.trim()).filter(Boolean);
+    const keys = list('key'), kinds = list('kind'), types = list('type'), q = (query.get('q') || '').toLowerCase();
+    const limit = Math.max(1, Math.min(2000, parseInt(query.get('limit'), 10) || 300));
+    const keyOk = k => !keys.length || keys.some(f => f === '-' ? k == null : f.endsWith('*') ? k != null && k.startsWith(f.slice(0, -1)) : k === f);
+    const count = (m, k, e) => { const c = m.get(k) || { n: 0, tick: 0 }; c.n++; c.tick = Math.max(c.tick, e.tick); m.set(k, c); };
+    const fam = new Map(), byKey = new Map(), byKind = new Map(), byType = new Map(), hits = [];
+    for (const e of all) {
+      count(fam, family(e.key), e); if (e.key != null) count(byKey, e.key, e); count(byKind, e.kind, e); count(byType, e.type, e);
+      if (keyOk(e.key) && (!kinds.length || kinds.includes(e.kind)) && (!types.length || types.includes(e.type)) && (!q || JSON.stringify(e).toLowerCase().includes(q))) hits.push(e);
+    }
+    const top = (m, n) => [...m.entries()].sort((a, b) => b[1].n - a[1].n || a[0].localeCompare(b[0])).slice(0, n).map(([k, c]) => ({ k, n: c.n, tick: c.tick }));
+    return {
+      id, loaded: ctx.rooms.has(id), total: all.length, matched: hits.length, kinds: KINDS,
+      from: all.length ? { tick: all[0].tick, ms: all[0].ms } : null, to: all.length ? { tick: all[all.length - 1].tick, ms: all[all.length - 1].ms } : null,
+      facets: { family: top(fam, 60), key: top(byKey, 150), kind: top(byKind, 10), type: top(byType, 60) },
+      entries: hits.slice(-limit).reverse()
+    };
+  }
+
   function serveFile(res, rel) {
     const file = path.normalize(path.join(ctx.debugDir, rel));
     if (!file.startsWith(ctx.debugDir + path.sep)) return notFound(res);
@@ -128,6 +156,13 @@ function create(ctx) {
       if (!ROOM_RE.test(id)) return json(res, 400, { error: 'bad room id' });
       const snap = roomSnapshot(id);
       return snap ? json(res, 200, snap) : json(res, 404, { error: 'no such room' });
+    }
+    if (url === '/api/debug/journal') {
+      const id = query.get('id') || '';
+      if (!ROOM_RE.test(id)) return json(res, 400, { error: 'bad room id' });
+      if (!ctx.journal) return json(res, 404, { error: 'no journal' });
+      journalView(id, query).then(body => json(res, 200, body), e => { console.error('[debug] journal', e); json(res, 500, { error: e.message }); });
+      return true;
     }
     if (url.startsWith('/api/debug/')) return extension(res, url.slice(11), query);
     if (url === '/debug' || url === '/debug/') return serveFile(res, 'index.html');
