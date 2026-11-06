@@ -6,6 +6,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
 const D = require('../shared/data.js');
+const E = require('../engine.js');
 const Sp = require('../spiders.js');
 const Webs = require('../shared/webs.js');
 
@@ -23,7 +24,7 @@ Sp.setHooks({
 });
 function mkRoom(seed, tick) {
   const room = {
-    tick: tick == null ? SEASON_TICK(2) : tick, rng: 12345, seq: 0, events: [], players: new Map(), icehouse: { built: false, ice: 0 },
+    tick: tick == null ? SEASON_TICK(2) : tick, daySeconds: D.BASE_DAY_SECONDS, rng: 12345, seq: 0, events: [], players: new Map(), icehouse: { built: false, ice: 0 },
     les: D.buildLes(seed).map(g => ({ g })), lesSeed: seed, tiles: D.buildMap().map(g => ({ g, s: null })), hory: D.buildMountains().map(g => ({ g }))
   };
   Sp.load(room, null);
@@ -47,8 +48,17 @@ const pathDist = (les, from) => {
   }
   return dist;
 };
-// beh simulácie: n krokov po 100 ms
-function run(room, from, n, each) { let now = from; for (let k = 0; k < n; k++) { now += 100; if (each) each(now); Sp.update(room, now, 0.1); } return now; }
+// Simulácia ide cez plánovač: každý pavúk má svoju udalosť (spider:<id>), krížiak spider:k<plocha>.
+const SPEC = { handlers: Sp.HANDLERS, onError(err) { throw err; } };
+const TICK_S = D.BASE_DAY_SECONDS / TPD; // krok = 0,125 s
+const ticks = s => Math.round(s / TICK_S); // sekundy reálneho času → kroky
+// beh simulácie: n krokov (each(tick) pred každým krokom); pavúky v lese s hráčom sa zobudia
+function run(room, n, each) { Sp.ensure(room); for (let k = 0; k < n; k++) { if (each) each(room.tick + 1); E.advanceTo(room, room.tick + 1, SPEC); } return room.tick; }
+// hráč sa pohol (ako udalosť arrivedFrom na serveri: pavúky v blízkosti zareagujú)
+function move(room, p, to) { Object.assign(p, to); Sp.noticePlayer(room, p); }
+// ručne nastavený stav pavúka – jeho udalosť sa preplánuje
+function set(room, s, st) { Object.assign(s, st); Sp.plan(room, s); }
+const spiderEvents = (room, id) => room.events.filter(e => e.key === 'spider:' + id);
 
 test('pavúky: 6 vlčiakov s norami ďaleko od seba, stará pradlena na čistine najďalej od vstupu', () => {
   for (const seed of SEEDS) {
@@ -136,20 +146,23 @@ test('ťahanie hodvábu: +1 hodváb, šanca na povšimnutie 20 % / 50 % / vždy,
   const wb = room.spid.webs.find(w => w.o === 0), t = Sp.webTiles(wb)[0];
   const p = player(room, 1, t % LW + 0.5, ((t / LW) | 0) + 1.5, 0);
   const s = Sp.spiders(room)[0];
-  assert.match(Sp.startPull(room, Object.assign({}, p, { lp: true }), wb, 0), /lampášom/);
-  assert.strictEqual(Sp.startPull(room, p, wb, 0), null);
-  let r = Sp.finishPull(room, p, 0, 0.21);
+  assert.match(Sp.startPull(room, Object.assign({}, p, { lp: true }), wb), /lampášom/);
+  assert.strictEqual(Sp.startPull(room, p, wb), null);
+  const pe = room.events.filter(e => e.key === 'pull:' + p.key);
+  assert.deepStrictEqual(pe.map(e => [e.type, e.at]), [['pullDone', room.tick + ticks(D.WEB.pullMs / 1000)]], 'ťahanie trvá WEB.pullMs (udalosť v plánovači)');
+  let r = Sp.finishPull(room, p, 0.21);
   assert.deepStrictEqual(r, { torn: false, noticed: false });
   assert.strictEqual(p.save.inv.silk, 1);
   assert.strictEqual(s.st, 'home', '21 % > 20 % – nevšimol si');
-  Sp.startPull(room, p, wb, 0);
-  r = Sp.finishPull(room, p, 0, 0.49);
+  Sp.startPull(room, p, wb);
+  r = Sp.finishPull(room, p, 0.49);
   assert.deepStrictEqual(r, { torn: false, noticed: true });
   assert.strictEqual(s.st, 'alert');
   assert.strictEqual(s.tgt, p.id);
+  assert.deepStrictEqual(spiderEvents(room, s.id).map(e => e.at), [room.tick + 1], 'reakcia pavúka hneď v najbližšom kroku');
   s.st = 'home';
-  Sp.startPull(room, p, wb, 0);
-  r = Sp.finishPull(room, p, 0, 0.999);
+  Sp.startPull(room, p, wb);
+  r = Sp.finishPull(room, p, 0.999);
   assert.deepStrictEqual(r, { torn: true, noticed: true }, 'posledné potiahnutie si všimne vždy');
   assert.strictEqual(p.save.inv.silk, 3);
   assert.ok(!room.spid.webs.includes(wb), 'roztrhnutá');
@@ -161,7 +174,7 @@ test('vbehnutie do pavučiny: lepí sa, pavučina sa roztrhne bez hodvábu a maj
   const wb = room.spid.webs.find(w => w.o === 2), t = Sp.webTiles(wb)[0];
   const p = player(room, 1, t % LW + 0.5, ((t / LW) | 0) + 0.5, 0);
   sent = [];
-  Sp.checkWalk(room, p, 1000);
+  Sp.checkWalk(room, p);
   assert.ok(!room.spid.webs.includes(wb));
   assert.ok(!p.save.inv.silk);
   assert.ok(sent.some(m => m.t === 'slow' && m.k === D.WEB.stick && m.ms === D.WEB.stickMs));
@@ -181,25 +194,27 @@ test('vlčiak: chytí hráča, berie hodváb každé 3 s (najviac 3), lampáš h
   const s = Sp.spiders(room)[0], h = room.spf.homes[0];
   const p = player(room, 1, h.x + 0.5, h.y + 0.5, 5);
   sent = [];
-  let now = run(room, 0, 3);
+  run(room, 3);
   assert.strictEqual(s.st, 'cling');
   assert.strictEqual(p.save.inv.silk, 4, 'vzal 1 hneď');
   assert.ok(sent.some(m => m.t === 'slow' && m.k === D.SPIDERS.vlciak.slow));
-  now = run(room, now, 31, n => { p.x = s.x; p.y = s.y; });
+  run(room, ticks(2.75), () => { p.x = s.x; p.y = s.y; });
+  assert.strictEqual(p.save.inv.silk, 4, 'pred 3 s ešte nie');
+  run(room, ticks(0.25), () => { p.x = s.x; p.y = s.y; });
   assert.strictEqual(p.save.inv.silk, 3, 'po 3 s ďalší');
   // lampáš: pustí sa, hodváb vráti, drží sa ďalej ako 2,5 políčka
-  p.lp = true;
-  now = run(room, now, 1);
+  move(room, p, { lp: true });
+  run(room, 1);
   assert.strictEqual(p.save.inv.silk, 5);
   assert.notStrictEqual(s.st, 'cling');
-  now = run(room, now, 15);
+  run(room, ticks(1.5));
   assert.ok(Math.hypot(s.x - p.x, s.y - p.y) >= D.SPIDERS.lamp - 0.6, 'kraj svetla');
   // lampáš dole: o 2 s sa vráti a chytí
-  p.lp = false;
-  now = run(room, now, 50);
+  move(room, p, { lp: false });
+  run(room, ticks(5));
   assert.strictEqual(s.st, 'cling');
   // bez lampáša: vezme najviac 3 a pustí sa
-  now = run(room, now, 80, n => { p.x = s.x; p.y = s.y; });
+  run(room, ticks(8), () => { p.x = s.x; p.y = s.y; });
   assert.strictEqual(p.save.inv.silk, 2, '5 − 3');
   assert.ok(['return', 'home'].includes(s.st), 'pustil sa a ide domov');
 });
@@ -215,25 +230,25 @@ test('vlčiak: za hranicou územia to po 2 s vzdá, stratený hráč po 4 s', ()
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const n = (y + dy) * LW + x + dx; if (!D.BLOCK[room.les[n].g] && f.owner[n] !== 1) { out = n; break; } }
   }
   const p = player(room, 1, center(out).x, center(out).y, 2);
-  Sp.spiders(room); s.st = 'chase'; s.tgt = 1; s.seen = 0; s.border = 0;
-  let now = run(room, 0, 15);
+  set(room, s, { st: 'chase', tgt: 1, seen: room.tick, border: 0 });
+  run(room, ticks(1.5));
   assert.strictEqual(s.st, 'chase', 'chvíľu čaká na hranici');
-  now = run(room, now, 12);
+  run(room, ticks(1.2));
   assert.ok(['return', 'home'].includes(s.st), 'vzdal to');
   // stratený: hráč je v území, ale už 4 s ďalej než 4 políčka → vzdá to
   const far = terrTile(room, 1, (d, i) => Math.hypot(center(i).x - room.spf.homes[1].x - 0.5, center(i).y - room.spf.homes[1].y - 0.5) > 5);
-  Object.assign(s, { x: room.spf.homes[1].x + 0.5, y: room.spf.homes[1].y + 0.5, st: 'chase', tgt: 1, seen: now - 3900, path: null });
+  set(room, s, { x: room.spf.homes[1].x + 0.5, y: room.spf.homes[1].y + 0.5, st: 'chase', tgt: 1, seen: room.tick - ticks(3.875), path: null });
   Object.assign(p, center(far));
-  now = run(room, now, 1);
+  run(room, 1);
   assert.strictEqual(s.st, 'chase', 'ešte nie');
-  now = run(room, now, 2);
+  run(room, 2);
   assert.ok(['return', 'home'].includes(s.st), 'stratil ho');
   // pustí sa aj vtedy, keď ho hráč vynesie za hranicu územia
   const h = room.spf.homes[1];
   Object.assign(p, { x: h.x + 0.5, y: h.y + 0.5 });
-  Object.assign(s, { x: h.x + 0.5, y: h.y + 0.5, st: 'cling', tgt: 1, taken: 1, next: now + 3000 });
+  set(room, s, { x: h.x + 0.5, y: h.y + 0.5, st: 'cling', tgt: 1, taken: 1, next: room.tick + ticks(3) });
   Object.assign(p, center(out));
-  now = run(room, now, 1);
+  run(room, 1);
   assert.ok(['return', 'home'].includes(s.st));
   assert.strictEqual(room.spf.owner[Math.floor(s.y) * LW + Math.floor(s.x)], 1, 'ostal vo svojom území');
 });
@@ -244,22 +259,22 @@ test('stará pradlena: na pavučinu siahnutú na jej čistine príde pomaly, uhr
   const p = player(room, 1, h.x + 2.5, h.y + 0.5, 5);
   if (room.spf.owner[Math.floor(p.y) * LW + Math.floor(p.x)] !== o) Object.assign(p, { x: h.x + 0.5, y: h.y + 1.5 });
   // bez dotyku pavučiny si hráča nevšíma
-  let now = run(room, 0, 20);
+  run(room, ticks(2));
   assert.strictEqual(s.st, 'home');
   const wb = room.spid.webs.find(w => w.o === o) || { id: -1, x: h.x, y: h.y, ax: 0, n: 1, o };
-  Sp.alert(room, wb, p, now);
+  Sp.alert(room, wb, p);
   sent = [];
-  now = run(room, now, 60);
+  run(room, ticks(6));
   assert.ok(sent.some(m => m.t === 'shove'), 'odhodila');
   assert.strictEqual(p.save.inv.silk, 2);
   const sh = sent.find(m => m.t === 'shove');
   assert.notStrictEqual(room.spf.owner[Math.floor(sh.y) * LW + Math.floor(sh.x)], o, 'za okraj jej územia');
   // lampáš: odtláča ju rýchlosťou 0,5 políčka/s (dva lampáše dvakrát rýchlejšie)
-  Object.assign(s, { x: h.x + 0.5, y: h.y + 0.5, st: 'chase', tgt: 1, cool: 0 });
   Object.assign(p, { x: h.x + 1.5, y: h.y + 0.5, lp: true });
   if (room.spf.owner[Math.floor(p.y) * LW + Math.floor(p.x)] !== o) Object.assign(p, { x: h.x + 0.5, y: h.y + 1.5 });
+  set(room, s, { x: h.x + 0.5, y: h.y + 0.5, st: 'chase', tgt: 1, cool: 0 });
   const d0 = Math.hypot(s.x - p.x, s.y - p.y);
-  now = run(room, now, 10);
+  run(room, ticks(1));
   const d1 = Math.hypot(s.x - p.x, s.y - p.y);
   assert.ok(d1 > d0 && d1 - d0 <= D.SPIDERS.pradlena.push * 1 + 0.05, `odtlačená pomaly (${(d1 - d0).toFixed(2)})`);
 });
@@ -297,18 +312,20 @@ test('krížiak: keď je hráč na ploche, beží rýchlo do kúta (5 políčok/
   assert.ok(Sp.startKriziak(room, 'garden', spot));
   const z = room.kz.garden;
   assert.ok(z.path.length >= 8);
-  let now = 0, moved = 0, prev = { x: z.x, y: z.y };
+  assert.strictEqual(spiderEvents(room, 'kgarden').length, 1, 'krížiak má svoju udalosť');
+  let moved = 0, prev = { x: z.x, y: z.y };
   for (let k = 0; k < 400 && room.kz.garden; k++) {
-    now += 100; Sp.updateKriziak(room, now, 0.1);
+    run(room, 1);
     if (room.kz.garden) { moved = Math.max(moved, Math.hypot(z.x - prev.x, z.y - prev.y)); prev = { x: z.x, y: z.y }; }
   }
-  assert.ok(Math.abs(moved - D.SPIDERS.kriziak.run * 0.1) < 0.02, 'rýchlosť ' + moved);
+  assert.ok(Math.abs(moved - D.SPIDERS.kriziak.run * TICK_S) < 0.02, 'rýchlosť ' + moved);
+  assert.strictEqual(spiderEvents(room, 'kgarden').length, 0, 'po dobehnutí udalosť zmizne');
   assert.deepStrictEqual(room.spid.corner.garden, [spot.k], 'dobehol a utkal');
   // zľakne sa hráča
   room.spid.corner.garden = [];
   Sp.startKriziak(room, 'garden', spot);
   Object.assign(p, { x: room.kz.garden.x + 1, y: room.kz.garden.y });
-  for (let k = 0; k < 20; k++) { now += 100; Sp.updateKriziak(room, now, 0.1); }
+  run(room, ticks(2));
   assert.ok(!room.kz.garden, 'ušiel');
   assert.deepStrictEqual(room.spid.corner.garden, [], 'pavučinu neutkal');
 });
@@ -330,22 +347,23 @@ test('na strome: vlčiak pri svojej pavučine vylezie na jej kmeň a čaká hlav
   const { room, wb, s, p } = treeCase(0);
   const spot = Sp.trunkSpot(room, wb), V = D.SPIDERS.vlciak;
   toWebNow(room, s, wb);
-  let now = run(room, 0, 30);
+  run(room, ticks(3));
   assert.strictEqual(s.st, 'guard');
+  assert.ok(spiderEvents(room, s.id)[0].at > room.tick + 1, 'čaká na kmeni – ďalšia udalosť až na jeho termín');
   assert.ok(Math.hypot(s.x - spot.x, s.y - spot.y) < 1e-6, 'na kmeni');
   assert.ok(s.z >= V.guard[0] - 1e-6 && s.z <= V.guard[1] + 1e-6, 'výška ' + s.z);
   const e = Sp.entities(room, 'les').find(o => o.id === s.id);
   assert.ok(e.z > 0 && e.n && e.u === 0, 'klient: výška, strana kmeňa, hlavou dole');
   // zdvihnutý lampáš pri ňom: vylezie na high, siahnutie na pavučinu ignoruje
-  Object.assign(p, { x: s.x + 1, y: s.y, lp: true });
-  now = run(room, now, 30);
+  move(room, p, { x: s.x + 1, y: s.y, lp: true });
+  run(room, ticks(3));
   assert.ok(Math.abs(s.z - V.high) < 1e-6, 'vyššie ' + s.z);
-  Sp.alert(room, wb, p, now);
+  Sp.alert(room, wb, p);
   assert.strictEqual(s.st, 'guard', 'pavučinu nechá tak');
   // bez lampáša (ešte čaká na kmeni): zoskočí a naháňa
-  p.lp = false; s.until = now + 60000;
-  now = run(room, now, 25);
-  Sp.alert(room, wb, p, now);
+  s.until = room.tick + ticks(60); move(room, p, { lp: false });
+  run(room, ticks(2.5));
+  Sp.alert(room, wb, p);
   assert.strictEqual(s.st, 'chase');
   assert.strictEqual(s.z, 0);
 });
@@ -353,7 +371,7 @@ test('na strome: vlčiak pri svojej pavučine vylezie na jej kmeň a čaká hlav
 test('na strome: vlčiak po čase zlezie a ide domov', () => {
   const { room, wb, s } = treeCase(1);
   toWebNow(room, s, wb);
-  const now = run(room, 0, 30 + D.SPIDERS.vlciak.guardMs[1] / 100 + 20);
+  run(room, ticks(3 + D.SPIDERS.vlciak.guardMs[1] / 1000 + 2));
   assert.ok(['return', 'home'].includes(s.st), s.st);
   assert.strictEqual(s.z, 0);
 });
@@ -362,7 +380,7 @@ test('na strome: stará pradlena občas zájde k pavučine a čaká na jej kmeni
   const o = mkRoom(SEEDS[0]).spf.homes.length - 1;
   const { room, s } = treeCase(o);
   let seen = false;
-  run(room, 0, 600, () => { if (s.st === 'guard' && s.z > 0.5) seen = true; });
+  run(room, ticks(60), () => { if (s.st === 'guard' && s.z > 0.5) seen = true; });
   assert.ok(seen, 'čakala na strome');
 });
 
@@ -375,9 +393,10 @@ test('krížiak: pri úteku vybehne na strom a stratí sa v korune', () => {
   const tx = t % w, ty = (t / w) | 0;
   const p = player(room, 1, tx + 3.5, ty + 0.5, 0, 'garden');
   room.kz = { garden: { id: 'kgarden', k: 'k', x: tx + 2.5, y: ty + 0.5, a: 0, path: [], spot, st: 'go', until: 0, left: 2, moving: false } };
-  let climbed = false, now = 0;
-  for (let k = 0; k < 40 && room.kz.garden; k++) {
-    now += 100; Sp.updateKriziak(room, now, 0.1);
+  E.scheduleUnique(room, 'spider:kgarden', room.tick + 1, 'kriziak', { area: 'garden' });
+  let climbed = false;
+  for (let k = 0; k < ticks(4) && room.kz.garden; k++) {
+    run(room, 1);
     const e = Sp.entities(room, 'garden')[0];
     if (e && e.z > 0) { climbed = true; assert.ok(e.n && e.u === 1); assert.ok(Math.hypot(e.x - tx - 0.5, e.y - ty - 0.5) < 0.5, 'na kmeni stromu'); }
   }
@@ -398,6 +417,99 @@ test('uloženie: pavučiny a kúty sa po načítaní zachovajú, neplatné sa za
   assert.deepStrictEqual(r2.spid.corner.garden, room.spid.corner.garden);
 });
 
+test('plánovač: každý pavúk má najviac jednu udalosť; kto sa hýbe, je na rade v každom kroku, kto čaká, až na svoj termín', () => {
+  const room = mkRoom(SEEDS[9]);
+  const f = room.spf, h = f.homes[0];
+  const p = player(room, 1, h.x + 0.5, h.y + 4.5, 2);
+  // hráč sa každých 5 s premiestni na iné miesto v územiach vlčiakov 0 a 1
+  const spots = [0, 1].flatMap(o => [2, 5, 8].map(k => terrTile(room, o, d => d === k))).filter(i => i >= 0);
+  let busySeen = 0, idleSeen = 0;
+  run(room, ticks(60), t => {
+    if (t % 40 === 0) move(room, p, center(spots[(t / 40) % spots.length]));
+    for (const s of Sp.spiders(room)) {
+      const evs = spiderEvents(room, s.id);
+      assert.ok(evs.length <= 1, `${s.id}: ${evs.length} udalosti`);
+      if (!evs.length) continue;
+      if (evs[0].at === room.tick + 1) busySeen++; else { idleSeen++; assert.ok(evs[0].type === 'spider', 'čakajúci pavúk nenaháňa'); }
+    }
+  });
+  assert.ok(busySeen > 0 && idleSeen > 0, `hýbu sa (${busySeen}) aj čakajú (${idleSeen})`);
+  // pavúky doma čakajú na svoj termín – fronta nemá udalosť každého pavúka v každom kroku
+  const at = Sp.spiders(room).map(s => (spiderEvents(room, s.id)[0] || {}).at).filter(Boolean);
+  assert.ok(at.some(t => t > room.tick + 1), 'aspoň jeden pavúk spí až do termínu');
+});
+
+test('plánovač: hráč odíde z lesa – pavúky sú doma bez udalostí; po návrate sa zobudia', () => {
+  const room = mkRoom(SEEDS[10]);
+  const h = room.spf.homes[0], p = player(room, 1, h.x + 0.5, h.y + 0.5, 0);
+  run(room, ticks(2));
+  assert.ok(room.events.some(e => /^spider:/.test(e.key)));
+  p.area = 'pomedzie';
+  run(room, ticks(10));
+  assert.ok(!room.events.some(e => /^spider:/.test(e.key)), 'žiadne udalosti pavúkov');
+  assert.ok(Sp.spiders(room).every(s => s.st === 'home' && s.x === s.hx && s.y === s.hy), 'všetci doma');
+  p.area = 'les';
+  Sp.ensure(room);
+  assert.strictEqual(room.events.filter(e => /^spider:s/.test(e.key)).length, Sp.spiders(room).length, 'každý pavúk dostal udalosť');
+});
+
+test('naháňanie (goTo): pavúk ide k predpovedanej polohe hráča v najbližšom kroku', () => {
+  const room = mkRoom(SEEDS[11]);
+  const f = room.spf, o = 0, h = f.homes[o];
+  // políčko územia aspoň 3 kroky od nory, vpravo od neho tiež územie
+  const i = terrTile(room, o, (d, k) => d >= 3 && d <= 6 && f.owner[k + 1] === o && f.owner[k - 1] === o);
+  assert.ok(i >= 0);
+  const p = player(room, 1, center(i).x, center(i).y, 2);
+  const s = Sp.spiders(room)[o];
+  p.mv = { vx: 0.6, vy: 0, t: room.tick }; // ide doprava 0,6 políčka za krok
+  set(room, s, { st: 'chase', tgt: p.id, seen: room.tick, path: null });
+  const ev = spiderEvents(room, s.id);
+  assert.deepStrictEqual(ev.map(e => [e.type, e.at, e.data.p, e.data.x, e.data.y]), [['goTo', room.tick + 1, p.id, +(p.x + 0.6).toFixed(3), p.y]]);
+  run(room, 1);
+  assert.strictEqual(s.goal, i + 1, 'cesta na políčko, kde hráč bude');
+  // hráč stojí (posledný pohyb je starý) – cieľ je jeho políčko
+  p.mv.t = room.tick - 10;
+  Object.assign(s, { x: h.x + 0.5, y: h.y + 0.5, path: null });
+  Sp.plan(room, s);
+  assert.strictEqual(spiderEvents(room, s.id)[0].data.x, p.x);
+  run(room, 1);
+  assert.strictEqual(s.goal, i);
+});
+
+test('pauza: pavúky sa hýbu len s herným časom (krokmi), nie s reálnym – pozastavený svet stojí, potom pokračuje rovnako', async () => {
+  const mk = () => { const room = mkRoom(SEEDS[12]); const h = room.spf.homes[2]; player(room, 1, h.x + 0.5, h.y + 1.5, 3); return room; };
+  const snap = room => JSON.stringify(Sp.spiders(room).map(s => [s.id, s.st, s.x.toFixed(4), s.y.toFixed(4), s.z || 0]));
+  const a = mk(), b = mk();
+  run(a, 80);
+  run(b, 40);
+  const before = snap(b);
+  // pauza: čas sveta sa neposúva (server len posúva wall), pavúky ani ich udalosti sa nezmenia
+  b.wall = Date.now();
+  const evs = JSON.stringify(b.events);
+  await new Promise(r => setTimeout(r, 300));
+  b.wall = Date.now();
+  assert.strictEqual(E.advance(b, b.wall, SPEC), 0);
+  assert.strictEqual(snap(b), before, 'pavúky stoja');
+  assert.strictEqual(JSON.stringify(b.events), evs);
+  run(b, 40);
+  assert.strictEqual(snap(b), snap(a), 'po pauze rovnako ako bez nej (deterministické, náhoda zo sveta)');
+});
+
+test('načítanie / dobiehanie po výpadku: udalosti pavúkov a ťahania sa zahodia, pavúky začínajú doma', () => {
+  const room = mkRoom(SEEDS[13]);
+  const h = room.spf.homes[0], p = player(room, 1, h.x + 0.5, h.y + 0.5, 3);
+  const wb = room.spid.webs.find(w => w.o === 1);
+  Sp.startPull(room, p, wb);
+  run(room, ticks(1));
+  assert.ok(room.events.some(e => /^spider:/.test(e.key)));
+  const saved = JSON.parse(JSON.stringify({ events: room.events, spid: Sp.save(room) }));
+  const r2 = Object.assign({}, room, { spf: null, spid: null, sps: null, players: new Map(), events: saved.events });
+  Sp.load(r2, saved.spid);
+  assert.ok(!r2.events.some(e => Sp.isRuntime(e)), 'žiadne udalosti pavúkov ani ťahania');
+  assert.ok(r2.events.some(e => e.type === 'weave') || !room.events.some(e => e.type === 'weave'), 'tkanie pavučín ostáva');
+  assert.ok(Sp.spiders(r2).every(s => s.st === 'home' && s.x === s.hx && s.y === s.hy));
+});
+
 function startServer(dataDir, port) {
   const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DEFAULT_MODE: 'paused' }), stdio: ['ignore', 'pipe', 'pipe']
@@ -415,7 +527,7 @@ test('server: svet z verzie 7 dostane pavučiny; v lese sa ťahá hodváb, s lam
   const port = 43000 + Math.floor(Math.random() * 2000);
   const lesSeed = 777, f = Sp.analyze(D.buildLes(lesSeed).map(g => ({ g })), lesSeed);
   const save = {
-    v: 7, tick: SEASON_TICK(2), wall: Date.now(), mode: 'paused', daySeconds: 1200, rng: 1, seq: 0, events: [], weather: 'sun', pomedzieSeed: 1, lesSeed, les: null,
+    v: 7, tick: SEASON_TICK(2) / 25, wall: Date.now(), mode: 'paused', daySeconds: 1200, rng: 1, seq: 0, events: [], weather: 'sun', pomedzieSeed: 1, lesSeed, les: null,
     saves: { eva: { coins: 5, water: 3, inv: { hoe: 1, can: 1, lamp: 1 }, recipes: [], seen: [], vily: 0, rep: 0, up: { can: 0, composter: 0 }, x: 1, y: 1, area: 'les' } },
     storage: {}, icehouse: { built: false, ice: 0 }, hory: null, up: { plots: 0 }
   };
@@ -449,7 +561,7 @@ test('server: svet z verzie 7 dostane pavučiny; v lese sa ťahá hodváb, s lam
     ws.close();
   } finally { await stopServer(proc); }
   const saved = JSON.parse(fs.readFileSync(path.join(dir, 'room-sp.json'), 'utf8'));
-  assert.strictEqual(saved.v, 8);
+  assert.strictEqual(saved.v, 9);
   assert.strictEqual(saved.migratedFrom, 7);
   assert.ok(saved.spid.webs.length >= 15);
   assert.ok(saved.spid.corner.garden.length >= 1);

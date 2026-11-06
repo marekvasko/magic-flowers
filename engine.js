@@ -17,10 +17,12 @@
 //   periodická – s kľúčom a periodic: true; plánuje ju len reconcile podľa spec.periodic
 //
 // Čas sa neposúva po krokoch, ale skokom na najbližšiu udalosť (advanceTo). Podrobný popis: docs/engine.md.
-const { TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, dayOfTick, minOfTick } = require('./shared/data.js');
+const { TICKS_PER_DAY, TICKS_PER_MIN, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick, minutes, hours, days } = require('./shared/data.js');
 
-// Reálne milisekundy na jeden krok
-function tickMs(world) { return world.daySeconds * 1000 / TICKS_PER_DAY; }
+// Reálne milisekundy na jeden krok (pri základnom 15-minútovom dni 125 ms)
+function tickMs(world) { return (world.daySeconds || BASE_DAY_SECONDS) * 1000 / TICKS_PER_DAY; }
+// Reálne trvanie v ms → počet krokov (najmenej 1) – pre veci, ktoré bežia v reálnom čase (pohyb pavúkov, ťahanie hodvábu)
+function msTicks(world, ms) { return Math.max(1, Math.round(ms / tickMs(world))); }
 
 // ---- Náhoda (mulberry32, stav je jedno uint32 číslo vo svete) ----
 function rand(world) {
@@ -170,8 +172,8 @@ function daily(tickOfDay) { return (world, from) => nextDailyTick(from, tickOfDa
 function every(period, offset) { return (world, from) => nextEvery(from, period, offset); }
 
 module.exports = {
-  TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, dayOfTick, minOfTick,
-  tickMs, rand, randInt, pick,
+  TICKS_PER_DAY, TICKS_PER_MIN, MIN_PER_TICK, DAWN_TICK, dayOfTick, minOfTick, minutes, hours, days,
+  tickMs, msTicks, rand, randInt, pick,
   schedule, scheduleIn, scheduleUnique, cancel, pending, nextAt,
   reconcile, reconcilePlan, runBatch, advanceTo, advance,
   nextEvery, nextDailyTick, daily, every

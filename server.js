@@ -12,11 +12,12 @@ const Scav = require('./scavenge.js');
 const Ice = require('./ice.js');
 const Areas = require('./areas.js');
 const Spiders = require('./spiders.js');
+const Moves = require('./moves.js');
 const P = require('./presence.js');
 const Debug = require('./debug.js');
 
 const PORT = +process.env.PORT || 3000;
-// Dĺžka herného dňa je napevno D.BASE_DAY_SECONDS (20 min); DAY_SECONDS v prostredí slúži len na testovanie.
+// Dĺžka herného dňa je napevno D.BASE_DAY_SECONDS (15 min, 8 krokov za sekundu); DAY_SECONDS v prostredí slúži len na testovanie.
 const DAY_SECONDS = +process.env.DAY_SECONDS || D.BASE_DAY_SECONDS;
 const MAX_PLAYERS = 4;
 const START = Econ.startCapital(process.env); // mince a reputácia nového hráča (v testovacích prostrediach viac)
@@ -64,8 +65,8 @@ const server = http.createServer((req, res) => {
 // ---------- Svety (miestnosti) ----------
 // Čas je diskrétny: svet má celé počítadlo `tick` (D.TICKS_PER_DAY krokov na deň), deň a minúta sa z neho
 // len odvodzujú. Všetko, čo sa má stať v budúcnosti, je udalosť v plánovači (room.events) a ukladá sa so svetom.
-const SAVE_VERSION = 8; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov; 8: pavúky a pavučiny
-const TPD = D.TICKS_PER_DAY, MPT = D.MIN_PER_TICK;
+const SAVE_VERSION = 9; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov; 8: pavúky a pavučiny; 9: 8 krokov za sekundu (7200 na deň)
+const TPD = D.TICKS_PER_DAY;
 const DEFAULT_MODE = process.env.DEFAULT_MODE === 'paused' ? 'paused' : 'running';
 const MAX_CATCHUP_DAYS = +process.env.MAX_CATCHUP_DAYS || 30; // koľko herných dní najviac dobehneme po výpadku servera
 const rooms = new Map();
@@ -74,11 +75,34 @@ function roomFile(id) { return path.join(DATA_DIR, 'room-' + id + '.json'); }
 
 function newWorldState() {
   return {
-    v: SAVE_VERSION, tick: D.DAWN_TICK + 6, wall: Date.now(), mode: DEFAULT_MODE, daySeconds: DAY_SECONDS,
+    v: SAVE_VERSION, tick: D.DAWN_TICK + D.minutes(30), wall: Date.now(), mode: DEFAULT_MODE, daySeconds: DAY_SECONDS,
     rng: crypto.randomBytes(4).readUInt32LE(0), seq: 0, events: [],
     weather: 'sun', saves: {}, storage: {}, market: null, contracts: null, fairyNight: -1, eternal: false, scav: {},
     icehouse: { built: false, ice: 0 }, hory: null, pomedzieSeed: Areas.newSeed(), up: { plots: 0 }, lesSeed: Areas.newSeed(), les: null, spid: null
   };
+}
+
+// Všetky uložené časy v krokoch (čas sveta, udalosti, rastliny, várky kvetov a ľadu, víly, trh, zákazky, hráči) × k.
+// Okno hľadania semienok (room.scav) je číslo hernej hodiny, nie krok – nemení sa; dni (fairyNight, glacierFed) tiež nie.
+function scaleTicks(out, k) {
+  const sc = v => typeof v === 'number' && isFinite(v) ? v * k : v;
+  const batches = fb => { for (const id in fb || {}) for (const b of fb[id] || []) { b.a = sc(b.a); b.at = sc(b.at); } };
+  out.tick = sc(out.tick);
+  for (const e of out.events || []) e.at = sc(e.at);
+  for (const t of out.tiles || []) if (t && t.s && t.s.p && t.s.p.bt != null) t.s.p.bt = sc(t.s.p.bt);
+  batches(out.storageFb);
+  for (const sv of Object.values(out.saves || {})) {
+    if (!sv) continue;
+    batches(sv.fb);
+    if (sv.vily) sv.vily = sc(sv.vily);
+    if (sv.lastTick != null) sv.lastTick = sc(sv.lastTick);
+  }
+  const m = out.market;
+  if (m) {
+    for (const n of m.news || []) if (n) n.tick = sc(n.tick);
+    if (m.festival) m.festival.until = sc(m.festival.until);
+  }
+  for (const c of (out.contracts && out.contracts.list) || []) { c.posted = sc(c.posted); c.openUntil = sc(c.openUntil); c.due = sc(c.due); }
 }
 
 // Prevod uloženia zo starších formátov, po krokoch podľa verzie.
@@ -86,9 +110,10 @@ function migrate(saved) {
   const out = Object.assign(newWorldState(), saved);
   const from = saved.v || 1;
   if (from === SAVE_VERSION) return out;
-  if (from < 2) { // spojitý čas day/min → diskrétne kroky
+  if (from < 2) { // spojitý čas day/min → diskrétne kroky (vtedy 288 na deň po 5 minút; na dnešné ich prevedie krok 9)
+    const OLD_TPD = 288, MPT = 5;
     const day = saved.day || 1, min = saved.min || 390;
-    out.tick = (day - 1) * TPD + Math.min(TPD - 1, Math.round(min / MPT));
+    out.tick = (day - 1) * OLD_TPD + Math.min(OLD_TPD - 1, Math.round(min / MPT));
     out.mode = 'paused'; // staré svety sa správali ako pozastavené – zachováme to, prepnúť sa dá v menu
     out.wall = Date.now();
     for (const sv of Object.values(out.saves || {})) if (sv.vily) sv.vily = Math.max(0, Math.round((sv.vily - 1440) / MPT));
@@ -123,6 +148,9 @@ function migrate(saved) {
   if (from < 8) { // pavúky: pavučiny v Lese divov a kúty krížiaka sa utkajú pri načítaní (spiders.js load)
     out.spid = null;
   }
+  if (from < 9) { // 8 krokov za sekundu: 7200 krokov na deň namiesto 288 – každý uložený krok × 25, herný čas ostane rovnaký
+    scaleTicks(out, D.TICKS_PER_DAY / 288);
+  }
   out.v = SAVE_VERSION; out.migratedFrom = saved.migratedFrom || from;
   return out;
 }
@@ -147,7 +175,8 @@ function getRoom(id) {
   if (!Number.isInteger(room.lesSeed)) room.lesSeed = Areas.newSeed();
   room.les = Areas.loadLes(st.les, room.lesSeed);
   Ice.applyIcehouse(room);
-  Spiders.load(room, st.spid); // pavučiny a kúty (bez uloženia sa utkajú nové); pavúky začínajú doma
+  room.events = (room.events || []).filter(e => !Moves.isRuntime(e)); // pohyb hráčov z minulého behu (hráči tu už nie sú)
+  Spiders.load(room, st.spid); // pavučiny a kúty (bez uloženia sa utkajú nové); pavúky začínajú doma, ich udalosti sa zahodia
   room.up = room.up || { plots: 0 };
   Object.defineProperty(room, 'day', { get() { return D.dayOfTick(this.tick); } });
   Object.defineProperty(room, 'min', { get() { return D.minOfTick(this.tick); } });
@@ -358,12 +387,16 @@ const HANDLERS = {
   }
 };
 
-Object.assign(HANDLERS, Econ.HANDLERS);
+Object.assign(HANDLERS, Econ.HANDLERS, Spiders.HANDLERS, Moves.HANDLERS, {
+  // goTo je spoločný typ: naháňanie pavúka (data.sp) aj vedenie hráča po ceste (data.pk) – kľúč je vždy jeho pohyb
+  goTo(room, d, ev) { return (d && d.sp != null ? Spiders.HANDLERS : Moves.HANDLERS).goTo(room, d, ev); }
+});
 Spiders.setHooks({ toast, sendMe, send(pl, msg) { send(pl.ws, msg); }, broadcastArea });
+Moves.setHooks({ forward: forwardMove, evaluate: evaluateMove, send(pl, msg) { send(pl.ws, msg); } });
 // Periodické udalosti plánuje engine sám (E.reconcile): ráno o 6:00 a každú celú hodinu, plus ekonomika.
 const PERIODIC = [
   { key: 'dawn', type: 'dawn', next: E.daily(D.DAWN_TICK) },
-  { key: 'hourly', type: 'hourly', next: E.every(TPD / 24) },
+  { key: 'hourly', type: 'hourly', next: E.every(D.hours(1)) },
   ...Econ.PERIODIC
 ];
 const SIM = { handlers: HANDLERS, periodic: PERIODIC };
@@ -381,9 +414,42 @@ function flushEconomy(room) {
   if (room.boardDirty) { room.boardDirty = false; broadcast(room, Econ.boardView(room)); }
 }
 
+// ---------- Pohyb hráčov ----------
+// Poloha hráča pre ostatných (správa 'pl' raz za krok, 'pm' hneď po pohybe)
+function playerView(p, now) {
+  return {
+    id: p.id, name: p.name, x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, a: p.a, look: p.look, cr: p.cr ? 1 : 0, lp: p.lp ? 1 : 0, j: p.jn | 0, si: p.scav ? p.scav.i : -1, area: p.area,
+    e: p.sleep ? 'sleep' : p.scav ? 'search' : p.pull ? 'pull' : p.emote && now - p.emoteAt < 6000 ? p.emote : null
+  };
+}
+// Nová poloha ide ostatným na ploche hneď, ešte pred vyhodnotením v plánovači (moves.js)
+function forwardMove(pl) {
+  const s = JSON.stringify({ t: 'pm', p: playerView(pl, Date.now()) });
+  for (const p of pl.room.players.values()) if (p !== pl && p.area === pl.area && p.ws.readyState === 1) p.ws.send(s);
+}
+// Vyhodnotenie pohybu v plánovači (udalosť arrivedFrom / goTo): from = odkiaľ hráč išiel od posledného vyhodnotenia
+function evaluateMove(room, pl, from) {
+  if (pl.scav && Math.hypot(pl.x - pl.scav.px, pl.y - pl.scav.py) > 0.35) stopScavenge(pl, 'Pohol(a) si sa skôr, než si dohľadal(a).');
+  if (pl.pull && (Math.hypot(pl.x - pl.pull.px, pl.y - pl.pull.py) > 0.35 || pl.lp)) { Spiders.stopPull(pl); toast(pl, 'Prestal(a) si ťahať hodváb.'); }
+  Spiders.checkWalk(room, pl, from); // vbehol do pavučiny (aj cestou)?
+  Spiders.noticePlayer(room, pl); // pavúky v blízkosti zareagujú hneď
+  const to = Areas.gateTarget(Areas.areaTiles(room, pl.area), pl.area, pl.x, pl.y);
+  if (to) travel(pl, to);
+}
+// Polohy hráčov a pavúkov raz za krok
+function sendPositions(room, now) {
+  for (const area of D.AREAS) {
+    const list = Spiders.entities(room, area), key = area + 'Sp';
+    if (list.length || room[key]) broadcastArea(room, area, { t: 'sp', list });
+    room[key] = list.length > 0;
+  }
+  const list = [...room.players.values()].map(p => playerView(p, now));
+  for (const area of D.AREAS) broadcastArea(room, area, { t: 'pl', list: list.filter(p => p.area === area) });
+}
+
 // ---------- Spánok ----------
-// Keď spia všetci pripojení hráči, svet pretočí noc zrýchlene (FF_STEPS krokov za 100 ms) až do 6:00.
-const FF_STEPS = 5;
+// Keď spia všetci pripojení hráči, svet pretočí noc zrýchlene (FF_RATE krokov za ms – 25 herných minút za 100 ms) až do 6:00.
+const FF_RATE = 1.25;
 const HOUSE = { x: 3.5, y: 28.5 };
 function nearHouse(pl) { return pl.area === 'garden' && Math.hypot(pl.x - HOUSE.x, pl.y - HOUSE.y) <= 3.5; }
 function sleepMsg(room) {
@@ -393,11 +459,13 @@ function sleepMsg(room) {
 function checkSleep(room) {
   if (room.ff || !room.players.size) return;
   for (const p of room.players.values()) if (!p.sleep) return;
-  room.ff = { until: E.nextDailyTick(room.tick + 1, D.DAWN_TICK) };
+  room.ff = { until: E.nextDailyTick(room.tick + 1, D.DAWN_TICK), last: Date.now() };
   broadcast(room, sleepMsg(room));
 }
 function fastForward(room, now) {
-  E.advanceTo(room, Math.min(room.ff.until, room.tick + FF_STEPS), SIM);
+  const n = Math.max(1, Math.round((now - room.ff.last) * FF_RATE));
+  room.ff.last = now;
+  E.advanceTo(room, Math.min(room.ff.until, room.tick + n), SIM);
   room.wall = now; // pretočený čas sa nedobieha – po prebudení beží svet zase normálnym tempom
   room.dirty = true;
   if (room.tick >= room.ff.until) {
@@ -408,8 +476,10 @@ function fastForward(room, now) {
   broadcast(room, timeMsg(room));
 }
 
+// Čas hráčom posielame, len keď sa zmení celá herná minúta (klient medzi tým dopočíta podľa tickMs), pri pretáčaní noci vždy.
 function timeMsg(room) {
-  return { t: 'time', tick: room.tick, tickMs: room.ff ? 100 / FF_STEPS : E.tickMs(room), weather: room.weather, mode: room.mode, daySeconds: room.daySeconds };
+  room.sentMin = Math.floor(room.min);
+  return { t: 'time', tick: room.tick, tickMs: room.ff ? 1 / FF_RATE : E.tickMs(room), weather: room.weather, mode: room.mode, daySeconds: room.daySeconds };
 }
 
 // ---------- Akcie ----------
@@ -465,7 +535,7 @@ function act(pl, m) {
   // Pavučiny: v Lese divov sa z nich ťahá hodváb (nie s lampášom v ruke), kútovú pavučinu krížiaka stačí odstrániť
   if (area === 'les') {
     const wb = Spiders.webAt(room, i);
-    if (wb) { const err = Spiders.startPull(room, pl, wb, Date.now()); return err ? toast(pl, err) : undefined; }
+    if (wb) { const err = Spiders.startPull(room, pl, wb); return err ? toast(pl, err) : undefined; }
   }
   if (D.CORNER_AREAS.includes(area) && Spiders.clearCorner(room, area, i)) {
     fx(room, 'cobweb', x + 0.5, y + 0.5, null, area);
@@ -676,8 +746,10 @@ function travel(pl, to) {
   pl.areaSeq++;
   pl.emote = null;
   Spiders.stopPull(pl);
+  Moves.forget(pl.room, pl);
   send(pl.ws, areaMsg(pl));
   for (const v of Spiders.areaViews(pl.room, to)) send(pl.ws, v);
+  Spiders.ensure(pl.room); // v Lese divov sa pavúky zobudia
   toast(pl, to === 'hory'
     ? '🏔️ Vystúpil(a) si do hôr. Na ľadovci pod skalami vysekáš krompáčom ľad. Chodníkom dole sa vrátiš do záhrady.'
     : to === 'les'
@@ -772,6 +844,7 @@ wss.on('connection', ws => {
         t: 'welcome', id: pl.id, room: roomId, w: D.areaSize(area).w, h: D.areaSize(area).h, tiles: tilesView(room, area), area, seq: pl.areaSeq, x: pl.x, y: pl.y
       });
       for (const v of Spiders.areaViews(room, area)) send(ws, v);
+      Spiders.ensure(room);
       send(ws, timeMsg(room));
       send(ws, Econ.marketView(room));
       send(ws, Econ.boardView(room));
@@ -794,17 +867,13 @@ wss.on('connection', ws => {
         if ((m.ar | 0) !== pl.areaSeq) break; // pohyb ešte z predchádzajúcej plochy
         if (typeof m.x === 'number' && typeof m.y === 'number' && isFinite(m.x) && isFinite(m.y)) {
           const pos = Areas.clampPos(pl.area, m.x, m.y); // z plochy sa vyjsť nedá – len cez prechod
-          pl.x = pos.x; pl.y = pos.y;
           pl.dir = m.dir | 0;
           if (typeof m.a === 'number' && isFinite(m.a)) pl.a = +m.a.toFixed(3); // presný smer pohľadu (3D: 8 smerov)
           pl.cr = !!m.cr; // plazí sa
           pl.lp = !!m.lp && !!sv.inv.lamp; // drží lampáš (svieti)
+          // poloha ide ostatným hneď; pavučiny, pavúky, hľadanie a prechody vyhodnotí plánovač v najbližšom kroku (moves.js)
+          Moves.arrive(room, pl, pos.x, pos.y, Date.now());
           sv.x = pl.x; sv.y = pl.y;
-          if (pl.scav && Math.hypot(pl.x - pl.scav.px, pl.y - pl.scav.py) > 0.35) stopScavenge(pl, 'Pohol(a) si sa skôr, než si dohľadal(a).');
-          if (pl.pull && (Math.hypot(pl.x - pl.pull.px, pl.y - pl.pull.py) > 0.35 || pl.lp)) { Spiders.stopPull(pl); toast(pl, 'Prestal(a) si ťahať hodváb.'); }
-          Spiders.checkWalk(room, pl, Date.now()); // vbehol do pavučiny?
-          const to = Areas.gateTarget(Areas.areaTiles(room, pl.area), pl.area, pl.x, pl.y);
-          if (to) travel(pl, to);
         }
         break;
       case 'act': if (!pl.sleep) act(pl, m); break;
@@ -974,6 +1043,7 @@ wss.on('connection', ws => {
     if (room.players.get(pl.id) === pl) {
       room.players.delete(pl.id);
       pl.save.lastTick = room.tick;
+      Moves.forget(room, pl); Spiders.stopPull(pl);
       const name = pl.name;
       leaving.leave(room.id + ':' + pl.key, () => toastAll(room, `${name} odišiel(a) zo záhrady.`));
       broadcast(room, roomInfo(room));
@@ -986,36 +1056,30 @@ wss.on('connection', ws => {
 });
 
 // Herný čas: pevný krok s dobiehaním – každý deň má presne TPD krokov, aj keď sa časovač oneskorí.
-setInterval(() => {
+// Časovač sa budí na hranici najbližšieho kroku (8× za sekundu); pavúky, pohyb hráčov aj všetko ostatné sú udalosti
+// v plánovači. Po posune času idú hráčom polohy (raz za krok) a čas, keď sa zmenila celá herná minúta.
+const MAX_STEP = 7 * TPD; // najviac toľko krokov v jednom prebudení (inak by zaseknutý server dobiehal naraz)
+function loop() {
   const now = Date.now();
+  let wait = 125;
   for (const room of rooms.values()) {
-    if (room.ff) { fastForward(room, now); flushEconomy(room); continue; }
-    if (room.mode === 'paused' && !room.players.size) { room.wall = now; continue; }
-    const n = E.advance(room, now, SIM, 50000);
-    if (n) { room.dirty = true; if (room.players.size) broadcast(room, timeMsg(room)); }
-    flushEconomy(room);
-  }
-}, 100);
-// Pozície hráčov (a pavúkov) 10× za sekundu
-let lastSim = Date.now();
-setInterval(() => {
-  const now = Date.now(), dt = Math.min(0.3, (now - lastSim) / 1000);
-  lastSim = now;
-  for (const room of rooms.values()) {
-    if (!room.players.size) continue;
-    Spiders.update(room, now, dt); Spiders.updateKriziak(room, now, dt);
-    for (const area of D.AREAS) {
-      const list = Spiders.entities(room, area), key = area + 'Sp';
-      if (list.length || room[key]) broadcastArea(room, area, { t: 'sp', list });
-      room[key] = list.length > 0;
+    if (room.ff) { fastForward(room, now); flushEconomy(room); if (room.players.size) sendPositions(room, now); continue; }
+    if (room.mode === 'paused' && !room.players.size) { room.wall = now; continue; } // pozastavený svet: stoja aj pavúky
+    const n = E.advance(room, now, SIM, MAX_STEP);
+    if (n) {
+      room.dirty = true;
+      if (room.players.size) {
+        if (Math.floor(room.min) !== room.sentMin) broadcast(room, timeMsg(room));
+        sendPositions(room, now);
+      }
     }
-    const list = [...room.players.values()].map(p => ({
-      id: p.id, name: p.name, x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, a: p.a, look: p.look, cr: p.cr ? 1 : 0, lp: p.lp ? 1 : 0, j: p.jn | 0, si: p.scav ? p.scav.i : -1, area: p.area,
-      e: p.sleep ? 'sleep' : p.scav ? 'search' : p.pull ? 'pull' : p.emote && now - p.emoteAt < 6000 ? p.emote : null
-    }));
-    for (const area of D.AREAS) broadcastArea(room, area, { t: 'pl', list: list.filter(p => p.area === area) });
+    flushEconomy(room);
+    const ms = E.tickMs(room);
+    wait = Math.min(wait, ms < 40 ? 40 : room.wall + ms - Date.now()); // pri skrátenom dni (testy) najviac 25× za sekundu
   }
-}, 100);
+  setTimeout(loop, Math.max(5, Math.ceil(wait)));
+}
+loop();
 // Priebežne ukladáme aj „naposledy videný“ – po páde servera tak dni neprítomnosti sedia (±15 s).
 setInterval(() => {
   for (const room of rooms.values()) { for (const p of room.players.values()) p.save.lastTick = room.tick; saveRoom(room); }

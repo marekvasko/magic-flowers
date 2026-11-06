@@ -186,12 +186,12 @@ function onDawn(room) {
 // ---------- Udalosti: veľkoobchodník, NPC, sviatky ----------
 // Periodické udalosti ekonomiky. Plánuje ich engine (E.reconcile), handlery sa samy znova neplánujú.
 // NPC prídu raz za deň medzi 8:00 a 18:00, najskôr pol dňa po predchádzajúcej návšteve.
-const npcVisit = (room, from) => E.nextDailyTick(from + TPD / 2, 96 + E.randInt(room, 120));
+const npcVisit = (room, from) => E.nextDailyTick(from + TPD / 2, D.hours(8) + E.randInt(room, D.hours(10)));
 // Sviatok začína o 6:00 svojho dňa v roku; ohlásenie je 2 dni vopred, koniec po f.len dňoch.
 const festStartTick = f => (f.season * DPS + f.day - 1) * TPD + D.DAWN_TICK;
 const yearly = at => E.every(YEAR_DAYS * TPD, at);
 const PERIODIC = [
-  { key: 'delivery', type: 'delivery', next: E.every(2 * TPD, 84) }, // každé 2 dni o 7:00
+  { key: 'delivery', type: 'delivery', next: E.every(2 * TPD, D.hours(7)) }, // každé 2 dni o 7:00
   ...['jano', 'fero', 'zuzka'].map(n => ({ key: 'npc_' + n, type: 'npc_' + n, next: npcVisit })),
   ...D.FESTIVALS.flatMap(f => [
     { key: 'festAnnounce:' + f.id, type: 'festAnnounce', data: { id: f.id }, next: yearly(festStartTick(f) - 2 * TPD) },

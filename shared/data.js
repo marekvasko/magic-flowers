@@ -12,10 +12,15 @@
   }
   const DAYS_PER_SEASON = 4;
   // Diskrétny čas: deň má vždy presne TICKS_PER_DAY krokov, jeden krok = MIN_PER_TICK herných minút.
-  const TICKS_PER_DAY = 288, MIN_PER_TICK = 5;
-  const DAWN_TICK = 72; // 6:00
+  // 8 krokov za sekundu pri 15-minútovom dni: 7200 krokov na deň, krok = 125 ms = 0,2 hernej minúty, hodina = 300 krokov.
+  const TICKS_PER_DAY = 7200, TICKS_PER_MIN = 5, MIN_PER_TICK = 1 / TICKS_PER_MIN;
+  // Trvania sa píšu v hernom čase, na kroky ich prevedú tieto funkcie (nie surové počty krokov)
+  const minutes = m => Math.round(m * TICKS_PER_MIN);
+  const hours = h => minutes(h * 60);
+  const days = d => Math.round(d * TICKS_PER_DAY);
+  const DAWN_TICK = hours(6); // 6:00
   // Základná dĺžka herného dňa v reálnych sekundách (napevno; DAY_SECONDS v prostredí len na testovanie)
-  const BASE_DAY_SECONDS = 1200;
+  const BASE_DAY_SECONDS = 900;
   const SEASONS = ['Jar', 'Leto', 'Jeseň', 'Zima'];
   const SEASON_ICONS = ['🌱', '☀️', '🍂', '❄️'];
 
@@ -233,8 +238,8 @@
   // Hľadá sa priestorom: server si každú hernú hodinu tajne vylosuje, v ktorých políčkach trávy semienka sú
   // (hustota = density × okolie × denná hodina × obdobie). Hráč chodí z políčka na políčko; klient nevie nič.
   const SCAVENGE = {
-    ticks: 1,           // výsledok príde v najbližšom kroku (do 5 herných minút), len ak hráč v tom kroku stále hľadá
-    window: 12,         // po koľkých krokoch sa semienka v tráve premiestnia (herná hodina)
+    ticks: minutes(5),  // výsledok príde o 5 herných minút, len ak hráč vtedy stále hľadá
+    window: hours(1),   // po koľkých krokoch sa semienka v tráve premiestnia (herná hodina)
     density: 0.07,      // podiel políčok so semienkom cez deň na jar, ďaleko od lesa a ciest
     find: 0.75,         // šanca, že ho na správnom políčku aj nájdeš
     edge: 0.15,         // + za každého lesného suseda (najviac 4) – na okraji lesa sa semienka sypú viac
@@ -734,12 +739,13 @@
   }
   function batchAge(b, tick, rate) { return b.a + (tick - b.at) * rate; }
   function dayOfTick(tick) { return Math.floor(tick / TICKS_PER_DAY) + 1; }
-  function minOfTick(tick) { return (tick % TICKS_PER_DAY) * MIN_PER_TICK; }
+  // herná minúta dňa (kroky sú jemnejšie ako minúta – vráti aj zlomok; hodiny ukazujú len celé minúty)
+  function minOfTick(tick) { return (tick % TICKS_PER_DAY) / TICKS_PER_MIN; }
   function seasonOf(day) { return Math.floor((day - 1) / DAYS_PER_SEASON) % 4; }
   function isNight(min) { const h = min / 60; return h >= 21 || h < 4; }
   // Spať sa dá večer a v noci (18:00 – 6:00); keď spia všetci hráči, noc prebehne až do rána.
   const SLEEP_FROM_MIN = 18 * 60;
-  function canSleep(min) { return min >= SLEEP_FROM_MIN || min < DAWN_TICK * MIN_PER_TICK; }
+  function canSleep(min) { return min >= SLEEP_FROM_MIN || min < DAWN_TICK / TICKS_PER_MIN; }
   function stageOf(p) {
     const sp = SPECIES[p.sp];
     if (!sp) return p.prog > 0 ? 1 : 0; // divá rastlina, ktorej druh klient ešte nepozná
@@ -752,7 +758,7 @@
   // ---- Pavúky a pavučiny (#57) ----
   // Les divov: vlčiaky (nora pri chodníku, svoje územie) a stará pradlena (najvzdialenejšia čistina) – obe tkajú pavučiny.
   // Všade inde: krížiak, ktorý tká len malé pavučiny v kútoch (nedá sa z nich nič získať).
-  // Rýchlosti v políčkach za sekundu (hráč chodí 3,8), časy v ms, vzdialenosti v políčkach.
+  // Rýchlosti v políčkach za sekundu (hráč chodí 3,8), časy v ms reálneho času (na kroky ich prevedie spiders.js), vzdialenosti v políčkach.
   const SPIDERS = {
     vlciak: { n: 6, reach: 10, gap: 12, walk: 1.2, run: 3.4, sense: 2, lose: 4, lostMs: 4000, borderMs: 2000, takeMs: 3000, takeMax: 3, slow: 0.5, backMs: 2000, coolMs: 6000, eyes: 5,
       climb: 1, guard: [0.5, 1.1], guardMs: [6000, 12000], high: 2 },
@@ -784,7 +790,7 @@
 
   const api = {
     CHAT_MAX, chatText,
-    W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
+    W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, TICKS_PER_MIN, MIN_PER_TICK, minutes, hours, days, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
     RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, canLevel, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, BODY, arrivalTiles, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_HEART, sunZone, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt, viewDiagAt,
     SPIDERS, WEB, WEB_ANCHOR, CORNER_WALL, CORNER_AREAS,

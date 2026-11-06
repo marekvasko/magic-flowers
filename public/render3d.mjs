@@ -1060,7 +1060,7 @@ void main() {
   let shadowDirty = true, lastShadowKey = '';
   function updateShadowMap(min, se) {
     const u = material.uniforms;
-    const stepMin = Math.floor(min / D.MIN_PER_TICK) * D.MIN_PER_TICK; // slnko z aktuálneho herného kroku
+    const stepMin = Math.floor(min / 5) * 5; // slnko (a prepočet tieňov) sa posúva po 5 herných minútach
     const key = se + ':' + stepMin + (layerOn('shadows') ? '' : ':off') + ':' + lesSunMode();
     if (!shadowDirty && key === lastShadowKey) return;
     shadowDirty = false; lastShadowKey = key;

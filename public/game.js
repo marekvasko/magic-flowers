@@ -131,6 +131,11 @@
         S.tick = m.tick; S.tickMs = m.tickMs; S.day = D.dayOfTick(m.tick); S.min = D.minOfTick(m.tick);
         S.weather = m.weather; S.mode = m.mode; S.daySeconds = m.daySeconds; S.timeAt = performance.now(); updateHud();
         break;
+      case 'pm': { // iný hráč sa práve pohol (server to prepošle hneď, ešte pred raz-za-krok správou 'pl')
+        const p = m.p, o = p && p.id !== S.id && S.others.get(p.id);
+        if (o) Object.assign(o, { tx: p.x, ty: p.y, dir: p.dir, a: p.a, cr: !!p.cr, lp: !!p.lp });
+        break;
+      }
       case 'pl': {
         const seen = new Set();
         for (const p of m.list) {
@@ -268,7 +273,8 @@
   // Hráč hrabe v tráve (si = index hľadaného políčka, inak -1) – hlinku a trávu kreslia častice vo svete (particles3d.mjs).
   const searching = o => o && o.si != null && o.si >= 0;
   function curMin() { if (window.MF_TIME && window.MF_TIME.min != null) return window.MF_TIME.min; return realMin(); }
-  function realMin() { return (S.min + Math.min(D.MIN_PER_TICK, (performance.now() - S.timeAt) / S.tickMs * D.MIN_PER_TICK)) % 1440; }
+  // Server posiela čas raz za hernú minútu – medzi správami dopočítame podľa dĺžky kroku, najviac o minútu dopredu
+  function realMin() { return (S.min + Math.min(1, (performance.now() - S.timeAt) / S.tickMs * D.MIN_PER_TICK)) % 1440; }
   function season() { return window.MF_TIME && window.MF_TIME.season != null ? window.MF_TIME.season : D.seasonOf(S.day); }
   const GLACIER_MAX = D.glacierLevels(D.buildMountains()); // pôvodná výška ľadu na políčkach hôr
   function tileAt(x, y) { return (x < 0 || y < 0 || x >= S.W || y >= S.H) ? null : S.tiles[y * S.W + x]; }
@@ -726,7 +732,7 @@
   }
 
   function updateHud() {
-    const m = curMin(), h = Math.floor(m / 60), mm = Math.floor(m % 60 / 10) * 10;
+    const m = curMin(), h = Math.floor(m / 60), mm = Math.floor(m % 60); // hodiny ukazujú len celé minúty
     const se = season();
     const dayInSeason = (S.day - 1) % D.DAYS_PER_SEASON + 1;
     $('hDate').textContent = (S.area !== 'garden' ? (D.AREA_FX[S.area] || {}).icon + ' ' : '') + `${D.SEASON_ICONS[se]} ${D.SEASONS[se]} · deň ${dayInSeason}/${D.DAYS_PER_SEASON}`;
@@ -795,7 +801,7 @@
     const d = Math.floor(hTotal / 24), hh = hTotal % 24;
     return (d ? d + ' d ' : '') + (hh || !d ? hh + ' h' : '');
   }
-  function fmtTick(t) { const m = D.minOfTick(t); return `deň ${D.dayOfTick(t)}, ${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; }
+  function fmtTick(t) { const m = Math.floor(D.minOfTick(t)); return `deň ${D.dayOfTick(t)}, ${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; }
   // Trend ceny za posledný deň ako ikonka: vždy 3 šípky natesno nad sebou, farebné sú
   // 1 (malá zmena), 2 (veľká) alebo 3 (veľmi veľká), zvyšok je sivý. Bez zmeny = všetky sivé.
   // upIsGood: pri predaji je rast ceny dobrý (zelený), pri nákupe zlý (červený).

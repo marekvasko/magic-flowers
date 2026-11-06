@@ -29,8 +29,8 @@ function addItems(c, id, n, tick, batches) {
   if (!batched(id)) return;
   const list = c.fb[id] || (c.fb[id] = []);
   for (const b of batches || [{ n, age: 0 }]) {
-    // rovnako staré kvety spojíme do jednej várky
-    const same = list.find(x => Math.abs(D.batchAge(x, tick, c.rate) - b.age) < 1);
+    // rovnako staré kvety (do 5 herných minút) spojíme do jednej várky
+    const same = list.find(x => Math.abs(D.batchAge(x, tick, c.rate) - b.age) < D.minutes(5));
     if (same) same.n += b.n;
     else list.push({ n: b.n, a: b.age, at: tick });
   }
