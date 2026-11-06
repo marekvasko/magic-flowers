@@ -27,6 +27,8 @@
     // so šancou cornerBreak zlom na hrane (bod posunutý o breakPull k protiľahlému vrcholu a vlákno k nemu)
     cornerSize: Pd(0.7, 0.3, 1.2, 0.05, 'corner'), cornerBreak: Pd(0.5, 0, 1, 0.05, 'corner'), breakPull: Pd(0.25, 0, 0.6, 0.01, 'corner'),
     cornerRays: Pd(11, 4, 20, 1, 'corner'), cornerFill: Pd(0.85, 0.4, 1, 0.01, 'corner'),
+    // pavučina v kúte budovy z minikociek je malá – menej detailov: počet lúčov a rozostup závitov v minikockách
+    voxelRays: Pd(5, 3, 12, 1, 'corner'), voxelPitch: Pd(0.8, 0.3, 2, 0.05, 'corner'),
     // kreslenie: 0 = shader na rovine (vlákna z výpočtu v každom pixeli), 1 = skutočné 3D vlákna ako čiary;
     // pri čiarach: copies = koľko kópií posunutých o pixel (hrúbka), bow = vydutie z roviny, sway = kývanie vo vetre
     render: Pd(0, 0, 1, 1, 'render'), copies: Pd(2, 1, 4, 1, 'render'), bow: Pd(0.12, 0, 0.5, 0.01, 'render'), sway: Pd(0.02, 0, 0.12, 0.005, 'render'),
@@ -347,6 +349,8 @@
       if (opts.faces === 3) pts = [[0, y(1, 0.15, 1), z(2, 0.15, 1)], [x(3, 0.15, 1), y(4, 0.15, 1), 0], [x(5, 0.15, 1), 0, z(6, 0.15, 1)]];
       else if (hs(k + 7) < 0.5) pts = [[0, y(1, 0.2, 1), z(2, 0.05, 0.95)], [0, y(3, 0.2, 1), z(4, 0.05, 0.95)], [x(5, 0.15, 0.95), 0, z(6, 0, 0.95)]];
       else pts = [[0, y(1, 0.3, 1), z(2, 0.05, 0.95)], [x(3, 0.15, 0.95), 0, z(4, 0, 0.95)], [x(5, 0.15, 0.95), 0, z(6, 0, 0.95)]];
+      // v budove z minikociek: kotva vždy v strede minikocky (na ploche v strede jej steny)
+      if (opts.voxel) pts = pts.map(p => p.map((v, i) => v === 0 ? 0 : Math.min(SZ[i] - 0.5 / 8, (Math.floor(v * 8) + 0.5) / 8)));
       // nie príliš plochý: plocha a najkratšia výška voči najdlhšej strane
       const ar = len(cross(sub(pts[1], pts[0]), sub(pts[2], pts[0]))) / 2, lm = Math.max(len(sub(pts[1], pts[0])), len(sub(pts[2], pts[1])), len(sub(pts[0], pts[2])));
       // kotvy sa musia navzájom vidieť (opts.see: medzi nimi nič plné – v budove z minikociek)
@@ -406,13 +410,13 @@
         }
         return best;
       };
-      const rays = P.cornerRays + Math.floor(hs(80 + pi) * 3), sp = [];
+      const rays = opts.voxel ? P.voxelRays + Math.floor(hs(80 + pi) * 2) : P.cornerRays + Math.floor(hs(80 + pi) * 3), sp = [];
       for (let k = 0; k < rays; k++) {
         const a = (k + (hs(90 + k + pi * 31) - 0.5) * 0.35) / rays * Math.PI * 2, d = Math.min(hit(a), S * 2);
         sp.push({ a, d });
         if (d < S * 2 && hs(120 + k + pi * 31) < keep + 0.15) seg2([h[0] + Math.cos(a) * inr * 0.15, h[1] + Math.sin(a) * inr * 0.15], [h[0] + Math.cos(a) * d, h[1] + Math.sin(a) * d], 3);
       }
-      const free = inr * 0.3, pitch = Math.max(0.012, P.pitch * 0.7 * (1 + (hs(5) - 0.5) * P.pitchVar));
+      const free = inr * 0.3, pitch = opts.voxel ? P.voxelPitch / 8 * (1 + (hs(5) - 0.5) * P.pitchVar * 0.5) : Math.max(0.012, P.pitch * 0.7 * (1 + (hs(5) - 0.5) * P.pitchVar));
       const at = (k, r) => { const s = sp[(k + rays) % rays]; return r <= s.d * P.cornerFill ? [h[0] + Math.cos(s.a) * r, h[1] + Math.sin(s.a) * r] : null; };
       for (let turn = 0; turn < 80; turn++) {
         let any = false;
@@ -425,7 +429,7 @@
         }
         if (!any && free + pitch * turn > S * 2) break;
       }
-      for (let r = inr * 0.04; r < inr * 0.15; r += inr * 0.035) for (let k = 0; k < rays; k++) { const a = at(k, r), b2 = at(k + 1, r); if (a && b2) seg2(a, b2, 1); } // hustý stred
+      if (!opts.voxel) for (let r = inr * 0.04; r < inr * 0.15; r += inr * 0.035) for (let k = 0; k < rays; k++) { const a = at(k, r), b2 = at(k + 1, r); if (a && b2) seg2(a, b2, 1); } // hustý stred
     });
     return { pos: new Float32Array(pos), tan: new Float32Array(tan), count: pos.length / 3, hub: hub0, anchors: V, layout: { seed, nH: polys.length, moor: [0, 0], fill, hubs: [] } };
   }
@@ -499,7 +503,7 @@
     const start = Math.floor(hs(1) * list.length);
     for (let i = 0; i < Math.min(list.length, 16); i++) {
       const q = pickVoxelCorner([list[(start + i * 7) % list.length]], seed + i * 101);
-      const th = cornerThreads(over, { seed: seed + i * 101, faces: q.faces, size: q.size, keep, see: voxelSight(f, q) });
+      const th = cornerThreads(over, { seed: seed + i * 101, faces: q.faces, size: q.size, keep, see: voxelSight(f, q), voxel: true });
       if (th) return { q, th };
     }
     return null;
