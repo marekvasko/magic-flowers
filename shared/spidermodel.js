@@ -178,6 +178,7 @@
       const mid = add(hip, [reach * 0.45, 0.12, s * reach * 0.35]), tip = add(hip, [reach, Math.max(0.03 - hip[1], -0.25), s * reach * 0.42]);
       parts.push({ k: 'seg', a: hip, b: mid, wa: w, wb: w * 0.85, col: C.leg }, { k: 'seg', a: mid, b: tip, wa: w * 0.85, wb: w, col: C.band });
     }
+    const bodies = parts.filter(p => p.part === 'abd' || p.part === 'hump').map(p => ({ c: p.c, A: p.A, r: Math.min(...p.A.map(a => Math.hypot(...a))) }));
     // nohy: bedro na okraji hlavohrude → koleno (najvyššie) → členok → chodidlo na zemi; chôdza striedavo (L1 P2 L3 P4)
     K.legs.forEach(([ha, fa, reach, kh, kf, ah, af, w0, w1], i) => {
       for (const s of [-1, 1]) {
@@ -191,6 +192,7 @@
         const knee = add(hip, [hz[0] * kf, kh * lift0 + (kh * (1 - lift0)) * 0.3 + up * 0.4 + (raise ? raise * 0.35 : 0), hz[2] * kf]);
         const ankle = [hip[0] + hz[0] * af, foot[1] + ah * lift0 + up * 0.5 + (base > 0 ? base * 0.12 : 0), hip[2] + hz[2] * af];
         const wm = w0 + (w1 - w0) * 0.45, wa = w0 + (w1 - w0) * 0.75;
+        clear(hip, knee, ankle, foot, bodies, wm);
         parts.push({ k: 'seg', a: hip, b: knee, wa: w0, wb: wm, col: C.leg, band: C.band, leg: i },
           { k: 'seg', a: knee, b: ankle, wa: wm, wb: wa, col: C.leg, band: C.band, leg: i },
           { k: 'seg', a: ankle, b: foot, wa, wb: w1, col: C.leg, band: C.band, leg: i, tip: true });
@@ -203,6 +205,30 @@
       else { p.a = mul(p.a, k); p.b = mul(p.b, k); p.wa *= k; p.wb *= k; }
     }
     return parts;
+  }
+  // Noha nesmie prejsť zadočkom ani hrbom: kým niektorý bod článkov (bez začiatku stehna pri bedre) leží v elipsoide
+  // zväčšenom o hrúbku nohy, posunie koleno a členok von po normále povrchu (váhy podľa toho, ku ktorému kĺbu je bod
+  // bližšie). Bedro a chodidlo ostanú. Mení sa priamo knee a ankle.
+  function clear(hip, knee, ankle, foot, bodies, w) {
+    const segs = [[hip, knee, 0.25], [knee, ankle, 0], [ankle, foot, 0]];
+    for (let it = 0; it < 40; it++) {
+      let worst = null;
+      for (const e of bodies) {
+        const need = 1 + (w * 0.6 + 0.04) / e.r;
+        segs.forEach(([a, b, t0], si) => {
+          for (let t = t0; t <= 1.0001; t += 0.1) {
+            const q = add(a, mul(sub(b, a), t)), u = solve3(e.A, sub(q, e.c)), r = Math.hypot(...u);
+            if (r < need && (!worst || need - r > worst.d)) worst = { d: need - r, e, u, si, t };
+          }
+        });
+      }
+      if (!worst) return;
+      const { e, u, si, t } = worst;
+      const n = norm(solve3T(e.A, u)), k = worst.d * e.r + 0.01;
+      const wk = si === 0 ? t : si === 1 ? 1 - t : 0, wa = si === 1 ? t : si === 2 ? 1 - t : 0;
+      const tot = Math.max(0.3, wk + wa);
+      for (let i = 0; i < 3; i++) { knee[i] += n[i] * k * (wk / tot); ankle[i] += n[i] * k * (wa / tot); }
+    }
   }
   const scales = {};
   function scaleOf(kind) {
