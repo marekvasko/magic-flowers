@@ -289,10 +289,9 @@ function revealWild(room, i) {
   const s = room.tiles[i].s, p = s && s.p;
   if (!p || !p.wild || p.d || !(p.prog > 0)) return;
   delete p.wild;
+  // do herbára pribudne tomu, kto políčko prekopal (pole je spoločné, preto už bez osobnej správy)
   const sv = s.o && room.saves[s.o];
   if (sv && sv.seen && !sv.seen.includes(p.sp)) sv.seen.push(p.sp);
-  const pl = s.o && playerByKey(room, s.o);
-  if (pl) toast(pl, `🌱 Z divého semienka vykukol klíčok: ${D.SPECIES[p.sp].name}!`, 'gift');
 }
 
 function dawn(room) {
@@ -510,7 +509,7 @@ function act(pl, m) {
       t.s = { k: D.TILLABLE[t.g], w: room.weather === 'rain' ? 1 : 0, r: 0, p: null, o: pl.key };
       tileMsg(room, i); broadcast(room, plotsMsg(room)); fx(room, 'dirt', x + 0.5, y + 0.5); return;
     }
-    if (t.s && !t.s.p) { // zarovnať prázdne políčko (ktorýkoľvek hráč) – uvoľní miesto v spoločnom povolení
+    if (D.canLevel(t)) { // zarovnať prázdne políčko (ktorýkoľvek hráč) – uvoľní miesto v spoločnom povolení
       t.s = null; Scav.empty(room, i); tileMsg(room, i); broadcast(room, plotsMsg(room)); return; // čerstvo zarovnaná zem semienka nemá
     }
     if (t.g === 'ring' || t.g === 'shroom') return toast(pl, 'Kruh z húb radšej nechaj tak… niekto tu v noci tancuje. 🍄');

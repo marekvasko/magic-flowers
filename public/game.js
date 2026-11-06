@@ -352,7 +352,7 @@
     if (sel === 'hoe') {
       if (p && p.d) return { i: '🧹', l: 'Vyčistiť' };
       if (!s && D.TILLABLE[t.g]) return { i: '⛏️', l: 'Kopať' };
-      if (s && !p && (!s.o || s.o === S.name.toLowerCase())) return { i: '🔄', l: 'Zarovnať' };
+      if (D.canLevel(t)) return { i: '🔄', l: 'Zarovnať' }; // ktokoľvek, ako na serveri
     }
     // neprekopaná tráva a v ruke nič, čo by tu niečo robilo → hľadať divé semienka (ako na serveri)
     if (t.g === 'grass' && !s && sel !== 'hoe' && !sel.startsWith('po_')) return { i: '🔍', l: 'Hľadať' };
