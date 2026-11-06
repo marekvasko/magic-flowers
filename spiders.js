@@ -205,7 +205,7 @@ function spiders(room) {
   }
   return room.sps;
 }
-function resetSpiders(room) { if (room.sps) for (const s of room.sps) Object.assign(s, { x: s.hx, y: s.hy, st: 'home', tgt: null, path: null, loot: 0, until: 0, moving: false }); }
+function resetSpiders(room) { if (room.sps) for (const s of room.sps) Object.assign(s, { x: s.hx, y: s.hy, st: 'home', tgt: null, path: null, loot: 0, until: 0, moving: false, z: 0, tr: null, web: null }); }
 const tileOf = (x, y) => Math.floor(y) * LW + Math.floor(x);
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 // Cesta po políčkach vlastného územia k prvému políčku, ktoré spĺňa goal (bez štartu). null = nedá sa.
@@ -237,7 +237,7 @@ function walkPath(s, sp, dt) {
   if (stepTo(s, i % LW + 0.5, ((i / LW) | 0) + 0.5, sp, dt)) s.path.shift();
   return !s.path.length;
 }
-function goHome(room, s, now) { s.st = 'return'; s.tgt = null; s.path = pathTo(room, s, i => i === tileOf(s.hx, s.hy)) || []; s.until = now; }
+function goHome(room, s, now) { s.z = 0; s.tr = null; s.st = 'return'; s.tgt = null; s.path = pathTo(room, s, i => i === tileOf(s.hx, s.hy)) || []; s.until = now; }
 function inTerr(room, s, x, y) { return forest(room).owner[tileOf(x, y)] === s.o; }
 // Krok preč od bodu (x, y) po vlastnom území (na susedné políčko najďalej od neho).
 function away(room, s, x, y, sp, dt) {
@@ -252,16 +252,55 @@ function away(room, s, x, y, sp, dt) {
   }
   if (best) stepTo(s, best[0], best[1], sp, dt);
 }
+// ---------- Na strome ----------
+// Pavúk čaká na kmeni, ktorý drží jednu z jeho pavučín: na strane kmeňa k pavučine (nx, ny = smer od kmeňa k nej),
+// hlavou dole. Ker ani spadnutý kmeň nie sú strom – keď pavučinu držia len tie, pavúk počká na chodníku.
+const CLIMB = { tree: 1, giant: 1, trunk: 1 };
+function trunkSpot(room, wb) {
+  const tiles = areaTiles(room, 'les'), out = [];
+  const ends = wb.ax ? [[wb.x, wb.y - 1, wb.x, wb.y], [wb.x, wb.y + wb.n, wb.x, wb.y + wb.n - 1]]
+    : [[wb.x - 1, wb.y, wb.x, wb.y], [wb.x + wb.n, wb.y, wb.x + wb.n - 1, wb.y]];
+  for (const [x, y, wx, wy] of ends) {
+    const a = Webs.anchorAt(tiles, LW, LH, x, y);
+    if (!a || !CLIMB[a.g]) continue;
+    let nx = wx + 0.5 - a.cx, ny = wy + 0.5 - a.cz;
+    const l = Math.hypot(nx, ny) || 1; nx /= l; ny /= l;
+    out.push({ x: a.cx + nx * (a.r + 0.04), y: a.cz + ny * (a.r + 0.04), nx, ny });
+  }
+  return out.length ? out[wb.id % out.length] : null;
+}
+const between = ([a, b]) => a + Math.random() * (b - a);
+// pri pavučine: na kmeň (ak je), inak postojí na chodníku
+function toWeb(room, s, P, now) {
+  const wb = room.spid.webs.find(w => w.id === s.web), spot = wb && trunkSpot(room, wb);
+  if (!spot) return false;
+  s.st = 'totree'; s.tr = spot; s.z = 0;
+  return true;
+}
+function startGuard(s, P, now) { s.st = 'guard'; s.gz = between(P.guard); s.until = now + between(P.guardMs); }
+// Čaká na kmeni: vylezie do svojej výšky (pri zdvihnutom lampáši až na P.high a pavučinu nechá tak),
+// po čase zlezie a ide domov.
+function guard(room, s, P, lamps, now, dt) {
+  if (lamps.some(l => dist(s, l) < SP.lamp + 0.5)) s.scared = now + (P.backMs || 2000);
+  const want = now < s.scared ? P.high : now < s.until ? s.gz : 0, dz = want - s.z;
+  if (Math.abs(dz) > 1e-6) { s.z = Math.abs(dz) <= P.climb * dt ? want : s.z + Math.sign(dz) * P.climb * dt; s.moving = true; s.up = dz > 0; }
+  else if (!want) goHome(room, s, now);
+}
+// Pavúk na kmeni pri tejto pavučine a pri ňom zdvihnutý lampáš – nechá ju tak.
+const hiding = (s, wb, now) => s.st === 'guard' && s.web === wb.id && now < s.scared;
+
 // Pavučinu niekto potiahol alebo do nej vbehol – majiteľ sa rozbehne k nej (pradlena rovno k hráčovi).
 function alert(room, wb, pl, now) {
   const s = spiders(room)[wb.o];
-  if (!s || s.st === 'cling') return;
+  if (!s || s.st === 'cling' || hiding(s, wb, now)) return;
+  s.z = 0; s.tr = null; // z kmeňa zoskočí
   if (s.k === 'p') { if (s.st !== 'chase') { s.st = 'chase'; s.tgt = pl.id; s.path = null; s.repath = 0; } return; }
   if (s.st === 'chase') return;
+  if (s.st === 'guard' && s.web === wb.id) { chase(s, pl, now); return; } // čakal priamo pri nej
   const t = webTiles(wb), mid = t[Math.floor(t.length / 2)];
   s.st = 'alert'; s.tgt = pl.id; s.path = pathTo(room, s, i => i === mid) || []; s.until = now;
 }
-function chase(s, pl, now) { s.st = 'chase'; s.tgt = pl.id; s.path = null; s.repath = 0; s.seen = now; s.border = 0; }
+function chase(s, pl, now) { s.z = 0; s.tr = null; s.st = 'chase'; s.tgt = pl.id; s.path = null; s.repath = 0; s.seen = now; s.border = 0; }
 
 function update(room, now, dt) {
   if (!room.spid || !room.les) return;
@@ -282,7 +321,7 @@ function vlciak(room, s, ps, byId, lamps, now, dt) {
   const lampNear = lamp && dist(s, lamp) < SP.lamp + 0.3;
   if (lampNear) s.scared = now + V.backMs;
   // kým nikoho nenaháňa, všimne si hráča, ktorý príde blízko (bez lampáša)
-  if (['home', 'walk', 'pause', 'return', 'search'].includes(s.st) && now >= s.cool && now >= s.scared) {
+  if (['home', 'walk', 'pause', 'return', 'search', 'totree', 'guard'].includes(s.st) && now >= s.cool && now >= s.scared) {
     const p = ps.find(p => !p.lp && dist(s, p) <= V.sense && inTerr(room, s, p.x, p.y));
     if (p) chase(s, p, now);
   }
@@ -290,7 +329,8 @@ function vlciak(room, s, ps, byId, lamps, now, dt) {
     case 'home':
       if (now >= s.until) {
         const own = room.spid.webs.filter(wb => wb.o === s.o);
-        const goal = own.length && Math.random() < 0.6 ? webTiles(own[Math.floor(Math.random() * own.length)]) : null;
+        const wb = own.length && Math.random() < 0.6 ? own[Math.floor(Math.random() * own.length)] : null, goal = wb && webTiles(wb);
+        s.web = wb ? wb.id : null;
         const f = forest(room), all = [];
         if (!goal) for (let i = 0; i < f.owner.length; i++) if (f.owner[i] === s.o) all.push(i);
         const g = goal ? goal[0] : all[Math.floor(Math.random() * all.length)];
@@ -298,7 +338,9 @@ function vlciak(room, s, ps, byId, lamps, now, dt) {
         s.st = 'walk';
       }
       break;
-    case 'walk': if (walkPath(s, V.walk, dt)) { s.st = 'pause'; s.until = now + 2000 + Math.random() * 2000; } break;
+    case 'walk': if (walkPath(s, V.walk, dt) && !toWeb(room, s, V, now)) { s.st = 'pause'; s.until = now + 2000 + Math.random() * 2000; } break;
+    case 'totree': if (stepTo(s, s.tr.x, s.tr.y, V.walk, dt)) startGuard(s, V, now); break;
+    case 'guard': guard(room, s, V, lamps, now, dt); break;
     case 'pause': if (now >= s.until) goHome(room, s, now); break;
     case 'return':
       if (walkPath(s, V.walk * 1.5, dt) && stepTo(s, s.hx, s.hy, V.walk, dt)) { s.st = 'home'; s.loot = 0; s.until = now + 3000 + Math.random() * 5000; }
@@ -372,9 +414,21 @@ function vlciak(room, s, ps, byId, lamps, now, dt) {
 function cling(room, s, p, now) { s.st = 'cling'; s.tgt = p.id; s.taken = 0; s.next = now; s.path = null; }
 
 function pradlena(room, s, byId, lamps, now, dt) {
-  if (s.st === 'home') return;
+  if (s.st === 'home') { // občas zájde k jednej zo svojich pavučín a počká na jej kmeni
+    if (!s.until) s.until = now + between(PR.idleMs);
+    if (now < s.until) return;
+    const own = room.spid.webs.filter(wb => wb.o === s.o && trunkSpot(room, wb)), wb = own[Math.floor(Math.random() * own.length)];
+    s.until = 0;
+    if (!wb) return;
+    const t = new Set(webTiles(wb));
+    s.web = wb.id; s.path = pathTo(room, s, i => t.has(i)) || []; s.st = 'walk';
+    return;
+  }
+  if (s.st === 'walk') { if (walkPath(s, PR.walk, dt) && !toWeb(room, s, PR, now)) goHome(room, s, now); return; }
+  if (s.st === 'totree') { if (stepTo(s, s.tr.x, s.tr.y, PR.walk, dt)) startGuard(s, PR, now); return; }
+  if (s.st === 'guard') { guard(room, s, PR, lamps, now, dt); return; }
   if (s.st === 'return') {
-    if (walkPath(s, PR.walk, dt) && stepTo(s, s.hx, s.hy, PR.walk, dt)) s.st = 'home';
+    if (walkPath(s, PR.walk, dt) && stepTo(s, s.hx, s.hy, PR.walk, dt)) { s.st = 'home'; s.until = 0; }
     return;
   }
   // naháňa toho, kto jej siahol na pavučinu – len po svojej čistine
@@ -413,7 +467,19 @@ function updateKriziak(room, now, dt) {
     if (!ps.length) { addCorner(room, area, z.spot); delete room.kz[area]; continue; } // nikto sa nepozerá – rovno dobehne
     z.moving = false;
     const scare = ps.find(p => dist(z, p) < KZ.near || (p.lp && dist(z, p) < SP.lamp));
-    if (scare && z.st !== 'flee') { z.st = 'flee'; z.until = now + 700; const a = Math.atan2(z.y - scare.y, z.x - scare.x); z.fx = Math.cos(a); z.fy = Math.sin(a); }
+    if (scare && z.st !== 'flee' && z.st !== 'climb') {
+      z.st = 'flee'; z.until = now + 700; const a = Math.atan2(z.y - scare.y, z.x - scare.x); z.fx = Math.cos(a); z.fy = Math.sin(a);
+      z.tree = treeNear(room, area, z, scare);
+    }
+    if (z.st === 'flee' && z.tree) { // vybehne na najbližší strom a stratí sa v korune
+      if (stepTo(z, z.tree.x, z.tree.y, KZ.flee, dt)) { z.st = 'climb'; z.tr = z.tree; z.z = 0; }
+      continue;
+    }
+    if (z.st === 'climb') {
+      z.z += KZ.climb * dt; z.moving = true; z.up = true;
+      if (z.z >= KZ.gone) delete room.kz[area];
+      continue;
+    }
     if (z.st === 'flee') {
       z.x += z.fx * KZ.flee * dt; z.y += z.fy * KZ.flee * dt; z.a = Math.atan2(z.fy, z.fx); z.moving = true;
       if (now >= z.until) delete room.kz[area]; // schoval sa – pavučinu tentoraz neutká
@@ -428,6 +494,26 @@ function updateKriziak(room, now, dt) {
     z.left -= dist(z, before);
     if (z.left <= 0) { z.st = 'pause'; z.until = now + 400 + Math.random() * 600; }
   }
+}
+
+// Strom do KZ.tree políčok od krížiaka, radšej ďalej od toho, kto ho vyľakal; miesto na kmeni na strane ku krížiakovi
+function treeNear(room, area, z, from) {
+  const tiles = areaTiles(room, area), { w, h } = D.areaSize(area), R = KZ.tree;
+  let best = null, bs = Infinity;
+  for (let y = Math.max(0, Math.floor(z.y - R)); y <= Math.min(h - 1, Math.floor(z.y + R)); y++) {
+    for (let x = Math.max(0, Math.floor(z.x - R)); x <= Math.min(w - 1, Math.floor(z.x + R)); x++) {
+      const a = Webs.anchorAt(tiles, w, h, x, y);
+      if (!a || !CLIMB[a.g]) continue;
+      const d = Math.hypot(a.cx - z.x, a.cz - z.y);
+      if (d > R) continue;
+      const sc = d - 0.6 * (Math.hypot(a.cx - from.x, a.cz - from.y) - dist(z, from));
+      if (sc < bs) { bs = sc; best = a; }
+    }
+  }
+  if (!best) return null;
+  let nx = z.x - best.cx, ny = z.y - best.cz;
+  const l = Math.hypot(nx, ny) || 1; nx /= l; ny /= l;
+  return { x: best.cx + nx * (best.r + 0.03), y: best.cz + ny * (best.r + 0.03), nx, ny };
 }
 
 // ---------- Správy pre klientov ----------
@@ -449,9 +535,11 @@ function areaViews(room, area) {
 function entities(room, area) {
   const out = [];
   const r = v => +v.toFixed(2);
-  if (area === 'les' && room.sps) for (const s of room.sps) out.push({ id: s.id, k: s.k, x: r(s.x), y: r(s.y), a: r(s.a), m: s.moving ? 1 : 0, c: s.st === 'cling' ? 1 : 0, h: s.st === 'home' ? 1 : 0 });
+  // na kmeni: z = výška, n = smer od kmeňa (strana, na ktorej sedí), u = lezie hore (inak hlavou dole)
+  const tree = (o, s) => { if (s.tr && s.st !== 'totree' && s.st !== 'flee') Object.assign(o, { z: r(s.z || 0), n: [r(s.tr.nx), r(s.tr.ny)], u: s.moving && s.up ? 1 : 0 }); return o; };
+  if (area === 'les' && room.sps) for (const s of room.sps) out.push(tree({ id: s.id, k: s.k, x: r(s.x), y: r(s.y), a: r(s.a), m: s.moving ? 1 : 0, c: s.st === 'cling' ? 1 : 0, h: s.st === 'home' ? 1 : 0 }, s));
   const z = room.kz && room.kz[area];
-  if (z) out.push({ id: z.id, k: 'k', x: r(z.x), y: r(z.y), a: r(z.a), m: z.moving ? 1 : 0 });
+  if (z) out.push(tree({ id: z.id, k: 'k', x: r(z.x), y: r(z.y), a: r(z.a), m: z.moving ? 1 : 0 }, z));
   return out;
 }
 
@@ -476,7 +564,7 @@ function load(room, saved) {
 function save(room) { return room.spid; }
 
 module.exports = {
-  setHooks, analyze, cornerSpots, forest, webTiles, webAt, target, weave, tear, balance, onWeave,
+  setHooks, analyze, cornerSpots, forest, trunkSpot, webTiles, webAt, target, weave, tear, balance, onWeave,
   spots, cornerList, clearCorner, addCorner, hourlyCorners, startKriziak, pruneCorners,
   startPull, stopPull, finishPull, walkIn, checkWalk, alert, spiders, update, updateKriziak,
   websView, cornerView, areaViews, entities, load, save

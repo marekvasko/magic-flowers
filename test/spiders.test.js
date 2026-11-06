@@ -313,6 +313,80 @@ test('krížiak: keď je hráč na ploche, beží rýchlo do kúta (5 políčok/
   assert.deepStrictEqual(room.spid.corner.garden, [], 'pavučinu neutkal');
 });
 
+// pavúk o, jeho pavučina na strome a hráč ďaleko od neho (v lese, inak simulácia stojí)
+function treeCase(o, seeds) {
+  for (const seed of seeds || SEEDS) {
+    const room = mkRoom(seed), wb = room.spid.webs.find(w => w.o === o && Sp.trunkSpot(room, w));
+    if (!wb) continue;
+    const s = Sp.spiders(room)[o], far = room.spf.homes.find(h => Math.hypot(h.x - s.hx, h.y - s.hy) > 15);
+    return { room, wb, s, p: player(room, 1, far.x + 0.5, far.y + 0.5, 3) };
+  }
+  throw new Error('žiadna pavučina na strome');
+}
+// pavúk práve došiel k pavučine
+function toWebNow(room, s, wb) { const i = Sp.webTiles(wb)[0]; Object.assign(s, { st: 'walk', web: wb.id, path: [], x: i % LW + 0.5, y: ((i / LW) | 0) + 0.5 }); }
+
+test('na strome: vlčiak pri svojej pavučine vylezie na jej kmeň a čaká hlavou dole; pri lampáši vylezie vyššie a pavučinu nechá tak', () => {
+  const { room, wb, s, p } = treeCase(0);
+  const spot = Sp.trunkSpot(room, wb), V = D.SPIDERS.vlciak;
+  toWebNow(room, s, wb);
+  let now = run(room, 0, 30);
+  assert.strictEqual(s.st, 'guard');
+  assert.ok(Math.hypot(s.x - spot.x, s.y - spot.y) < 1e-6, 'na kmeni');
+  assert.ok(s.z >= V.guard[0] - 1e-6 && s.z <= V.guard[1] + 1e-6, 'výška ' + s.z);
+  const e = Sp.entities(room, 'les').find(o => o.id === s.id);
+  assert.ok(e.z > 0 && e.n && e.u === 0, 'klient: výška, strana kmeňa, hlavou dole');
+  // zdvihnutý lampáš pri ňom: vylezie na high, siahnutie na pavučinu ignoruje
+  Object.assign(p, { x: s.x + 1, y: s.y, lp: true });
+  now = run(room, now, 30);
+  assert.ok(Math.abs(s.z - V.high) < 1e-6, 'vyššie ' + s.z);
+  Sp.alert(room, wb, p, now);
+  assert.strictEqual(s.st, 'guard', 'pavučinu nechá tak');
+  // bez lampáša (ešte čaká na kmeni): zoskočí a naháňa
+  p.lp = false; s.until = now + 60000;
+  now = run(room, now, 25);
+  Sp.alert(room, wb, p, now);
+  assert.strictEqual(s.st, 'chase');
+  assert.strictEqual(s.z, 0);
+});
+
+test('na strome: vlčiak po čase zlezie a ide domov', () => {
+  const { room, wb, s } = treeCase(1);
+  toWebNow(room, s, wb);
+  const now = run(room, 0, 30 + D.SPIDERS.vlciak.guardMs[1] / 100 + 20);
+  assert.ok(['return', 'home'].includes(s.st), s.st);
+  assert.strictEqual(s.z, 0);
+});
+
+test('na strome: stará pradlena občas zájde k pavučine a čaká na jej kmeni', () => {
+  const o = mkRoom(SEEDS[0]).spf.homes.length - 1;
+  const { room, s } = treeCase(o);
+  let seen = false;
+  run(room, 0, 600, () => { if (s.st === 'guard' && s.z > 0.5) seen = true; });
+  assert.ok(seen, 'čakala na strome');
+});
+
+test('krížiak: pri úteku vybehne na strom a stratí sa v korune', () => {
+  const room = mkRoom(SEEDS[7]);
+  room.spid.corner.garden = [];
+  const { w } = D.areaSize('garden'), spot = Sp.spots(room, 'garden')[0];
+  // strom s voľným políčkom 2 vpravo; krížiak tam, hráč ešte o 1 ďalej
+  const t = room.tiles.findIndex((x, i) => x.g === 'tree' && i % w < w - 3 && D.passable(room.tiles[i + 2]) && D.passable(room.tiles[i + 3]));
+  const tx = t % w, ty = (t / w) | 0;
+  const p = player(room, 1, tx + 3.5, ty + 0.5, 0, 'garden');
+  room.kz = { garden: { id: 'kgarden', k: 'k', x: tx + 2.5, y: ty + 0.5, a: 0, path: [], spot, st: 'go', until: 0, left: 2, moving: false } };
+  let climbed = false, now = 0;
+  for (let k = 0; k < 40 && room.kz.garden; k++) {
+    now += 100; Sp.updateKriziak(room, now, 0.1);
+    const e = Sp.entities(room, 'garden')[0];
+    if (e && e.z > 0) { climbed = true; assert.ok(e.n && e.u === 1); assert.ok(Math.hypot(e.x - tx - 0.5, e.y - ty - 0.5) < 0.5, 'na kmeni stromu'); }
+  }
+  assert.ok(climbed, 'vybehol na strom');
+  assert.ok(!room.kz.garden, 'zmizol v korune');
+  assert.deepStrictEqual(room.spid.corner.garden, [], 'pavučinu neutkal');
+  assert.ok(p);
+});
+
 test('uloženie: pavučiny a kúty sa po načítaní zachovajú, neplatné sa zahodia', () => {
   const room = mkRoom(SEEDS[8]);
   const saved = JSON.parse(JSON.stringify(Sp.save(room)));

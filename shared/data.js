@@ -752,9 +752,14 @@
   // Všade inde: krížiak, ktorý tká len malé pavučiny v kútoch (nedá sa z nich nič získať).
   // Rýchlosti v políčkach za sekundu (hráč chodí 3,8), časy v ms, vzdialenosti v políčkach.
   const SPIDERS = {
-    vlciak: { n: 6, reach: 10, gap: 12, walk: 1.2, run: 3.4, sense: 2, lose: 4, lostMs: 4000, borderMs: 2000, takeMs: 3000, takeMax: 3, slow: 0.5, backMs: 2000, coolMs: 6000, eyes: 5 },
-    pradlena: { walk: 1.5, bite: 3, slow: 0.5, slowMs: 4000, push: 0.5, coolMs: 5000, eyes: 5 },
-    kriziak: { run: 5, flee: 8, near: 1.5, perDay: 2, max: 3 },
+    vlciak: { n: 6, reach: 10, gap: 12, walk: 1.2, run: 3.4, sense: 2, lose: 4, lostMs: 4000, borderMs: 2000, takeMs: 3000, takeMax: 3, slow: 0.5, backMs: 2000, coolMs: 6000, eyes: 5,
+      climb: 1, guard: [0.5, 1.1], guardMs: [6000, 12000], high: 2 },
+    pradlena: { walk: 1.5, bite: 3, slow: 0.5, slowMs: 4000, push: 0.5, coolMs: 5000, eyes: 5,
+      climb: 0.8, guard: [0.7, 1.3], guardMs: [8000, 16000], high: 2.6, idleMs: [6000, 14000] },
+    kriziak: { run: 5, flee: 8, near: 1.5, perDay: 2, max: 3, tree: 4, climb: 3, gone: 2.5 },
+    // na strome (#57): pavúk čaká na kmeni pri svojej pavučine hlavou dole vo výške guard (políčka), guardMs; lezie climb
+    // políčok/s; pri zdvihnutom lampáši vylezie na high a pavučinu nechá tak; krížiak pri úteku vybehne na strom
+    // do tree políčok a zmizne vo výške gone
     lamp: 2.5,      // k zdvihnutému lampášu sa vlčiak ani krížiak nepriblíži bližšie (pradlenu len pomaly odtláča)
     entrance: 8,    // pri vstupe do lesa (toľko krokov od prechodu) je les ničí – bez pavúkov a pavučín
     heart: 1        // o koľko políčok za okraj srdca lesa (slnečná čistina v strede) ešte nie sú pavúky
