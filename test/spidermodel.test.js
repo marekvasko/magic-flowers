@@ -82,5 +82,5 @@ test('oči na snímke: spredu áno, zozadu ich zakryje zadoček, z brucha žiadn
     assert.strictEqual(SM.layout(k, 'N').eyes[0].length, 0, k + ' zozadu');
     assert.strictEqual(SM.layout(k, 'down-b').eyes[0].length, 0, k + ' brucho');
   }
-  for (const e of SM.layout('v', 'S').eyes[0]) assert.ok(e.r > 0 && e.y > 0, 'oko nad zemou');
+  for (const e of SM.layout('v', 'S').eyes[0]) assert.ok(e.r > 0 && Math.abs(e.x) < 0.15, 'oko na hlave (pri strednej osi)');
 });
