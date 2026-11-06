@@ -310,7 +310,7 @@ function growPlant(room, i) {
   if (p.dry >= deathAt) return die('sucho');
   if (p.ht === room.tick) return; // trvalku v tomto kroku odtrhli – kvitnutie sa skončilo, dnes nerastie
   if (p.prog >= sp.days) { // už kvitne – po čase odkvitne (trvalka zakvitne znova)
-    if (p.bt == null) p.bt = room.tick;
+    if (p.bt == null) p.bt = room.tick - 1; // kvitol už pred týmto krokom (elixír, staré uloženie) – dá sa trhať v oboch poradiach
     if (room.tick - p.bt >= sp.life * TPD) {
       if (sp.perennial) { p.prog = sp.days * 0.5; p.bt = null; p.et = room.tick; }
       else die('odkvitla');
@@ -874,7 +874,7 @@ function usePotion(pl, k, x, y) {
   take(pl, 'po_' + k, 1);
   if (k === 'rast') {
     eachAround(room, x, y, 1, (i, t) => {
-      if (t.s && t.s.p && !t.s.p.d) { const sp = D.SPECIES[t.s.p.sp]; t.s.p.prog = Math.min(sp.days, t.s.p.prog + 1); t.s.w = 1; revealWild(room, i); tileMsg(room, i); }
+      if (t.s && t.s.p && !t.s.p.d) { const sp = D.SPECIES[t.s.p.sp]; t.s.p.prog = Math.min(sp.days, t.s.p.prog + 1); if (t.s.p.prog >= sp.days && t.s.p.bt == null) t.s.p.bt = room.tick; t.s.w = 1; revealWild(room, i); tileMsg(room, i); }
     });
     fx(room, 'sparkle', x + 0.5, y + 0.5, { c: '#7ed957' });
   } else if (k === 'dazd') {

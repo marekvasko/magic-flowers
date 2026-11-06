@@ -110,6 +110,8 @@ function fakeWs() {
 function game(names) {
   const room = G.getRoom('par' + (++roomN));
   room.rng = 4242; room.weather = 'sun';
+  // kútové pavučiny krížiaka sú v novom svete na náhodných políčkach – ťuknutie na také políčko by pavučinu odstránilo
+  for (const a of Object.keys(room.spid.corner)) room.spid.corner[a] = [];
   E.reconcile(room, G.SIM);
   const players = {};
   for (const name of names) {
@@ -233,6 +235,26 @@ test('zber v kroku, keď kvet ráno rozkvitne: v tom kroku ešte nie (v žiadnom
   assert.strictEqual(a.p.prog, D.SPECIES.narcis.days, 'ráno rozkvitol');
 });
 
+test('zber v rannom kroku: kvet rozkvitnutý elixírom rastu (bez zapísaného rozkvitnutia) – rovnako v oboch poradiach', () => {
+  const setup = room => plant(room, 'narcis', { bt: undefined }); // ako po elixíri rastu alebo zo starého uloženia
+  const a = dawnAndHarvest(setup, ['Eva'], ['dawn', 'Eva']), b = dawnAndHarvest(setup, ['Eva'], ['Eva', 'dawn']);
+  assert.ok(a.got.Eva.fl_narcis > 0, 'kvitol už pred ránom – dá sa odtrhnúť');
+  assert.deepStrictEqual(a, b);
+});
+
+test('elixír rastu: kvet, ktorý ním rozkvitne, sa dá odtrhnúť od ďalšieho kroku (ako pri rannom rozkvitnutí)', () => {
+  const { room, players: P, step } = game(['Eva']);
+  plant(room, 'narcis', { prog: D.SPECIES.narcis.days - 1, bt: undefined });
+  place(P.Eva, TILE.x + 0.5, TILE.y + 1.5);
+  P.Eva.pl.save.inv.po_rast = 1;
+  P.Eva.send({ t: 'act', x: TILE.x, y: TILE.y, item: 'po_rast' });
+  step();
+  const p = tileOf(room).s.p;
+  assert.deepStrictEqual([p.prog, p.bt], [D.SPECIES.narcis.days, room.tick], 'rozkvitol v tomto kroku');
+  harvest(P.Eva); step();
+  assert.ok(flowers(P.Eva, 'narcis') > 0);
+});
+
 test('zber: zvädnutý kvet v rannom kroku a dvaja hráči – vo všetkých 6 poradiach ho dostane práve jeden a záhon je rovnaký', () => {
   const setup = room => plant(room, 'narcis', { bt: E.pending(room, 'dawn').at - D.SPECIES.narcis.life * TPD });
   const results = perms(['dawn', 'Eva', 'Jan']).map(ord => ({ ord, r: dawnAndHarvest(setup, ['Eva', 'Jan'], ord) }));
@@ -345,6 +367,7 @@ test('akcie hráča: kúpa v kroku, keď hľadanie končí, hľadanie nepreruš�
     P.Eva.send({ t: 'act', x, y, item: '' });
     step();
     const done = E.pending(room, 'playerAction:eva');
+    assert.ok(done, 'hľadanie sa začalo: ' + P.Eva.toasts().slice(-2).join(' | '));
     assert.strictEqual(done.type, 'scavDone');
     E.advanceTo(room, done.at - 1, G.SIM); // krok pred koncom hľadania
     if (what === 'buy') P.Eva.send({ t: 'buy', id: 'compost', n: 1 });
@@ -407,4 +430,105 @@ test('determinizmus: ten istý priebeh hry (správy hráčov, ráno, NPC) v dvoc
   assert.strictEqual(k, -1, k < 0 ? '' : `denník sa líši od záznamu ${k}: ${JSON.stringify(a.j[k])} ≠ ${JSON.stringify(b.j[k])}`);
   assert.deepStrictEqual(a.j, b.j);
   assert.ok(a.j.some(e => e.type === 'dawn' && e.kind === 'run'), 'priebeh obsahuje ráno');
+});
+
+// ---------- reconciler v jednom kroku ----------
+test('reconciler: periodickú udalosť, ktorú v dávke zruší iná udalosť, ďalší reconcile naplánuje znova (nestratí sa)', () => {
+  const w = world(), log = [];
+  const spec = {
+    handlers: { kill(w) { E.cancel(w, 'p'); log.push('kill@' + w.tick); }, per(w) { log.push('per@' + w.tick); } },
+    periodic: [{ key: 'p', type: 'per', next: E.every(10) }], onError: rethrow
+  };
+  E.reconcile(w, spec); // p v kroku 10
+  E.schedule(w, 10, 'kill'); // v tom istom kroku, ale pred ňou? nie – kill má vyššie seq, preto ide po nej
+  order(w, 10, [e => e.type === 'kill']);
+  E.advanceTo(w, 25, spec);
+  assert.deepStrictEqual(log, ['kill@10', 'per@20'], 'v kroku 10 zrušená, v kroku 20 zase beží');
+  assert.ok(E.pending(w, 'p'), 'a ďalšia je naplánovaná');
+});
+
+test('reconciler: duplicitná periodická udalosť v tom istom kroku (poškodené uloženie) sa vykoná raz, neznámy typ sa zahodí a ostatné v kroku bežia', () => {
+  const w = world(), log = [];
+  const spec = {
+    handlers: { per(w) { log.push('per@' + w.tick); }, ok(w, d) { log.push('ok' + d + '@' + w.tick); } },
+    periodic: [{ key: 'p', type: 'per', next: E.every(10) }], onError: rethrow
+  };
+  w.events = [
+    { at: 10, seq: 1, type: 'per', data: null, key: 'p', periodic: true },
+    { at: 10, seq: 2, type: 'per', data: null, key: 'p', periodic: true },
+    { at: 10, seq: 3, type: 'zmiznuty', data: null },
+    { at: 10, seq: 4, type: 'ok', data: 1 }
+  ];
+  w.seq = 4;
+  E.advanceTo(w, 10, spec);
+  assert.deepStrictEqual(log, ['per@10', 'ok1@10']);
+  const drops = E.journal(w).list.filter(e => e.kind === 'drop').map(e => [e.type, e.why]);
+  assert.deepStrictEqual(drops.sort(), [['per', 'duplicita'], ['zmiznuty', 'neznámy typ']]);
+});
+
+test('načítanie sveta: akcie hráčov (aj staršie move:/pull:/scavDone:) a jednorazové úkony sa zahodia, periodické a ostatné udalosti ostanú', () => {
+  const src = G.getRoom('par-src');
+  E.reconcile(src, G.SIM);
+  const st = JSON.parse(G.serialize(src));
+  const keep = st.events.length;
+  const t = st.tick + 5;
+  st.events.push(
+    { at: t, seq: 9001, type: 'arriveAt', data: { pk: 'eva', id: 1, seq: 0, x: 1, y: 1 }, key: 'playerAction:eva' },
+    { at: t, seq: 9002, type: 'buy', data: { pk: 'eva', id: 1, seq: 0, pa: 1, m: { id: 'compost' } } },
+    { at: t, seq: 9003, type: 'arriveAt', data: { pk: 'eva', id: 1, seq: 0 }, key: 'move:eva' },
+    { at: t, seq: 9004, type: 'pullDone', data: { key: 'eva', n: 1 }, key: 'pull:eva' },
+    { at: t, seq: 9005, type: 'scavDone', data: { key: 'eva', n: 1 }, key: 'scavDone:eva' },
+    { at: t, seq: 9006, type: 'arrivedFrom', data: {} },
+    { at: t, seq: 9007, type: 'jano_sell', data: { sp: 'narcis', n: 2 } } // udalosť sveta (Jano prinesie kvety) – ostane
+  );
+  fs.writeFileSync(path.join(process.env.DATA_DIR, 'room-par-load.json'), JSON.stringify(st));
+  const room = G.getRoom('par-load');
+  const types = room.events.filter(e => e.at === t).map(e => e.type);
+  assert.deepStrictEqual(types, ['jano_sell']);
+  assert.ok(room.events.filter(e => e.periodic).length >= 5, 'ranné, hodinové a NPC udalosti ostali');
+  assert.ok(room.events.length >= keep - 1);
+});
+
+// ---------- pavúky a pavučiny v jednom kroku ----------
+const Moves = require('../moves.js');
+const Sp = require('../spiders.js');
+
+test('pavučina: dvaja hráči ťahajú posledný hodváb z jednej pavučiny v jednom kroku – dostane ho jeden, druhý sa dozvie, že je preč', () => {
+  for (const first of ['Eva', 'Jan']) {
+    const { room, players: P, step } = game(['Eva', 'Jan']);
+    const wb = room.spid.webs[0], [t0] = Sp.webTiles(wb), x = t0 % D.LES_W, y = (t0 / D.LES_W) | 0;
+    wb.silk = 1;
+    place(P.Eva, x - 0.6, y + 1.6, 'les'); place(P.Jan, x + 1.6, y + 1.6, 'les');
+    const second = first === 'Eva' ? 'Jan' : 'Eva';
+    for (const n of [first, second]) P[n].send({ t: 'act', x, y, item: '' });
+    step(); // obaja začnú ťahať
+    assert.deepStrictEqual(['Eva', 'Jan'].map(n => Actions.doing(room, P[n].pl, 'pullDone') ? 1 : 0), [1, 1]);
+    const done = E.pending(room, 'playerAction:' + P[first].pl.key).at;
+    assert.strictEqual(E.pending(room, 'playerAction:' + P[second].pl.key).at, done, 'skončia v tom istom kroku');
+    E.advanceTo(room, done, G.SIM);
+    const silk = n => P[n].pl.save.inv.silk || 0;
+    assert.deepStrictEqual([silk(first), silk(second)], [1, 0], first + ' bol prvý');
+    assert.ok(!room.spid.webs.includes(wb), 'pavučina sa roztrhla');
+    assert.ok(P[second].toasts().some(t => /Pavučina je preč/.test(t)));
+  }
+});
+const Actions = require('../actions.js');
+
+test('pavúk: odhodenie v tom istom kroku ako čakajúci pohyb hráča – pohyb sa zruší, správy poslané pred odhodením sa zahodia', () => {
+  const { room, players: P, step } = game(['Eva']);
+  place(P.Eva, 10.5, 30.5);
+  P.Eva.send({ t: 'move', x: 10.5, y: 31.2, dir: 0, ar: 0 });
+  assert.strictEqual(E.pending(room, 'playerAction:eva').type, 'arriveAt');
+  Moves.place(room, P.Eva.pl, 12.5, 30.5, 'shove'); // pradlena ho odhodí (server)
+  assert.strictEqual(E.pending(room, 'playerAction:eva'), null, 'čakajúci pohyb je zrušený');
+  const shove = P.Eva.ws.msgs.filter(m => m.t === 'shove').pop();
+  assert.deepStrictEqual([shove.x, shove.y, shove.fix], [12.5, 30.5, 1]);
+  P.Eva.send({ t: 'move', x: 10.5, y: 31.4, dir: 0, ar: 0, fx: 0 }); // klient ešte nevedel o odhodení
+  assert.strictEqual(E.pending(room, 'playerAction:eva'), null, 'stará správa sa zahodí');
+  step();
+  assert.deepStrictEqual([P.Eva.pl.x, P.Eva.pl.y], [12.5, 30.5]);
+  P.Eva.send({ t: 'move', x: 12.5, y: 31, dir: 0, ar: 0, fx: 1 }); // po odhodení
+  step();
+  assert.deepStrictEqual([P.Eva.pl.x, P.Eva.pl.y], [12.5, 31]);
+  assert.deepStrictEqual(E.journal(room).list.filter(e => e.key === 'playerAction:eva').map(e => e.kind + ' ' + e.type), ['add arriveAt', 'cancel arriveAt', 'add arriveAt', 'run arriveAt']);
 });
