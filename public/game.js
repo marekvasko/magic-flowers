@@ -175,8 +175,8 @@
       }
       case 'slow': S.slowK = m.k; S.slowUntil = performance.now() + m.ms; break;
       // ťuknutím zvolenú cestu ide server (goTo): kroky, koniec, alebo že sa tam nedá dôjsť
-      case 'goStep': if (S.walk && m.n === S.walk.n) S.walk.srv = { x: m.x, y: m.y }; break;
-      case 'goToEnd': if (S.walk && m.n === S.walk.n) walkEnd(m.x, m.y); break;
+      case 'goStep': if (S.walk && m.n === S.walk.n) walkPoint(m.x, m.y); break;
+      case 'goToEnd': if (S.walk && m.n === S.walk.n) { walkPoint(m.x, m.y); S.walk.end = true; } break;
       case 'goToNo': if (S.walk && m.n === S.walk.n) { stopWalk(); S.tapMark = null; toast(GO_NO[m.why] || GO_NO.far); } break;
       // server polohu neprijal (cez prekážku, privysoko, priďaleko) alebo hráča presunul sám (pradlena ho odhodila)
       case 'moveNo': case 'shove': S.me.x = m.x; S.me.y = m.y; S.fix = m.fix | 0; stopWalk(); break;
@@ -618,28 +618,39 @@
   // Cestu ide server: pošle sa mu cieľové políčko (posledné na ceste), on hráča vedie krok za krokom (goStep)
   // a na konci pošle goToEnd; keď sa tam nedá dôjsť, goToNo. n = číslo žiadosti (staršie odpovede sa zahodia).
   const GO_NO = { far: 'Tam sa odtiaľto nedá dôjsť. 🚧', blocked: 'Cestu ti niečo zatarasilo – zastavil(a) si. 🚧', sleep: 'Najprv sa zobuď. 😴' };
+  // Kroky servera sa prehrávajú plynulo: fronta bodov, každý úsek trvá jeden krok servera (rovnomerná rýchlosť,
+  // hráč je o krok pozadu). Keď sa fronta nahromadí (sieť), ide o štvrtinu rýchlejšie, aby oneskorenie nerástlo.
+  // Na konci sa nepreskakuje – goToEnd len pridá posledný bod a vedenie skončí, keď k nemu hráč naozaj dôjde.
   function startWalk(path) {
     const g = path[path.length - 1], me = S.me;
-    S.walk = { n: ++S.walkN, srv: null };
+    S.walk = { n: ++S.walkN, q: [], end: false };
     send({ t: 'goTo', x: Math.floor(g.x), y: Math.floor(g.y), n: S.walk.n, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq, fx: S.fix });
   }
-  function walkEnd(x, y) {
+  function walkPoint(x, y) {
+    const q = S.walk.q, last = q.length ? q[q.length - 1] : S.me, d = Math.hypot(x - last.x, y - last.y);
+    if (d > 1e-4) q.push({ x, y, v: d / S.tickMs }); // políčka za ms
+  }
+  function walkEnd() {
     const me = S.me, pa = S.pendingAct;
     S.walk = null; S.pendingAct = null;
-    me.x = x; me.y = y; me.moving = false; me.phase = 0;
+    me.moving = false; me.phase = 0;
     if (pa) { face(pa.x + 0.5 - me.x, pa.y + 0.5 - me.y); doAction(pa.x, pa.y); }
   }
-  // Hráč ide za krokmi servera (plynulo, ako ostatných hráčov). Objekt na dosah → akcia hneď; poslaná poloha vedenie zastaví.
+  // Hráč ide za krokmi servera. Objekt na dosah → akcia hneď; poslaná poloha vedenie zastaví.
   function followWalk(dt) {
     const me = S.me, w = S.walk, pa = S.pendingAct;
     if (pa && !pa.onTile && inReach(pa.x, pa.y)) { stopWalk(); face(pa.x + 0.5 - me.x, pa.y + 0.5 - me.y); doAction(pa.x, pa.y); return; }
-    if (!w.srv) return;
-    const dx = w.srv.x - me.x, dy = w.srv.y - me.y, d = Math.hypot(dx, dy), k = Math.min(1, dt * 12);
-    me.moving = d > 0.02;
-    if (!me.moving) { me.phase = 0; return; }
-    me.x += dx * k; me.y += dy * k;
-    face(dx, dy); me.a = Math.atan2(dy, dx);
-    me.phase += dt * (me.crawl ? 7 : 11);
+    let ms = dt * 1000 * (w.q.length > 2 ? 1.25 : 1), dx = 0, dy = 0;
+    while (ms > 0 && w.q.length) {
+      const p = w.q[0], ex = p.x - me.x, ey = p.y - me.y, d = Math.hypot(ex, ey), go = Math.min(d, p.v * ms);
+      if (d > 1e-6) { me.x += ex / d * go; me.y += ey / d * go; dx = ex; dy = ey; }
+      ms -= p.v ? go / p.v : ms;
+      if (go >= d - 1e-6) { me.x = p.x; me.y = p.y; w.q.shift(); }
+    }
+    if (dx || dy) { face(dx, dy); me.a = Math.atan2(dy, dx); w.idle = 0; } else w.idle = (w.idle || 0) + dt;
+    me.moving = w.idle < 0.15 && !(w.end && !w.q.length); // krátka medzera medzi správami nohy nezastaví
+    if (me.moving) me.phase += dt * (me.crawl ? 7 : 11); else me.phase = 0;
+    if (!w.q.length && w.end) walkEnd();
   }
 
   // BFS po políčkach – nájde cestu k prvému políčku, ktoré spĺňa podmienku
