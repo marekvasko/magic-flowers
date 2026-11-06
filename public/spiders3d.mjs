@@ -412,7 +412,7 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
         if (Math.hypot(o.x - me.x, o.y - me.y) < 1.2) { x = me.x; z = me.y; }
         lift = 0.45;
       }
-      const f = o.m ? Math.floor(o.phase / (Math.PI / 2)) % 4 : 0;
+      const f = o.m ? SM.frameOf(o.phase) : 0;
       const y = groundY(x, z) + lift;
       // na kmeni: chrbtom von zo stromu, hlavou dole (čaká) alebo hore (lezie); zo strany od kamery ho kmeň zakryje
       if (o.n) { x += o.n[0] * 0.05; z += o.n[1] * 0.05; }

@@ -27,12 +27,21 @@ export function spiderView({ h, ctx, mainEl, save, seg }) {
   const KINDS = Object.keys(SM.SPECIES);
   const st = {
     kind: KINDS.includes(ctx.param('sk')) ? ctx.param('sk') : 'v',
-    frame: Math.max(0, Math.min(3, parseInt(ctx.param('sf'), 10) || 0)),
+    frame: Math.max(0, Math.min(SM.FRAMES - 1, parseInt(ctx.param('sf'), 10) || 0)),
     zoom: Math.max(1, Math.min(4, parseInt(ctx.param('sz'), 10) || 2)),
     bg: ctx.param('sb') === 'dark' ? 'dark' : 'ground',
-    anim: false
+    speed: 0 // index v SPEEDS: 0 = stojí, inak prehráva chôdzu rýchlosťou ako v hre
   };
+  // rýchlosti z hry (D.SPIDERS), políčka/s
+  const SP = ctx.D.SPIDERS;
+  const SPEEDS = {
+    k: [['stand', 0], ['run', SP.kriziak.run], ['flee', SP.kriziak.flee], ['climb', SP.kriziak.climb]],
+    v: [['stand', 0], ['walk', SP.vlciak.walk], ['run', SP.vlciak.run], ['climb', SP.vlciak.climb]],
+    p: [['stand', 0], ['walk', SP.pradlena.walk], ['climb', SP.pradlena.climb]]
+  };
+  const sprites = []; // { c, view } – 2D sprity v mriežke, prekresľujú sa pri prehrávaní
   const bar = h('div', { class: 'as-bar' });
+  const speedInfo = h('span', { class: 'muted' });
   const info = h('div', { class: 'muted' });
   const grid = h('div', { class: 'spd-grid' });
   const refs = h('div', { class: 'spd-refs' });
@@ -51,10 +60,12 @@ export function spiderView({ h, ctx, mainEl, save, seg }) {
   function renderBar() {
     bar.replaceChildren(
       seg(h, KINDS.map(k => SM.SPECIES[k].name), KINDS.indexOf(st.kind), i => { st.kind = KINDS[i]; saveSt(); renderBar(); rebuild(); }),
-      seg(h, ['frame 0', '1', '2', '3'], st.frame, i => { st.frame = i; saveSt(); renderBar(); rebuild(); }),
+      seg(h, Array.from({ length: SM.FRAMES }, (_, i) => i ? String(i) : 'frame 0'), st.frame, i => { st.frame = i; saveSt(); renderBar(); rebuild(); }),
+      seg(h, SPEEDS[st.kind].map(([n, v]) => v ? `${n} ${v}` : n), Math.min(st.speed, SPEEDS[st.kind].length - 1), i => { st.speed = i; renderBar(); if (i) { last = 0; loop(performance.now()); } }),
       seg(h, ['1×', '2×', '3×', '4×'], st.zoom - 1, i => { st.zoom = i + 1; saveSt(); renderBar(); rebuild(); }),
       seg(h, ['ground', 'dark'], st.bg === 'dark' ? 1 : 0, i => { st.bg = i ? 'dark' : 'ground'; saveSt(); renderBar(); rebuild(); }),
-      h('button', { class: st.anim ? 'on' : null, onclick: () => { st.anim = !st.anim; renderBar(); if (st.anim) loop(); } }, st.anim ? '■ Stop walk' : '▶ Walk'));
+      speedInfo);
+    if (!SPEEDS[st.kind][st.speed]) st.speed = 0;
   }
   function saveSt() { ctx.setParam && (ctx.setParam('sk', st.kind), ctx.setParam('sf', st.frame), ctx.setParam('sz', st.zoom), ctx.setParam('sb', st.bg)); save(); }
 
@@ -66,12 +77,12 @@ export function spiderView({ h, ctx, mainEl, save, seg }) {
     const L = SM.layout(st.kind, view), z = st.zoom;
     // 2D sprite (rovnaký kód ako v hre)
     const c2 = document.createElement('canvas'); c2.width = L.w; c2.height = L.h;
-    if (SM.SPECIES[st.kind] && phase == null) SM.sprite(c2.getContext('2d'), st.kind, view, st.frame);
-    else SM.draw(c2.getContext('2d'), SM.project(SM.build(st.kind, phase, SM.isSurface(view) ? 'surface' : 'ground'), view), L.ppu, L.ox, L.oy);
+    SM.sprite(c2.getContext('2d'), st.kind, view, st.frame);
+    sprites.push({ c: c2, view });
     // 3D model rovnakým (ortografickým) pohľadom a mierkou
     renderer.setSize(L.w, L.h, false);
     cam.left = -L.ox / L.ppu; cam.right = (L.w - L.ox) / L.ppu; cam.top = L.oy / L.ppu; cam.bottom = -(L.h - L.oy) / L.ppu; cam.updateProjectionMatrix();
-    const g = SM.buildMesh(THREE, st.kind, phase == null ? st.frame * Math.PI / 2 : phase, view);
+    const g = SM.buildMesh(THREE, st.kind, st.frame * 2 * Math.PI / SM.FRAMES, view);
     scene.add(g); renderer.render(scene, cam); scene.remove(g);
     g.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
     const c3 = document.createElement('canvas'); c3.width = L.w; c3.height = L.h; c3.getContext('2d').drawImage(renderer.domElement, 0, 0);
@@ -79,11 +90,12 @@ export function spiderView({ h, ctx, mainEl, save, seg }) {
     for (const cv of [c3, c2]) { cv.style.width = cv.width * z / 2 + 'px'; cv.style.background = BG[st.bg]; }
     return { c2, c3, score, L };
   }
-  function rebuild(phase) {
+  function rebuild() {
     const out = [];
     let sum = 0;
+    sprites.length = 0;
     grid.replaceChildren(...VIEWS.map(v => {
-      const r = cell(v, phase);
+      const r = cell(v);
       sum += r.score; out.push(v + ' ' + r.score.toFixed(2));
       return h('div', { class: 'spd-cell', 'data-view': v, 'data-iou': r.score.toFixed(3) },
         h('h6', null, h('span', null, v + (SM.PLANAR.includes(v) ? '' : v.startsWith('dorsal') || v.startsWith('ventral') ? ' (reference)' : SM.TRUNK.includes(v) ? ' (on trunk)' : ' (on surface)')), h('span', { class: 'muted' }, 'IoU ' + r.score.toFixed(2))),
@@ -93,13 +105,21 @@ export function spiderView({ h, ctx, mainEl, save, seg }) {
     info.textContent = `${K.name} (${K.ref}) – span ${K.span} tiles${K.top ? ', height ' + K.top : ''} · ${K.ppu} px/tile · mean silhouette IoU ${(sum / VIEWS.length).toFixed(3)}`;
     refs.replaceChildren(...(REFS[st.kind] || []).map(([f, label]) => h('figure', null, h('a', { href: page(f), target: '_blank' }, h('img', { src: thumb(f), alt: f, loading: 'lazy' })), h('figcaption', null, label + ' – ' + f))));
   }
+  // Prehrávanie ako v hre: fáza podľa prejdenej dráhy (SpiderModel.stepPhase), snímka SpiderModel.frameOf; prekresľujú
+  // sa len 2D sprity (3D model ostane na zvolenej snímke).
+  let phase = 0;
   function loop(t) {
-    if (!st.anim) return;
+    cancelAnimationFrame(raf);
+    const sp = SPEEDS[st.kind][st.speed];
+    if (!sp || !sp[1]) { speedInfo.textContent = ''; return; }
     raf = requestAnimationFrame(loop);
-    if (t - last < 120) return;
+    const dt = last ? Math.min(0.1, (t - last) / 1000) : 0;
     last = t;
-    rebuild(t / 1000 * 6);
+    phase += SM.stepPhase(st.kind, sp[1] * dt, dt);
+    const f = SM.frameOf(phase), hz = Math.min(sp[1] / SM.cycle(st.kind), SM.MAX_HZ);
+    speedInfo.textContent = `${hz.toFixed(1)} steps/s${sp[1] / SM.cycle(st.kind) > SM.MAX_HZ ? ' (capped)' : ''} · ${(hz * SM.FRAMES).toFixed(0)} frames/s · frame ${f}`;
+    for (const { c, view } of sprites) { const g = c.getContext('2d'); g.clearRect(0, 0, c.width, c.height); SM.sprite(g, st.kind, view, f); }
   }
   renderBar(); rebuild();
-  return { dispose() { st.anim = false; cancelAnimationFrame(raf); renderer.dispose(); renderer.forceContextLoss(); } };
+  return { dispose() { st.speed = 0; cancelAnimationFrame(raf); renderer.dispose(); renderer.forceContextLoss(); } };
 }
