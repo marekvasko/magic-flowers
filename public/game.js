@@ -20,9 +20,9 @@
     me: { x: D.SPAWN.x, y: D.SPAWN.y, dir: 0, phase: 0, moving: false, jz: 0, jv: 0, crawl: false }, crawlKey: false, crawlTgl: false, myEmote: null,
     others: new Map(), inv: {}, coins: 0, water: 20, recipes: [], seen: [], vily: false,
     sel: 'hoe', area: 'garden', areaSeq: 0, W: D.W, H: D.H, tilesGen: 0, storageRate: D.STORAGE_AGE_RATE, icehouse: { built: false, ice: 0 }, quest: null, eternal: false, names: [],
-    keys: {}, stick: { x: 0, y: 0 }, path: null, pendingAct: null, tapMark: null, lastSent: '', sentAt: 0,
+    keys: {}, stick: { x: 0, y: 0 }, walk: null, walkN: 0, pendingAct: null, tapMark: null, lastSent: '', sentAt: 0,
     fx: [], screenFx: [], bubbles: {}, modal: null, cauldron: [], brewed: null, anchors: {}, joined: false,
-    skyTaps: [], tipIdx: Math.floor(Math.random() * D.TIPS.length), stuckT: 0,
+    skyTaps: [], tipIdx: Math.floor(Math.random() * D.TIPS.length),
     // pavúky (#57): pavučiny v Lese divov (webTile: políčko → pavučina), nory a čistina pradleny, kútové pavučiny krížiaka,
     // pavúky na ploche (plynulo dobiehajú polohu zo servera) a spomalenie (lepkavá pavučina, pavúk na chrbte)
     webs: [], webTile: new Map(), homes: [], websGen: 0, corner: [], cornerGen: 0, spiders: new Map(), slowK: 1, slowUntil: 0
@@ -174,6 +174,10 @@
         break;
       }
       case 'slow': S.slowK = m.k; S.slowUntil = performance.now() + m.ms; break;
+      // ťuknutím zvolenú cestu ide server (goTo): kroky, koniec, alebo že sa tam nedá dôjsť
+      case 'goStep': if (S.walk && m.n === S.walk.n) S.walk.srv = { x: m.x, y: m.y }; break;
+      case 'goToEnd': if (S.walk && m.n === S.walk.n) walkEnd(m.x, m.y); break;
+      case 'goToNo': if (S.walk && m.n === S.walk.n) { stopWalk(); S.tapMark = null; toast(GO_NO[m.why] || GO_NO.far); } break;
       case 'shove': S.me.x = m.x; S.me.y = m.y; stopWalk(); break; // stará pradlena odhodila hráča za okraj čistiny
       case 'brewed': S.brewed = m.k; S.cauldron = []; sfx(m.k === 'sliz' ? 'bad' : 'magic'); if (S.modal && S.modal.refresh) S.modal.refresh(); break;
       case 'error': alert(m.text); S.joined = false; $('conn').classList.add('hidden'); break;
@@ -436,7 +440,8 @@
   function walkOnto(tx, ty) {
     const path = findPath((x, y) => x === tx && y === ty);
     if (!path) return;
-    S.path = path; S.pendingAct = { x: tx, y: ty, onTile: true }; S.stuckT = 0;
+    S.pendingAct = { x: tx, y: ty, onTile: true };
+    startWalk(path);
   }
 
   function doAction(tx, ty) {
@@ -608,7 +613,33 @@
   const GROUND = { 'Zarovnať': 1, 'Kopať': 1, 'Poliať': 1, 'Sadiť': 1, 'Pohnojiť': 1, 'Vyčistiť': 1, 'Použiť': 1, 'Vysekať ľad': 1 };
   const REACH = 1.7;
   function inReach(tx, ty) { return Math.hypot(S.me.x - (tx + 0.5), S.me.y - (ty + 0.5)) <= REACH; }
-  function stopWalk() { S.path = null; S.pendingAct = null; }
+  function stopWalk() { S.walk = null; S.pendingAct = null; }
+  // Cestu ide server: pošle sa mu cieľové políčko (posledné na ceste), on hráča vedie krok za krokom (goStep)
+  // a na konci pošle goToEnd; keď sa tam nedá dôjsť, goToNo. n = číslo žiadosti (staršie odpovede sa zahodia).
+  const GO_NO = { far: 'Tam sa odtiaľto nedá dôjsť. 🚧', blocked: 'Cestu ti niečo zatarasilo – zastavil(a) si. 🚧', sleep: 'Najprv sa zobuď. 😴' };
+  function startWalk(path) {
+    const g = path[path.length - 1], me = S.me;
+    S.walk = { n: ++S.walkN, srv: null };
+    send({ t: 'goTo', x: Math.floor(g.x), y: Math.floor(g.y), n: S.walk.n, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq });
+  }
+  function walkEnd(x, y) {
+    const me = S.me, pa = S.pendingAct;
+    S.walk = null; S.pendingAct = null;
+    me.x = x; me.y = y; me.moving = false; me.phase = 0;
+    if (pa) { face(pa.x + 0.5 - me.x, pa.y + 0.5 - me.y); doAction(pa.x, pa.y); }
+  }
+  // Hráč ide za krokmi servera (plynulo, ako ostatných hráčov). Objekt na dosah → akcia hneď; poslaná poloha vedenie zastaví.
+  function followWalk(dt) {
+    const me = S.me, w = S.walk, pa = S.pendingAct;
+    if (pa && !pa.onTile && inReach(pa.x, pa.y)) { stopWalk(); face(pa.x + 0.5 - me.x, pa.y + 0.5 - me.y); doAction(pa.x, pa.y); return; }
+    if (!w.srv) return;
+    const dx = w.srv.x - me.x, dy = w.srv.y - me.y, d = Math.hypot(dx, dy), k = Math.min(1, dt * 12);
+    me.moving = d > 0.02;
+    if (!me.moving) { me.phase = 0; return; }
+    me.x += dx * k; me.y += dy * k;
+    face(dx, dy); me.a = Math.atan2(dy, dx);
+    me.phase += dt * (me.crawl ? 7 : 11);
+  }
 
   // BFS po políčkach – nájde cestu k prvému políčku, ktoré spĺňa podmienku
   function findPath(goal) {
@@ -666,9 +697,9 @@
       // (na privysoký ľad sa nevylezie – vtedy čo najbližšie k nemu)
       path = (walkable && findPath((x, y) => x === tgt.x && y === tgt.y)) || findPath((x, y) => Math.hypot(x + 0.5 - cx0, y + 0.5 - cy0) <= 1.45);
     }
-    if (!path || (dark && path.length > 2 * dist + 3)) return;
-    if (path.length > 1 && Math.hypot(path[0].x - S.me.x, path[0].y - S.me.y) < 0.6) path.shift();
-    S.path = path; S.stuckT = 0;
+    if (!path && !dark) toast(GO_NO.far);
+    if (!path || (dark && path.length > 2 * dist + 3)) { S.pendingAct = null; return; }
+    startWalk(path);
   }
 
   function face(dx, dy) {
@@ -1267,68 +1298,51 @@
   function update(dt) {
     const me = S.me;
     let vx = S.stick.x, vy = S.stick.y;
-    if (S.asleep || S.areaFx) { vx = vy = 0; S.keys = {}; S.path = null; }
+    if (S.asleep || S.areaFx) { vx = vy = 0; S.keys = {}; if (S.walk) stopWalk(); }
     if (S.keys.l) vx -= 1; if (S.keys.r) vx += 1; if (S.keys.u) vy -= 1; if (S.keys.d) vy += 1;
     if (R3 && (vx || vy)) [vx, vy] = R3.screenToWorld(vx, vy); // joystick je vzhľadom na obrazovku, kamera je otočená
     if (vx || vy) stopWalk();
-    if (S.path) {
-      const pa = S.pendingAct;
-      if (pa && !pa.onTile && inReach(pa.x, pa.y) && S.path.length <= 1) {
-        stopWalk(); face(pa.x + 0.5 - me.x, pa.y + 0.5 - me.y); doAction(pa.x, pa.y);
-      } else {
-        const wp = S.path[0], dx = wp.x - me.x, dy = wp.y - me.y, d = Math.hypot(dx, dy);
-        if (d < 0.1) {
-          S.path.shift();
-          if (!S.path.length) {
-            S.path = null;
-            if (pa) { S.pendingAct = null; face(pa.x + 0.5 - me.x, pa.y + 0.5 - me.y); doAction(pa.x, pa.y); }
-          }
-        } else { const sp = Math.min(1, d / (3.8 * dt)); vx = dx / d * sp; vy = dy / d * sp; }
-      }
-    }
-    const len = Math.hypot(vx, vy);
-    if (len > 1) { vx /= len; vy /= len; }
-    me.moving = len > 0.05;
     me.crawl = !S.asleep && (S.crawlKey || S.crawlTgl) && !me.jz;
     if (me.jz > 0 || me.jv > 0) { me.jz += me.jv * dt; me.jv -= JUMP_G * dt; if (me.jz <= 0) me.jz = me.jv = 0; }
-    if (me.moving) {
-      // ťažký ľad v náručí spomaľuje
-      // lepkavá pavučina a pavúk na chrbte spomaľujú (server pošle 'slow')
-      const slowK = performance.now() < S.slowUntil ? S.slowK : 1;
-      const sp = 3.8 * dt * (me.crawl ? CRAWL_SPEED : 1) * Math.max(0.4, 1 - D.ICE_SLOW * (S.inv.ice || 0)) * slowK;
-      const ox = me.x, oy = me.y;
-      const { rx, ry } = D.BODY;
-      // hráč stojí na najvyššom políčku pod sebou – kým celkom nezíde z ľadu, nezasekne sa o jeho hranu
-      const corners = (x, y) => [[x - rx, y - ry], [x + rx, y - ry], [x - rx, y + ry], [x + rx, y + ry]];
-      let here = tileAt(Math.floor(me.x), Math.floor(me.y));
-      const overlap = new Set();
-      for (const [cx, cy] of corners(me.x, me.y)) {
-        const t = tileAt(Math.floor(cx), Math.floor(cy));
-        overlap.add(Math.floor(cy) * S.W + Math.floor(cx));
-        if (D.passable(t) && D.level(t) > D.level(here)) here = t;
-      }
-      const lift = Math.floor((me.jz || 0) * D.GLACIER_LAYERS);
-      // plazenie: meria sa od políčka pod stredom postavy a stred nesmie prejsť na inú výšku
-      // (inak by sa dalo vyliezť, keď sa už rohom dotýka vyššieho ľadu)
-      const mid = tileAt(Math.floor(me.x), Math.floor(me.y)), from = me.crawl ? mid : here;
-      const free = (x, y) => corners(x, y).every(([cx, cy]) => !solid(cx, cy, from, lift, me.crawl, overlap))
-        && (!me.crawl || D.level(tileAt(Math.floor(x), Math.floor(y))) === D.level(mid));
-      const nx = me.x + vx * sp;
-      if (free(nx, me.y)) me.x = nx;
-      const ny = me.y + vy * sp;
-      if (free(me.x, ny)) me.y = ny;
-      face(vx, vy);
-      me.a = Math.atan2(vy, vx); // presný smer pre 8-smerový sprite
-      me.phase += dt * (me.crawl ? 7 : 11);
-      if (S.path) {
-        if (Math.hypot(me.x - ox, me.y - oy) < sp * 0.1) { S.stuckT += dt; if (S.stuckT > 0.6) stopWalk(); }
-        else S.stuckT = 0;
-      }
-    } else me.phase = 0;
-    // odoslanie pozície
-    const now = performance.now();
-    const key = me.x.toFixed(2) + ',' + me.y.toFixed(2) + ',' + me.dir + ',' + (me.a != null ? me.a.toFixed(1) : '') + ',' + me.crawl + ',' + (S.sel === 'lamp');
-    if (key !== S.lastSent && now - S.sentAt > 90) { send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq }); S.lastSent = key; S.sentAt = now; }
+    if (S.walk) followWalk(dt); // cestu po ťuknutí ide server
+    else {
+      const len = Math.hypot(vx, vy);
+      if (len > 1) { vx /= len; vy /= len; }
+      me.moving = len > 0.05;
+      if (me.moving) {
+        // ťažký ľad v náručí spomaľuje
+        // lepkavá pavučina a pavúk na chrbte spomaľujú (server pošle 'slow')
+        const slowK = performance.now() < S.slowUntil ? S.slowK : 1;
+        const sp = 3.8 * dt * (me.crawl ? CRAWL_SPEED : 1) * Math.max(0.4, 1 - D.ICE_SLOW * (S.inv.ice || 0)) * slowK;
+        const { rx, ry } = D.BODY;
+        // hráč stojí na najvyššom políčku pod sebou – kým celkom nezíde z ľadu, nezasekne sa o jeho hranu
+        const corners = (x, y) => [[x - rx, y - ry], [x + rx, y - ry], [x - rx, y + ry], [x + rx, y + ry]];
+        let here = tileAt(Math.floor(me.x), Math.floor(me.y));
+        const overlap = new Set();
+        for (const [cx, cy] of corners(me.x, me.y)) {
+          const t = tileAt(Math.floor(cx), Math.floor(cy));
+          overlap.add(Math.floor(cy) * S.W + Math.floor(cx));
+          if (D.passable(t) && D.level(t) > D.level(here)) here = t;
+        }
+        const lift = Math.floor((me.jz || 0) * D.GLACIER_LAYERS);
+        // plazenie: meria sa od políčka pod stredom postavy a stred nesmie prejsť na inú výšku
+        // (inak by sa dalo vyliezť, keď sa už rohom dotýka vyššieho ľadu)
+        const mid = tileAt(Math.floor(me.x), Math.floor(me.y)), from = me.crawl ? mid : here;
+        const free = (x, y) => corners(x, y).every(([cx, cy]) => !solid(cx, cy, from, lift, me.crawl, overlap))
+          && (!me.crawl || D.level(tileAt(Math.floor(x), Math.floor(y))) === D.level(mid));
+        const nx = me.x + vx * sp;
+        if (free(nx, me.y)) me.x = nx;
+        const ny = me.y + vy * sp;
+        if (free(me.x, ny)) me.y = ny;
+        face(vx, vy);
+        me.a = Math.atan2(vy, vx); // presný smer pre 8-smerový sprite
+        me.phase += dt * (me.crawl ? 7 : 11);
+      } else me.phase = 0;
+      // odoslanie pozície
+      const now = performance.now();
+      const key = me.x.toFixed(2) + ',' + me.y.toFixed(2) + ',' + me.dir + ',' + (me.a != null ? me.a.toFixed(1) : '') + ',' + me.crawl + ',' + (S.sel === 'lamp');
+      if (key !== S.lastSent && now - S.sentAt > 90) { send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq }); S.lastSent = key; S.sentAt = now; }
+    }
     // ostatní hráči
     for (const o of S.others.values()) {
       const dx = o.tx - o.x, dy = o.ty - o.y;

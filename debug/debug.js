@@ -60,7 +60,7 @@
     const d = e.data || {}, xy = (x, y) => x == null ? '' : `(${(+x).toFixed(2)}, ${(+y).toFixed(2)})`;
     if (e.type === 'arrivedFrom') return `player moved ${xy(d.fx, d.fy)} → ${xy(d.x, d.y)} at tick ${d.t}, evaluated next tick`;
     if (e.type === 'goTo' && d.sp != null) return `${d.sp} chases player #${d.p} → predicted ${xy(d.x, d.y)}`;
-    if (e.type === 'goTo') return `player led to ${xy(d.x, d.y)}${d.path ? ` (${d.path.length} tiles left)` : ''}`;
+    if (e.type === 'goTo') return `player led to tile ${d.gx},${d.gy}: step ${xy(d.fx, d.fy)} → ${xy(d.x, d.y)}${d.path ? ` (${d.path.length} tiles left)` : ''}`;
     if (e.type === 'kriziak') return `cross spider running to a corner (${d.area})`;
     if (e.type === 'pullDone') return 'silk pull finishes';
     if (e.type === 'spider') return `${d.id}: next step`;

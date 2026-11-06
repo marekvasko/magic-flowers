@@ -391,7 +391,14 @@ Object.assign(HANDLERS, Econ.HANDLERS, Spiders.HANDLERS, Moves.HANDLERS, {
   // goTo je spoločný typ: naháňanie pavúka (data.sp) aj vedenie hráča po ceste (data.pk) – kľúč je vždy jeho pohyb
   goTo(room, d, ev) { return (d && d.sp != null ? Spiders.HANDLERS : Moves.HANDLERS).goTo(room, d, ev); }
 });
-Spiders.setHooks({ toast, sendMe, send(pl, msg) { send(pl.ws, msg); }, broadcastArea });
+Spiders.setHooks({
+  toast, sendMe, broadcastArea,
+  send(pl, msg) {
+    if (msg.t === 'shove') Moves.stop(pl.room, pl); // odhodený hráč už nejde, kam ťukol
+    if (msg.t === 'slow') pl.slow = { k: msg.k, until: pl.room.tick + E.msTicks(pl.room, msg.ms) }; // spomalí aj vedenie (goTo)
+    send(pl.ws, msg);
+  }
+});
 Moves.setHooks({ forward: forwardMove, evaluate: evaluateMove, send(pl, msg) { send(pl.ws, msg); } });
 // Periodické udalosti plánuje engine sám (E.reconcile): ráno o 6:00 a každú celú hodinu, plus ekonomika.
 const PERIODIC = [
@@ -875,6 +882,13 @@ wss.on('connection', ws => {
           Moves.arrive(room, pl, pos.x, pos.y, Date.now());
           sv.x = pl.x; sv.y = pl.y;
         }
+        break;
+      case 'goTo': // ťuknutie na políčko: server hráča dovedie po najkratšej ceste (moves.js), alebo odpovie 'goToNo'
+        if ((m.ar | 0) !== pl.areaSeq) break;
+        if (pl.sleep) { send(pl.ws, { t: 'goToNo', n: m.n | 0, why: 'sleep' }); break; }
+        pl.cr = !!m.cr;
+        pl.lp = !!m.lp && !!sv.inv.lamp;
+        Moves.goTo(room, pl, m.x, m.y, m.n | 0);
         break;
       case 'act': if (!pl.sleep) act(pl, m); break;
       case 'jump': if (!pl.sleep) pl.jn = ((pl.jn | 0) + 1) % 1000; break; // skok je len pre parádu – ostatní ho uvidia podľa zmeny počítadla
