@@ -41,6 +41,14 @@ test('povolenie na pole: patrí záhrade, kúpi ho ktokoľvek a obrobené polí�
   assert.strictEqual(eva.up.can, 0);
 });
 
+test('zarovnať: prázdne obrobené políčko môže zarovnať ktokoľvek, nielen ten, kto ho prekopal', () => {
+  assert.strictEqual(D.canLevel({ g: 'grass', s: { k: 'normal', p: null, o: 'eva' } }), true);
+  assert.strictEqual(D.canLevel({ g: 'grass', s: { k: 'normal', p: null } }), true, 'aj políčko bez zapísaného hráča');
+  assert.strictEqual(D.canLevel({ g: 'grass', s: { k: 'normal', p: { sp: 'tulipan', prog: 1 }, o: 'eva' } }), false, 's rastlinou nie');
+  assert.strictEqual(D.canLevel({ g: 'grass', s: null }), false, 'neprekopanú trávu nie');
+  assert.strictEqual(D.canLevel(null), false);
+});
+
 // ---------- Server: migrácia osobných povolení a spoločný limit ----------
 function startServer(dataDir, port) {
   const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
@@ -139,5 +147,49 @@ test('server: osobné povolenia z verzie 4 prejdú na spoločné povolenie záhr
     assert.strictEqual(saved.saves.jan.up.can, 1);
     assert.strictEqual(saved.saves.eva.coins, 500);
     assert.strictEqual(saved.tiles.filter(t => t.s).length, 48, 'žiadne políčko sa nestratilo');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('server: divé semienko na cudzom políčku vyklíči bez správy, do herbára pribudne tomu, kto políčko prekopal', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-plots-'));
+  const port = 41000 + Math.floor(Math.random() * 2000);
+  const map = D.buildMap(), tiles = map.map(() => ({ s: null }));
+  // Eva prekopala políčko a zasadila divé semienko; Ján stojí vedľa, Eva ďaleko (na políčku s iným hráčom by elixír daroval)
+  const free = map.map((g, i) => i).filter(i => map[i] === 'grass' && i >= 26 * D.W && i < 29 * D.W && (i % D.W) > 2 && (i % D.W) < 17);
+  const wi = free[0], wx = wi % D.W, wy = (wi / D.W) | 0;
+  const far = free.find(i => Math.abs(i % D.W - wx) > 5), ex = far % D.W, ey = (far / D.W) | 0;
+  tiles[wi] = { s: { k: 'normal', w: 1, r: 0, o: 'eva', p: { sp: 'slnecnica', prog: 0, q: 3, dry: 0, wild: 1 } } };
+  const pl = { water: 3, recipes: [], seen: [], vily: 0, talked: true, area: 'garden', coins: 10, rep: 0, up: { can: 0, composter: 0 } };
+  const save = {
+    v: 7, tick: 1000, wall: Date.now(), mode: 'paused', daySeconds: 1200, rng: 1, seq: 0, events: [], weather: 'sun',
+    saves: {
+      eva: Object.assign({}, pl, { inv: { hoe: 1 }, x: ex + 0.5, y: ey + 0.5 }),
+      jan: Object.assign({}, pl, { inv: { hoe: 1, po_rast: 1 }, x: wx + 1.5, y: wy + 0.5 })
+    },
+    up: { plots: 0 }, storage: {}, icehouse: { built: false, ice: 0 }, hory: null, pomedzieSeed: 7, tiles
+  };
+  fs.writeFileSync(path.join(dir, 'room-klicok.json'), JSON.stringify(save));
+  const proc = await startServer(dir, port);
+  try {
+    const eva = client(port), jan = client(port);
+    await eva.open(); await jan.open();
+    eva.send({ t: 'join', room: 'klicok', name: 'Eva' });
+    jan.send({ t: 'join', room: 'klicok', name: 'Jan' });
+    await eva.wait(m => m.t === 'me'); await jan.wait(m => m.t === 'me');
+    // Ján použije elixír rastu na Evino políčko → divé semienko vyklíči
+    jan.send({ t: 'act', x: wx, y: wy, item: 'po_rast' });
+    const tile = await eva.wait(m => m.t === 'tile' && m.i === wi && m.v.s.p.sp !== 'wild');
+    assert.strictEqual(tile.v.s.p.sp, 'slnecnica', 'klíčok vidno v záhrade');
+    assert.strictEqual(tile.v.s.o, 'eva', 'políčko si pamätá, kto ho prekopal');
+    // správa o klíčku by prišla pred zmenou políčka – nesmie prísť nikomu
+    await assert.rejects(eva.wait(m => m.t === 'toast' && /klíčok/.test(m.text), 300));
+    await assert.rejects(jan.wait(m => m.t === 'toast' && /klíčok/.test(m.text), 300));
+    eva.ws.close(); jan.ws.close();
+  } finally { await stopServer(proc); }
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, 'room-klicok.json'), 'utf8'));
+  try {
+    assert.ok(saved.saves.eva.seen.includes('slnecnica'), 'kvet pribudol do herbára tomu, kto políčko prekopal');
+    assert.ok(!saved.saves.jan.seen.includes('slnecnica'), 'tomu, kto použil elixír, nie');
+    assert.strictEqual(saved.tiles[wi].s.p.wild, undefined);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
