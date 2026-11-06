@@ -29,7 +29,7 @@
   //       výška členka, kde je členok, hrúbka pri tele, hrúbka na konci]
   const SPECIES = {
     k: {
-      name: 'krížiak', span: 0.25, ppu: 420, ref: 'Araneus diadematus', glow: '#c8ff9a',
+      name: 'krížiak', span: 0.25, ppu: 420, ref: 'Araneus diadematus', glow: '#c8ff9a', glowR: 0.007, glowSpread: 3,
       ceph: { len: 0.9, wid: 0.78, hgt: 0.4, x: 0.6, y: 0.42 },
       abd: { len: 1.75, wid: 1.6, hgt: 1.45, x: -0.72, y: 0.98, tilt: 0.32 }, gloss: 0.35,
       legs: [[38, 34, 3.15, 1.05, 0.34, 0.55, 0.7, 0.13, 0.05], [72, 66, 2.85, 1.0, 0.36, 0.5, 0.7, 0.13, 0.05],
@@ -40,7 +40,7 @@
       marks: kriziakMarks
     },
     v: {
-      name: 'vlčiak', span: 1.0, ppu: 150, ref: 'Hogna radiata', glow: '#ffcf6a',
+      name: 'vlčiak', span: 1.0, ppu: 150, ref: 'Hogna radiata', glow: '#ffcf6a', glowR: 0.014, glowSpread: 2.4,
       ceph: { len: 1, wid: 0.84, hgt: 0.44, x: 0.55, y: 0.4, rise: 0.12 },
       abd: { len: 1.2, wid: 0.8, hgt: 0.62, x: -0.6, y: 0.4, tilt: 0.05 }, gloss: 0.12,
       legs: [[40, 30, 3.3, 0.85, 0.32, 0.4, 0.66, 0.19, 0.07], [70, 64, 3.0, 0.82, 0.34, 0.38, 0.68, 0.19, 0.07],
@@ -51,7 +51,7 @@
       marks: vlciakMarks
     },
     p: {
-      name: 'stará pradlena', span: 1.5, top: 1.2, ppu: 120, ref: 'Araneus angulatus', glow: '#ff6a4a',
+      name: 'stará pradlena', span: 1.5, top: 1.2, ppu: 120, ref: 'Araneus angulatus', glow: '#ff6a4a', glowR: 0.02, glowSpread: 3,
       ceph: { len: 1, wid: 0.86, hgt: 0.46, x: 0.6, y: 0.5 },
       abd: { len: 1.85, wid: 1.65, hgt: 1.4, x: -0.78, y: 0.95, tilt: 0.45 }, gloss: 0.2,
       humps: [[0.42, 0.62, 0.5, 0.36], [0.42, 0.62, -0.5, 0.36]],
@@ -458,6 +458,26 @@
     return items[hi].marks.filter(m => m.eye && m.fade > 0.3 && !later.some(e => inside(e, m.c)))
       .map(m => ({ x: m.c[0], y: m.c[1], r: Math.sqrt(Math.abs(m.m[0][0] * m.m[1][1] - m.m[0][1] * m.m[1][0])) }));
   }
+  // Svit očí v tme do plátna: (px, py) = pixel počiatku modelu, k = pixelov na jednotku sveta, a = sila 0–1.
+  // Oči sú drobné a tesne pri sebe, preto má každý druh čitateľnú veľkosť svitu glowR (políčka; najväčšie oko ju má
+  // celú, menšie úmerne) a oči sú od svojho stredu odsunuté glowSpread-krát – v tme vidno páry očí, nie jednu šmuhu.
+  function glow(c, kind, eyes, px, py, k, a) {
+    if (!eyes || !eyes.length || a <= 0.02) return;
+    const K = SPECIES[kind] || SPECIES.v, big = Math.max(...eyes.map(q => q.r));
+    const mx = eyes.reduce((s, q) => s + q.x, 0) / eyes.length, my = eyes.reduce((s, q) => s + q.y, 0) / eyes.length;
+    eyes = eyes.map(q => ({ r: q.r, x: mx + (q.x - mx) * K.glowSpread, y: my + (q.y - my) * K.glowSpread }));
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.fillStyle = K.glow; c.shadowColor = K.glow;
+    for (const q of eyes) {
+      const r = Math.max(1, K.glowR * k * (0.45 + 0.55 * q.r / big)), x = px + q.x * k, y = py - q.y * k;
+      c.globalAlpha = Math.min(1, a) * 0.25; c.shadowBlur = 0;
+      c.beginPath(); c.arc(x, y, r * 2, 0, Math.PI * 2); c.fill();
+      c.globalAlpha = Math.min(1, a); c.shadowBlur = Math.max(3, r * 3);
+      c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+    }
+    c.restore();
+  }
   // nakreslí snímku f (0–3) pohľadu do plátna veľkosti layout(kind, view)
   function sprite(c, kind, view, f) {
     const L = layout(kind, view);
@@ -524,7 +544,7 @@
   const eyeH = {};
   const eyeHeight = kind => eyeH[kind] != null ? eyeH[kind] : (eyeH[kind] = build(kind, 0, 'ground')[0].c[1]);
 
-  const api = { eyeHeight, SPECIES, VIEWS, PLANAR, TRUNK, trunkView, PITCH, CAM, FRAMES, MAX_HZ, cycle, stepPhase, frameOf, build, project, draw, layout, sprite, planarView, viewMatrix, isSurface, buildMesh, scaleOf };
+  const api = { eyeHeight, SPECIES, VIEWS, PLANAR, TRUNK, trunkView, PITCH, CAM, FRAMES, MAX_HZ, cycle, stepPhase, frameOf, glow, build, project, draw, layout, sprite, planarView, viewMatrix, isSurface, buildMesh, scaleOf };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SpiderModel = api;
 })(typeof window !== 'undefined' ? window : globalThis);
