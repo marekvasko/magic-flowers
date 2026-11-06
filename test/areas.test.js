@@ -248,11 +248,17 @@ test('server: svet z verzie 3 sa prevedie (záhrada aj poloha ostanú) a hráč 
     assert.strictEqual(toPom.tiles.length, toPom.w * toPom.h);
     assert.ok(toPom.tiles.some(t => t.g === 'meadow') && !toPom.tiles.some(t => t.s), 'Les na pomedzí bez záhonov');
     // mimo mriežky sa nedá – server polohu udrží na ploche
-    const H = D.areaSize('pomedzie').h;
-    assert.strictEqual((await walkTo(c, 0, H - 1, toPom.seq)).t, 'goToEnd');
-    c.send({ t: 'move', x: -4, y: 40, dir: 0, ar: toPom.seq });
+    // (les je zo semienka – dôjde k západnému okraju na prvé políčko, kam sa dá dôjsť, mimo prechodu, a skúsi ísť ďalej)
+    const PW = D.areaSize('pomedzie').w;
+    let wy = null;
+    for (let y = D.areaSize('pomedzie').h - 1; y >= 0 && wy == null; y--) {
+      const t = toPom.tiles[y * PW];
+      if (D.passable(t) && t.g !== 'gate' && (await walkTo(c, 0, y, toPom.seq)).t === 'goToEnd') wy = y;
+    }
+    assert.ok(wy != null, 'k západnému okraju sa dá dôjsť');
+    c.send({ t: 'move', x: -4, y: wy + 0.5, dir: 0, ar: toPom.seq });
     const pl = await c.wait(m => m.t === 'pl' && m.list.some(p => p.name === 'Eva' && p.x === 0.2));
-    assert.deepStrictEqual(pl.list.map(p => [p.area, p.x, p.y]), [['pomedzie', 0.2, H - 0.2]]);
+    assert.deepStrictEqual(pl.list.map(p => [p.area, p.x, p.y]), [['pomedzie', 0.2, wy + 0.5]]);
     // motyka v lese nič neprekope
     c.send({ t: 'act', x: 0, y: D.areaSize('pomedzie').h - 1, item: 'hoe' });
     assert.match((await c.wait(m => m.t === 'toast' && /nepestuje/.test(m.text))).text, /Les na pomedzí je divý/);
