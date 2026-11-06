@@ -69,6 +69,15 @@ export function spiderView({ h, ctx, mainEl, save, seg }) {
   }
   function saveSt() { ctx.setParam && (ctx.setParam('sk', st.kind), ctx.setParam('sf', st.frame), ctx.setParam('sz', st.zoom), ctx.setParam('sb', st.bg)); save(); }
 
+  // 2D sprite ako v hre; na tmavom pozadí stmavený (ako v Lese divov) a so svitom očí
+  function paint(cv, view, f) {
+    const g = cv.getContext('2d'), L = SM.layout(st.kind, view);
+    g.clearRect(0, 0, cv.width, cv.height);
+    SM.sprite(g, st.kind, view, f);
+    if (st.bg !== 'dark') return;
+    g.save(); g.globalCompositeOperation = 'source-atop'; g.fillStyle = 'rgba(8,12,10,0.8)'; g.fillRect(0, 0, cv.width, cv.height); g.restore();
+    SM.glow(g, st.kind, L.eyes[f], L.ox, L.oy, L.ppu, 1);
+  }
   // obrys z alfa kanála
   const mask = cv => { const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data, m = new Uint8Array(cv.width * cv.height); for (let i = 0; i < m.length; i++) m[i] = d[i * 4 + 3] > 100 ? 1 : 0; return m; };
   function iou(a, b) { let i = 0, u = 0; for (let k = 0; k < a.length; k++) { i += a[k] & b[k]; u += a[k] | b[k]; } return u ? i / u : 1; }
@@ -77,7 +86,7 @@ export function spiderView({ h, ctx, mainEl, save, seg }) {
     const L = SM.layout(st.kind, view), z = st.zoom;
     // 2D sprite (rovnaký kód ako v hre)
     const c2 = document.createElement('canvas'); c2.width = L.w; c2.height = L.h;
-    SM.sprite(c2.getContext('2d'), st.kind, view, st.frame);
+    paint(c2, view, st.frame);
     sprites.push({ c: c2, view });
     // 3D model rovnakým (ortografickým) pohľadom a mierkou
     renderer.setSize(L.w, L.h, false);
@@ -118,7 +127,7 @@ export function spiderView({ h, ctx, mainEl, save, seg }) {
     phase += SM.stepPhase(st.kind, sp[1] * dt, dt);
     const f = SM.frameOf(phase), hz = Math.min(sp[1] / SM.cycle(st.kind), SM.MAX_HZ);
     speedInfo.textContent = `${hz.toFixed(1)} steps/s${sp[1] / SM.cycle(st.kind) > SM.MAX_HZ ? ' (capped)' : ''} · ${(hz * SM.FRAMES).toFixed(0)} frames/s · frame ${f}`;
-    for (const { c, view } of sprites) { const g = c.getContext('2d'); g.clearRect(0, 0, c.width, c.height); SM.sprite(g, st.kind, view, f); }
+    for (const { c, view } of sprites) paint(c, view, f);
   }
   renderBar(); rebuild();
   return { dispose() { st.speed = 0; cancelAnimationFrame(raf); renderer.dispose(); renderer.forceContextLoss(); } };

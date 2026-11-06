@@ -437,8 +437,6 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
   // kto si dá pozor, uvidí ich skôr. Občas žmurknú.
   const KEYE = 2.5;
   function overlay(c, ppb, t) {
-    c.save();
-    c.globalCompositeOperation = 'lighter';
     for (const [id, e] of lastSeen) {
       const E = e.eye;
       if (e.hide || !E) continue;
@@ -447,23 +445,14 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
       const dark = Math.max(0, Math.min(1, (0.85 - e.b) / 0.45));
       if (dark <= 0.02) continue;
       const range = e.k === 'k' ? KEYE : (e.k === 'p' ? SPI.pradlena : SPI.vlciak).eyes;
-      const far = e.seen > 0.05 ? 1 : Math.max(0, Math.min(1, (range - e.d) / 1.5));
+      const far = e.seen > 0.05 ? 1 : Math.max(0, Math.min(1, (range + 0.5 - e.d) / 1)); // do range naplno, potom rýchlo zhasne
       const h = ((id.charCodeAt(1) || 0) + id.length * 7) * 1.7;
       if (Math.sin(t * 0.9 + h) < -0.9) continue; // žmurknutie
       const a = dark * far * (0.75 + 0.25 * Math.sin(t * 3 + h));
       if (a <= 0.02) continue;
-      const P = project(E.x, E.y, E.z), k = ppb * E.s, col = SM.SPECIES[e.k].glow;
-      c.globalAlpha = Math.min(1, a);
-      c.fillStyle = col; c.shadowColor = col;
-      for (const q of eyes) { // žiara okolo a jasný stred
-        const r = Math.max(0.9, q.r * k * 1.1), x = P.x + q.x * k, y = P.y - q.y * k;
-        c.globalAlpha = Math.min(1, a) * 0.35; c.shadowBlur = 0;
-        c.beginPath(); c.arc(x, y, r * 2.4, 0, Math.PI * 2); c.fill();
-        c.globalAlpha = Math.min(1, a); c.shadowBlur = Math.max(4, r * 6);
-        c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
-      }
+      const P = project(E.x, E.y, E.z);
+      SM.glow(c, e.k, eyes, P.x, P.y, ppb * E.s, a);
     }
-    c.restore();
   }
   function dispose() {
     for (const m of webMeshes.values()) drop(m);
