@@ -4,9 +4,10 @@
 //  - plochy: D.buildArea(area, seed) ako pôdorysy pre viac semienok vedľa seba;
 //  - pavučiny (cobwebs.mjs): parametre Webs.WEB_PARAMS, 3D náhľad so shaderom z hry a miesta v Lese divov.
 // Úpravy žijú len v tejto stránke (a v adrese), hru nikdy nemenia.
-import { createViewer, loadWorld3D, injectCss, modelStats } from '/debug/tabs/modelview.mjs';
+import { createViewer, loadWorld3D, loadScript, injectCss, modelStats } from '/debug/tabs/modelview.mjs';
 import { CSS as ASSETS_CSS, SEASONS, ROTS, seg } from '/debug/tabs/assets.mjs';
 import { webView, CSS as WEB_CSS } from '/debug/tabs/cobwebs.mjs';
+import { spiderView, CSS as SPD_CSS } from '/debug/tabs/spiders.mjs';
 
 const CSS = `
 .gn-params { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
@@ -49,6 +50,7 @@ export function mount(el, ctx) {
   injectCss('tab-assets-css', ASSETS_CSS);
   injectCss('tab-generators-css', CSS);
   injectCss('tab-cobwebs-css', WEB_CSS);
+  injectCss('tab-spiders-css', SPD_CSS);
   document.body.classList.add('dbg-wide');
   let W = null, viewer = null, gone = false, raf = 0;
   const intP = (k, def, max) => { const v = parseInt(ctx.param(k), 10); return Number.isInteger(v) && v >= 0 && v <= max ? v : def; };
@@ -66,7 +68,7 @@ export function mount(el, ctx) {
   root.append(listEl, mainEl);
   el.replaceChildren(h('div', { class: 'muted', style: 'padding:20px' }, 'Loading generators…'));
 
-  Promise.all([loadWorld3D(), window.Webs ? null : new Promise((res, rej) => { const s = document.createElement('script'); s.src = '/shared/webs.js'; s.onload = res; s.onerror = () => rej(new Error('webs.js')); document.head.appendChild(s); })]).then(([w]) => {
+  Promise.all([loadWorld3D(), window.Webs ? null : loadScript('/shared/webs.js'), window.SpiderModel ? null : loadScript('/shared/spidermodel.js')]).then(([w]) => {
     if (gone) return;
     W = w;
     if (!gens().some(g => g.id === st.gen)) st.gen = 'tree-buk';
@@ -78,7 +80,8 @@ export function mount(el, ctx) {
     // bežné stromy a obrovský strom Lesa divov (obor – nie je medzi TREE_KINDS, lebo v záhrade nerastie)
     ...W.TREE_KINDS.concat(W.TREE_PARAMS.obor ? ['obor'] : []).map(k => ({ id: 'tree-' + k, kind: k, name: (W.TREE_NAMES && W.TREE_NAMES[k]) || k, group: 'Trees', sub: Object.keys(W.TREE_PARAMS[k]).length + ' params' })),
     ...D.AREAS.map(a => ({ id: 'area-' + a, area: a, name: D.AREA_NAMES[a] || a, group: 'Area layouts', sub: a === 'pomedzie' || a === 'les' ? 'seeded' : 'fixed' })),
-    { id: 'web', web: true, name: 'Cobweb (Les divov)', group: 'Cobwebs', sub: Object.keys(window.Webs.WEB_PARAMS).length + ' params' }
+    { id: 'web', web: true, name: 'Cobweb (Les divov)', group: 'Cobwebs', sub: Object.keys(window.Webs.WEB_PARAMS).length + ' params' },
+    { id: 'spiders', spiders: true, name: 'Spider sprites', group: 'Spiders', sub: '3D model vs 2D, 16 views' }
   ];
   const cur = () => gens().find(g => g.id === st.gen);
   function save() {
@@ -113,7 +116,8 @@ export function mount(el, ctx) {
     const g = cur();
     if (viewer) { viewer.dispose(); viewer = null; }
     if (webV) { webV.dispose(); webV = null; }
-    if (g.web) webV = webView({ h, D, ctx, mainEl, over: () => webOver, setOver: o => { webOver = o; }, save, seg, isGone: () => gone });
+    if (g.spiders) webV = spiderView({ h, ctx, mainEl, save, seg });
+    else if (g.web) webV = webView({ h, D, ctx, mainEl, over: () => webOver, setOver: o => { webOver = o; }, save, seg, isGone: () => gone });
     else if (g.kind) treeView(g); else areaView(g);
   }
   function webChanged() { const p = window.Webs.webParams(webOver), out = {}; for (const [k, d] of Object.entries(window.Webs.WEB_PARAMS)) if (p[k] !== d.def) out[k] = p[k]; return out; }
