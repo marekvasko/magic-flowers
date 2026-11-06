@@ -84,3 +84,15 @@ test('oči na snímke: spredu áno, zozadu ich zakryje zadoček, z brucha žiadn
   }
   for (const e of SM.layout('v', 'S').eyes[0]) assert.ok(e.r > 0 && Math.abs(e.x) < 0.15, 'oko na hlave (pri strednej osi)');
 });
+
+test('nohy neprechádzajú zadočkom ani hrbmi (žiadna snímka, žiadna póza)', () => {
+  const cr = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]], d = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+  const local = (A, p) => { const [a, b, c] = A, det = d(a, cr(b, c)); return [d(p, cr(b, c)) / det, d(a, cr(p, c)) / det, d(a, cr(b, p)) / det]; };
+  for (const k of Object.keys(SM.SPECIES)) for (let f = 0; f < SM.FRAMES; f++) for (const pose of ['ground', 'surface']) {
+    const parts = SM.build(k, f * 2 * Math.PI / SM.FRAMES, pose), bodies = parts.filter(p => p.part === 'abd' || p.part === 'hump');
+    for (const sg of parts.filter(p => p.k === 'seg' && p.leg != null)) for (let t = 0; t <= 1; t += 0.1) {
+      const q = sg.a.map((v, i) => v + (sg.b[i] - v) * t);
+      for (const e of bodies) assert.ok(Math.hypot(...local(e.A, q.map((v, i) => v - e.c[i]))) >= 1, `${k} snímka ${f} ${pose}: noha ${sg.leg} v ${e.part}`);
+    }
+  }
+});
