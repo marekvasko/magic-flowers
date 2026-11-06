@@ -18,6 +18,10 @@
 
   const VIEWS = ['S', 'SE', 'E', 'NE', 'N', 'NW', 'W', 'SW', 'up', 'down', 'left', 'right', 'up-b', 'down-b', 'left-b', 'right-b'];
   const PLANAR = VIEWS.slice(0, 8);
+  // Na kmeni: plocha kmeňa natočená voči kamere o 0°, ±45°, ±90° (+ = jej normála mieri doprava), hlavou hore (u)
+  // alebo dole (d) – 10 pohľadov 't<uhol><u|d>', napr. 't-45d'. Zo zadnej strany kmeňa pavúka zakryje kmeň.
+  const TRUNK_ANG = [-90, -45, 0, 45, 90];
+  const TRUNK = TRUNK_ANG.flatMap(a => ['u', 'd'].map(h => 't' + a + h));
 
   // ---------- druhy ----------
   // Dĺžky v jednotkách dĺžky hlavohrude (L); celý model sa potom zmenší tak, aby rozpätie nôh bolo span.
@@ -221,6 +225,11 @@
       const a = i * Math.PI / 4, h = [Math.sin(a), 0, Math.cos(a)], y = [0, 1, 0];
       return [h, y, cross(h, y)];
     }
+    const tm = /^t(-?\d+)([ud])$/.exec(view);
+    if (tm) {
+      const a = +tm[1] * Math.PI / 180, n = [Math.sin(a), 0, Math.cos(a)], h = tm[2] === 'u' ? [0, 1, 0] : [0, -1, 0];
+      return [h, n, cross(h, n)];
+    }
     const belly = view.endsWith('-b'), dir = view.replace('-b', '');
     // plocha je zvislá a natočená ku kamere; chrbát ku kamere (+z) alebo od nej
     const n = belly ? [0, 0, -1] : [0, 0, 1];
@@ -407,6 +416,13 @@
     draw(c, L.frames[((f | 0) % FRAMES + FRAMES) % FRAMES], L.ppu, L.ox, L.oy);
     return L;
   }
+  // pohľad na kmeni podľa strany kmeňa (nx, nz = smer od kmeňa) a smeru ku kamere; null = za kmeňom (nevidno ho)
+  function trunkView(nx, nz, gx, gz, up) {
+    const a = Math.atan2(nx * gz - nz * gx, nx * gx + nz * gz) * 180 / Math.PI;
+    if (Math.abs(a) > 112.5) return null;
+    const q = Math.max(-90, Math.min(90, Math.round(a / 45) * 45));
+    return 't' + q + (up ? 'u' : 'd');
+  }
   // pohľad na zemi podľa smeru hlavy (dx, dz vo svete) a smeru ku kamere (gx, gz vodorovne)
   function planarView(dx, dz, gx, gz) {
     const s = dx * gx + dz * gz, e = dx * gz - dz * gx; // vpravo od kamery = (gz, -gx)
@@ -460,7 +476,7 @@
   const eyeH = {};
   const eyeHeight = kind => eyeH[kind] != null ? eyeH[kind] : (eyeH[kind] = build(kind, 0, 'ground')[0].c[1]);
 
-  const api = { eyeHeight, SPECIES, VIEWS, PLANAR, PITCH, CAM, FRAMES, build, project, draw, layout, sprite, planarView, viewMatrix, isSurface, buildMesh, scaleOf };
+  const api = { eyeHeight, SPECIES, VIEWS, PLANAR, TRUNK, trunkView, PITCH, CAM, FRAMES, build, project, draw, layout, sprite, planarView, viewMatrix, isSurface, buildMesh, scaleOf };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SpiderModel = api;
 })(typeof window !== 'undefined' ? window : globalThis);
