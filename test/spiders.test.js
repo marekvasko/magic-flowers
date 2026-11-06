@@ -509,6 +509,7 @@ test('pavučina v budove: kotvy (aj zlom) sa navzájom vidia – medzi nimi nie 
       webs++;
       const see = Webs.voxelSight(f, r.q), A = r.th.anchors;
       assert.ok(see(A[0], A[1]) && see(A[1], A[2]) && see(A[2], A[0]), `${id} ${seed}: kotvy sa vidia`);
+      assert.ok(A.every(Webs.voxelHold(f, r.q)), `${id} ${seed}: každá kotva leží na skutočnej ploche (za ňou plná minikocka)`);
       // kotvy vždy v strede minikocky: na ploche 0, inak (n + ½) / 8
       for (const p of A) for (const v of p) assert.ok(v === 0 || Math.abs(v * 8 - Math.floor(v * 8) - 0.5) < 1e-9, `${id} ${seed}: stred minikocky (${v * 8})`);
       assert.ok(r.th.count / 2 < 80, `${id} ${seed}: málo detailov (${r.th.count / 2} úsečiek)`);
