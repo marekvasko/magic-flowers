@@ -163,7 +163,7 @@
           seen.add(p.id);
           let o = S.spiders.get(p.id);
           if (!o) { o = { x: p.x, y: p.y, phase: 0 }; S.spiders.set(p.id, o); }
-          Object.assign(o, { id: p.id, k: p.k, tx: p.x, ty: p.y, a: p.a, m: !!p.m, c: !!p.c, h: !!p.h });
+          Object.assign(o, { id: p.id, k: p.k, tx: p.x, ty: p.y, a: p.a, m: !!p.m, c: !!p.c, h: !!p.h, tz: p.z || 0, n: p.n || null, u: !!p.u }); // n = na kmeni
         }
         for (const id of [...S.spiders.keys()]) if (!seen.has(id)) S.spiders.delete(id);
         break;
@@ -1335,6 +1335,7 @@
     for (const o of S.spiders.values()) {
       const k = Math.min(1, dt * 12);
       o.x += (o.tx - o.x) * k; o.y += (o.ty - o.y) * k;
+      o.z = o.n ? (o.z || 0) + (o.tz - (o.z || 0)) * k : 0;
       o.phase = o.m ? o.phase + dt * (o.k === 'k' ? 30 : o.k === 'p' ? 8 : 16) : 0;
     }
     // efekty
