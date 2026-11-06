@@ -29,7 +29,7 @@
   //       výška členka, kde je členok, hrúbka pri tele, hrúbka na konci]
   const SPECIES = {
     k: {
-      name: 'krížiak', span: 0.25, ppu: 420, ref: 'Araneus diadematus',
+      name: 'krížiak', span: 0.25, ppu: 420, ref: 'Araneus diadematus', glow: '#c8ff9a',
       ceph: { len: 0.9, wid: 0.78, hgt: 0.4, x: 0.6, y: 0.42 },
       abd: { len: 1.75, wid: 1.6, hgt: 1.45, x: -0.72, y: 0.98, tilt: 0.32 }, gloss: 0.35,
       legs: [[38, 34, 3.15, 1.05, 0.34, 0.55, 0.7, 0.13, 0.05], [72, 66, 2.85, 1.0, 0.36, 0.5, 0.7, 0.13, 0.05],
@@ -40,7 +40,7 @@
       marks: kriziakMarks
     },
     v: {
-      name: 'vlčiak', span: 1.0, ppu: 150, ref: 'Hogna radiata',
+      name: 'vlčiak', span: 1.0, ppu: 150, ref: 'Hogna radiata', glow: '#ffcf6a',
       ceph: { len: 1, wid: 0.84, hgt: 0.44, x: 0.55, y: 0.4, rise: 0.12 },
       abd: { len: 1.2, wid: 0.8, hgt: 0.62, x: -0.6, y: 0.4, tilt: 0.05 }, gloss: 0.12,
       legs: [[40, 30, 3.3, 0.85, 0.32, 0.4, 0.66, 0.19, 0.07], [70, 64, 3.0, 0.82, 0.34, 0.38, 0.68, 0.19, 0.07],
@@ -51,7 +51,7 @@
       marks: vlciakMarks
     },
     p: {
-      name: 'stará pradlena', span: 1.5, top: 1.2, ppu: 120, ref: 'Araneus angulatus',
+      name: 'stará pradlena', span: 1.5, top: 1.2, ppu: 120, ref: 'Araneus angulatus', glow: '#ff6a4a',
       ceph: { len: 1, wid: 0.86, hgt: 0.46, x: 0.6, y: 0.5 },
       abd: { len: 1.85, wid: 1.65, hgt: 1.4, x: -0.78, y: 0.95, tilt: 0.45 }, gloss: 0.2,
       humps: [[0.42, 0.62, 0.5, 0.36], [0.42, 0.62, -0.5, 0.36]],
@@ -159,6 +159,7 @@
     const ceph = { k: 'ell', c: [K.ceph.x, cy, 0], A: ellAxes(K.ceph.len, K.ceph.hgt, K.ceph.wid, -(K.ceph.rise || 0)), col: C.ceph, dark: C.out, part: 'ceph' };
     const abd = { k: 'ell', c: [K.abd.x, ay, 0], A: ellAxes(K.abd.len, K.abd.hgt, K.abd.wid, K.abd.tilt), col: C.abd, dark: C.out, part: 'abd' };
     const mk = K.marks(C);
+    for (const m of mk.ceph) if (m.col === C.eye) m.eye = true; // oči sa v tme lesknú
     ceph.marks = mk.ceph; abd.marks = mk.abd;
     parts.push(ceph, abd);
     // hrudná kosť zospodu (tmavá)
@@ -253,14 +254,14 @@
         // svetlá škvrna: bod povrchu s normálou k svetlu
         const s = norm([dot(A[0], LIGHT), dot(A[1], LIGHT), dot(A[2], LIGHT)]);
         const hl = P2(add(c, add(add(mul(A[0], s[0]), mul(A[1], s[1])), mul(A[2], s[2]))));
-        const it = { k: 'ell', d: dot(c, CAM.c), C3: c, A3: A, c: P2(c), e, hl, col: p.col, dark: p.dark, gloss: p.gloss == null ? 0.3 : p.gloss, marks: [] };
+        const it = { k: 'ell', part: p.part, d: dot(c, CAM.c), C3: c, A3: A, c: P2(c), e, hl, col: p.col, dark: p.dark, gloss: p.gloss == null ? 0.3 : p.gloss, marks: [] };
         for (const mk of p.marks || []) {
           // normála elipsoidu v bode A·d je A^-T·d; ku kamere ⇔ (A^-T d)·cam > 0 ⇔ d·(A^-1 cam) > 0
           const n = dot(mk.d, solve3(A, CAM.c));
           if (n <= 0.02) continue;
           const f = markFrame(A, mk), at = add(c, f.at);
           const T1 = P2(f.T1), T2 = P2(f.T2);
-          it.marks.push({ c: P2(at), m: [T1, T2], col: mk.col, fade: Math.min(1, n * 4) });
+          it.marks.push({ c: P2(at), m: [T1, T2], col: mk.col, fade: Math.min(1, n * 4), eye: mk.eye });
         }
         items.push(it);
       } else {
@@ -406,9 +407,23 @@
     // vodorovne súmerne okolo počiatku (sprite sa centruje), zvislo podľa obsahu
     const hw = Math.max(-x0, x1);
     const w = Math.ceil(hw * ppu * 2 + pad * 2), h = Math.ceil((y1 - y0) * ppu + pad * 2);
-    const L = { w, h, ox: w / 2, oy: pad + y1 * ppu, ppu, frames, bottom: y0 };
+    const L = { w, h, ox: w / 2, oy: pad + y1 * ppu, ppu, frames, bottom: y0, eyes: frames.map(eyesOf) };
     layouts[key] = L;
     return L;
+  }
+  // Oči viditeľné v snímke: { x, y } (svet, voči počiatku modelu, y hore) a polomer r. Oko, ktoré zakryje časť tela
+  // nakreslená po hlavohrudi (zadoček, hrb), sa nepočíta.
+  function eyesOf(items) {
+    const hi = items.findIndex(i => i.part === 'ceph');
+    if (hi < 0) return [];
+    const inside = (e, p) => {
+      const dx = p[0] - e.c[0], dy = p[1] - e.c[1], c = Math.cos(e.e.ang), s = Math.sin(e.e.ang);
+      const u = (dx * c + dy * s) / e.e.rx, v = (-dx * s + dy * c) / e.e.ry;
+      return u * u + v * v < 1;
+    };
+    const later = items.slice(hi + 1).filter(i => i.k === 'ell' && i.part !== 'cheli');
+    return items[hi].marks.filter(m => m.eye && m.fade > 0.3 && !later.some(e => inside(e, m.c)))
+      .map(m => ({ x: m.c[0], y: m.c[1], r: Math.sqrt(Math.abs(m.m[0][0] * m.m[1][1] - m.m[0][1] * m.m[1][0])) }));
   }
   // nakreslí snímku f (0–3) pohľadu do plátna veľkosti layout(kind, view)
   function sprite(c, kind, view, f) {
