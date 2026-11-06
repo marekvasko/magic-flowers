@@ -68,7 +68,7 @@ E.pending(world, key)                         // the pending event or null
 | Key | Meaning |
 |---|---|
 | `vilyEnd:<player>` | the fairy potion wears off (drinking another one moves it) |
-| `scavDone:<player>` | searching the grass finishes (moving or acting cancels it) |
+| `playerAction:<player>` | the player's one pending action (see *Player actions* below) |
 | `cExpire:<contract>` / `cDue:<contract>` | a contract leaves the board / its deadline (delivering it cancels both) |
 
 ### 3. Periodic (declared)
@@ -140,17 +140,35 @@ advanceTo(world, target, spec):
 
 `advance()` is the only function that knows about real time. Everything else works in ticks. Durations are written in game time with `D.minutes()`, `D.hours()`, `D.days()`; things that run in real time (spider speeds and reactions, pulling silk) use `E.msTicks(world, ms)` and `E.tickMs(world)` as the length of one step.
 
-## Live events: movement and spiders
+## Player actions
 
-Player movement and spiders run on the same queue, with keyed (unique) events, so each player and each spider has at most one pending event:
+**Every player has at most one pending action, key `playerAction:<player>` (`actions.js`).** Moving, tap to walk, an action on a tile, going to bed, and the actions in progress (searching the grass, pulling silk) all share it, so **a new action always replaces the pending one**. Nothing has to remember to cancel the future events of the previous action: the scheduler does it through the key. The state of an action in progress is read from its pending event (`Actions.doing(room, pl, 'scavDone')`), not stored on the player, so nothing stays behind when it's replaced. A type can declare `Actions.define(type, { interrupted(room, pl, ev, why) })` to react when it's replaced (`why` = the new action's type) or cancelled (`why` = `leave`, `travel`, `sleep`, `shove`), e.g. the toast *Prestal(a) si hľadať.*
+
+| Type | What | From |
+|---|---|---|
+| `arriveAt` | a position the client reports: checked to be reachable from the current state, then forwarded and evaluated (`moveNo` if not) | `move` message, only if the player really moved or raised/lowered the lantern (turning around is not an action) |
+| `goTo` | tap to walk: first event lands the client's position and plans the route, then one step per tick along the memoized shortest route, rescheduling itself; `goToEnd` / `goToNo` to the player | `goTo` message |
+| `act` | an action on a tile (dig, plant, water, search, pull silk, give, potion…), done from the position it was made at (the message carries it, checked like `arriveAt`) | `act` message; tapping the same search / web again only says *still searching* |
+| `scavDone` | searching the grass finishes | `act` on grass |
+| `pullDone` | pulling silk finishes | `act` on a web in Les divov |
+| `sleep` | go to bed / get up | `sleep` message |
+
+**One-off actions** (shop, contracts, upgrades, cauldron, wish, storage, compost, tools, icehouse, settings, emote) go through the scheduler too, as plain events of the message's type in the next tick (`Actions.once`): they show in the journal but don't replace the pending action (buying doesn't stop a walk, two quick purchases both happen). Only jumping and chat are handled directly.
+
+Leaving, going through a gate and being thrown by the old spider cancel the pending action (`Actions.cancel`).
+
+## Live events: player actions and spiders
 
 | Key | Types | Scheduled by |
 |---|---|---|
-| `move:<player>` | `arriveAt` (a position the client asks for: checked to be reachable, then forwarded and evaluated; `moveNo` if not), `goTo` (tap to walk: one step per tick along the memoized shortest route, reschedules itself; `goToEnd` / `goToNo` to the player) | `moves.js`: `arrive()` on every `move` message, `goTo()` on every `goTo` message, `settle()` before an action, `place()` when the server moves the player itself |
+| `playerAction:<player>` | see above | `actions.js` (`moves.js`, `server.js`, `spiders.js` through it) |
 | `spider:<id>`, `spider:k<area>` | `spider` (next step), `goTo` (chase: path to the player's predicted position), `kriziak` | `spiders.js`: the spider's own handler (next tick while moving, its deadline while idle); player actions that concern it replace it with a reaction in the next tick |
-| `pull:<player>` | `pullDone` | `spiders.js` `startPull()`; moving or leaving cancels it |
 
-These events belong to the running world only: they are saved with the queue (so `/debug` can show them) but dropped on load (`Moves.isRuntime`, `Spiders.isRuntime`). While nobody is in an area, its spiders have no events at all.
+These events belong to the running world only: they are saved with the queue (so `/debug` can show them) but dropped on load (`Actions.isRuntime`, `Spiders.isRuntime`). While nobody is in an area, its spiders have no events at all.
+
+## Owned events (rule for new content)
+
+An event that concerns an object (a player, a spider, a contract, later a plant on a tile) is keyed by its owner, so removing or changing the owner is one `E.cancel(key)` in the one place that removes it, and the handler checks that the owner is still the same (`Actions.owner` does this for players: same player, still connected, same area). Today flowers have no events of their own: growth is done by the periodic `dawn`, wilting and age are computed from the plant's and the batch's ticks.
 
 ## Determinism and saving
 

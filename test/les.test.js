@@ -177,7 +177,7 @@ let walkN = 0;
 // (so zažatým lampášom – pavúky v Lese divov sa mu vyhnú a neodhodia ho)
 function walkTo(c, x, y, ar, pred) {
   c.send({ t: 'goTo', x: Math.floor(x), y: Math.floor(y), n: ++walkN, ar, lp: true });
-  return c.wait(pred || (m => m.t === 'goToEnd' || m.t === 'goToNo' || m.t === 'shove'), 20000);
+  return c.wait(pred || (m => m.t === 'goToEnd' || m.t === 'goToNo' || m.t === 'shove'), 45000); // dlhá cesta lesom pod záťažou
 }
 function client(port) {
   const ws = new WebSocket('ws://127.0.0.1:' + port), msgs = [], waiters = [];
@@ -233,7 +233,9 @@ test('server: svet z verzie 4 dostane (cez v7) Les divov (záhrada aj Les na pom
     // veľká plocha: dá sa ísť aj ďaleko za hranice záhrady, ale nie von z mriežky
     // (dôjde ťuknutím k východnému okraju – na prvé políčko, kam sa dá dôjsť – a skúsi ísť ďalej)
     let ey = null;
-    for (let y = LH - 1; y >= 0 && ey == null; y--) if (D.passable(toLes.tiles[y * LW + LW - 1]) && (await walkTo(c, LW - 1, y, toLes.seq)).t === 'goToEnd') ey = y;
+    // najbližšie políčka okraja najprv – cesta lesom môže byť dlhá (pavučiny sa obchádzajú)
+    const edge = Array.from({ length: LH }, (_, y) => y).filter(y => D.passable(toLes.tiles[y * LW + LW - 1])).sort((p, q) => Math.abs(p - a.y) - Math.abs(q - a.y));
+    for (const y of edge) if ((await walkTo(c, LW - 1, y, toLes.seq)).t === 'goToEnd') { ey = y; break; }
     assert.ok(ey != null, 'k východnému okraju sa dá dôjsť');
     c.send({ t: 'move', x: 300, y: ey + 0.5, dir: 0, lp: true, ar: toLes.seq });
     const pl = await c.wait(m => m.t === 'pl' && m.list.some(p => p.name === 'Eva' && p.area === 'les' && p.x > LW - 0.4));

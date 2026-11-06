@@ -54,16 +54,20 @@
     if (m < 1) return `in ${dt} tick${dt === 1 ? '' : 's'} (${(dt * (daySeconds || D.BASE_DAY_SECONDS) / D.TICKS_PER_DAY).toFixed(3)} s)`;
     return m < 60 ? `in ${Math.round(m)} min` : m < 1440 ? `in ${(m / 60).toFixed(1)} h` : `in ${(m / 1440).toFixed(1)} d`;
   }
-  // Udalosti bežiaceho sveta (#101): pohyb hráčov (move:<hráč>), pavúky (spider:<id>) a ťahanie hodvábu (pull:<hráč>).
-  // Každý hráč aj pavúk má najviac jednu – zobrazia sa zvlášť, aby nezahltili ostatný plán.
-  const LIVE = /^(move|spider|pull):/;
+  // Udalosti bežiaceho sveta (#101): akcia hráča (playerAction:<hráč> – pohyb, vedenie, akcia na políčku, hľadanie,
+  // ťahanie hodvábu, spánok) a pavúky (spider:<id>). Každý hráč aj pavúk má najviac jednu – zobrazia sa zvlášť.
+  const LIVE = /^(playerAction|spider):/;
   function liveDesc(e) {
     const d = e.data || {}, xy = (x, y) => x == null ? '' : `(${(+x).toFixed(2)}, ${(+y).toFixed(2)})`;
     if (e.type === 'arriveAt') return `player wants to arrive at ${xy(d.x, d.y)} (now ${xy(d.fx, d.fy)}), sent at tick ${d.t}, checked next tick`;
     if (e.type === 'goTo' && d.sp != null) return `${d.sp} chases player #${d.p} → predicted ${xy(d.x, d.y)}`;
     if (e.type === 'goTo') return `player led to tile ${d.gx},${d.gy}: step ${xy(d.fx, d.fy)} → ${xy(d.x, d.y)}${d.path ? ` (${d.path.length} tiles left)` : ''}`;
     if (e.type === 'kriziak') return `cross spider running to a corner (${d.area})`;
+    if (e.type === 'goTo' && !d.path) return `player tapped tile ${d.gx},${d.gy}: route planned next tick`;
     if (e.type === 'pullDone') return 'silk pull finishes';
+    if (e.type === 'scavDone') return `search finishes (tile ${d.i})`;
+    if (e.type === 'act') return `action on tile ${d.tx},${d.ty}${d.item ? ' with ' + d.item : ''}${d.x != null ? ` from ${xy(d.x, d.y)}` : ''}`;
+    if (e.type === 'sleep') return d.on ? 'goes to bed' : 'gets up';
     if (e.type === 'spider') return `${d.id}: next step`;
     return short(d);
   }
@@ -184,12 +188,12 @@
           h('td', null, o ? 'now' : sv.lastTick != null ? when(sv.lastTick) : '–'));
       }))) : h('div', { class: 'empty' }, 'Nobody has played here yet.'));
 
-    out.push(h('h3', null, `Live: movement and spiders (${live.length})`));
+    out.push(h('h3', null, `Live: player actions and spiders (${live.length})`));
     out.push(live.length ? h('div', { class: 'tablewrap' }, h('table', null,
       h('tr', null, h('th', null, 'Key'), h('th', null, 'Type'), h('th', null, 'When'), h('th', null, 'What')),
       live.map(e => h('tr', null, h('td', { class: 'mono' }, e.key), h('td', null, h('b', null, e.type)),
         h('td', { class: 'muted' }, e.at <= tick ? 'now' : `in ${e.at - tick} tick${e.at - tick === 1 ? '' : 's'} (${((e.at - tick) * (w.daySeconds || D.BASE_DAY_SECONDS) / D.TICKS_PER_DAY).toFixed(3)} s)`), h('td', null, liveDesc(e)))))) :
-      h('div', { class: 'empty' }, 'Nothing moving: spiders sleep at home while nobody is in their area, players have no unevaluated move.'));
+      h('div', { class: 'empty' }, 'Nothing pending: spiders sleep at home while nobody is in their area, players have no pending action.'));
 
     out.push(h('h3', null, `Upcoming events (${events.length})`));
     out.push(events.length ? h('div', { class: 'tablewrap' }, h('table', null,

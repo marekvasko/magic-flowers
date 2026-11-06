@@ -8,6 +8,7 @@
 //   a ťahanie hodvábu hráča (kľúč pull:<hráč>). Pavúky sa hýbu len vtedy, keď je na ich ploche aspoň jeden hráč.
 const D = require('./shared/data.js');
 const E = require('./engine.js');
+const Actions = require('./actions.js');
 const { areaTiles } = require('./areas.js');
 const Webs = require('./shared/webs.js');
 const { analyze, cornerSpots, bfs } = Webs;
@@ -154,31 +155,26 @@ function give(pl, n) { if (n > 0) { pl.save.inv.silk = silkOf(pl) + n; io.sendMe
 function take(pl, n) { const k = Math.min(n, silkOf(pl)); if (k > 0) { if (k === silkOf(pl)) delete pl.save.inv.silk; else pl.save.inv.silk -= k; io.sendMe(pl); } return k; }
 function slow(pl, k, ms) { io.send(pl, { t: 'slow', k, ms }); }
 
-// Hráč začne ťahať hodváb z pavučiny (potrvá WEB.pullMs – udalosť 'pullDone', kľúč pull:<hráč>).
-// Vráti chybové hlásenie alebo null.
+// Hráč začne ťahať hodváb z pavučiny: akcia hráča 'pullDone' o WEB.pullMs (actions.js – kľúč playerAction:<hráč>).
+// Ťahá, kým ju nenahradí iná akcia (pohyb, iné ťuknutie, zdvihnutý lampáš…). Vráti chybové hlásenie alebo null.
 function startPull(room, pl, wb) {
   if (pl.lp) return 'S lampášom v ruke hodváb neutrhneš. Vyber si v lište niečo iné alebo prázdnu ruku. 🏮';
-  if (pl.pull) return 'Ešte ťaháš… 🕸️';
-  pl.pullN = (pl.pullN | 0) + 1;
-  pl.pull = { id: wb.id, n: pl.pullN, until: room.tick + E.msTicks(room, WEB.pullMs), px: pl.x, py: pl.y };
-  E.scheduleUnique(room, 'pull:' + pl.key, pl.pull.until, 'pullDone', { key: pl.key, n: pl.pullN });
+  Actions.schedule(room, pl, room.tick + E.msTicks(room, WEB.pullMs), 'pullDone', { web: wb.id });
   return null;
 }
-function stopPull(pl, room) {
-  pl.pull = null;
-  room = room || pl.room;
-  if (room && room.events) E.cancel(room, 'pull:' + pl.key);
-}
-// Udalosť 'pullDone': ťahanie sa dokončí, len ak hráč stále ťahá to isté a je v lese
+const pulling = (room, pl) => Actions.doing(room, pl, 'pullDone');
+Actions.define('pullDone', {
+  interrupted(room, pl, ev, why) { if (!QUIET[why]) io.toast(pl, 'Prestal(a) si ťahať hodváb.'); }
+});
+const QUIET = { leave: 1, travel: 1, sleep: 1, shove: 1 };
+// Udalosť 'pullDone': ťahanie sa dokončí, len ak je hráč stále v lese
 function onPullDone(room, d) {
-  const pl = d && playersIn(room, 'les').find(p => p.key === d.key);
-  if (pl && pl.pull && pl.pull.n === d.n) finishPull(room, pl);
+  const pl = Actions.owner(room, d);
+  if (pl && pl.area === 'les') finishPull(room, pl, null, d.web);
 }
-// Dokončenie potiahnutia: +1 hodváb; majiteľ si to všimne s rastúcou šancou, posledné potiahnutie pavučinu roztrhne.
-function finishPull(room, pl, rnd) {
-  const p = pl.pull;
-  pl.pull = null;
-  const wb = room.spid.webs.find(x => x.id === p.id);
+// Dokončenie potiahnutia z pavučiny web: +1 hodváb; majiteľ si to všimne s rastúcou šancou, posledné potiahnutie ju roztrhne.
+function finishPull(room, pl, rnd, web) {
+  const wb = room.spid.webs.find(x => x.id === web);
   if (!wb) return io.toast(pl, 'Pavučina je preč – niekto ju roztrhol. 🕸️');
   const k = WEB.silk - wb.silk; // koľké potiahnutie (0 = prvé)
   wb.silk--;
@@ -658,7 +654,7 @@ function save(room) { return room.spid; }
 module.exports = {
   setHooks, analyze, cornerSpots, forest, trunkSpot, webTiles, webAt, target, weave, tear, balance, onWeave,
   spots, cornerList, clearCorner, addCorner, hourlyCorners, startKriziak, pruneCorners,
-  startPull, stopPull, finishPull, walkIn, checkWalk, alert, spiders, plan, wake, ensure, noticePlayer, predict, sleepAll,
+  startPull, pulling, finishPull, walkIn, checkWalk, alert, spiders, plan, wake, ensure, noticePlayer, predict, sleepAll,
   websView, cornerView, areaViews, entities, load, save, isRuntime,
   // obsluha udalostí v plánovači (server ich pridá do svojich HANDLERS; goTo pavúka má v dátach sp)
   HANDLERS: { spider: onSpider, goTo: onSpider, kriziak: onKriziak, pullDone: onPullDone }

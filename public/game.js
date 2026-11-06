@@ -464,8 +464,8 @@
       else plantInfo(tx, ty);
       return;
     }
-    if (a.l === 'Hľadať') { const me = S.me; send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq, fx: S.fix }); } // server musí vedieť, že už stojím na políčku
-    send({ t: 'act', x: tx, y: ty, item: S.sel });
+    // akcia nesie aj polohu hráča – server ju overí ako pohyb a akciu urobí odtiaľ (v najbližšom kroku)
+    send(Object.assign({ t: 'act', x: tx, y: ty, item: S.sel, ar: S.areaSeq, fx: S.fix }, myPos()));
     if (a.l === 'Kopať' || a.l === 'Vysekať ľad' || a.l === 'Ťahať hodváb') sfx('dig'); else if (a.l === 'Poliať' || a.l === 'Načrieť') sfx('water'); else sfx('pop');
   }
 
@@ -624,8 +624,12 @@
   function startWalk(path) {
     const g = path[path.length - 1], me = S.me;
     S.walk = { n: ++S.walkN, q: [], end: false };
-    send({ t: 'goTo', x: Math.floor(g.x), y: Math.floor(g.y), n: S.walk.n, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq, fx: S.fix });
+    send(Object.assign({ t: 'goTo', x: Math.floor(g.x), y: Math.floor(g.y), n: S.walk.n, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq, fx: S.fix }, myPos()));
+    S.localMove = false;
   }
+  // Poloha pre server len vtedy, keď hráča naposledy pohol klient sám (joystick, klávesy). Po vedení serverom je
+  // hráč na obrazovke o krok pozadu – server vie lepšie, kde je, a stará poloha by ho vrátila späť.
+  function myPos() { return S.localMove ? { px: S.me.x, py: S.me.y } : {}; }
   function walkPoint(x, y) {
     const q = S.walk.q, last = q.length ? q[q.length - 1] : S.me, d = Math.hypot(x - last.x, y - last.y);
     if (d > 1e-4) q.push({ x, y, v: d / S.tickMs }); // políčka za ms
@@ -1326,7 +1330,7 @@
         // lepkavá pavučina a pavúk na chrbte spomaľujú (server pošle 'slow')
         const slowK = performance.now() < S.slowUntil ? S.slowK : 1;
         const sp = 3.8 * dt * (me.crawl ? CRAWL_SPEED : 1) * Math.max(0.4, 1 - D.ICE_SLOW * (S.inv.ice || 0)) * slowK;
-        const { rx, ry } = D.BODY;
+        const { rx, ry } = D.BODY, ox = me.x, oy = me.y;
         // hráč stojí na najvyššom políčku pod sebou – kým celkom nezíde z ľadu, nezasekne sa o jeho hranu
         const corners = (x, y) => [[x - rx, y - ry], [x + rx, y - ry], [x - rx, y + ry], [x + rx, y + ry]];
         let here = tileAt(Math.floor(me.x), Math.floor(me.y));
@@ -1347,6 +1351,7 @@
         const ny = me.y + vy * sp;
         if (free(me.x, ny)) me.y = ny;
         face(vx, vy);
+        if (me.x !== ox || me.y !== oy) S.localMove = true;
         me.a = Math.atan2(vy, vx); // presný smer pre 8-smerový sprite
         me.phase += dt * (me.crawl ? 7 : 11);
       } else me.phase = 0;
