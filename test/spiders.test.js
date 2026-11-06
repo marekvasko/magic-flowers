@@ -459,3 +459,63 @@ test('kútová pavučina: 3 kotvy na 2 alebo 3 plochách kúta, rám vo vzduchu,
   assert.strictEqual(Webs.cornerThreads({ cornerBreak: 0 }, { seed: 5, faces: 2 }).layout.nH, 1);
   assert.strictEqual(Webs.cornerThreads({ cornerBreak: 1 }, { seed: 5, faces: 2 }).layout.nH, 2);
 });
+
+test('kúty v budovách z minikociek: hrana steny so zemou a pod presahom strechy, nesúmerná veľkosť, nie na streche', () => {
+  // model 12 × 12 × 12: stena v x = 0…3 (celá výška 10), na vrchu presah strechy x = 4…7 vo výške 9; schod na zemi v z = 0…1
+  const sx = 12, sy = 12, sz = 12, data = new Uint8Array(sx * sy * sz);
+  const put = (x, y, z) => { data[(z * sy + y) * sx + x] = 1; };
+  for (let z = 0; z < sz; z++) { for (let y = 0; y < 10; y++) for (let x = 0; x < 4; x++) put(x, y, z); for (let x = 4; x < 8; x++) put(x, 9, z); }
+  for (let x = 8; x < 11; x++) for (let z = 0; z < 2; z++) put(x, 0, z); // nízky schod pod holým nebom
+  const all = Webs.voxelCorners({ sx, sy, sz, data }, { x0: 0, x1: sx - 1, y0: 0, y1: sy - 1, z0: 0, z1: sz - 1 });
+  const key = q => q.X.join() + '|' + q.Y.join();
+  // stena a zem: X von zo steny (+x), Y hore; voľné miesto po presah (4 kocky) a 8 nahor (strop 9 – najviac max 8)
+  const ground = all.find(q => key(q) === '1,0,0|0,1,0' && q.o[1] === 0 && q.v[2] >= 2); // mimo schodu
+  assert.strictEqual(all.find(q => key(q) === '1,0,0|0,1,0' && q.v[2] < 2).size[0], 4, 'pri schode len po schod');
+  assert.ok(ground, 'hrana steny so zemou');
+  assert.strictEqual(ground.size[0], 8);
+  assert.deepStrictEqual(ground.o.slice(0, 2), [4, 0], 'roh na päte steny');
+  // pod presahom strechy: X dole (von zo strechy), Y von zo steny – výška pod strechou 8 (y 1…8 nad schodom/ zemou 0…8 = 9 → max 8)
+  const eave = all.find(q => q.X.join() === '1,0,0' && q.Y.join() === '0,-1,0');
+  assert.ok(eave, 'pod strechou pri stene');
+  assert.strictEqual(eave.size[0], 4, 'od steny len po okraj presahu (4 kocky)');
+  assert.strictEqual(eave.size[1], 8, 'nadol po stene (najviac 8)');
+  assert.deepStrictEqual(eave.o.slice(0, 2), [4, 9]);
+  // na schode pod holým nebom nič (vodorovná plocha nad zemou bez strechy nad ňou)
+  assert.ok(!all.some(q => q.v[1] === 1 && q.v[0] >= 8), 'nie na streche/schode pod nebom');
+  // veľkosti: aspoň 2 kocky, nikdy viac ako voľné miesto; rôzne semienka → rôzne a nesúmerné
+  const sizes = new Set();
+  for (let s = 1; s <= 40; s++) {
+    const q = Webs.pickVoxelCorner(all, s);
+    q.vox.forEach((n, i) => assert.ok(n >= 2 && n <= q.free[i]));
+    assert.deepStrictEqual(q.size, q.vox.map(n => n / 8));
+    sizes.add(q.vox.join('x'));
+  }
+  assert.ok(sizes.size > 10, 'rôzne veľkosti');
+  assert.ok([...sizes].some(s => { const v = s.split('x').map(Number); return Math.max(...v) >= 3 * Math.min(...v); }), 'aj pretiahnuté (napr. 2 × 6)');
+  // pavučina s veľkosťou po osiach drží kotvy v nej
+  const t = Webs.cornerThreads({}, { seed: 9, faces: 2, size: [2 / 8, 6 / 8, 3 / 8] });
+  assert.ok(t.anchors.every(p => p[0] <= 2 / 8 + 1e-9 && p[1] <= 6 / 8 + 1e-9 && p[2] <= 3 / 8 + 1e-9));
+});
+
+test('pavučina v budove: kotvy (aj zlom) sa navzájom vidia – medzi nimi nie je plná minikocka', () => {
+  const W3 = require('../shared/world3d.js');
+  let webs = 0;
+  for (const id of ['house', 'hut', 'stall', 'icehouse', 'well']) {
+    const f = W3.FINE_MODELS.find(m => m.id === id).build(1, 0);
+    const all = Webs.voxelCorners(f, { x0: 0, x1: f.sx - 1, y0: 0, y1: f.sy - 1, z0: 0, z1: f.sz - 1 });
+    for (let seed = 1; seed <= 15; seed++) {
+      const r = Webs.voxelWeb(f, all, seed, {}, 1);
+      if (!r) continue;
+      webs++;
+      const see = Webs.voxelSight(f, r.q), A = r.th.anchors;
+      assert.ok(see(A[0], A[1]) && see(A[1], A[2]) && see(A[2], A[0]), `${id} ${seed}: kotvy sa vidia`);
+    }
+  }
+  assert.ok(webs > 60, 'v budovách sa pavučiny nájdu');
+  // stena medzi kotvami: voxelSight to odhalí
+  const sx = 8, sy = 8, sz = 8, data = new Uint8Array(sx * sy * sz);
+  for (let z = 0; z < sz; z++) for (let y = 0; y < sy; y++) data[(z * sy + y) * sx + 4] = 1; // stena v x = 4
+  const see = Webs.voxelSight({ sx, sy, sz, data }, { o: [0, 2, 0], X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] });
+  assert.ok(see([0, 0, 0.1], [0.4, 0, 0.1]), 'pred stenou');
+  assert.ok(!see([0, 0, 0.1], [0.8, 0, 0.1]), 'cez stenu nie');
+});

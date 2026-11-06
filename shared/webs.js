@@ -330,7 +330,10 @@
   // vzniknú dve oblasti. Každá oblasť sa vyplní ako veľká pavučina: stred, lúče po rám, špirála alebo kruhy.
   // Výsledok: pos/tan úsečiek v súradniciach kúta, hub = stred prvej oblasti (tam sedí krížiak).
   function cornerThreads(over, opts) {
-    const P = webParams(over), seed = (opts.seed + P.seed * 101) % 997, keep = opts.keep == null ? 1 : opts.keep, S = P.cornerSize;
+    const P = webParams(over), seed = (opts.seed + P.seed * 101) % 997, keep = opts.keep == null ? 1 : opts.keep;
+    // veľkosť kúta po osiach (políčka): v kúte pri stene všade cornerSize, v kúte budovy z minikociek podľa miesta (napr. 2 × 6 minikociek)
+    const see = opts.see || null;
+    const SZ = opts.size || [P.cornerSize, P.cornerSize, P.cornerSize], S = Math.max(...SZ), S2 = (SZ[0] * SZ[1] + SZ[1] * SZ[2] + SZ[0] * SZ[2]) / 3;
     const hs = n => { const x = Math.sin(seed * 12.9898 + n * 78.233) * 43758.5453; return x - Math.floor(x); };
     const R = (n, a, b) => a + (b - a) * hs(n);
     const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -339,16 +342,18 @@
     // tri body (pri plochom trojuholníku ďalší pokus)
     let V = null;
     for (let t = 0; t < 24 && !V; t++) {
-      const k = t * 17, r = (n, a, b) => R(k + n, a * S, b * S);
+      const k = t * 17, x = (n, a, b) => R(k + n, a, b) * SZ[0], y = (n, a, b) => R(k + n, a, b) * SZ[1], z = (n, a, b) => R(k + n, a, b) * SZ[2];
       let pts;
-      if (opts.faces === 3) pts = [[0, r(1, 0.15, 1), r(2, 0.15, 1)], [r(3, 0.15, 1), r(4, 0.15, 1), 0], [r(5, 0.15, 1), 0, r(6, 0.15, 1)]];
-      else if (hs(k + 7) < 0.5) pts = [[0, r(1, 0.2, 1), r(2, 0.05, 0.9)], [0, r(3, 0.2, 1), r(4, 0.05, 0.9)], [r(5, 0.15, 0.9), 0, r(6, 0, 0.9)]];
-      else pts = [[0, r(1, 0.3, 1), r(2, 0.05, 0.9)], [r(3, 0.15, 0.9), 0, r(4, 0, 0.9)], [r(5, 0.15, 0.9), 0, r(6, 0, 0.9)]];
+      if (opts.faces === 3) pts = [[0, y(1, 0.15, 1), z(2, 0.15, 1)], [x(3, 0.15, 1), y(4, 0.15, 1), 0], [x(5, 0.15, 1), 0, z(6, 0.15, 1)]];
+      else if (hs(k + 7) < 0.5) pts = [[0, y(1, 0.2, 1), z(2, 0.05, 0.95)], [0, y(3, 0.2, 1), z(4, 0.05, 0.95)], [x(5, 0.15, 0.95), 0, z(6, 0, 0.95)]];
+      else pts = [[0, y(1, 0.3, 1), z(2, 0.05, 0.95)], [x(3, 0.15, 0.95), 0, z(4, 0, 0.95)], [x(5, 0.15, 0.95), 0, z(6, 0, 0.95)]];
       // nie príliš plochý: plocha a najkratšia výška voči najdlhšej strane
       const ar = len(cross(sub(pts[1], pts[0]), sub(pts[2], pts[0]))) / 2, lm = Math.max(len(sub(pts[1], pts[0])), len(sub(pts[2], pts[1])), len(sub(pts[0], pts[2])));
-      if (ar > 0.12 * S * S && 2 * ar / lm > 0.3 * S) V = pts;
+      // kotvy sa musia navzájom vidieť (opts.see: medzi nimi nič plné – v budove z minikociek)
+      if (ar > 0.12 * S2 && 2 * ar / lm > 0.25 * Math.sqrt(S2) && (!see || (see(pts[0], pts[1]) && see(pts[1], pts[2]) && see(pts[2], pts[0])))) V = pts;
     }
-    V = V || [[0, 0.6 * S, 0.1 * S], [0, 0.2 * S, 0.8 * S], [0.6 * S, 0, 0.4 * S]];
+    if (!V && see) return null; // v tomto kúte sa vidiace sa kotvy nenašli
+    V = V || [[0, 0.7 * SZ[1], 0.1 * SZ[2]], [0, 0.25 * SZ[1], 0.9 * SZ[2]], [0.7 * SZ[0], 0, 0.5 * SZ[2]]];
     // rovina pavučiny: 2D súradnice (u, v) v rovine trojuholníka
     const O = V[0], U = mul(sub(V[1], O), 1 / len(sub(V[1], O))), N = cross(U, sub(V[2], O)), W = mul(cross(mul(N, 1 / len(N)), U), 1);
     const to2 = p => [dot(sub(p, O), U), dot(sub(p, O), W)], to3 = q => add(O, add(mul(U, q[0]), mul(W, q[1])));
@@ -359,14 +364,16 @@
       for (let i = 0; i < n; i++) { const p = add(A, mul(d, i / n)), q = add(A, mul(d, (i + 1) / n)); pos.push(...p, ...q); tan.push(...t, ...t); }
     };
     // rám a oblasti (so zlomom: dve oblasti so spoločným deliacim vláknom)
-    let polys, frame;
+    let polys = null, frame;
     if (hs(40) < P.cornerBreak) {
       const c = Math.floor(hs(41) * 3), e1 = v2[(c + 1) % 3], e2 = v2[(c + 2) % 3], C = v2[c];
       const t = R(42, 0.3, 0.7), mid = [e1[0] + (e2[0] - e1[0]) * t, e1[1] + (e2[1] - e1[1]) * t], k = P.breakPull * R(43, 0.6, 1.4);
       const M = [mid[0] + (C[0] - mid[0]) * k, mid[1] + (C[1] - mid[1]) * k];
-      polys = [[e1, M, C], [M, e2, C]];
-      frame = [[e1, M], [M, e2], [e2, C], [C, e1], [M, C]];
-    } else {
+      // aj bod zlomu musí vidieť na oba konce hrany aj na protiľahlý vrchol – inak bez zlomu
+      const ok = !see || [e1, e2, C].every(q => see(to3(M), to3(q)));
+      if (ok) { polys = [[e1, M, C], [M, e2, C]]; frame = [[e1, M], [M, e2], [e2, C], [C, e1], [M, C]]; }
+    }
+    if (!polys) {
       polys = [v2];
       frame = [[v2[0], v2[1]], [v2[1], v2[2]], [v2[2], v2[0]]];
     }
@@ -423,7 +430,91 @@
     return { pos: new Float32Array(pos), tan: new Float32Array(tan), count: pos.length / 3, hub: hub0, anchors: V, layout: { seed, nH: polys.length, moor: [0, 0], fill, hubs: [] } };
   }
 
-  const api = { WEB_PARAMS, webParams, ANCHOR, anchorAt, webGeom, webLayout, webThreads, cornerThreads, noise2, analyze, cornerSpots, bfs };
+
+  // ---- Kúty v budovách z minikociek (1/8 políčka) ----
+  // Prázdna minikocka E, ktorá má plnú susednú kocku v dvoch kolmých smeroch a, b (vnútorná hrana: pod strechou pri stene,
+  // v okne, pri schode, stena pri zemi – pod modelom je zem), prípadne aj v treťom c (vnútorný roh). Pavučina sa napne
+  // v otvorenom kvadrante: X von z plochy a (−a), Y von z plochy b (−b), Z pozdĺž hrany c. Veľkosť po osiach v minikockách
+  // je, kam až siaha voľné miesto a zároveň plocha, na ktorej ležia kotvy (pod presahom strechy len po jeho okraj),
+  // najviac max – nemusí byť súmerná, napr. 2 × 6. Kúty na streche pod holým nebom
+  // (vodorovná plocha nad zemou a nad ňou už nič) sa vynechajú. Vráti zoznam kútov:
+  // { o: roh v súradniciach minikociek (spojité), X, Y, Z: celočíselné smery, size: [nx, ny, nz], faces: 2 | 3 }.
+  // f = { sx, sy, sz, data } (data[(z * sy + y) * sx + x]), box = oblasť hľadania v minikockách { x0, x1, y0, y1, z0, z1 }.
+  const VDIR = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+  function voxelCorners(f, box, max) {
+    max = max || 8;
+    const { sx, sy, sz, data } = f;
+    const inXZ = (x, z) => x >= 0 && z >= 0 && x < sx && z < sz;
+    const solid = (x, y, z) => !inXZ(x, z) ? false : y < 0 ? true : y >= sy ? false : data[(z * sy + y) * sx + x] !== 0;
+    const free = (x, y, z) => !solid(x, y, z);
+    const run = (x, y, z, d, ok) => { let n = 0; while (n < max && ok(x + d[0] * n, y + d[1] * n, z + d[2] * n)) n++; return n; };
+    const out = [];
+    for (let z = Math.max(0, box.z0); z <= Math.min(sz - 1, box.z1); z++) for (let y = Math.max(0, box.y0); y <= Math.min(sy - 1, box.y1); y++) for (let x = Math.max(0, box.x0); x <= Math.min(sx - 1, box.x1); x++) {
+      if (solid(x, y, z)) continue;
+      for (let ia = 0; ia < 6; ia++) for (let ib = ia + 1; ib < 6; ib++) {
+        const a = VDIR[ia], b = VDIR[ib];
+        if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] !== 0) continue;
+        if (!solid(x + a[0], y + a[1], z + a[2]) || !solid(x + b[0], y + b[1], z + b[2])) continue;
+        // hrana pokračuje v smere c (kolmo na a aj b): ešte voľno a obe plochy pokračujú
+        const c = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+        const edge = (px, py, pz) => free(px, py, pz) && solid(px + a[0], py + a[1], pz + a[2]) && solid(px + b[0], py + b[1], pz + b[2]);
+        for (const cc of [c, c.map(v => -v)]) {
+          if (edge(x - cc[0], y - cc[1], z - cc[2])) continue; // nie je začiatok hrany
+          const len = run(x, y, z, cc, edge);
+          // veľkosť od plochy a: kým je voľno a plocha b (kotvy na nej) ešte pokračuje – a naopak
+          const nA = run(x, y, z, a.map(v => -v), (px, py, pz) => free(px, py, pz) && solid(px + b[0], py + b[1], pz + b[2]));
+          const nB = run(x, y, z, b.map(v => -v), (px, py, pz) => free(px, py, pz) && solid(px + a[0], py + a[1], pz + a[2]));
+          if (len < 2 || nA < 2 || nB < 2) continue;
+          const faces = solid(x - cc[0], y - cc[1], z - cc[2]) ? 3 : 2; // aj začiatok hrany je stena → vnútorný roh
+          // vodorovná plocha pod pavučinou (zem, parapet) áno, ale nie schody strechy pod holým nebom
+          const up = a[1] < 0 || b[1] < 0;
+          if (up && y > 0) { let sky = true; for (let yy = y + 1; yy < sy && sky; yy++) if (solid(x, yy, z)) sky = false; if (sky) continue; }
+          const o = [x, y, z].map((v, i) => v + (a[i] > 0 ? 1 : 0) + (b[i] > 0 ? 1 : 0) + (cc[i] < 0 ? 1 : 0));
+          out.push({ o, X: a.map(v => -v || 0), Y: b.map(v => -v || 0), Z: cc.map(v => v || 0), size: [nA, nB, len], faces, v: [x, y, z] });
+        }
+      }
+    }
+    return out;
+  }
+
+  // Priama viditeľnosť v modeli z minikociek: úsečka a–b (súradnice kúta q v políčkach) nesmie prejsť plnou minikockou
+  // (zem pod modelom sa ráta ako plná). Body ležia na plochách – vzorky sa posunú o kúsok do otvoreného kvadrantu.
+  function voxelSight(f, q) {
+    const { sx, sy, sz, data } = f;
+    const solid = (x, y, z) => x < 0 || z < 0 || x >= sx || z >= sz ? false : y < 0 ? true : y >= sy ? false : data[(z * sy + y) * sx + x] !== 0;
+    const toV = p => [0, 1, 2].map(i => q.o[i] + (q.X[i] * p[0] + q.Y[i] * p[1] + q.Z[i] * p[2]) * 8 + (q.X[i] + q.Y[i] + q.Z[i]) * 0.01);
+    return (a, b) => {
+      const A = toV(a), B = toV(b), n = Math.max(2, Math.ceil(Math.hypot(B[0] - A[0], B[1] - A[1], B[2] - A[2]) * 4));
+      for (let i = 1; i < n; i++) {
+        const t = i / n;
+        if (solid(Math.floor(A[0] + (B[0] - A[0]) * t), Math.floor(A[1] + (B[1] - A[1]) * t), Math.floor(A[2] + (B[2] - A[2]) * t))) return false;
+      }
+      return true;
+    };
+  }
+  // Pavučina v budove: kúty v poradí podľa semienka, v každom veľkosť podľa semienka (pickVoxelCorner); berie sa prvý kút,
+  // v ktorom sa kotvy navzájom vidia (voxelSight). Vráti { q, th } (th = cornerThreads) alebo null.
+  function voxelWeb(f, list, seed, over, keep) {
+    const hs = n => { const x = Math.sin(seed * 12.9898 + n * 78.233) * 43758.5453; return x - Math.floor(x); };
+    const start = Math.floor(hs(1) * list.length);
+    for (let i = 0; i < Math.min(list.length, 16); i++) {
+      const q = pickVoxelCorner([list[(start + i * 7) % list.length]], seed + i * 101);
+      const th = cornerThreads(over, { seed: seed + i * 101, faces: q.faces, size: q.size, keep, see: voxelSight(f, q) });
+      if (th) return { q, th };
+    }
+    return null;
+  }
+
+  // Výber kúta zo zoznamu podľa semienka a jeho veľkosť: po osiach náhodne v rámci voľného miesta (najmenej 2 minikocky),
+  // takže pavučiny sú rôzne a nesúmerné (napr. 2 × 6). size je v políčkach (minikocka = 1/8).
+  function pickVoxelCorner(list, seed) {
+    if (!list.length) return null;
+    const hs = n => { const x = Math.sin(seed * 12.9898 + n * 78.233) * 43758.5453; return x - Math.floor(x); };
+    const q = list[Math.floor(hs(1) * list.length)];
+    return Object.assign({}, q, { free: q.size, vox: q.size.map((n, i) => 2 + Math.floor(hs(2 + i) * (n - 1))), size: q.size.map((n, i) => (2 + Math.floor(hs(2 + i) * (n - 1))) / 8) });
+  }
+
+  const api = { WEB_PARAMS, webParams, ANCHOR, anchorAt, webGeom, webLayout, webThreads, cornerThreads, voxelCorners, pickVoxelCorner, voxelSight, voxelWeb, noise2, analyze, cornerSpots, bfs };
   root.Webs = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof self !== 'undefined' ? self : this);
