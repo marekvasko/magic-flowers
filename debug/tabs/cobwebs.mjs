@@ -3,7 +3,8 @@
 // shaderom ako v hre (public/spiders3d.mjs) a pôdorys Lesa divov s miestami, kde môže pavučina visieť (rozpätie span / gladeSpan).
 // Úpravy žijú len v tejto stránke (a v adrese); „Copy parameters“ dá JSON so zmenenými hodnotami (v hre: window.MF_WEB = …).
 import * as THREE from '/vendor/three/three.module.js';
-import { webMaterial, webLines, cornerLines } from '/spiders3d.mjs';
+import { meshModel } from '/debug/tabs/modelview.mjs';
+import { webMaterial, webLines, cornerLines, threadLines } from '/spiders3d.mjs';
 
 const MAX_LIGHTS = 16;
 export const CSS = `
@@ -22,7 +23,8 @@ const LIGHT = {
   day: { label: 'Garden, day', amb: [0.62, 0.64, 0.72], sun: [0.55, 0.52, 0.44], dark: 0, lamp: false, bg: 0x9ec7e0 },
   night: { label: 'Garden, night + lantern', amb: [0.22, 0.25, 0.42], sun: [0, 0, 0], dark: 0, lamp: true, bg: 0x0d1428 }
 };
-const ANCH = ['tree', 'giant', 'bush', 'log', 'corner', 'corner3'];
+const ANCH = ['tree', 'giant', 'bush', 'log', 'corner', 'corner3', 'house', 'hut', 'stall', 'icehouse'];
+const BUILDINGS = ['house', 'hut', 'stall', 'icehouse'];
 
 export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone }) {
   const Webs = window.Webs;
@@ -59,14 +61,14 @@ export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone })
     lampIn.oninput = () => { st.lamp = +lampIn.value; saveSt(); placeLamp(); request(); };
     const webIn = h('input', { type: 'number', min: 1, max: 99999, value: st.web, style: 'width:80px' });
     webIn.onchange = () => { st.web = Math.max(1, +webIn.value | 0); saveSt(); rebuild(); };
-    bar.replaceChildren(
+    bar.replaceChildren(...[
       seg(h, Object.values(LIGHT).map(l => l.label), Object.keys(LIGHT).indexOf(st.light), i => { st.light = Object.keys(LIGHT)[i]; saveSt(); renderBar(); applyLight(); request(); }),
       seg(h, ANCH, ANCH.indexOf(st.anchor), i => { st.anchor = ANCH[i]; saveSt(); renderBar(); resetView(); rebuild(); }),
       h('label', null, 'tiles ', seg(h, ['1', '2', '3', '4', '5'], st.n - 1, i => { st.n = i + 1; saveSt(); renderBar(); rebuild(); })),
       h('label', null, 'silk ', seg(h, ['1', '2', '3'], st.silk - 1, i => { st.silk = i + 1; saveSt(); renderBar(); rebuild(); })),
       h('label', null, 'web id ', webIn),
       LIGHT[st.light].lamp ? h('label', null, '🏮 ', lampIn) : null,
-      h('button', { onclick: () => { resetView(); } }, 'Reset view'));
+      h('button', { onclick: () => { resetView(); } }, 'Reset view')].filter(Boolean)); // bez lampáša nič navyše
   }
 
   // ---- posuvníky po skupinách ----
@@ -132,7 +134,7 @@ export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone })
     cv.ondblclick = resetView;
     new ResizeObserver(() => request()).observe(viewEl);
   }
-  function resetView() { Object.assign(view, st.anchor.startsWith('corner') ? { yaw: 0.8, pitch: 0.45, dist: 2.2 } : { yaw: 0.35, pitch: 0.38, dist: 2.2 + st.n * 1.1 }); request(); }
+  function resetView() { Object.assign(view, BUILDINGS.includes(st.anchor) ? { yaw: 0.8, pitch: 0.3, dist: 1.4 } : st.anchor.startsWith('corner') ? { yaw: 0.8, pitch: 0.45, dist: 2.2 } : { yaw: 0.35, pitch: 0.38, dist: 2.2 + st.n * 1.1 }); request(); }
   const matBark = new THREE.MeshLambertMaterial({ color: 0x7a5236 }), matLeaf = new THREE.MeshLambertMaterial({ color: 0x3f7a36 }), matGround = new THREE.MeshLambertMaterial({ color: 0x5a4a36 });
   const amb = new THREE.AmbientLight(0xffffff, 1), sunL = new THREE.DirectionalLight(0xffffff, 0), lampL = new THREE.PointLight(0xffc878, 0, 3.5, 1.5);
   scene.add(amb, sunL, lampL);
@@ -161,6 +163,7 @@ export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone })
     const T = tiles(), P = Webs.webParams(over()), g = Webs.webGeom(T.t, T.w, T.hh, T.wb, over());
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(T.w, T.hh), matGround); ground.rotation.x = -Math.PI / 2; ground.position.set(T.w / 2, 0, T.hh / 2); objs.push(ground);
     if (st.anchor.startsWith('corner')) return rebuildCorner(P);
+    if (BUILDINGS.includes(st.anchor)) return rebuildBuilding(P);
     for (const o of [g.a, g.b]) if (o) objs.push(anchorMesh(o));
     web = makeWeb(P, { w: g.len, h: g.hgt, seed: st.web, keep: st.silk >= 3 ? 1 : st.silk === 2 ? 0.72 : 0.42 });
     web.position.set((g.u0 + g.u1) / 2, g.hgt / 2 + 0.02, g.line);
@@ -187,6 +190,33 @@ export function webView({ h, D, ctx, mainEl, over, setOver, save, seg, isGone })
     target.set(O.x + 0.3, 0.3, O.z + 0.3);
     const inf = web.material.userData.info;
     stats.textContent = `corner web ${st.web} (${three ? '3 faces: two walls + ground' : '2 faces: wall + ground'}): ${inf.hubs === 2 ? 'with a break – 2 regions' : 'no break – 1 region'} · ${inf.segments} segments × ${inf.copies} copies · ${inf.fill ? 'concentric' : 'spiral'} fill · ${Object.keys(changed()).length} changed`;
+    placeLamp(); applyLight(); request();
+  }
+  // kút v budove z minikociek: model budovy (ako v hre), Webs.voxelCorners na celom modeli, výber a veľkosť podľa „web id“
+  function rebuildBuilding(P) {
+    const W3 = window.World3D, ft = W3 && W3.FINE_MODELS.find(m => m.id === st.anchor);
+    if (!ft) { stats.textContent = 'World3D is not loaded'; return; }
+    const model = ft.build(1, 0), O = new THREE.Vector3(1, 0, 1);
+    const { geo } = meshModel(W3, model, 1);
+    const house = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+    house.scale.setScalar(1 / 8); house.position.set(O.x + model.sx / 16, 0, O.z + model.sz / 16); objs.push(house); // meshModel je vycentrovaný
+    const all = Webs.voxelCorners(model, { x0: 0, x1: model.sx - 1, y0: 0, y1: model.sy - 1, z0: 0, z1: model.sz - 1 });
+    const r = Webs.voxelWeb(model, all, st.web, over(), st.silk >= 3 ? 1 : st.silk === 2 ? 0.72 : 0.42); // kotvy sa navzájom vidia
+    if (!r) { stats.textContent = 'no corner with anchors that see each other'; return; }
+    const q = r.q;
+    web = threadLines(THREE, world, viewDir, P, r.th, MAX_LIGHTS, frame);
+    web.matrixAutoUpdate = false;
+    web.matrix.makeBasis(new THREE.Vector3(...q.X), new THREE.Vector3(...q.Y), new THREE.Vector3(...q.Z)).setPosition(O.x + q.o[0] / 8, q.o[1] / 8, O.z + q.o[2] / 8);
+    web.matrixWorldNeedsUpdate = true;
+    objs.push(web);
+    for (const o of objs) scene.add(o);
+    const c = new THREE.Vector3(...web.material.userData.info.hub).applyMatrix4(web.matrix);
+    target.copy(c);
+    // kamera z otvorenej strany kúta (uhlopriečka osí pavučiny), blízko – pavučiny v budove sú malé
+    const d = new THREE.Vector3(...q.X).add(new THREE.Vector3(...q.Y)).add(new THREE.Vector3(...q.Z)).normalize();
+    Object.assign(view, { yaw: Math.atan2(d.x, d.z), pitch: Math.max(-0.2, Math.min(1.4, Math.asin(d.y) * 0.6 + 0.15)), dist: 0.5 + Math.max(...q.size) * 1.6 });
+    const inf = web.material.userData.info;
+    stats.textContent = `${st.anchor}: corner ${all.indexOf(all.find(x => x.o.join() === q.o.join() && x.X.join() === q.X.join() && x.Z.join() === q.Z.join())) + 1} of ${all.length} · web ${q.vox.join(' × ')} voxels (free space ${q.free.join(' × ')}) · ${q.faces} faces · ${inf.hubs === 2 ? 'with a break' : 'no break'} · ${inf.segments} segments · change “web id” for another corner`;
     placeLamp(); applyLight(); request();
   }
   function placeLamp() {

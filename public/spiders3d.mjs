@@ -228,7 +228,11 @@ export function webLines(THREE, world, view, P, opts, maxLights, frame) {
 }
 // Kútová pavučina (krížiak): 3D trojuholník v kúte (Webs.cornerThreads) – vždy z čiar; súradnice kúta (pozri webs.js)
 export function cornerLines(THREE, world, view, P, opts, maxLights, frame) {
-  return linesMesh(THREE, world, view, P, window.Webs.cornerThreads(P, opts), { w: 1, h: 1, sway: 0 }, maxLights, frame);
+  return threadLines(THREE, world, view, P, window.Webs.cornerThreads(P, opts), maxLights, frame);
+}
+// hotové vlákna (napr. Webs.voxelWeb) ako čiary bez kývania
+export function threadLines(THREE, world, view, P, th, maxLights, frame) {
+  return linesMesh(THREE, world, view, P, th, { w: 1, h: 1, sway: 0 }, maxLights, frame);
 }
 function linesMesh(THREE, world, view, P, th, o, maxLights, frame) {
   const L = th.layout, g = new THREE.InstancedBufferGeometry();
@@ -249,7 +253,7 @@ function linesMesh(THREE, world, view, P, th, o, maxLights, frame) {
   return m;
 }
 
-export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, renderer, world, maxLights }) {
+export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, renderer, world, maxLights, fine }) {
   const SPI = D.SPIDERS;
   const webMeshes = new Map(), cornerMeshes = [], burrowMeshes = [], sprites = new Map();
   let builtWebs = -1, builtCorner = -1, builtArea = null, builtTiles = -1;
@@ -301,19 +305,44 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
     const ox = k.x + 0.5 + k.dx * 0.5 + k.ex * 0.5, oz = k.y + 0.5 + k.dy * 0.5 + k.ey * 0.5;
     return new THREE.Matrix4().makeBasis(new THREE.Vector3(-k.dx, 0, -k.dy), new THREE.Vector3(0, 1, 0), new THREE.Vector3(-k.ex, 0, -k.ey)).setPosition(ox, gy + 0.005, oz);
   }
+  // Kút pri budove z minikociek: skutočný vnútorný kút modelu (pod strechou, v okne, pri schode, pri zemi) na strane
+  // políčka, kde krížiak tká – Webs.voxelCorners. Veľkosť po osiach náhodne v rámci voľného miesta (najmenej 2 minikocky),
+  // takže pavučiny sú rôzne a nesúmerné (napr. 2 × 6). null = pri stene nie je model (skala) → kút pri zemi.
+  const FINE = 8;
+  function voxelCorner(k, seed) {
+    const list = fine ? fine() : null;
+    if (!list) return null;
+    const wx = k.x + k.dx + 0.5, wz = k.y + k.dy + 0.5;
+    const f = list.find(m => wx >= m.ox && wx < m.ox + m.sx / FINE && wz >= m.oz && wz < m.oz + m.sz / FINE);
+    if (!f) return null;
+    // oblasť hľadania: polovica políčka pred stenou (aj pod presahom strechy) a kúsok do steny (výklenky), celá výška
+    const px = k.x + 0.5, pz = k.y + 0.5, pts = [[0, -0.5], [0, 0.5], [0.85, -0.5], [0.85, 0.5]].map(([s, t]) => [px + k.dx * s + k.ex * t, pz + k.dy * s + k.ey * t]);
+    const vx = pts.map(p => (p[0] - f.ox) * FINE), vz = pts.map(p => (p[1] - f.oz) * FINE);
+    const box = { x0: Math.floor(Math.min(...vx)), x1: Math.ceil(Math.max(...vx)) - 1, z0: Math.floor(Math.min(...vz)), z1: Math.ceil(Math.max(...vz)) - 1, y0: 0, y1: f.sy - 1 };
+    // len kúty otvorené k políčku krížiaka (jedna z osí pavučiny smeruje od steny)
+    const c = window.Webs.voxelCorners(f, box).filter(q => [q.X, q.Y, q.Z].some(a => a[0] === -k.dx && a[1] === 0 && a[2] === -k.dy));
+    const r = window.Webs.voxelWeb(f, c, seed, window.MF_WEB); // kotvy sa musia navzájom vidieť
+    if (!r) return null;
+    const q = r.q;
+    const M = new THREE.Matrix4().makeBasis(new THREE.Vector3(...q.X), new THREE.Vector3(...q.Y), new THREE.Vector3(...q.Z))
+      .setPosition(f.ox + q.o[0] / FINE, f.oy + q.o[1] / FINE, f.oz + q.o[2] / FINE);
+    return { M, size: q.size, faces: q.faces, th: r.th };
+  }
   function buildCorners() {
     for (const m of cornerMeshes) drop(m);
     cornerMeshes.length = 0;
     const P = params();
     for (const k of S.corner) {
-      const M = cornerMatrix(k);
-      const m = add(cornerLines(THREE, world, view, P, { seed: k.x * 31 + k.y * 7 + k.dx * 3 + k.ey, faces: k.f || 2 }, maxLights, frame));
+      const seed = k.x * 31 + k.y * 7 + k.dx * 3 + k.ey;
+      const vc = voxelCorner(k, seed);
+      const M = vc ? vc.M : cornerMatrix(k);
+      const m = add(vc ? threadLines(THREE, world, view, P, vc.th, maxLights, frame) : cornerLines(THREE, world, view, P, { seed, faces: k.f || 2 }, maxLights, frame));
       m.renderOrder = 2; m.matrixAutoUpdate = false; m.matrix.copy(M); m.matrixWorldNeedsUpdate = true;
       cornerMeshes.push(m);
-      // krížiak sedí v strede prvej oblasti pavučiny
-      const hub = m.material.userData.info.hub, at = new THREE.Vector3(...hub).applyMatrix4(M);
-      const sp = makeSprite(0.24, 0.12); sp.material.map = frameTex('k', 0); sp.layers.set(1);
-      sp.position.set(at.x, at.y - 0.06, at.z);
+      // krížiak sedí v strede prvej oblasti pavučiny (v malej pavučine budovy menší)
+      const hub = m.material.userData.info.hub, at = new THREE.Vector3(...hub).applyMatrix4(M), ks = vc ? Math.min(1, Math.max(...vc.size) * 1.6) : 1;
+      const sp = makeSprite(0.24 * ks, 0.12 * ks); sp.material.map = frameTex('k', 0); sp.layers.set(1);
+      sp.position.set(at.x, at.y - 0.06 * ks, at.z);
       cornerMeshes.push(sp);
     }
   }
