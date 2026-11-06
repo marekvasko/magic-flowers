@@ -166,6 +166,18 @@ Leaving, going through a gate and being thrown by the old spider cancel the pend
 
 These events belong to the running world only: they are saved with the queue (so `/debug` can show them) but dropped on load (`Actions.isRuntime`, `Spiders.isRuntime`). While nobody is in an area, its spiders have no events at all.
 
+## Several things in one tick
+
+Everything due in a tick runs as one batch, in queue order `(at, seq)`: `seq` is the order of scheduling, so player messages run in arrival order and long-planned events (`dawn`, `hourly`, NPCs) before them. Each event sees what the earlier ones in the batch changed. What follows from that, tested in `test/parallel.test.js` (every conflict in both or all orders):
+
+- **Two players, one thing:** the first action wins and the second finds it gone – one flower for one picker, one ice layer for one digger (two layers: both get one), the last unit of stock for one buyer (the other hears *Vypredané*, pays nothing). Nothing is duplicated or lost.
+- **Same player twice in a tick:** only the last action runs (`playerAction:<player>` replaces); two players' actions both run. A one-off action (shop) doesn't interrupt anything.
+- **Dawn and a harvest in the same tick give the same result in any order:** a flower whose bloom ends at that dawn (withers, a perennial finishes, or a blooming plant dies of drought or frost) can still be picked in that tick (`p.et`); a flower that ripens at that dawn can be picked from the next tick (`p.bt < tick`); a perennial picked in that tick doesn't also grow at that dawn (`p.ht`).
+- **An event cancelled or replaced by an earlier event of the same tick doesn't run;** what a batch schedules never runs before the next tick.
+- **Determinism:** the same inputs give the same state and the same journal (the RNG is the world's seeded `E.rand`, drawn in batch order).
+
+Known order dependencies, as `todo` tests: a player tapping with a hoe a bed someone emptied in the same tick hoes it (the action has no intent yet); watering in the dawn tick counts for that dawn's growth only if it runs before `dawn`.
+
 ## Owned events (rule for new content)
 
 An event that concerns an object (a player, a spider, a contract, later a plant on a tile) is keyed by its owner, so removing or changing the owner is one `E.cancel(key)` in the one place that removes it, and the handler checks that the owner is still the same (`Actions.owner` does this for players: same player, still connected, same area). Today flowers have no events of their own: growth is done by the periodic `dawn`, wilting and age are computed from the plant's and the batch's ticks.

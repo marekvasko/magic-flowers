@@ -285,29 +285,35 @@ function give(pl, id, n, batches) { I.addItems(I.playerC(pl.save), id, n, pl.roo
 function take(pl, id, n) { return I.removeItems(I.playerC(pl.save), id, n, pl.room.tick); }
 
 // ---------- Rast ----------
+// Ráno (dawn) a zber v tom istom kroku dajú to isté v ľubovoľnom poradí:
+//   – kvet, ktorý ráno odkvitne alebo uhynie (zvädne, sucho, mráz), sa v tom kroku ešte dá odtrhnúť (p.et = krok konca kvitnutia),
+//   – kvet, ktorý ráno rozkvitne, sa dá odtrhnúť až od ďalšieho kroku (p.bt < krok),
+//   – trvalka odtrhnutá v rannom kroku (p.ht) v ňom už nerastie.
 function growPlant(room, i) {
   const t = room.tiles[i], s = t.s, p = s && s.p;
   if (!p || p.d) return;
   const sp = D.SPECIES[p.sp];
+  const die = why => { if (p.prog >= sp.days) p.et = room.tick; p.d = 1; p.why = why; };
   const se = season(room);
   const x = i % D.W, y = Math.floor(i / D.W);
   const inSeason = sp.seasons.includes(se) || p.b || room.eternal;
   if (!inSeason) {
     // Mráz zničí všetko nezimné; inak má rastlina 2 dni milosti a kvitnúca vydrží.
-    if (se === 3) { p.d = 1; p.why = 'mráz'; return; }
+    if (se === 3) return die('mráz');
     p.oos = (p.oos || 0) + 1;
-    if (p.prog < sp.days && p.oos > 2) { p.d = 1; p.why = 'nesprávne obdobie'; return; }
+    if (p.prog < sp.days && p.oos > 2) return die('nesprávne obdobie');
   }
   const watered = !!s.w || room.eternal;
   p.dry = watered ? 0 : (p.dry || 0) + 1;
   const tol = sp.water === 1 ? 2 : sp.water === 2 ? 1 : 0;
   const deathAt = sp.water === 1 ? 5 : sp.water === 2 ? 3 : 2;
-  if (p.dry >= deathAt) { p.d = 1; p.why = 'sucho'; return; }
+  if (p.dry >= deathAt) return die('sucho');
+  if (p.ht === room.tick) return; // trvalku v tomto kroku odtrhli – kvitnutie sa skončilo, dnes nerastie
   if (p.prog >= sp.days) { // už kvitne – po čase odkvitne (trvalka zakvitne znova)
     if (p.bt == null) p.bt = room.tick;
     if (room.tick - p.bt >= sp.life * TPD) {
-      if (sp.perennial) { p.prog = sp.days * 0.5; p.bt = null; }
-      else { p.d = 1; p.why = 'odkvitla'; }
+      if (sp.perennial) { p.prog = sp.days * 0.5; p.bt = null; p.et = room.tick; }
+      else die('odkvitla');
     }
     return;
   }
@@ -590,15 +596,15 @@ function act(pl, m) {
     sv.water = Econ.canCap(sv); sendMe(pl); fx(room, 'splash', x + 0.5, y + 0.5); return;
   }
 
-  // Zber
+  // Zber: kvitne (od kroku po rozkvitnutí) alebo kvitnutie skončilo práve v tomto kroku (pozri growPlant)
   const p = t.s && t.s.p;
-  if (p && !p.d && p.prog >= D.SPECIES[p.sp].days) {
+  if (p && ((!p.d && p.prog >= D.SPECIES[p.sp].days && (p.bt == null || p.bt < room.tick)) || p.et === room.tick)) {
     const sp = D.SPECIES[p.sp];
     if (p.sp === 'papradie' && !D.isNight(room.min)) return toast(pl, 'Papraď drží púčik pevne zatvorený… vraj sa otvára len v noci. 🌙');
     const n = Math.min(4, p.q + (t.s.r ? 1 : 0));
     give(pl, 'fl_' + p.sp, n);
     t.s.r = 0;
-    if (sp.perennial) { p.prog = sp.days * 0.5; p.q = 3; p.bt = null; } else t.s.p = null;
+    if (sp.perennial) { p.prog = sp.days * 0.5; p.q = 3; p.bt = null; delete p.et; p.ht = room.tick; } else t.s.p = null;
     toast(pl, `+${n}× ${sp.name}` + (n >= 3 ? ' ⭐ výborná kvalita!' : ''));
     if (p.sp === 'papradie') toastAll(room, `✨ ${pl.name} našiel(a) papraďový kvet! Môže si niečo priať…`, 'magic');
     fx(room, p.sp === 'papradie' ? 'sparkle' : 'pop', x + 0.5, y + 0.5, { c: sp.color });
@@ -1002,7 +1008,9 @@ const wss = new WebSocketServer({ server });
 let nextId = 1;
 const leaving = P.createLeaving(RECONNECT_GRACE_MS);
 
-wss.on('connection', ws => {
+wss.on('connection', onConnection);
+// Jedno spojenie hráča (WebSocket alebo v testoch jeho náhrada: on/send/close/readyState)
+function onConnection(ws) {
   P.watch(ws);
   let pl = null;
   ws.on('message', raw => {
@@ -1112,7 +1120,7 @@ wss.on('connection', ws => {
       saveRoom(room);
     }
   });
-});
+}
 
 // Herný čas: pevný krok s dobiehaním – každý deň má presne TPD krokov, aj keď sa časovač oneskorí.
 // Časovač sa budí na hranici najbližšieho kroku (8× za sekundu); pavúky, pohyb hráčov aj všetko ostatné sú udalosti
@@ -1138,21 +1146,27 @@ function loop() {
   }
   setTimeout(loop, Math.max(5, Math.ceil(wait)));
 }
-loop();
-// Priebežne ukladáme aj „naposledy videný“ – po páde servera tak dni neprítomnosti sedia (±15 s).
-setInterval(() => {
-  for (const room of rooms.values()) { for (const p of room.players.values()) p.save.lastTick = room.tick; saveRoom(room); }
-}, 15000);
-setInterval(() => P.heartbeat(wss.clients), HEARTBEAT_MS);
-setInterval(() => { for (const room of rooms.values()) journal.flush(room); }, 1000);
 
 function shutdown() {
   for (const room of rooms.values()) { for (const p of room.players.values()) p.save.lastTick = room.tick; saveRoom(room, true); journal.flush(room); }
   process.exit(0);
 }
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+// Spustenie servera: časovač sveta, priebežné ukladanie, srdcový tep, denník a počúvanie na porte.
+// Len pri `node server.js` – testy si modul načítajú bez toho a krokujú svet samy (E.advanceTo s SIM).
+function start() {
+  loop();
+  // Priebežne ukladáme aj „naposledy videný“ – po páde servera tak dni neprítomnosti sedia (±15 s).
+  setInterval(() => {
+    for (const room of rooms.values()) { for (const p of room.players.values()) p.save.lastTick = room.tick; saveRoom(room); }
+  }, 15000);
+  setInterval(() => P.heartbeat(wss.clients), HEARTBEAT_MS);
+  setInterval(() => { for (const room of rooms.values()) journal.flush(room); }, 1000);
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+  server.listen(PORT, () => {
+    console.log(`🌼 Čarovná záhrada beží na http://localhost:${PORT}  (nový svet: deň = ${DAY_SECONDS}s, režim ${DEFAULT_MODE}, ${TPD} krokov/deň)`);
+  });
+}
+if (require.main === module) start();
 
-server.listen(PORT, () => {
-  console.log(`🌼 Čarovná záhrada beží na http://localhost:${PORT}  (nový svet: deň = ${DAY_SECONDS}s, režim ${DEFAULT_MODE}, ${TPD} krokov/deň)`);
-});
+module.exports = { rooms, getRoom, onConnection, SIM, HANDLERS, serialize };
