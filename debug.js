@@ -72,10 +72,14 @@ function create(ctx) {
     const st = fs.statSync(roomFile(id));
     return { id, source: 'file', file: { size: st.size, saved: st.mtimeMs }, online: [], state: ctx.migrate(JSON.parse(text)) };
   }
-  // Kľúče hráčov (z načítaných svetov) nahradí v celej odpovedi odtlačkom
+  // Kľúče hráčov (z načítaných svetov) nahradí v celej odpovedi odtlačkom – aj za dvojbodkou v kľúčoch udalostí
   function redact(obj, keys) {
     let text = JSON.stringify(obj);
-    for (const k of keys) text = text.split(JSON.stringify(k)).join(JSON.stringify(keyId(k)));
+    for (const k of keys) {
+      text = text.split(JSON.stringify(k)).join(JSON.stringify(keyId(k)));
+      // aj v kľúčoch udalostí (move:<hráč>, pull:<hráč>, scavDone:<hráč>…)
+      text = text.split(':' + JSON.stringify(k).slice(1)).join(':' + JSON.stringify(keyId(k)).slice(1));
+    }
     return JSON.parse(text);
   }
   function roomSnapshot(id) {

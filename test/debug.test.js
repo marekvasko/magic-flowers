@@ -19,7 +19,7 @@ async function setup() {
   fs.writeFileSync(path.join(debugDir, 'api', 'coins.js'), `module.exports = (q, t) => { const r = t.load(q.get('id')); if (!r) return null; r.state.saves = {}; return { source: r.source, coins: Object.entries(JSON.parse(JSON.stringify(t.load(q.get('id')).state.saves))).map(([k, v]) => [k, v.coins]) }; };`);
   fs.writeFileSync(path.join(debugDir, 'api', 'boom.js'), 'module.exports = () => { throw new Error("bum"); };');
   fs.writeFileSync(path.join(dir, 'secret.txt'), 'nie');
-  const saved = JSON.stringify({ v: 1, tick: 100, rng: 1, events: [{ at: 150, seq: 1, type: 'stary', data: null }, { at: 130, seq: 2, type: 'dawn', data: null, key: 'dawn', periodic: true }], saves: { [KEY]: { coins: 5 } }, contracts: { list: [{ by: KEY }] } });
+  const saved = JSON.stringify({ v: 1, tick: 100, rng: 1, events: [{ at: 150, seq: 1, type: 'stary', data: null }, { at: 130, seq: 2, type: 'dawn', data: null, key: 'dawn', periodic: true }], saves: { [KEY]: { coins: 5 } }, contracts: { list: [{ by: KEY, ev: 'move:' + KEY }] } });
   fs.writeFileSync(path.join(dataDir, 'room-stary.json'), saved);
   const rooms = new Map([['zivy', { tick: 7, state: { tick: 7, saves: { [KEY]: { coins: 9 } } }, players: new Map([[1, { name: 'Anka', area: 'hory', key: KEY }]]) }]]);
   const sim = { handlers: { dawn() {}, hourly() {} }, periodic: [{ key: 'dawn', type: 'dawn', next: (w, from) => from + 50 }, { key: 'hourly', type: 'hourly', next: (w, from) => from + 12 }] };
@@ -71,6 +71,7 @@ test('debug: snímka sveta je len na čítanie a bez kľúčov hráčov', async 
     assert.ok(!f.body.includes(KEY), 'kľúč hráča nesmie byť vo výstupe');
     assert.deepStrictEqual(Object.keys(snap.state.saves), [Debug.keyId(KEY)]);
     assert.strictEqual(snap.state.contracts.list[0].by, Debug.keyId(KEY));
+    assert.strictEqual(snap.state.contracts.list[0].ev, 'move:' + Debug.keyId(KEY), 'aj za dvojbodkou v kľúči udalosti (move:<hráč>)');
     const m = await s.get('/api/debug/room?id=zivy');
     assert.strictEqual(JSON.parse(m.body).source, 'memory');
     assert.ok(!m.body.includes(KEY));

@@ -45,11 +45,26 @@
     const s = Math.max(0, (serverNow - ms) / 1000);
     return s < 60 ? Math.round(s) + ' s ago' : s < 3600 ? Math.round(s / 60) + ' min ago' : s < 86400 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' d ago';
   }
-  const hhmm = min => String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(min % 60).padStart(2, '0');
+  const hhmm = min => String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(Math.floor(min % 60)).padStart(2, '0');
   const when = tick => `day ${D.dayOfTick(tick)} ${hhmm(D.minOfTick(tick))}`;
-  function inTicks(dt) {
+  // dt krokov dopredu v hernom čase; pod jednu hernú minútu v krokoch a reálnych sekundách (krok = 125 ms)
+  function inTicks(dt, daySeconds) {
     const m = dt * D.MIN_PER_TICK;
-    return m < 60 ? `in ${m} min` : m < 1440 ? `in ${(m / 60).toFixed(1)} h` : `in ${(m / 1440).toFixed(1)} d`;
+    if (m < 1) return `in ${dt} tick${dt === 1 ? '' : 's'} (${(dt * (daySeconds || D.BASE_DAY_SECONDS) / D.TICKS_PER_DAY).toFixed(3)} s)`;
+    return m < 60 ? `in ${Math.round(m)} min` : m < 1440 ? `in ${(m / 60).toFixed(1)} h` : `in ${(m / 1440).toFixed(1)} d`;
+  }
+  // Udalosti bežiaceho sveta (#101): pohyb hráčov (move:<hráč>), pavúky (spider:<id>) a ťahanie hodvábu (pull:<hráč>).
+  // Každý hráč aj pavúk má najviac jednu – zobrazia sa zvlášť, aby nezahltili ostatný plán.
+  const LIVE = /^(move|spider|pull):/;
+  function liveDesc(e) {
+    const d = e.data || {}, xy = (x, y) => x == null ? '' : `(${(+x).toFixed(2)}, ${(+y).toFixed(2)})`;
+    if (e.type === 'arrivedFrom') return `player moved ${xy(d.fx, d.fy)} → ${xy(d.x, d.y)}, evaluated next tick`;
+    if (e.type === 'goTo' && d.sp != null) return `${d.sp} chases player #${d.p} → predicted ${xy(d.x, d.y)}`;
+    if (e.type === 'goTo') return `player led to ${xy(d.x, d.y)}${d.path ? ` (${d.path.length} tiles left)` : ''}`;
+    if (e.type === 'kriziak') return `cross spider running to a corner (${d.area})`;
+    if (e.type === 'pullDone') return 'silk pull finishes';
+    if (e.type === 'spider') return `${d.id}: next step`;
+    return short(d);
   }
   const short = v => { const s = JSON.stringify(v); return s == null ? '' : s.length > 80 ? s.slice(0, 77) + '…' : s; };
 
@@ -130,7 +145,8 @@
   // ---------- záložka Room: prehľad sveta ----------
   function roomView(s) {
     const w = s.state, tick = w.tick || 0, day = D.dayOfTick(tick), se = D.seasonOf(day), meta = rooms.find(r => r.id === s.id);
-    const saves = Object.entries(w.saves || {}), events = (w.events || []).slice().sort((a, b) => a.at - b.at || a.seq - b.seq);
+    const saves = Object.entries(w.saves || {}), all = (w.events || []).slice().sort((a, b) => a.at - b.at || a.seq - b.seq);
+    const live = all.filter(e => LIVE.test(e.key || '')), events = all.filter(e => !LIVE.test(e.key || ''));
     const onlineBy = new Map(s.online.map(o => [o.player, o]));
     const card = (label, value, sub) => h('div', { class: 'card' }, h('small', null, label), h('b', null, value), sub ? h('small', null, sub) : null);
     const m = w.market || {}, sum = o => Object.values(o || {}).reduce((n, x) => n + (x.stock || 0), 0);
@@ -146,7 +162,7 @@
         card('Day length', `${Math.round((w.daySeconds || D.BASE_DAY_SECONDS) / 60)} min`, `${w.daySeconds || D.BASE_DAY_SECONDS} s`),
         card('Weather', w.weather || '–', w.fairyNight >= 0 ? 'fairy night day ' + w.fairyNight : null),
         card('Players', `${saves.length}`, `${s.online.length} online`),
-        card('Events', `${events.length}`, events[0] ? `next ${events[0].type}` : null),
+        card('Events', `${events.length}`, (events[0] ? `next ${events[0].type}` : '') + (live.length ? ` · ${live.length} live` : '')),
         card('Market stock', `${sum(m.seeds)} seeds`, `${sum(m.flowers)} flowers${m.compost ? ', ' + (m.compost.stock || 0) + ' compost' : ''}`),
         card('Contracts', `${((w.contracts || {}).list || []).length}`, 'on the board'),
         card('Icehouse', w.icehouse && w.icehouse.built ? `${w.icehouse.ice || 0} ice` : 'not built'))
@@ -167,10 +183,17 @@
           h('td', null, o ? 'now' : sv.lastTick != null ? when(sv.lastTick) : '–'));
       }))) : h('div', { class: 'empty' }, 'Nobody has played here yet.'));
 
+    out.push(h('h3', null, `Live: movement and spiders (${live.length})`));
+    out.push(live.length ? h('div', { class: 'tablewrap' }, h('table', null,
+      h('tr', null, h('th', null, 'Key'), h('th', null, 'Type'), h('th', null, 'When'), h('th', null, 'What')),
+      live.map(e => h('tr', null, h('td', { class: 'mono' }, e.key), h('td', null, h('b', null, e.type)),
+        h('td', { class: 'muted' }, e.at <= tick ? 'now' : `in ${e.at - tick} tick${e.at - tick === 1 ? '' : 's'} (${((e.at - tick) * (w.daySeconds || D.BASE_DAY_SECONDS) / D.TICKS_PER_DAY).toFixed(3)} s)`), h('td', null, liveDesc(e)))))) :
+      h('div', { class: 'empty' }, 'Nothing moving: spiders sleep at home while nobody is in their area, players have no unevaluated move.'));
+
     out.push(h('h3', null, `Upcoming events (${events.length})`));
     out.push(events.length ? h('div', { class: 'tablewrap' }, h('table', null,
       h('tr', null, h('th', null, 'When'), h('th', null, ''), h('th', null, 'Type'), h('th', null, 'Kind'), h('th', null, 'Data')),
-      events.slice(0, 25).map(e => h('tr', null, h('td', null, when(e.at)), h('td', { class: 'muted' }, inTicks(e.at - tick)), h('td', null, h('b', null, e.type)),
+      events.slice(0, 25).map(e => h('tr', null, h('td', null, when(e.at)), h('td', { class: 'muted' }, inTicks(e.at - tick, w.daySeconds)), h('td', null, h('b', null, e.type)),
         h('td', null, h('span', { class: 'badge', title: e.key || '' }, e.periodic ? 'periodic' : e.key != null ? 'unique' : 'plain')), h('td', { class: 'mono' }, short(e.data)))),
       events.length > 25 ? h('tr', null, h('td', { colspan: 5, class: 'muted' }, `… and ${events.length - 25} more (see raw state)`)) : null)) : h('div', { class: 'empty' }, 'No events scheduled.'));
 
