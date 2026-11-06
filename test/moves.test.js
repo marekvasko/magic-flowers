@@ -26,7 +26,7 @@ test('pohyb: poloha ide ostatným hneď, plánovač ju vyhodnotí až v najbliž
   assert.deepStrictEqual(log, [['forward', 1, 1000, 11, 20.5]], 'prepošle sa hneď, ešte bez vyhodnotenia');
   assert.deepStrictEqual([a.x, a.y], [11, 20.5], 'poloha platí hneď (bez overenia vopred)');
   const ev = moveEvents(room, a);
-  assert.deepStrictEqual(ev.map(e => [e.type, e.at]), [['arrivedFrom', 1001]], 'udalosť s aktuálnym krokom servera');
+  assert.deepStrictEqual(ev.map(e => [e.type, e.data.t, e.at]), [['arrivedFrom', 1000, 1001]], 'udalosť s aktuálnym krokom servera, vyhodnotí sa v najbližšom');
   step();
   assert.deepStrictEqual(log[1], ['evaluate', 1, 1001, 10.5, 20.5, 11, 20.5], 'vyhodnotí sa až potom: odkiaľ → kam');
   assert.strictEqual(moveEvents(room, a).length, 0);

@@ -34,7 +34,7 @@ function arrive(room, pl, x, y, nowMs) {
   pl.mvAt = nowMs;
   pl.x = x; pl.y = y;
   hooks.forward(pl); // najprv prepošleme…
-  return E.scheduleUnique(room, KEY(pl), room.tick + 1, 'arrivedFrom', { pk: pl.key, id: pl.id, seq: pl.areaSeq, fx: from.x, fy: from.y, x, y, vx, vy }); // …potom vyhodnotíme
+  return E.scheduleUnique(room, KEY(pl), room.tick + 1, 'arrivedFrom', { pk: pl.key, id: pl.id, seq: pl.areaSeq, t: room.tick, fx: from.x, fy: from.y, x, y, vx, vy }); // …potom vyhodnotíme (t = krok servera pri príchode)
 }
 function onArrived(room, d) {
   const pl = byKey(room, d);
