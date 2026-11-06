@@ -34,7 +34,7 @@
       abd: { len: 1.75, wid: 1.6, hgt: 1.45, x: -0.72, y: 0.98, tilt: 0.32 }, gloss: 0.35,
       legs: [[38, 34, 3.15, 1.05, 0.34, 0.55, 0.7, 0.13, 0.05], [72, 66, 2.85, 1.0, 0.36, 0.5, 0.7, 0.13, 0.05],
              [112, 118, 2.05, 0.75, 0.4, 0.38, 0.72, 0.12, 0.05], [148, 152, 2.7, 0.95, 0.38, 0.48, 0.72, 0.13, 0.05]],
-      palp: [0.55, 0.1], cheli: 0.2, stride: 0.22, lift: 0.3,
+      palp: [0.55, 0.1], cheli: 0.2, stride: 0.4, lift: 0.3,
       col: { body: '#c47f3a', abd: '#d9934a', leg: '#d8b37a', band: '#7a3f1c', dark: '#5a2e12', out: '#3a1e0c',
              mark: '#fbf1dc', belly: '#2a1a10', belly2: '#f2d27a', eye: '#1a1008', ceph: '#a8692e' },
       marks: kriziakMarks
@@ -45,7 +45,7 @@
       abd: { len: 1.2, wid: 0.8, hgt: 0.62, x: -0.6, y: 0.4, tilt: 0.05 }, gloss: 0.12,
       legs: [[40, 30, 3.3, 0.85, 0.32, 0.4, 0.66, 0.19, 0.07], [70, 64, 3.0, 0.82, 0.34, 0.38, 0.68, 0.19, 0.07],
              [108, 116, 2.75, 0.8, 0.36, 0.36, 0.68, 0.19, 0.07], [146, 156, 3.55, 0.88, 0.34, 0.4, 0.68, 0.2, 0.07]],
-      palp: [0.7, 0.11], cheli: 0.24, stride: 0.32, lift: 0.28,
+      palp: [0.7, 0.11], cheli: 0.24, stride: 0.5, lift: 0.28,
       col: { body: '#6b5238', abd: '#7a6146', leg: '#9c7f5a', band: '#6e5438', dark: '#2e2016', out: '#1e140c',
              mark: '#cdb48c', belly: '#1c1410', belly2: '#3a2c20', eye: '#0c0a08', ceph: '#8a6c4a' },
       marks: vlciakMarks
@@ -57,7 +57,7 @@
       humps: [[0.42, 0.62, 0.5, 0.36], [0.42, 0.62, -0.5, 0.36]],
       legs: [[38, 32, 3.0, 1.8, 0.4, 1.0, 0.74, 0.13, 0.045], [72, 68, 2.75, 1.75, 0.42, 0.95, 0.74, 0.13, 0.045],
              [112, 120, 2.2, 1.3, 0.44, 0.7, 0.74, 0.12, 0.045], [148, 154, 2.6, 1.6, 0.42, 0.9, 0.74, 0.13, 0.045]],
-      palp: [0.7, 0.1], cheli: 0.24, stride: 0.26, lift: 0.4, lifted: 1.3,
+      palp: [0.7, 0.1], cheli: 0.24, stride: 0.45, lift: 0.4, lifted: 1.3,
       col: { body: '#4a3a30', abd: '#5c4838', leg: '#c8b496', band: '#3a2a20', dark: '#22160f', out: '#120c08',
              mark: '#d8c8a8', belly: '#1a120c', belly2: '#9a8468', eye: '#ff6a4a', ceph: '#3e2f26' },
       marks: pradlenaMarks
@@ -387,7 +387,14 @@
   }
 
   // ---------- sprity: veľkosť plátna cez všetky snímky pohľadu ----------
-  const FRAMES = 4;
+  // Chôdza: FRAMES snímok na jeden krok (cyklus oboch skupín nôh). Za cyklus prejde pavúk 4 × stride (každá polovica
+  // cyklu je jedna skupina nôh na zemi a posunie sa o 2 × stride), takže fázu posúvame podľa prejdenej vzdialenosti –
+  // nohy nekĺžu. Najviac MAX_HZ krokov za sekundu (malý rýchly krížiak by inak len blikal).
+  const FRAMES = 8, MAX_HZ = 12;
+  const cycle = kind => 4 * (SPECIES[kind] || SPECIES.v).stride * scaleOf(kind);
+  // posun fázy za dt pri prejdenej vzdialenosti dist (políčka)
+  const stepPhase = (kind, dist, dt) => Math.min(dist * 2 * Math.PI / cycle(kind), dt * 2 * Math.PI * MAX_HZ);
+  const frameOf = phase => ((Math.floor(phase / (2 * Math.PI / FRAMES)) % FRAMES) + FRAMES) % FRAMES;
   const layouts = {};
   function layout(kind, view) {
     const key = kind + ':' + view;
@@ -396,7 +403,7 @@
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
     const frames = [];
     for (let f = 0; f < FRAMES; f++) {
-      const items = project(build(kind, f * Math.PI / 2, isSurface(view) ? 'surface' : 'ground'), view);
+      const items = project(build(kind, f * 2 * Math.PI / FRAMES, isSurface(view) ? 'surface' : 'ground'), view);
       frames.push(items);
       for (const it of items) {
         if (it.k === 'ell') { const r = Math.max(it.e.rx, it.e.ry); x0 = Math.min(x0, it.c[0] - r); x1 = Math.max(x1, it.c[0] + r); y0 = Math.min(y0, it.c[1] - r); y1 = Math.max(y1, it.c[1] + r); }
@@ -491,7 +498,7 @@
   const eyeH = {};
   const eyeHeight = kind => eyeH[kind] != null ? eyeH[kind] : (eyeH[kind] = build(kind, 0, 'ground')[0].c[1]);
 
-  const api = { eyeHeight, SPECIES, VIEWS, PLANAR, TRUNK, trunkView, PITCH, CAM, FRAMES, build, project, draw, layout, sprite, planarView, viewMatrix, isSurface, buildMesh, scaleOf };
+  const api = { eyeHeight, SPECIES, VIEWS, PLANAR, TRUNK, trunkView, PITCH, CAM, FRAMES, MAX_HZ, cycle, stepPhase, frameOf, build, project, draw, layout, sprite, planarView, viewMatrix, isSurface, buildMesh, scaleOf };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SpiderModel = api;
 })(typeof window !== 'undefined' ? window : globalThis);

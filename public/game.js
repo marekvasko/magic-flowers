@@ -1333,10 +1333,11 @@
     }
     // pavúky
     for (const o of S.spiders.values()) {
-      const k = Math.min(1, dt * 12);
+      const k = Math.min(1, dt * 12), x0 = o.x, y0 = o.y, z0 = o.z || 0;
       o.x += (o.tx - o.x) * k; o.y += (o.ty - o.y) * k;
-      o.z = o.n ? (o.z || 0) + (o.tz - (o.z || 0)) * k : 0;
-      o.phase = o.m ? o.phase + dt * (o.k === 'k' ? 30 : o.k === 'p' ? 8 : 16) : 0;
+      o.z = o.n ? z0 + (o.tz - z0) * k : 0;
+      // nohy podľa prejdenej dráhy (aj po kmeni), aby nekĺzali
+      o.phase = o.m ? o.phase + window.SpiderModel.stepPhase(o.k, Math.hypot(o.x - x0, o.y - y0, o.z - z0), dt) : 0;
     }
     // efekty
     for (const p of S.fx) {
