@@ -1,6 +1,6 @@
 # Simulation engine (`engine.js`)
 
-The game world is a **discrete-event simulation**. Time is a whole-number counter (`tick`, 288 per game day, 1 tick = 5 game minutes). Anything that should happen in the future is an **event** in one queue, and the engine moves the clock **from event to event**. Ticks with no events in them are never simulated.
+The game world is a **discrete-event simulation**. Time is a whole-number counter (`tick`, 7200 per game day, 8 per second of real time: 1 tick = 125 ms = 0.2 game minutes, 1 game hour = 300 ticks). Anything that should happen in the future is an **event** in one queue, and the engine moves the clock **from event to event**. Ticks with no events in them are never simulated.
 
 The engine is a set of stateless functions. It has no module-level state, no classes and no timers:
 
@@ -101,7 +101,7 @@ Helpers for `next`:
 |---|---|
 | `E.daily(tickOfDay)` | every day at that time (`E.daily(D.DAWN_TICK)` = 6:00) |
 | `E.every(period, offset)` | at `offset + k·period` (`E.every(12)` = every full hour, `E.every(2*TPD, 84)` = every 2nd day at 7:00, `E.every(YEAR, start)` = yearly) |
-| custom | anything, including random times. For example, an NPC visit: `(w, from) => E.nextDailyTick(from + TPD/2, 96 + E.randInt(w, 120))` |
+| custom | anything, including random times. For example, an NPC visit: `(w, from) => E.nextDailyTick(from + TPD/2, D.hours(8) + E.randInt(w, D.hours(10)))` |
 
 A `next` that uses `E.rand` stays deterministic: it draws from the world's seeded generator at a deterministic moment.
 
@@ -133,16 +133,30 @@ advanceTo(world, target, spec):
 
 | Who | Call | What it does |
 |---|---|---|
-| server, every 100 ms | `E.advance(room, Date.now(), SIM, 50000)` | moves the world by as many whole ticks as have passed since `room.wall` (at most 50,000 per call) |
+| server, at every tick boundary (8× per second) | `E.advance(room, Date.now(), SIM, 7 * TPD)` | moves the world by as many whole ticks as have passed since `room.wall` (at most 7 days per call); then sends positions (once per tick) and the time (when a whole game minute changed) |
 | loading a running world | `E.advance(room, Date.now(), SIM)` | catches up downtime (capped at `MAX_CATCHUP_DAYS` by moving `wall`) |
-| everyone asleep | `E.advanceTo(room, min(ff.until, tick + 5), SIM)` | fast-forwards the night, 5 ticks per 100 ms so clients can animate it |
+| everyone asleep | `E.advanceTo(room, min(ff.until, tick + n), SIM)` | fast-forwards the night, 1.25 ticks per ms (25 game minutes per 100 ms) so clients can animate it |
 | tests, headless simulation | `E.advanceTo(world, world.tick + days * TPD, spec)` | runs any amount of game time as fast as the events allow |
 
-`advance()` is the only function that knows about real time. Everything else works in ticks.
+`advance()` is the only function that knows about real time. Everything else works in ticks. Durations are written in game time with `D.minutes()`, `D.hours()`, `D.days()`; things that run in real time (spider speeds and reactions, pulling silk) use `E.msTicks(world, ms)` and `E.tickMs(world)` as the length of one step.
+
+## Live events: movement and spiders
+
+Player movement and spiders run on the same queue, with keyed (unique) events, so each player and each spider has at most one pending event:
+
+| Key | Types | Scheduled by |
+|---|---|---|
+| `move:<player>` | `arrivedFrom` (a position from the client), `goTo` (server leads the player along a path) | `moves.js`: `arrive()` on every `move` message (after forwarding the position to the others), `goTo()` |
+| `spider:<id>`, `spider:k<area>` | `spider` (next step), `goTo` (chase: path to the player's predicted position), `kriziak` | `spiders.js`: the spider's own handler (next tick while moving, its deadline while idle); player actions that concern it replace it with a reaction in the next tick |
+| `pull:<player>` | `pullDone` | `spiders.js` `startPull()`; moving or leaving cancels it |
+
+These events belong to the running world only: they are saved with the queue (so `/debug` can show them) but dropped on load (`Moves.isRuntime`, `Spiders.isRuntime`). While nobody is in an area, its spiders have no events at all.
 
 ## Determinism and saving
 
 The queue, `seq` and `rng` are part of the save. Given the same saved world and the same spec, the simulation always produces the same result, whether it runs continuously, is saved and loaded halfway, or jumps instead of stepping (`test/engine.test.js`).
+
+Save format version 9 switched from 288 to 7200 ticks per day: `migrate()` multiplies every stored tick by 25 (world `tick`, event `at`, plants' `bt`, flower/ice batches `a`/`at`, `vily`, `lastTick`, market news and festival end, contracts' `posted`/`openUntil`/`due`), so every garden keeps its state in game time.
 
 Save format version 5 added `key` and `periodic` to events. `migrate()` in `server.js` gives keys to the events of older saves (`dawn`, `hourly`, `delivery`, `npc_*` → periodic with key = type; festivals → `festX:<id>`; contracts, fairy potions and searching → unique keys). The first reconcile then removes any duplicates and adds whatever is missing.
 
@@ -152,7 +166,7 @@ Save format version 5 added `key` and `periodic` to events. `migrate()` in `serv
 
 ```js
 HANDLERS.marketDay = (room) => { … };   // just the effect
-PERIODIC.push({ key: 'marketDay', type: 'marketDay', next: E.every(7 * TPD, D.DAWN_TICK + 36) });
+PERIODIC.push({ key: 'marketDay', type: 'marketDay', next: E.every(7 * TPD, D.DAWN_TICK + D.hours(3)) });
 ```
 
 Existing worlds get it automatically on load.
