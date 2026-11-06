@@ -354,7 +354,9 @@
       // nie príliš plochý: plocha a najkratšia výška voči najdlhšej strane
       const ar = len(cross(sub(pts[1], pts[0]), sub(pts[2], pts[0]))) / 2, lm = Math.max(len(sub(pts[1], pts[0])), len(sub(pts[2], pts[1])), len(sub(pts[0], pts[2])));
       // kotvy sa musia navzájom vidieť (opts.see: medzi nimi nič plné – v budove z minikociek)
-      if (ar > 0.12 * S2 && 2 * ar / lm > 0.25 * Math.sqrt(S2) && (!see || (see(pts[0], pts[1]) && see(pts[1], pts[2]) && see(pts[2], pts[0])))) V = pts;
+      // každá kotva musí ležať na skutočnej ploche (opts.hold: za ňou plná minikocka) – inak by visela vo vzduchu
+      if (ar > 0.12 * S2 && 2 * ar / lm > 0.25 * Math.sqrt(S2) && (!see || (see(pts[0], pts[1]) && see(pts[1], pts[2]) && see(pts[2], pts[0])))
+        && (!opts.hold || pts.every(opts.hold))) V = pts;
     }
     if (!V && see) return null; // v tomto kúte sa vidiace sa kotvy nenašli
     V = V || [[0, 0.7 * SZ[1], 0.1 * SZ[2]], [0, 0.25 * SZ[1], 0.9 * SZ[2]], [0.7 * SZ[0], 0, 0.5 * SZ[2]]];
@@ -496,6 +498,19 @@
       return true;
     };
   }
+  // Kotva p (súradnice kúta q v políčkach) leží na ploche, keď za ňou (proti osi, ktorej súradnica je 0) je plná minikocka
+  // a pred ňou voľno – plocha tam naozaj je (tretia stena vnútorného kúta môže byť len úzka, rímsa sa môže skončiť skôr).
+  function voxelHold(f, q) {
+    const { sx, sy, sz, data } = f;
+    const solid = (x, y, z) => x < 0 || z < 0 || x >= sx || z >= sz ? false : y < 0 ? true : y >= sy ? false : data[(z * sy + y) * sx + x] !== 0;
+    const ax = [q.X, q.Y, q.Z];
+    return p => {
+      const i = p.findIndex(v => v === 0);
+      if (i < 0) return false;
+      const at = k => solid(...[0, 1, 2].map(j => Math.floor(q.o[j] + (q.X[j] * p[0] + q.Y[j] * p[1] + q.Z[j] * p[2]) * 8 + ax[i][j] * k)));
+      return at(-0.5) && !at(0.5);
+    };
+  }
   // Pavučina v budove: kúty v poradí podľa semienka, v každom veľkosť podľa semienka (pickVoxelCorner); berie sa prvý kút,
   // v ktorom sa kotvy navzájom vidia (voxelSight). Vráti { q, th } (th = cornerThreads) alebo null.
   function voxelWeb(f, list, seed, over, keep) {
@@ -503,7 +518,7 @@
     const start = Math.floor(hs(1) * list.length);
     for (let i = 0; i < Math.min(list.length, 16); i++) {
       const q = pickVoxelCorner([list[(start + i * 7) % list.length]], seed + i * 101);
-      const th = cornerThreads(over, { seed: seed + i * 101, faces: q.faces, size: q.size, keep, see: voxelSight(f, q), voxel: true });
+      const th = cornerThreads(over, { seed: seed + i * 101, faces: q.faces, size: q.size, keep, see: voxelSight(f, q), hold: voxelHold(f, q), voxel: true });
       if (th) return { q, th };
     }
     return null;
@@ -518,7 +533,7 @@
     return Object.assign({}, q, { free: q.size, vox: q.size.map((n, i) => 2 + Math.floor(hs(2 + i) * (n - 1))), size: q.size.map((n, i) => (2 + Math.floor(hs(2 + i) * (n - 1))) / 8) });
   }
 
-  const api = { WEB_PARAMS, webParams, ANCHOR, anchorAt, webGeom, webLayout, webThreads, cornerThreads, voxelCorners, pickVoxelCorner, voxelSight, voxelWeb, noise2, analyze, cornerSpots, bfs };
+  const api = { WEB_PARAMS, webParams, ANCHOR, anchorAt, webGeom, webLayout, webThreads, cornerThreads, voxelCorners, pickVoxelCorner, voxelSight, voxelHold, voxelWeb, noise2, analyze, cornerSpots, bfs };
   root.Webs = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof self !== 'undefined' ? self : this);
