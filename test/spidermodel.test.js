@@ -75,3 +75,12 @@ test('na kmeni: 10 pohľadov podľa strany kmeňa voči kamere, zo zadnej strany
   const a = SM.layout('v', 't0d'), b = SM.layout('v', 'down');
   assert.deepStrictEqual([a.w, a.h], [b.w, b.h]);
 });
+
+test('oči na snímke: spredu áno, zozadu ich zakryje zadoček, z brucha žiadne', () => {
+  for (const k of ['k', 'p']) {
+    assert.ok(SM.layout(k, 'S').eyes[0].length >= 2, k + ' spredu');
+    assert.strictEqual(SM.layout(k, 'N').eyes[0].length, 0, k + ' zozadu');
+    assert.strictEqual(SM.layout(k, 'down-b').eyes[0].length, 0, k + ' brucho');
+  }
+  for (const e of SM.layout('v', 'S').eyes[0]) assert.ok(e.r > 0 && e.y > 0, 'oko nad zemou');
+});

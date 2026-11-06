@@ -373,6 +373,7 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
     const L = SM.layout(k, view), key = k + view + f;
     if (sp.userData.key !== key) { sp.material.map = spriteTex(`spider:${k}:${view}:${f}`, L.w, L.h, c => SM.sprite(c, k, view, f)); sp.material.needsUpdate = true; sp.userData.key = key; }
     const s = ks || 1;
+    sp.userData.eye = { L, f, s, x, y, z }; // pre svit očí v tme (počiatok modelu)
     sp.scale.set(L.w / L.ppu * s, L.h / L.ppu * s, 1);
     if (SM.isSurface(view)) { sp.center.set(L.ox / L.w, 1 - L.oy / L.h); sp.position.set(x, y, z); return; }
     const t = (L.h - L.oy) / L.ppu * s / sinP;
@@ -380,7 +381,7 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
     sp.position.set(x + toCam.x * t, y, z + toCam.z * t);
   }
 
-  const lastSeen = new Map(); // id → { x, y, z, seen, d } pre oči v prekrytí
+  const lastSeen = new Map(); // id → { k, eye (počiatok a snímka), b (jas), hide, seen, d } pre svit očí v prekrytí
   function update(dt, t, lights) {
     if (builtArea !== S.area || builtTiles !== S.tilesGen) { builtArea = S.area; builtTiles = S.tilesGen; builtWebs = builtCorner = -1; } // nová plocha (výška zeme)
     if (builtWebs !== S.websGen) { builtWebs = S.websGen; buildWebs(); }
@@ -392,15 +393,17 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
     frame.time.value = t;
     if (renderer) renderer.getDrawingBufferSize(frame.res.value);
     toCam.copy(camera.position).sub(camTarget).setY(0).normalize();
+    lastSeen.clear();
     for (const m of cornerMeshes) if (m.isSprite) {
       const w = m.userData.web, n = w.nrm;
       const view = !n || Math.abs(n.y) > 0.8 ? SM.planarView(0, 1, toCam.x, toCam.z) : n.dot(toCam) >= 0 ? 'down' : 'down-b';
       pose(m, 'k', view, 0, w.at.x, w.at.y, w.at.z, w.ks);
-      m.material.color.setRGB(...lightAt(w.at.x, w.at.y, w.at.z, lights, lights.length));
+      const c = lightAt(w.at.x, w.at.y, w.at.z, lights, lights.length, lo);
+      m.material.color.setRGB(...c);
+      lastSeen.set(m.uuid, { k: 'k', eye: m.userData.eye, b: Math.max(...c), seen: lo.seen, d: Math.hypot(w.at.x - me.x, w.at.z - me.y) });
     }
     for (const m of burrowMeshes) { const p = m.position; lightAt(p.x, p.y, p.z, lights, lights.length, lo); m.material.opacity = 0.85 * lo.seen; m.visible = lo.seen > 0.02; }
     const alive = new Set();
-    lastSeen.clear();
     for (const o of S.spiders.values()) {
       alive.add(o.id);
       const sp = spriteFor(o);
@@ -417,36 +420,50 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
       const tv = o.n ? SM.trunkView(o.n[0], o.n[1], toCam.x, toCam.z, o.u) : null; // na kmeni: podľa strany kmeňa voči kamere
       const view = o.n ? tv || 't0d' : o.c ? 'up' : SM.planarView(Math.cos(o.a || 0), Math.sin(o.a || 0), toCam.x, toCam.z);
       pose(sp, o.k, view, f, x, o.c ? y + 0.25 : o.n ? y + (o.z || 0) : y, z, o.c ? 0.6 : 1); // na hráčovi menší, nech ho nezakryje celého
-      const c = lightAt(x, y + 0.2 + (o.n ? o.z || 0 : 0), z, lights, lights.length, lo);
+      const c = lightAt(x, y + 0.2 + (o.n ? o.z || 0 : 0), z, lights, lights.length, lo), bright = Math.max(...c);
       if (o.c) for (let i = 0; i < 3; i++) c[i] = Math.max(c[i], 0.8); // na sebe ho vidíš aj v tme
       sp.material.color.setRGB(...c);
       // pavúk na chrbte hráča sa kreslí navrch (inak by ho zakryla postavička)
       if (sp.userData.top !== !!o.c) { const m = sp.material; sp.userData.top = !!o.c; m.depthTest = !o.c; m.transparent = !!o.c; sp.renderOrder = o.c ? 1e6 + 1 : 0; m.needsUpdate = true; } // až po siluete hráča
       const inBurrow = o.k === 'v' && o.h;
       sp.visible = lo.seen > 0.02 && !inBurrow && !(o.n && !tv); // za kmeňom ho nevidno
-      lastSeen.set(o.id, { x, y: y + (o.n ? o.z || 0 : SM.eyeHeight(o.k)), z, seen: inBurrow || (o.n && !tv) ? 0 : lo.seen, d: Math.hypot(x - me.x, z - me.y), k: o.k });
+      lastSeen.set(o.id, { k: o.k, eye: sp.userData.eye, b: bright, hide: !!(o.n && !tv), seen: inBurrow ? 0 : lo.seen, d: Math.hypot(x - me.x, z - me.y) });
     }
     for (const [id, sp] of sprites) if (!alive.has(id)) { scene.remove(sp); sp.material.dispose(); sprites.delete(id); }
   }
 
-  // V tme: oči vlčiaka a pradleny sa lesknú aj za dohľadom (vlčiak do SPI.vlciak.eyes políčok) – kto si dá pozor, uvidí ich skôr.
+  // Oči sa v tme lesknú (všetky pavúky): na skutočných miestach očí v snímke (SpiderModel.layout().eyes), tým silnejšie,
+  // čím je pri pavúkovi tmavšie. Aj za dohľadom – vlčiak a pradlena do SPI.*.eyes políčok, krížiak do 2,5 –
+  // kto si dá pozor, uvidí ich skôr. Občas žmurknú.
+  const KEYE = 2.5;
   function overlay(c, ppb, t) {
-    if (!D.isDark(S.area)) return;
+    c.save();
+    c.globalCompositeOperation = 'lighter';
     for (const [id, e] of lastSeen) {
-      if (e.k === 'k') continue;
-      const range = (e.k === 'p' ? SPI.pradlena : SPI.vlciak).eyes;
-      if (e.d > range || e.seen > 0.7) continue;
-      const h = (id.charCodeAt(1) || 0) * 1.7;
-      if (Math.sin(t * 0.9 + h) < -0.85) continue; // žmurknutie
-      const a = (1 - e.seen) * (1 - Math.max(0, e.d - range + 1.5) / 1.5) * (0.65 + 0.35 * Math.sin(t * 3 + h));
+      const E = e.eye;
+      if (e.hide || !E) continue;
+      const eyes = E.L.eyes[E.f];
+      if (!eyes || !eyes.length) continue;
+      const dark = Math.max(0, Math.min(1, (0.85 - e.b) / 0.45));
+      if (dark <= 0.02) continue;
+      const range = e.k === 'k' ? KEYE : (e.k === 'p' ? SPI.pradlena : SPI.vlciak).eyes;
+      const far = e.seen > 0.05 ? 1 : Math.max(0, Math.min(1, (range - e.d) / 1.5));
+      const h = ((id.charCodeAt(1) || 0) + id.length * 7) * 1.7;
+      if (Math.sin(t * 0.9 + h) < -0.9) continue; // žmurknutie
+      const a = dark * far * (0.75 + 0.25 * Math.sin(t * 3 + h));
       if (a <= 0.02) continue;
-      const P = project(e.x, e.y, e.z), gap = ppb * (e.k === 'p' ? 0.16 : 0.08), r = Math.max(1.5, ppb * (e.k === 'p' ? 0.045 : 0.03));
+      const P = project(E.x, E.y, E.z), k = ppb * E.s, col = SM.SPECIES[e.k].glow;
       c.globalAlpha = Math.min(1, a);
-      c.fillStyle = e.k === 'p' ? '#ff6a4a' : '#ffcf6a';
-      c.shadowColor = c.fillStyle; c.shadowBlur = r * 4;
-      for (const s of [-1, 1]) { c.beginPath(); c.arc(P.x + s * gap / 2, P.y, r, 0, Math.PI * 2); c.fill(); }
-      c.shadowBlur = 0; c.globalAlpha = 1;
+      c.fillStyle = col; c.shadowColor = col;
+      for (const q of eyes) { // žiara okolo a jasný stred
+        const r = Math.max(0.9, q.r * k * 1.1), x = P.x + q.x * k, y = P.y - q.y * k;
+        c.globalAlpha = Math.min(1, a) * 0.35; c.shadowBlur = 0;
+        c.beginPath(); c.arc(x, y, r * 2.4, 0, Math.PI * 2); c.fill();
+        c.globalAlpha = Math.min(1, a); c.shadowBlur = Math.max(4, r * 6);
+        c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+      }
     }
+    c.restore();
   }
   function dispose() {
     for (const m of webMeshes.values()) drop(m);
