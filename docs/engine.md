@@ -146,7 +146,7 @@ Player movement and spiders run on the same queue, with keyed (unique) events, s
 
 | Key | Types | Scheduled by |
 |---|---|---|
-| `move:<player>` | `arrivedFrom` (a position from the client), `goTo` (tap to walk: one step per tick along the memoized shortest route, reschedules itself; `goToEnd` / `goToNo` to the player) | `moves.js`: `arrive()` on every `move` message (after forwarding the position to the others), `goTo()` on every `goTo` message |
+| `move:<player>` | `arriveAt` (a position the client asks for: checked to be reachable, then forwarded and evaluated; `moveNo` if not), `goTo` (tap to walk: one step per tick along the memoized shortest route, reschedules itself; `goToEnd` / `goToNo` to the player) | `moves.js`: `arrive()` on every `move` message, `goTo()` on every `goTo` message, `settle()` before an action, `place()` when the server moves the player itself |
 | `spider:<id>`, `spider:k<area>` | `spider` (next step), `goTo` (chase: path to the player's predicted position), `kriziak` | `spiders.js`: the spider's own handler (next tick while moving, its deadline while idle); player actions that concern it replace it with a reaction in the next tick |
 | `pull:<player>` | `pullDone` | `spiders.js` `startPull()`; moving or leaving cancels it |
 

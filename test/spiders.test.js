@@ -54,7 +54,7 @@ const TICK_S = D.BASE_DAY_SECONDS / TPD; // krok = 0,125 s
 const ticks = s => Math.round(s / TICK_S); // sekundy reálneho času → kroky
 // beh simulácie: n krokov (each(tick) pred každým krokom); pavúky v lese s hráčom sa zobudia
 function run(room, n, each) { Sp.ensure(room); for (let k = 0; k < n; k++) { if (each) each(room.tick + 1); E.advanceTo(room, room.tick + 1, SPEC); } return room.tick; }
-// hráč sa pohol (ako udalosť arrivedFrom na serveri: pavúky v blízkosti zareagujú)
+// hráč sa pohol (ako udalosť arriveAt na serveri: pavúky v blízkosti zareagujú)
 function move(room, p, to) { Object.assign(p, to); Sp.noticePlayer(room, p); }
 // ručne nastavený stav pavúka – jeho udalosť sa preplánuje
 function set(room, s, st) { Object.assign(s, st); Sp.plan(room, s); }
@@ -544,12 +544,13 @@ test('server: svet z verzie 7 dostane pavučiny; v lese sa ťahá hodváb, s lam
     assert.ok(webs.webs.length >= 15, 'v jeseni je les plný pavučín');
     assert.deepStrictEqual(webs.homes.map(h => [h.k, h.x, h.y]), f.homes.map(h => [h.k, h.x, h.y]));
     // postaví sa vedľa pavučiny (na susedné voľné políčko mimo nej)
-    const wb = webs.webs[0], t = wb.y * LW + wb.x;
+    const wb = webs.webs.slice().sort((a, b) => Math.hypot(a.x - wel.x, a.y - wel.y) - Math.hypot(b.x - wel.x, b.y - wel.y))[0], t = wb.y * LW + wb.x; // najbližšia – pôjde sa k nej pešo
     const tiles = wel.tiles, side = wb.ax ? [[1, 0], [-1, 0]] : [[0, 1], [0, -1]];
     const [dx, dy] = side.find(([dx, dy]) => !D.BLOCK[tiles[t + dy * LW + dx].g]);
     const at = { x: wb.x + dx + 0.5, y: wb.y + dy + 0.5 };
-    ws.send(JSON.stringify({ t: 'move', x: at.x, y: at.y, dir: 0, lp: true, ar: wel.seq }));
-    await wait(m => m.t === 'pl' && m.list.some(p => p.x === at.x && p.y === at.y));
+    // dôjde tam ťuknutím (goTo) – preskok správou move by server neprijal
+    ws.send(JSON.stringify({ t: 'goTo', x: at.x - 0.5, y: at.y - 0.5, n: 1, lp: true, ar: wel.seq }));
+    assert.strictEqual((await wait(m => m.t === 'goToEnd' || m.t === 'goToNo', 20000)).t, 'goToEnd');
     ws.send(JSON.stringify({ t: 'act', x: wb.x, y: wb.y, item: 'lamp' }));
     assert.match((await wait(m => m.t === 'toast' && /lampáš/.test(m.text))).text, /neutrhneš/);
     ws.send(JSON.stringify({ t: 'move', x: at.x, y: at.y, dir: 0, lp: false, ar: wel.seq }));

@@ -204,7 +204,7 @@ function walkIn(room, pl, wb) {
   alert(room, wb, pl);
   io.toast(pl, `🕸️ Vbehol(a) si do pavučiny! Lepí sa… a ${kindOf(room, wb.o) === 'p' ? 'stará pradlena' : 'vlčiak'} vie, kde si. 🕷️`);
 }
-// Hráč prešiel po políčku s pavučinou (kontroluje sa pri každom pohybe v lese – udalosť arrivedFrom).
+// Hráč prešiel po políčku s pavučinou (kontroluje sa pri každom pohybe v lese – udalosť arriveAt).
 // from = odkiaľ išiel od posledného vyhodnotenia: skontrolujú sa všetky políčka na ceste, nielen cieľ.
 function checkWalk(room, pl, from) {
   if (pl.area !== 'les' || !room.spid) return;
@@ -251,7 +251,7 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 // ---------- Plánovanie udalostí pavúka ----------
 const BUSY = { walk: 1, totree: 1, return: 1, alert: 1, chase: 1, cling: 1 };
 const busy = s => !!BUSY[s.st] || s.moving;
-// Kde bude hráč v najbližšom kroku: posledný pohyb (arrivedFrom) predĺžený o jeden krok; kto stojí, ostane stáť.
+// Kde bude hráč v najbližšom kroku: posledný pohyb (arriveAt) predĺžený o jeden krok; kto stojí, ostane stáť.
 function predict(room, p) {
   const v = p.mv;
   if (!v || room.tick - v.t > 2) return { x: p.x, y: p.y };
@@ -282,7 +282,7 @@ function ensure(room) {
   if (!room.spid || !room.les || !playersIn(room, 'les').length) return;
   for (const s of spiders(room)) if (!E.pending(room, KEY(s.id))) E.scheduleUnique(room, KEY(s.id), room.tick + 1, 'spider', { id: s.id });
 }
-// Hráč sa pohol (udalosť arrivedFrom): pavúky v jeho blízkosti, ktoré čakajú na termín, zareagujú hneď
+// Hráč sa pohol (udalosť arriveAt): pavúky v jeho blízkosti, ktoré čakajú na termín, zareagujú hneď
 // (všimnú si ho, zľaknú sa lampáša, zlezú z kmeňa…).
 const NOTICE = Math.max(V.sense, SP.lamp + 0.5, WEB.alert) + 1;
 function noticePlayer(room, pl) {

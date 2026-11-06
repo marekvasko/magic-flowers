@@ -1,11 +1,12 @@
 // Pohyb hráčov ako udalosti v plánovači (#101).
 // Každý hráč má najviac jednu čakajúcu udalosť pohybu s kľúčom move:<hráč>:
-//   'arrivedFrom' – klient poslal novú polohu. Server ju neoveruje vopred: hneď ju prepošle ostatným (hooks.forward)
-//                   a až potom ju v najbližšom kroku vyhodnotí plánovač (hooks.evaluate – pavučiny, pavúky, prechody…).
-//                   Novšia poloha nahradí ešte nevyhodnotenú; odkiaľ hráč išiel (fx, fy), ostane z tej staršej,
-//                   takže vyhodnotenie vidí celú cestu od posledného vyhodnotenia.
-//   'goTo'        – hráč ťukol na políčko a server ho tam vedie po najkratšej ceste: každý krok je ako arrivedFrom
-//                   (odkiaľ → kam) a na konci sa goTo naplánuje znova na ďalší krok (pozri nižšie).
+//   'arriveAt' – klient poslal, kam sa dostal (x, y). Je to len žiadosť: v najbližšom kroku sa server z aktuálneho
+//                stavu pokúsi prísť na to miesto – overí, že sa tam dá dôjsť (priechodné políčka, výšky, rýchlosť).
+//                Až potom hráča presunie, polohu prepošle ostatným (hooks.forward) a vyhodnotí (hooks.evaluate –
+//                pavučiny, pavúky, prechody…). Kam sa dôjsť nedá, hráč zastane na poslednom možnom mieste a klient
+//                dostane opravu ('moveNo'). Novšia žiadosť nahradí ešte nevyhodnotenú.
+//   'goTo'     – hráč ťukol na políčko a server ho tam vedie po najkratšej ceste: každý krok je ako arriveAt
+//                (odkiaľ → kam) a na konci sa goTo naplánuje znova na ďalší krok (pozri nižšie).
 // Obe zdieľajú ten istý kľúč: nový pohyb od klienta zruší vedenie a nové vedenie zruší nevyhodnotený pohyb.
 // Z posledného pohybu sa počíta rýchlosť (políčka za krok) – podľa nej pavúk predpovedá, kde hráč bude (pl.mv).
 const D = require('./shared/data.js');
@@ -24,28 +25,81 @@ function byKey(room, d) {
   return null;
 }
 
-// Nová poloha od klienta (už orezaná na plochu). nowMs = reálny čas príchodu správy (na odhad rýchlosti).
+// ---------- arriveAt: klient hlási, kam sa dostal ----------
+// Výskok (medzerník) vynesie hráča až o JUMP_LIFT vrstiev vyššie (≈ 0,7 bloku, ako klient) – kto skočil
+// pred menej než JUMP_MS, smie vyliezť aj vyššie. Rýchlosť sa overuje voči reálnemu času medzi správami
+// (s rezervou na sieť: SPEED_SLACK, a najviac za BUDGET_MS – po dlhom státí sa nenaskočí ďaleko).
+const JUMP_LIFT = Math.floor(0.7 * D.GLACIER_LAYERS), JUMP_MS = 1000;
+const SPEED_SLACK = 1.5, BUDGET_MIN = 250, BUDGET_MS = 2000;
+
+// Nová poloha od klienta (už orezaná na plochu) – zatiaľ len žiadosť. nowMs = reálny čas príchodu správy.
 function arrive(room, pl, x, y, nowMs) {
-  const prev = E.pending(room, KEY(pl));
-  const from = prev && prev.type === 'arrivedFrom' ? { x: prev.data.fx, y: prev.data.fy } : { x: pl.x, y: pl.y };
   // rýchlosť z dvoch po sebe idúcich správ, prepočítaná na jeden krok; po dlhšej prestávke hráč stál
-  const ms = E.tickMs(room), gap = pl.mvAt != null ? nowMs - pl.mvAt : Infinity;
+  const ms = E.tickMs(room), gap = pl.mvAt != null ? nowMs - pl.mvAt : Infinity, last = pl.rep || pl;
   const k = gap > 0 && gap <= 4 * ms ? ms / gap : 0;
-  const vx = +((x - pl.x) * k).toFixed(4), vy = +((y - pl.y) * k).toFixed(4);
-  pl.mvAt = nowMs;
-  pl.x = x; pl.y = y;
-  hooks.forward(pl); // najprv prepošleme…
-  return E.scheduleUnique(room, KEY(pl), room.tick + 1, 'arrivedFrom', { pk: pl.key, id: pl.id, seq: pl.areaSeq, t: room.tick, fx: from.x, fy: from.y, x, y, vx, vy }); // …potom vyhodnotíme (t = krok servera pri príchode)
+  const vx = +((x - last.x) * k).toFixed(4), vy = +((y - last.y) * k).toFixed(4);
+  pl.mvAt = nowMs; pl.rep = { x, y };
+  const budget = Math.min(BUDGET_MS, Math.max(BUDGET_MIN, nowMs - (pl.okAt != null ? pl.okAt : nowMs)));
+  const j = pl.jumpAt != null && nowMs - pl.jumpAt < JUMP_MS ? 1 : 0;
+  return E.scheduleUnique(room, KEY(pl), room.tick + 1, 'arriveAt', { pk: pl.key, id: pl.id, seq: pl.areaSeq, t: room.tick, fx: pl.x, fy: pl.y, x, y, vx, vy, now: nowMs, ms: budget, j });
 }
-function onArrived(room, d) {
+// Výška, na ktorej hráč stojí: najvyššie priechodné políčko pod jeho telom (ako klient – kým celkom nezíde z ľadu);
+// políčko, na ktoré práve vstupuje (skip), sa nepočíta – inak by sa naň dalo vyliezť, len čo sa ho dotkne
+function standLevel(tiles, w, h, x, y, skip) {
+  const idx = (cx, cy) => cx >= 0 && cy >= 0 && cx < w && cy < h ? Math.floor(cy) * w + Math.floor(cx) : -1;
+  let L = D.level(tiles[idx(x, y)]);
+  for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    const i = idx(x + dx * D.BODY.rx, y + dy * D.BODY.ry);
+    if (i >= 0 && i !== skip && D.passable(tiles[i])) L = Math.max(L, D.level(tiles[i]));
+  }
+  return L;
+}
+// Dá sa z (x, y) prísť na (tx, ty)? Úsečka sa prejde po štvrť políčka; každé nové políčko musí byť priechodné
+// a nie privysoko (plazením ani hore, ani dolu), celá dĺžka najviac maxD. Vráti { x, y, ok } – kam až sa dá dôjsť.
+function reach(room, pl, x, y, tx, ty, maxD, lift) {
+  const tiles = Areas.areaTiles(room, pl.area), { w, h } = D.areaSize(pl.area);
+  const len = Math.hypot(tx - x, ty - y), go = Math.min(len, maxD), n = Math.max(1, Math.ceil(go / 0.25));
+  let px = x, py = y, ti = Math.floor(y) * w + Math.floor(x);
+  for (let k = 1; k <= n; k++) {
+    const nx = x + (tx - x) * (go / (len || 1)) * k / n, ny = y + (ty - y) * (go / (len || 1)) * k / n;
+    const ni = Math.floor(ny) * w + Math.floor(nx);
+    if (ni !== ti) {
+      const t = tiles[ni], up = D.level(t) - (pl.cr ? D.level(tiles[ti]) : standLevel(tiles, w, h, px, py, ni));
+      if (!D.passable(t) || (pl.cr ? up !== 0 : up > D.GLACIER_STEP + lift)) return { x: px, y: py, ok: false };
+      ti = ni;
+    }
+    px = nx; py = ny;
+  }
+  return { x: px, y: py, ok: go >= len - 1e-9 };
+}
+function onArriveAt(room, d) {
   const pl = byKey(room, d);
   if (!pl) return;
+  const from = { x: pl.x, y: pl.y };
+  const maxD = WALK * d.ms / 1000 * SPEED_SLACK + 0.5;
+  const r = reach(room, pl, pl.x, pl.y, d.x, d.y, maxD, d.j ? JUMP_LIFT : 0);
+  pl.x = r.ok ? d.x : +r.x.toFixed(4); pl.y = r.ok ? d.y : +r.y.toFixed(4);
+  if (pl.save) { pl.save.x = pl.x; pl.save.y = pl.y; }
+  pl.okAt = d.now;
   pl.mv = { vx: d.vx || 0, vy: d.vy || 0, t: room.tick };
-  hooks.evaluate(room, pl, { x: d.fx, y: d.fy });
+  if (!r.ok) { pl.rep = { x: pl.x, y: pl.y }; pl.mv = { vx: 0, vy: 0, t: room.tick }; fix(pl, 'moveNo'); }
+  hooks.forward(pl);
+  hooks.evaluate(room, pl, from);
+}
+// Klient dostane polohu, kde hráč naozaj je. fix = poradové číslo opravy: pohyby, ktoré klient poslal ešte
+// pred ňou (z miesta, kde už nie je), server zahodí (správa move nesie fx).
+function fix(pl, t) { pl.fix = ((pl.fix | 0) + 1) % 1000; hooks.send(pl, { t, x: pl.x, y: pl.y, fix: pl.fix }); }
+// Správa od klienta prišla skôr, než sa vyhodnotil jeho čakajúci pohyb (napr. akcia hneď po kroku) –
+// pohyb sa vyhodnotí hneď, aby akcia videla polohu, z ktorej ju hráč urobil.
+function settle(room, pl) {
+  const e = E.pending(room, KEY(pl));
+  if (!e || e.type !== 'arriveAt') return;
+  E.cancel(room, KEY(pl));
+  onArriveAt(room, e.data);
 }
 
 // ---------- goTo: hráč ťukne na políčko, server ho tam vedie ----------
-// Klient pošle cieľové políčko (gx, gy). goTo sa naplánuje na najbližší krok a má tie isté údaje ako arrivedFrom
+// Klient pošle cieľové políčko (gx, gy). goTo sa naplánuje na najbližší krok a má tie isté údaje ako arriveAt
 // (odkiaľ fx, fy → kam x, y v tom kroku, rýchlosť vx, vy, krok servera t) plus cieľ a zvyšok cesty. Keď sa vykoná,
 // hráč sa presunie na x, y, poloha ide ostatným, vyhodnotí sa ako príchod a goTo sa naplánuje znova na ďalší krok
 // s ďalším úsekom cesty – až kým hráč nedôjde (hlásenie 'goToEnd'). Nedá sa tam dôjsť → 'goToNo' (klient to oznámi).
@@ -67,7 +121,7 @@ function pathOk(room, area, start, path, cr) {
   for (let k = 0, a = start; k < path.length; a = path[k++]) if (a !== path[k] && !stepOk(room, area, tiles, a, path[k], cr)) return false;
   return true;
 }
-// Cesta po políčkach plochy (4 smery, výšky ako pri chôdzi, bez pavučín) – zoznam políčok bez štartu, null = nedá sa
+// Cesta po políčkach plochy (4 smery, výšky ako pri chôdzi, bez pavučín a cudzích prechodov) – zoznam políčok bez štartu, null = nedá sa
 function route(room, area, from, to, cr) {
   const { w, h } = D.areaSize(area);
   const start = Math.floor(from.y) * w + Math.floor(from.x), goal = Math.floor(to.y) * w + Math.floor(to.x);
@@ -85,6 +139,7 @@ function route(room, area, from, to, cr) {
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
       const nx = cx + dx, ny = cy + dy, n = ny * w + nx;
       if (nx < 0 || ny < 0 || nx >= w || ny >= h || prev.has(n) || !stepOk(room, area, tiles, i, n, cr)) continue;
+      if (tiles[n].g === 'gate' && n !== goal) continue; // cez prechod len vtedy, keď je cieľom (inak by hráč odišiel z plochy)
       prev.set(n, i); q.push(n);
     }
   }
@@ -134,12 +189,9 @@ function goTo(room, pl, gx, gy, n) {
   if (!Number.isInteger(gx) || !Number.isInteger(gy) || gx < 0 || gy < 0 || gx >= w || gy >= h) return reject(pl, n, 'far'), false;
   const path = route(room, pl.area, pl, { x: gx + 0.5, y: gy + 0.5 }, pl.cr);
   if (!path) return reject(pl, n, 'far'), false;
-  // nevyhodnotený pohyb od klienta sa nestratí: goTo ho vyhodnotí spolu so svojím prvým krokom
-  const prev = E.pending(room, KEY(pl));
-  const from = prev && (prev.type === 'arrivedFrom' || prev.type === 'goTo') ? { x: prev.data.fx, y: prev.data.fy } : { x: pl.x, y: pl.y };
   const step = nextStep(room, pl, pl.x, pl.y, path, gx, gy);
   if (!step) return reject(pl, n, 'far'), false;
-  plan(room, pl, { n, gx, gy }, from.x, from.y, step);
+  plan(room, pl, { n, gx, gy }, pl.x, pl.y, step);
   return true;
 }
 function onGoTo(room, d) {
@@ -166,13 +218,21 @@ function onGoTo(room, d) {
   if (!step) return reject(pl, d.n, 'blocked');
   plan(room, pl, d, pl.x, pl.y, step);
 }
-// Vedenie sa preruší (pradlena hráča odhodila…) – nevyhodnotený pohyb od klienta ostane
+// Vedenie sa preruší – nevyhodnotený pohyb od klienta ostane
 function stop(room, pl) { const e = E.pending(room, KEY(pl)); if (e && e.type === 'goTo') E.cancel(room, KEY(pl)); }
+// Server hráča presunul sám (pradlena ho odhodila): pohyb aj vedenie sa zrušia a klient dostane novú polohu
+function place(room, pl, x, y, t) {
+  E.cancel(room, KEY(pl));
+  pl.x = x; pl.y = y; pl.rep = { x, y };
+  if (pl.save) { pl.save.x = x; pl.save.y = y; }
+  fix(pl, t);
+  hooks.forward(pl);
+}
 
 // Hráč odišiel – jeho nevyhodnotený pohyb netreba
 function forget(room, pl) { E.cancel(room, KEY(pl)); }
 
 // Udalosti pohybu patria len bežiacemu svetu (hráči sa neukladajú s ním) – po načítaní sa zahodia.
-const isRuntime = e => e.type === 'arrivedFrom' || (e.type === 'goTo' && e.data && e.data.pk != null);
+const isRuntime = e => e.type === 'arriveAt' || e.type === 'arrivedFrom' /* starší názov */ || (e.type === 'goTo' && e.data && e.data.pk != null);
 
-module.exports = { KEY, WALK, setHooks, arrive, goTo, route, stop, forget, isRuntime, HANDLERS: { arrivedFrom: onArrived, goTo: onGoTo } };
+module.exports = { KEY, WALK, setHooks, arrive, reach, settle, goTo, route, stop, place, forget, isRuntime, HANDLERS: { arriveAt: onArriveAt, goTo: onGoTo } };

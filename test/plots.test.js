@@ -130,8 +130,9 @@ test('server: osobné povolenia z verzie 4 prejdú na spoločné povolenie záhr
     // prázdne políčko zarovná ktokoľvek, nielen ten, kto ho prekopal – uvoľní miesto pre všetkých
     // (Ján z políčka odstúpi – motyka na políčku s iným hráčom by darovala)
     jan.send({ t: 'move', x: jx + 1.9, y: jy + 0.5, dir: 0, ar: 0 });
-    eva.send({ t: 'move', x: jx - 0.9, y: jy + 0.5, dir: 0, ar: 0 });
-    await jan.wait(m => m.t === 'pl' && m.list.some(p => p.name === 'Eva' && Math.abs(p.x - (jx - 0.9)) < 0.01) && m.list.some(p => p.name === 'Jan' && Math.abs(p.x - (jx + 1.9)) < 0.01));
+    eva.send({ t: 'goTo', x: jx - 1, y: jy, n: 1, ar: 0 }); // Eva je ďaleko – dôjde ťuknutím (preskok by server neprijal)
+    assert.strictEqual((await eva.wait(m => m.t === 'goToEnd' || m.t === 'goToNo', 20000)).t, 'goToEnd');
+    await jan.wait(m => m.t === 'pl' && m.list.some(p => p.name === 'Eva' && Math.abs(p.x - (jx - 0.5)) < 0.01) && m.list.some(p => p.name === 'Jan' && Math.abs(p.x - (jx + 1.9)) < 0.01));
     eva.send({ t: 'act', x: jx, y: jy, item: 'hoe' });
     assert.deepStrictEqual(await eva.wait(m => m.t === 'plots' && m.used === 48), { t: 'plots', used: 48, limit: 96 });
     // ďalšia úroveň už nie je

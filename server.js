@@ -394,7 +394,7 @@ Object.assign(HANDLERS, Econ.HANDLERS, Spiders.HANDLERS, Moves.HANDLERS, {
 Spiders.setHooks({
   toast, sendMe, broadcastArea,
   send(pl, msg) {
-    if (msg.t === 'shove') Moves.stop(pl.room, pl); // odhodený hráč už nejde, kam ťukol
+    if (msg.t === 'shove') return Moves.place(pl.room, pl, msg.x, msg.y, 'shove'); // odhodený hráč už nejde, kam ťukol
     if (msg.t === 'slow') pl.slow = { k: msg.k, until: pl.room.tick + E.msTicks(pl.room, msg.ms) }; // spomalí aj vedenie (goTo)
     send(pl.ws, msg);
   }
@@ -434,7 +434,7 @@ function forwardMove(pl) {
   const s = JSON.stringify({ t: 'pm', p: playerView(pl, Date.now()) });
   for (const p of pl.room.players.values()) if (p !== pl && p.area === pl.area && p.ws.readyState === 1) p.ws.send(s);
 }
-// Vyhodnotenie pohybu v plánovači (udalosť arrivedFrom / goTo): from = odkiaľ hráč išiel od posledného vyhodnotenia
+// Vyhodnotenie pohybu v plánovači (udalosť arriveAt / goTo): from = odkiaľ hráč išiel od posledného vyhodnotenia
 function evaluateMove(room, pl, from) {
   if (pl.scav && Math.hypot(pl.x - pl.scav.px, pl.y - pl.scav.py) > 0.35) stopScavenge(pl, 'Pohol(a) si sa skôr, než si dohľadal(a).');
   if (pl.pull && (Math.hypot(pl.x - pl.pull.px, pl.y - pl.pull.py) > 0.35 || pl.lp)) { Spiders.stopPull(pl); toast(pl, 'Prestal(a) si ťahať hodváb.'); }
@@ -872,26 +872,27 @@ wss.on('connection', ws => {
       case 'move':
         if (pl.sleep) break; // spiaci hráč leží v posteli
         if ((m.ar | 0) !== pl.areaSeq) break; // pohyb ešte z predchádzajúcej plochy
+        if ((m.fx | 0) !== (pl.fix | 0)) break; // pohyb poslaný ešte pred opravou polohy (moveNo / shove)
         if (typeof m.x === 'number' && typeof m.y === 'number' && isFinite(m.x) && isFinite(m.y)) {
           const pos = Areas.clampPos(pl.area, m.x, m.y); // z plochy sa vyjsť nedá – len cez prechod
           pl.dir = m.dir | 0;
           if (typeof m.a === 'number' && isFinite(m.a)) pl.a = +m.a.toFixed(3); // presný smer pohľadu (3D: 8 smerov)
           pl.cr = !!m.cr; // plazí sa
           pl.lp = !!m.lp && !!sv.inv.lamp; // drží lampáš (svieti)
-          // poloha ide ostatným hneď; pavučiny, pavúky, hľadanie a prechody vyhodnotí plánovač v najbližšom kroku (moves.js)
+          // len žiadosť: v najbližšom kroku server overí, že sa tam dá dôjsť, a až potom polohu prepošle a vyhodnotí (moves.js)
           Moves.arrive(room, pl, pos.x, pos.y, Date.now());
-          sv.x = pl.x; sv.y = pl.y;
         }
         break;
       case 'goTo': // ťuknutie na políčko: server hráča dovedie po najkratšej ceste (moves.js), alebo odpovie 'goToNo'
         if ((m.ar | 0) !== pl.areaSeq) break;
         if (pl.sleep) { send(pl.ws, { t: 'goToNo', n: m.n | 0, why: 'sleep' }); break; }
+        Moves.settle(room, pl); // vedenie začne tam, kam klient naposledy došiel
         pl.cr = !!m.cr;
         pl.lp = !!m.lp && !!sv.inv.lamp;
         Moves.goTo(room, pl, m.x, m.y, m.n | 0);
         break;
-      case 'act': if (!pl.sleep) act(pl, m); break;
-      case 'jump': if (!pl.sleep) pl.jn = ((pl.jn | 0) + 1) % 1000; break; // skok je len pre parádu – ostatní ho uvidia podľa zmeny počítadla
+      case 'act': if (!pl.sleep) { Moves.settle(room, pl); act(pl, m); } break; // akcia vidí polohu, z ktorej ju hráč urobil
+      case 'jump': if (!pl.sleep) { pl.jn = ((pl.jn | 0) + 1) % 1000; pl.jumpAt = Date.now(); } break; // skok je len pre parádu – ostatní ho uvidia podľa zmeny počítadla
       case 'sleep': {
         if (m.on) {
           if (pl.sleep || room.ff) return;

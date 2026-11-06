@@ -187,6 +187,12 @@ function startServer(dataDir, port) {
   });
 }
 function stopServer(proc) { return new Promise(r => { proc.removeAllListeners('exit'); proc.on('exit', r); proc.kill('SIGTERM'); }); }
+// Hráč dôjde na políčko ťuknutím (goTo) – server overuje každý pohyb, preskok správou move by neprijal
+let walkN = 0;
+function walkTo(c, x, y, ar, pred) {
+  c.send({ t: 'goTo', x: Math.floor(x), y: Math.floor(y), n: ++walkN, ar });
+  return c.wait(pred || (m => m.t === 'goToEnd' || m.t === 'goToNo' || m.t === 'shove'), 20000);
+}
 // klient: správy do fronty, wait(pred) počká na prvú vyhovujúcu
 function client(port) {
   const ws = new WebSocket('ws://127.0.0.1:' + port), msgs = [], waiters = [];
@@ -235,29 +241,28 @@ test('server: svet z verzie 3 sa prevedie (záhrada aj poloha ostanú) a hráč 
     assert.strictEqual(wel.tiles[plot].s.p.sp, 'mak', 'záhrada ostala');
     // na prechod na východnom okraji záhrady
     const ge = D.GATES.garden.find(g => g.to === 'pomedzie');
-    c.send({ t: 'move', x: ge.x + 0.5, y: ge.y + 0.5, dir: 0, ar: 0 });
-    const toPom = await c.wait(m => m.t === 'area');
+    const toPom = await walkTo(c, ge.x, ge.y, 0, m => m.t === 'area');
     const a = D.arrival('garden', 'pomedzie');
     assert.strictEqual(toPom.area, 'pomedzie');
     assert.deepStrictEqual([toPom.x, toPom.y, toPom.w, toPom.h], [a.x, a.y, D.areaSize('pomedzie').w, D.areaSize('pomedzie').h]);
     assert.strictEqual(toPom.tiles.length, toPom.w * toPom.h);
     assert.ok(toPom.tiles.some(t => t.g === 'meadow') && !toPom.tiles.some(t => t.s), 'Les na pomedzí bez záhonov');
     // mimo mriežky sa nedá – server polohu udrží na ploche
+    const H = D.areaSize('pomedzie').h;
+    assert.strictEqual((await walkTo(c, 0, H - 1, toPom.seq)).t, 'goToEnd');
     c.send({ t: 'move', x: -4, y: 40, dir: 0, ar: toPom.seq });
     const pl = await c.wait(m => m.t === 'pl' && m.list.some(p => p.name === 'Eva' && p.x === 0.2));
-    assert.deepStrictEqual(pl.list.map(p => [p.area, p.x, p.y]), [['pomedzie', 0.2, D.areaSize('pomedzie').h - 0.2]]);
+    assert.deepStrictEqual(pl.list.map(p => [p.area, p.x, p.y]), [['pomedzie', 0.2, H - 0.2]]);
     // motyka v lese nič neprekope
     c.send({ t: 'act', x: 0, y: D.areaSize('pomedzie').h - 1, item: 'hoe' });
     assert.match((await c.wait(m => m.t === 'toast' && /nepestuje/.test(m.text))).text, /Les na pomedzí je divý/);
     // späť cez prechod na západe
     const pw = D.GATES.pomedzie[0];
-    c.send({ t: 'move', x: pw.x + 0.5, y: pw.y + 0.5, dir: 0, ar: toPom.seq });
-    const back = await c.wait(m => m.t === 'area');
+    const back = await walkTo(c, pw.x, pw.y, toPom.seq, m => m.t === 'area');
     const b = D.arrival('pomedzie', 'garden');
     assert.deepStrictEqual([back.area, back.x, back.y], ['garden', b.x, b.y]);
     // a znova do lesa: po odpojení a znovupripojení je hráčka v lese
-    c.send({ t: 'move', x: ge.x + 0.5, y: ge.y + 0.5, dir: 0, ar: back.seq });
-    await c.wait(m => m.t === 'area' && m.area === 'pomedzie');
+    await walkTo(c, ge.x, ge.y, back.seq, m => m.t === 'area' && m.area === 'pomedzie');
     c.ws.close();
   } finally { await stopServer(proc); }
   const saved = JSON.parse(fs.readFileSync(path.join(dir, 'room-stary.json'), 'utf8'));

@@ -20,7 +20,7 @@
     me: { x: D.SPAWN.x, y: D.SPAWN.y, dir: 0, phase: 0, moving: false, jz: 0, jv: 0, crawl: false }, crawlKey: false, crawlTgl: false, myEmote: null,
     others: new Map(), inv: {}, coins: 0, water: 20, recipes: [], seen: [], vily: false,
     sel: 'hoe', area: 'garden', areaSeq: 0, W: D.W, H: D.H, tilesGen: 0, storageRate: D.STORAGE_AGE_RATE, icehouse: { built: false, ice: 0 }, quest: null, eternal: false, names: [],
-    keys: {}, stick: { x: 0, y: 0 }, walk: null, walkN: 0, pendingAct: null, tapMark: null, lastSent: '', sentAt: 0,
+    keys: {}, stick: { x: 0, y: 0 }, walk: null, walkN: 0, fix: 0, pendingAct: null, tapMark: null, lastSent: '', sentAt: 0,
     fx: [], screenFx: [], bubbles: {}, modal: null, cauldron: [], brewed: null, anchors: {}, joined: false,
     skyTaps: [], tipIdx: Math.floor(Math.random() * D.TIPS.length),
     // pavúky (#57): pavučiny v Lese divov (webTile: políčko → pavučina), nory a čistina pradleny, kútové pavučiny krížiaka,
@@ -100,7 +100,7 @@
       case 'welcome':
         if (S.areaFx) endAreaFx(true); // nové pripojenie – rozbehnutý prechod už neplatí
         S.id = m.id; S.tiles = m.tiles; S.me.x = m.x; S.me.y = m.y; S.joined = true;
-        S.area = m.area || 'garden'; S.areaSeq = m.seq | 0; S.tilesGen++;
+        S.area = m.area || 'garden'; S.areaSeq = m.seq | 0; S.tilesGen++; S.fix = 0; // nové pripojenie = nový hráč na serveri
         S.W = m.w || D.W; S.H = m.h || D.H;
         findAnchors();
         if (!localStorage.getItem('mfHint')) { localStorage.setItem('mfHint', '1'); setTimeout(() => toast('👆 Potiahni prstom kdekoľvek pre pohyb · ťukni na objekt pre akciu'), 600); }
@@ -178,7 +178,8 @@
       case 'goStep': if (S.walk && m.n === S.walk.n) S.walk.srv = { x: m.x, y: m.y }; break;
       case 'goToEnd': if (S.walk && m.n === S.walk.n) walkEnd(m.x, m.y); break;
       case 'goToNo': if (S.walk && m.n === S.walk.n) { stopWalk(); S.tapMark = null; toast(GO_NO[m.why] || GO_NO.far); } break;
-      case 'shove': S.me.x = m.x; S.me.y = m.y; stopWalk(); break; // stará pradlena odhodila hráča za okraj čistiny
+      // server polohu neprijal (cez prekážku, privysoko, priďaleko) alebo hráča presunul sám (pradlena ho odhodila)
+      case 'moveNo': case 'shove': S.me.x = m.x; S.me.y = m.y; S.fix = m.fix | 0; stopWalk(); break;
       case 'brewed': S.brewed = m.k; S.cauldron = []; sfx(m.k === 'sliz' ? 'bad' : 'magic'); if (S.modal && S.modal.refresh) S.modal.refresh(); break;
       case 'error': alert(m.text); S.joined = false; $('conn').classList.add('hidden'); break;
     }
@@ -463,7 +464,7 @@
       else plantInfo(tx, ty);
       return;
     }
-    if (a.l === 'Hľadať') { const me = S.me; send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq }); } // server musí vedieť, že už stojím na políčku
+    if (a.l === 'Hľadať') { const me = S.me; send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq, fx: S.fix }); } // server musí vedieť, že už stojím na políčku
     send({ t: 'act', x: tx, y: ty, item: S.sel });
     if (a.l === 'Kopať' || a.l === 'Vysekať ľad' || a.l === 'Ťahať hodváb') sfx('dig'); else if (a.l === 'Poliať' || a.l === 'Načrieť') sfx('water'); else sfx('pop');
   }
@@ -620,7 +621,7 @@
   function startWalk(path) {
     const g = path[path.length - 1], me = S.me;
     S.walk = { n: ++S.walkN, srv: null };
-    send({ t: 'goTo', x: Math.floor(g.x), y: Math.floor(g.y), n: S.walk.n, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq });
+    send({ t: 'goTo', x: Math.floor(g.x), y: Math.floor(g.y), n: S.walk.n, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq, fx: S.fix });
   }
   function walkEnd(x, y) {
     const me = S.me, pa = S.pendingAct;
@@ -1341,7 +1342,7 @@
       // odoslanie pozície
       const now = performance.now();
       const key = me.x.toFixed(2) + ',' + me.y.toFixed(2) + ',' + me.dir + ',' + (me.a != null ? me.a.toFixed(1) : '') + ',' + me.crawl + ',' + (S.sel === 'lamp');
-      if (key !== S.lastSent && now - S.sentAt > 90) { send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq }); S.lastSent = key; S.sentAt = now; }
+      if (key !== S.lastSent && now - S.sentAt > 90) { send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq, fx: S.fix }); S.lastSent = key; S.sentAt = now; }
     }
     // ostatní hráči
     for (const o of S.others.values()) {

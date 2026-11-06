@@ -172,6 +172,13 @@ function startServer(dataDir, port) {
   });
 }
 function stopServer(proc) { return new Promise(r => { proc.removeAllListeners('exit'); proc.on('exit', r); proc.kill('SIGTERM'); }); }
+// Hráč dôjde na políčko ťuknutím (goTo) – server overuje každý pohyb, preskok správou move by neprijal
+let walkN = 0;
+// (so zažatým lampášom – pavúky v Lese divov sa mu vyhnú a neodhodia ho)
+function walkTo(c, x, y, ar, pred) {
+  c.send({ t: 'goTo', x: Math.floor(x), y: Math.floor(y), n: ++walkN, ar, lp: true });
+  return c.wait(pred || (m => m.t === 'goToEnd' || m.t === 'goToNo' || m.t === 'shove'), 20000);
+}
 function client(port) {
   const ws = new WebSocket('ws://127.0.0.1:' + port), msgs = [], waiters = [];
   ws.on('message', raw => {
@@ -202,7 +209,7 @@ test('server: svet z verzie 4 dostane (cez v7) Les divov (záhrada aj Les na pom
   tiles[plot] = { s: { k: 'normal', w: 1, r: 0, p: { sp: 'mak', prog: 1, q: 3, dry: 0 }, o: 'eva' } };
   const save = {
     v: 4, tick: 1000, wall: Date.now(), mode: 'paused', daySeconds: 1200, rng: 1, seq: 0, events: [], weather: 'sun', pomedzieSeed: 4242,
-    saves: { eva: { coins: 77, water: 3, inv: { hoe: 1, can: 1 }, recipes: [], seen: [], vily: 0, rep: 0, up: { can: 0, plots: 0, composter: 0 }, x: 9.5, y: 1.5, area: 'pomedzie' } },
+    saves: { eva: { coins: 77, water: 3, inv: { hoe: 1, can: 1, lamp: 1 }, recipes: [], seen: [], vily: 0, rep: 0, up: { can: 0, plots: 0, composter: 0 }, x: 9.5, y: 1.5, area: 'pomedzie' } },
     storage: {}, icehouse: { built: false, ice: 0 }, hory: null, tiles
   };
   fs.writeFileSync(path.join(dir, 'room-v4.json'), JSON.stringify(save));
@@ -216,8 +223,7 @@ test('server: svet z verzie 4 dostane (cez v7) Les divov (záhrada aj Les na pom
     assert.deepStrictEqual(wel.tiles.map(t => t.g), D.buildPomedzie(4242), 'Les na pomedzí ostal (iba s prechodom na severe)');
     // na prechod na severnom okraji Lesa na pomedzí
     const gn = D.GATES.pomedzie.find(g => g.to === 'les');
-    c.send({ t: 'move', x: gn.x + 0.5, y: gn.y + 0.4, dir: 0, ar: wel.seq });
-    const toLes = await c.wait(m => m.t === 'area');
+    const toLes = await walkTo(c, gn.x, gn.y, wel.seq, m => m.t === 'area');
     const a = D.arrival('pomedzie', 'les');
     assert.deepStrictEqual([toLes.area, toLes.x, toLes.y, toLes.w, toLes.h], ['les', a.x, a.y, LW, LH]);
     assert.strictEqual(toLes.tiles.length, LW * LH);
@@ -225,24 +231,25 @@ test('server: svet z verzie 4 dostane (cez v7) Les divov (záhrada aj Les na pom
     lesTiles = toLes.tiles.map(t => t.g);
     assert.match((await c.wait(m => m.t === 'toast' && /Lesa divov/.test(m.text))).text, /tma/);
     // veľká plocha: dá sa ísť aj ďaleko za hranice záhrady, ale nie von z mriežky
-    c.send({ t: 'move', x: 300, y: 300, dir: 0, ar: toLes.seq });
-    const pl = await c.wait(m => m.t === 'pl' && m.list.some(p => p.name === 'Eva' && p.area === 'les' && p.x > D.W));
-    assert.deepStrictEqual(pl.list.map(p => [p.x, p.y]), [[LW - 0.2, LH - 0.2]]);
+    // (dôjde ťuknutím k východnému okraju – na prvé políčko, kam sa dá dôjsť – a skúsi ísť ďalej)
+    let ey = null;
+    for (let y = LH - 1; y >= 0 && ey == null; y--) if (D.passable(toLes.tiles[y * LW + LW - 1]) && (await walkTo(c, LW - 1, y, toLes.seq)).t === 'goToEnd') ey = y;
+    assert.ok(ey != null, 'k východnému okraju sa dá dôjsť');
+    c.send({ t: 'move', x: 300, y: ey + 0.5, dir: 0, lp: true, ar: toLes.seq });
+    const pl = await c.wait(m => m.t === 'pl' && m.list.some(p => p.name === 'Eva' && p.area === 'les' && p.x > LW - 0.4));
+    assert.deepStrictEqual(pl.list.map(p => [p.x, p.y]), [[LW - 0.2, ey + 0.5]]);
     // v Lese divov sa nepestuje
-    c.send({ t: 'move', x: a.x, y: a.y, dir: 0, ar: toLes.seq });
-    await c.wait(m => m.t === 'pl' && m.list.some(p => p.name === 'Eva' && p.x === a.x));
+    assert.strictEqual((await walkTo(c, a.x, a.y, toLes.seq)).t, 'goToEnd');
     c.send({ t: 'act', x: Math.floor(a.x), y: Math.floor(a.y), item: 'hoe' });
     assert.match((await c.wait(m => m.t === 'toast' && /Pestuj/.test(m.text))).text, /Lese divov/);
     // späť cez prechod na juhu
     const gs = D.GATES.les[0];
-    c.send({ t: 'move', x: gs.x + 0.5, y: gs.y + 0.5, dir: 0, ar: toLes.seq });
-    const back = await c.wait(m => m.t === 'area');
+    const back = await walkTo(c, gs.x, gs.y, toLes.seq, m => m.t === 'area');
     const b = D.arrival('les', 'pomedzie');
     assert.deepStrictEqual([back.area, back.x, back.y], ['pomedzie', b.x, b.y]);
     assert.strictEqual(Areas.gateTarget(back.tiles, 'pomedzie', b.x, b.y), null, 'po príchode hráčka nestojí na prechode');
     // a znova do Lesa divov – po reštarte servera tam ostane
-    c.send({ t: 'move', x: gn.x + 0.5, y: gn.y + 0.4, dir: 0, ar: back.seq });
-    await c.wait(m => m.t === 'area' && m.area === 'les');
+    await walkTo(c, gn.x, gn.y, back.seq, m => m.t === 'area' && m.area === 'les');
     c.ws.close();
   } finally { await stopServer(proc); }
   const saved = JSON.parse(fs.readFileSync(path.join(dir, 'room-v4.json'), 'utf8'));

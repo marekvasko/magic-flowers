@@ -21,34 +21,100 @@ function setup() {
 const WALK_TICK = room => Moves.WALK * E.tickMs(room) / 1000;
 const moveEvents = (room, p) => room.events.filter(e => e.key === 'move:' + p.key);
 
-test('pohyb: poloha ide ostatným hneď, plánovač ju vyhodnotí až v najbližšom kroku', () => {
+const WALL = Object.keys(D.BLOCK).find(g => g !== 'glacier');
+
+test('pohyb: arriveAt je len žiadosť – server v najbližšom kroku overí cestu, až potom polohu prepošle a vyhodnotí', () => {
   const { room, a, log, step } = setup();
   Moves.arrive(room, a, 11, 20.5, 0);
-  assert.deepStrictEqual(log, [['forward', 1, 1000, 11, 20.5]], 'prepošle sa hneď, ešte bez vyhodnotenia');
-  assert.deepStrictEqual([a.x, a.y], [11, 20.5], 'poloha platí hneď (bez overenia vopred)');
+  assert.deepStrictEqual(log, [], 'nič sa neprepošle ani nevyhodnotí');
+  assert.deepStrictEqual([a.x, a.y], [10.5, 20.5], 'poloha sa ešte nezmenila');
   const ev = moveEvents(room, a);
-  assert.deepStrictEqual(ev.map(e => [e.type, e.data.t, e.at]), [['arrivedFrom', 1000, 1001]], 'udalosť s aktuálnym krokom servera, vyhodnotí sa v najbližšom');
+  assert.deepStrictEqual(ev.map(e => [e.type, e.data.t, e.at, e.data.x, e.data.y]), [['arriveAt', 1000, 1001, 11, 20.5]], 'udalosť s krokom servera pri príchode, overí sa v najbližšom');
   step();
-  assert.deepStrictEqual(log[1], ['evaluate', 1, 1001, 10.5, 20.5, 11, 20.5], 'vyhodnotí sa až potom: odkiaľ → kam');
+  assert.deepStrictEqual([a.x, a.y], [11, 20.5]);
+  assert.deepStrictEqual(log, [['forward', 1, 1001, 11, 20.5], ['evaluate', 1, 1001, 10.5, 20.5, 11, 20.5]], 'najprv overí a presunie, potom prepošle a vyhodnotí odkiaľ → kam');
   assert.strictEqual(moveEvents(room, a).length, 0);
 });
 
-test('pohyb: hráč má najviac jednu udalosť pohybu – novšia nahradí staršiu, cesta od posledného vyhodnotenia ostane', () => {
+test('pohyb: hráč má najviac jednu udalosť pohybu – novšia žiadosť nahradí staršiu a overí sa z aktuálnej polohy', () => {
   const { room, a, b, log, step } = setup();
   Moves.arrive(room, a, 11, 20.5, 0);
   Moves.arrive(room, a, 11.5, 20.5, 60);
   Moves.arrive(room, b, 12.5, 21, 60);
   assert.strictEqual(moveEvents(room, a).length, 1, 'jedna udalosť hráča A');
   assert.strictEqual(moveEvents(room, b).length, 1, 'iný hráč má svoju');
-  assert.deepStrictEqual([moveEvents(room, a)[0].data.fx, moveEvents(room, a)[0].data.x], [10.5, 11.5], 'odkiaľ zo staršej, kam z novšej');
   // goTo zdieľa ten istý kľúč: nahradí nevyhodnotený pohyb…
   Moves.goTo(room, a, 3, 20, 1);
   assert.deepStrictEqual(moveEvents(room, a).map(e => e.type), ['goTo']);
   // …a nový pohyb od klienta nahradí vedenie
   Moves.arrive(room, a, 11.6, 20.5, 120);
-  assert.deepStrictEqual(moveEvents(room, a).map(e => e.type), ['arrivedFrom']);
+  assert.deepStrictEqual(moveEvents(room, a).map(e => e.type), ['arriveAt']);
   step();
-  assert.deepStrictEqual(log.filter(l => l[0] === 'evaluate').map(l => l[1]).sort(), [1, 2], 'každý hráč sa vyhodnotí raz');
+  assert.deepStrictEqual(log.filter(l => l[0] === 'evaluate').map(l => [l[1], l[3]]).sort(), [[1, 10.5], [2, 12.5]], 'každý hráč sa vyhodnotí raz, odkiaľ = kde naozaj bol');
+  assert.strictEqual(a.x, 11.6);
+});
+
+test('pohyb: cez prekážku sa neprejde – hráč zastane pred ňou a klient dostane opravu (moveNo)', () => {
+  const { room, a, log, step } = setup();
+  const { w } = D.areaSize('garden');
+  room.tiles[20 * w + 11] = { g: WALL };
+  Moves.arrive(room, a, 12, 20.5, 0);
+  step();
+  assert.ok(a.x < 11 && a.x > 10.5, 'zastal pred prekážkou: ' + a.x);
+  const msg = log.find(l => l[0] === 'send')[3];
+  assert.deepStrictEqual(msg, { t: 'moveNo', x: a.x, y: 20.5, fix: 1 }, 'klient sa dozvie, kde naozaj je');
+  assert.deepStrictEqual(log.find(l => l[0] === 'forward').slice(3), [a.x, 20.5], 'ostatní vidia skutočnú polohu');
+});
+
+test('pohyb: privysoký ľad sa nevylezie, výskokom áno; plazením sa výška neprejde', () => {
+  const { room, a, step, log } = setup();
+  const { w } = D.areaSize('garden');
+  const ice = D.level({ g: 'grass' }) + D.GLACIER_STEP + 2 - D.level({ g: 'glacier', ice: 0 }); // o pol bloku viac, než sa dá vyjsť
+  room.tiles[20 * w + 11] = { g: 'glacier', ice };
+  Moves.arrive(room, a, 11.5, 20.5, 0);
+  step();
+  assert.ok(a.x < 11, 'bez výskoku nevyšiel');
+  a.jumpAt = 400;
+  Moves.arrive(room, a, 11.5, 20.5, 500);
+  step();
+  assert.strictEqual(a.x, 11.5, 'výskokom vyšiel');
+  room.tiles[20 * w + 12] = { g: 'glacier', ice: ice + 1 }; // o vrstvu vyššie
+  a.cr = true;
+  Moves.arrive(room, a, 12.5, 20.5, 3000);
+  step();
+  assert.ok(a.x < 12, 'plazením ani o vrstvu');
+  assert.ok(log.filter(l => l[0] === 'send').every(l => l[3].t === 'moveNo'));
+});
+
+test('pohyb: priďaleko za taký čas sa nedôjde (rýchlosť s rezervou na sieť)', () => {
+  const { room, a, step } = setup();
+  Moves.arrive(room, a, 10.6, 20.5, 0);
+  step();
+  Moves.arrive(room, a, 20.5, 20.5, 250); // 10 políčok za štvrť sekundy
+  step();
+  const max = Moves.WALK * 0.25 * 1.5 + 0.5;
+  assert.ok(Math.abs(a.x - 10.6 - max) < 1e-3, 'došiel len tak ďaleko, ako sa dá: ' + a.x);
+  Moves.arrive(room, a, 13, 20.5, 250 + 1000); // za sekundu 3,8 políčka – v poriadku
+  step();
+  assert.strictEqual(a.x, 13);
+});
+
+test('pohyb: akcia hneď po pohybe (settle) vyhodnotí čakajúci pohyb ešte pred ňou', () => {
+  const { room, a, log } = setup();
+  Moves.arrive(room, a, 11, 20.5, 0);
+  Moves.settle(room, a);
+  assert.strictEqual(a.x, 11);
+  assert.strictEqual(moveEvents(room, a).length, 0);
+  assert.strictEqual(log.filter(l => l[0] === 'evaluate').length, 1);
+});
+
+test('pohyb: odhodenie (place) zruší pohyb aj vedenie a klient dostane novú polohu s číslom opravy', () => {
+  const { room, a, log } = setup();
+  Moves.goTo(room, a, 14, 20, 1);
+  Moves.place(room, a, 5.5, 20.5, 'shove');
+  assert.strictEqual(moveEvents(room, a).length, 0);
+  assert.deepStrictEqual([a.x, a.y], [5.5, 20.5]);
+  assert.deepStrictEqual(log.find(l => l[0] === 'send')[3], { t: 'shove', x: 5.5, y: 20.5, fix: 1 });
 });
 
 test('pohyb: rýchlosť z posledného pohybu (políčka za krok) pre predpoveď polohy; po prestávke hráč stojí', () => {
@@ -78,7 +144,7 @@ test('pohyb: goTo vedie hráča po ceste krok za krokom rýchlosťou chôdze a k
   assert.deepStrictEqual(sent[sent.length - 1], { t: 'goToEnd', n: 7, x: 13.5, y: 20.5 });
 });
 
-test('pohyb: goTo má údaje ako arrivedFrom (odkiaľ → kam v najbližšom kroku) plus cieľ a na konci sa naplánuje znova', () => {
+test('pohyb: goTo má údaje ako arriveAt (odkiaľ → kam v najbližšom kroku) plus cieľ a na konci sa naplánuje znova', () => {
   const { room, a, log, step } = setup();
   Moves.goTo(room, a, 13, 20, 1);
   const s = WALK_TICK(room);
@@ -145,9 +211,9 @@ test('pohyb: pohyb od klienta (joystick) zruší vedenie; stop() zruší len ved
   Moves.goTo(room, a, 14, 20, 1);
   step();
   Moves.arrive(room, a, a.x, 21.2, 100);
-  assert.deepStrictEqual(moveEvents(room, a).map(e => e.type), ['arrivedFrom']);
+  assert.deepStrictEqual(moveEvents(room, a).map(e => e.type), ['arriveAt']);
   Moves.stop(room, a);
-  assert.deepStrictEqual(moveEvents(room, a).map(e => e.type), ['arrivedFrom'], 'nevyhodnotený pohyb od klienta ostane');
+  assert.deepStrictEqual(moveEvents(room, a).map(e => e.type), ['arriveAt'], 'nevyhodnotený pohyb od klienta ostane');
   Moves.goTo(room, a, 14, 20, 2);
   Moves.stop(room, a);
   assert.strictEqual(moveEvents(room, a).length, 0);
@@ -159,5 +225,5 @@ test('pohyb: udalosť hráča, ktorý medzitým odišiel alebo prešiel na inú 
   a.areaSeq++; // prešiel na inú plochu
   step();
   assert.ok(!log.some(l => l[0] === 'evaluate'));
-  assert.ok(Moves.isRuntime({ type: 'arrivedFrom', data: {} }) && Moves.isRuntime({ type: 'goTo', data: { pk: 'x' } }) && !Moves.isRuntime({ type: 'goTo', data: { sp: 's0' } }));
+  assert.ok(Moves.isRuntime({ type: 'arriveAt', data: {} }) && Moves.isRuntime({ type: 'goTo', data: { pk: 'x' } }) && !Moves.isRuntime({ type: 'goTo', data: { sp: 's0' } }));
 });
