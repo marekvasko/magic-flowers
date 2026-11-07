@@ -16,8 +16,8 @@ const KEY = 'tajny-kluc-hraca';
 
 // Svet s trhom, ktorý pár dní žil (história, správy, NPC, zákazky)
 function makeState(days) {
-  const room = { tick: D.DAWN_TICK + 6, wall: 0, daySeconds: 1200, rng: 7, seq: 0, events: [], saves: { [KEY]: { coins: 50, rep: 200, inv: {} } }, market: null, contracts: null };
-  const spec = { handlers: Object.assign({ dawn: Econ.onDawn }, Econ.HANDLERS), periodic: [{ key: 'dawn', type: 'dawn', next: E.daily(D.DAWN_TICK) }, ...Econ.PERIODIC], onError(err) { throw err; } };
+  const room = { tick: D.DAWN_TICK + 6, wall: 0, daySeconds: 1200, seed: 'debug-trh', step: 0, seq: 0, events: [], saves: { [KEY]: { coins: 50, rep: 200, inv: {} } }, market: null, contracts: null, maxRep: 200 };
+  const spec = { proposers: Object.assign({ dawn: Econ.DAWN }, Econ.PROPOSERS), periodic: [{ key: 'dawn', type: 'dawn', next: E.daily(D.DAWN_TICK) }, ...Econ.PERIODIC], onError(err) { throw err; } };
   Econ.initEconomy(room);
   E.advanceTo(room, room.tick + days * TPD, spec);
   const c = room.contracts.list[0];
@@ -38,19 +38,19 @@ test('debug trh: štruktúra a ceny zhodné s hrou, stav sa nezmení', () => {
   assert.strictEqual(r.tick, state.tick);
   assert.strictEqual(r.seeds.length, Econ.PLANTABLE.length);
   for (const s of r.seeds) {
-    assert.strictEqual(s.price, Econ.seedPrice(state, s.sp), s.sp);
-    assert.strictEqual(s.sellBack, Econ.sellQuote(state, 'seed_' + s.sp));
+    assert.strictEqual(s.price, Econ.seedPrice(state.market, state.tick, s.sp), s.sp);
+    assert.strictEqual(s.sellBack, Econ.sellQuote(state.market, state.tick, 'seed_' + s.sp));
     assert.strictEqual(s.stock, state.market.seeds[s.sp].stock);
     assert.deepStrictEqual(s.hist, state.market.hist['seed_' + s.sp]);
     assert.strictEqual(s.minRep, D.MIN_SEED_REP[s.sp] || 0);
     assert.strictEqual(s.name, D.SPECIES[s.sp].name);
   }
   for (const f of r.flowers) {
-    assert.strictEqual(f.price, Econ.flowerPrice(state, f.sp));
+    assert.strictEqual(f.price, Econ.flowerPrice(state.market, state.tick, f.sp));
     assert.ok(['base', 'rare', 'fest', 'sat', 'satRaw', 'raw'].every(k => typeof f.parts[k] === 'number'));
   }
-  assert.strictEqual(r.compost.price, Econ.compostPrice(state));
-  assert.strictEqual(r.compost.sellBack, Econ.sellQuote(state, 'compost'));
+  assert.strictEqual(r.compost.price, Econ.compostPrice(state.market));
+  assert.strictEqual(r.compost.sellBack, Econ.sellQuote(state.market, state.tick, 'compost'));
   assert.strictEqual(r.npcs.jano.coins, state.market.npcs.jano.coins);
   assert.strictEqual(r.npcs.fero.coins, state.market.npcs.fero.coins);
   assert.ok(r.nextDelivery > r.tick);

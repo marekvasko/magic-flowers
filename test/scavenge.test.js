@@ -2,12 +2,18 @@ const test = require('node:test');
 const assert = require('node:assert');
 const D = require('../shared/data.js');
 const Scav = require('../scavenge.js');
+const E = require('../engine.js');
 const TPD = D.TICKS_PER_DAY, C = D.SCAVENGE;
 
 const tiles = D.buildMap().map(g => ({ g, s: null }));
 // tick v prvý deň jari o danej hodine
 const at = (h, day = 1) => (day - 1) * TPD + Math.round(h * 60 / D.MIN_PER_TICK);
-function room(tick, seed) { return { tick, rng: seed || 7, tiles, scav: {} }; }
+// Svet hľadania: políčka, prehľadané políčka, tajná soľ (zo semienka) a generátor náhody
+function room(tick, seed) { return { tick, tiles, scav: {}, scavSalt: E.seedOf('test', seed || 7), g: E.generator(seed || 7) }; }
+const density = (r, i) => Scav.density(r.tiles, r.tick, i);
+const hasSeed = (r, i) => Scav.hasSeed(r.scavSalt, r.scav, r.tiles, r.tick, i);
+const chance = (r, i) => Scav.chance(r.scavSalt, r.scav, r.tiles, r.tick, i);
+const roll = (r, i) => Scav.roll(r.scavSalt, r.scav, r.tiles, r.tick, i, r.g);
 // tráva ďaleko od lesa a ciest, aj tráva na okraji lesa
 const field = (() => { for (let i = 0; i < tiles.length; i++) if (tiles[i].g === 'grass' && Scav.tileFactor(tiles, i) === 1) return i; })();
 const edge = (() => { for (let i = 0; i < tiles.length; i++) if (tiles[i].g === 'grass' && Scav.tileFactor(tiles, i) > 1.2) return i; })();
@@ -19,20 +25,20 @@ test('hľadať sa dá len v neprekopanej tráve', () => {
 });
 
 test('hustota semienok závisí od dennej hodiny: ráno najviac, v noci takmer nič', () => {
-  const morning = Scav.density(room(at(7)), field), noon = Scav.density(room(at(13)), field), night = Scav.density(room(at(23)), field);
+  const morning = density(room(at(7)), field), noon = density(room(at(13)), field), night = density(room(at(23)), field);
   assert.ok(morning > noon && noon > night, `${morning} ${noon} ${night}`);
   assert.ok(Math.abs(noon - C.density) < 1e-9);
 });
 
 test('okraj lesa má viac semienok, zima menej', () => {
-  assert.ok(edge != null && Scav.density(room(at(13)), edge) > Scav.density(room(at(13)), field));
-  const spring = Scav.density(room(at(13, 1)), field), summer = Scav.density(room(at(13, 1 + D.DAYS_PER_SEASON)), field);
-  const winter = Scav.density(room(at(13, 1 + 3 * D.DAYS_PER_SEASON)), field);
+  assert.ok(edge != null && density(room(at(13)), edge) > density(room(at(13)), field));
+  const spring = density(room(at(13, 1)), field), summer = density(room(at(13, 1 + D.DAYS_PER_SEASON)), field);
+  const winter = density(room(at(13, 1 + 3 * D.DAYS_PER_SEASON)), field);
   assert.ok(summer > spring && spring > winter);
 });
 
 const grass = tiles.map((t, i) => i).filter(i => tiles[i].g === 'grass');
-const spots = r => grass.filter(i => Scav.hasSeed(r, i));
+const spots = r => grass.filter(i => hasSeed(r, i));
 
 test('semienka sú len na niektorých políčkach, počas hodiny ostávajú a potom sa premiestnia', () => {
   const r = room(at(13), 3);
@@ -43,26 +49,24 @@ test('semienka sú len na niektorých políčkach, počas hodiny ostávajú a po
   r.tick += 1; // ďalšia hodina
   const b = spots(r);
   assert.notDeepStrictEqual(b, a, 'v ďalšej hodine sú inde');
-  for (const i of grass) assert.strictEqual(Scav.chance(r, i), Scav.hasSeed(r, i) ? C.find : 0);
+  for (const i of grass) assert.strictEqual(chance(r, i), hasSeed(r, i) ? C.find : 0);
 });
 
 test('prehľadané políčko je do konca hodiny prázdne, staré záznamy sa vyhodia', () => {
   const r = room(at(13), 3), i = spots(r)[0];
-  Scav.roll(r, i);
-  assert.strictEqual(Scav.hasSeed(r, i), false);
-  assert.strictEqual(Scav.roll(r, i), false, 'druhýkrát nič');
+  roll(r, i);
+  assert.strictEqual(hasSeed(r, i), false);
+  assert.strictEqual(roll(r, i), false, 'druhýkrát nič');
   r.tick += C.window;
-  Scav.prune(r);
+  Scav.prune(r.scav, r.tick);
   assert.deepStrictEqual(r.scav, {});
 });
 
-test('tajné číslo sveta je jedno a rôzne svety majú semienka inde', () => {
+test('tajné číslo sveta určuje, kde sú semienka: rovnaká soľ rovnaké miesta, rôzne svety inde', () => {
   const a = room(at(13), 11), b = room(at(13), 12);
   const sa = spots(a);
-  const salt = a.scavSalt;
-  assert.ok(Number.isInteger(salt), 'vytvorí sa pri prvom hľadaní');
   assert.deepStrictEqual(spots(a), sa);
-  assert.strictEqual(a.scavSalt, salt, 'a už sa nemení');
+  assert.deepStrictEqual(spots(room(at(13), 11)), sa);
   assert.notDeepStrictEqual(spots(b), sa);
 });
 
@@ -73,7 +77,7 @@ test('za deň poctivého hľadania z políčka na políčko (pokus každý krok 
     const r = room(0, 1000 + d);
     for (let k = 0; k < 180; k++) {
       r.tick = at(6 + k * 15 / 180, 1 + (d % 4)); // od 6:00 do 21:00, jeden pokus za krok
-      if (Scav.roll(r, grass[(d * 31 + k * 7) % grass.length])) found++;
+      if (roll(r, grass[(d * 31 + k * 7) % grass.length])) found++;
     }
   }
   const avg = found / days;
@@ -96,7 +100,7 @@ test('divé semienko: len sezónne, nemagické a nie prísne druhy', () => {
 test('divé semienko „pozná trh“: drahší kvet v čase sadenia padne oveľa častejšie (váha cena²)', () => {
   const r = room(0, 99), n = 4000, cnt = {};
   const price = sp => sp === 'slnecnica' ? 100 : 20; // leto: slnečnica sa práve predáva za 5× viac
-  for (let k = 0; k < n; k++) { const sp = Scav.pickWild(r, 1, price); cnt[sp] = (cnt[sp] || 0) + 1; }
+  for (let k = 0; k < n; k++) { const sp = Scav.pickWild(r.g, 1, price); cnt[sp] = (cnt[sp] || 0) + 1; }
   const others = Scav.wildCandidates(1).length - 1;
   const expected = 25 / (25 + others); // 100² : 20² = 25 : 1
   assert.ok(Math.abs(cnt.slnecnica / n - expected) < 0.03, `${cnt.slnecnica / n} vs ${expected}`);
@@ -105,7 +109,7 @@ test('divé semienko „pozná trh“: drahší kvet v čase sadenia padne oveľ
 
 test('rovnaké semienko náhody → rovnaký druh (deterministické)', () => {
   const a = room(0, 5), b = room(0, 5), price = () => 30;
-  for (let k = 0; k < 20; k++) assert.strictEqual(Scav.pickWild(a, 0, price), Scav.pickWild(b, 0, price));
+  for (let k = 0; k < 20; k++) assert.strictEqual(Scav.pickWild(a.g, 0, price), Scav.pickWild(b.g, 0, price));
 });
 
 test('klient nevidí druh divej rastliny, kým nevyklíči', () => {
@@ -121,7 +125,7 @@ test('klient nevidí druh divej rastliny, kým nevyklíči', () => {
 test('divé semienka sa nedajú predať a majú slovenský názov', () => {
   const Econ = require('../economy.js');
   for (let se = 0; se < 4; se++) {
-    assert.strictEqual(Econ.sellQuote({ market: {} }, 'wild_' + se), null);
+    assert.strictEqual(Econ.sellQuote({}, 0, 'wild_' + se), null);
     assert.match(D.itemName('wild_' + se), /^Divé semienko \((jar|leto|jeseň|zima)\)$/);
   }
 });

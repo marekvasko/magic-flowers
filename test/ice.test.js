@@ -8,10 +8,21 @@ const TPD = D.TICKS_PER_DAY;
 
 // Minimálny svet: záhrada z generátora, hory, sklad
 function room(tick) {
-  const r = { tick: tick || 0, storage: {}, tiles: D.buildMap().map(g => ({ g, s: null })), hory: Ice.loadHory(null), icehouse: null };
-  Ice.applyIcehouse(r);
+  const r = { tick: tick || 0, storage: { inv: {}, fb: {} }, tiles: D.buildMap().map(g => ({ g, s: null })), hory: Ice.loadHory(null), icehouse: { built: false, ice: 0 }, glacierFed: -1 };
+  Ice.applyIcehouse(r.icehouse, r.tiles);
   return r;
 }
+const dawnIce = (r, se, weather) => Ice.dawnIce(r.tiles, r.hory, se, weather);
+// kŕmenie ľadovca zrážkami najviac raz za deň – tak ako to robí server (rainFeedsGlacier) a ráno (dawn)
+function feed(r, weather) {
+  const day = D.dayOfTick(r.tick);
+  if (!D.GLACIER_GROW[weather] || r.glacierFed === day) return 0;
+  r.glacierFed = day;
+  return Ice.feedGlacier(r.hory, weather);
+}
+const fill = (r, n) => Ice.fillIcehouse(r.icehouse, r.storage, r.tick, n);
+const melt = (r, se) => Ice.meltHourly(r.icehouse, r.storage, r.tick, se);
+const storage = r => I.storageC(r.storage, r.icehouse);
 const find = (tiles, g) => tiles.findIndex(t => t.g === g);
 
 test('hory majú rovnakú veľkosť ako záhrada, prechody a príchody sedia', () => {
@@ -64,22 +75,22 @@ test('ľadovec: úrovne od pol bloku na okraji po 2 bloky v strede', () => {
 test('ľadovec: krompáč berie vrchnú vrstvu až po dno', () => {
   const r = room(), i = find(r.hory, 'glacier'), max = Ice.LEVELS[i];
   assert.strictEqual(r.hory[i].ice, max);
-  for (let k = 0; k < max; k++) assert.ok(Ice.digIce(r, r.hory, i, 1).ok);
-  assert.strictEqual(Ice.digIce(r, r.hory, i, 1).ok, false);
+  for (let k = 0; k < max; k++) assert.ok(Ice.digIce(r.hory, i, 1).ok);
+  assert.strictEqual(Ice.digIce(r.hory, i, 1).ok, false);
 });
 
 test('ľadu je málo: menší ľadovec, sám nedorastá, topí sa od okrajov', () => {
-  const r = room(), total = () => Ice.glacierTotal(r);
+  const r = room(), total = () => Ice.glacierTotal(r.hory);
   assert.ok(Ice.glacierMax() <= 140, `ľadovec má len ${Ice.glacierMax()} vrstiev`);
-  assert.deepStrictEqual(Ice.dawnIce(r, 3, 'sun'), [], 'v zime bez snehu sa nič nemení');
+  assert.deepStrictEqual(dawnIce(r, 3, 'sun'), [], 'v zime bez snehu sa nič nemení');
   r.tick += D.TICKS_PER_DAY;
-  Ice.dawnIce(r, 1, 'sun');                      // slnečný letný deň
+  dawnIce(r, 1, 'sun');                      // slnečný letný deň
   assert.strictEqual(total(), Ice.glacierMax() - D.GLACIER_MELT[1]);
   const edges = r.hory.map((t, i) => i).filter(i => Ice.LEVELS[i] === 2);
   assert.ok(r.hory.every((t, i) => t.ice == null || Ice.LEVELS[i] === 2 || t.ice === Ice.LEVELS[i]), 'topí sa len okraj');
   assert.ok(edges.some(i => r.hory[i].ice < 2));
   // leto bez dažďa: po čase sa minie úplne
-  for (let d = 0; d < 40; d++) { r.tick += D.TICKS_PER_DAY; Ice.dawnIce(r, 1, 'sun'); }
+  for (let d = 0; d < 40; d++) { r.tick += D.TICKS_PER_DAY; dawnIce(r, 1, 'sun'); }
   assert.strictEqual(total(), 0, 'ľadovec sa môže minúť');
 });
 
@@ -87,16 +98,16 @@ test('ľadovec dorastá len v daždi a snehu, raz za deň, od skál nadol', () =
   const r = room();
   for (const t of r.hory) if (t.ice != null) t.ice = 0;
   r.tick = 5 * D.TICKS_PER_DAY;
-  Ice.dawnIce(r, 0, 'rain');
-  assert.strictEqual(Ice.glacierTotal(r), D.GLACIER_GROW.rain, 'prázdny ľadovec sa netopí, dážď pridá vrstvy');
+  dawnIce(r, 0, 'rain'); r.glacierFed = D.dayOfTick(r.tick);
+  assert.strictEqual(Ice.glacierTotal(r.hory), D.GLACIER_GROW.rain, 'prázdny ľadovec sa netopí, dážď pridá vrstvy');
   const top = r.hory.map((t, i) => i).filter(i => Ice.LEVELS[i] === Math.max(...Ice.LEVELS));
   assert.ok(top.every(i => r.hory[i].ice > 0), 'najprv pod skalami');
-  assert.strictEqual(Ice.feedGlacier(r, 'rain'), 0, 'v ten istý deň druhý dážď nepridá');
+  assert.strictEqual(feed(r, 'rain'), 0, 'v ten istý deň druhý dážď nepridá');
   r.tick += D.TICKS_PER_DAY;
-  assert.strictEqual(Ice.feedGlacier(r, 'snow'), D.GLACIER_GROW.snow);
-  assert.strictEqual(Ice.feedGlacier(r, 'sun'), 0);
-  for (let d = 0; d < 50; d++) { r.tick += D.TICKS_PER_DAY; Ice.feedGlacier(r, 'snow'); }
-  assert.strictEqual(Ice.glacierTotal(r), Ice.glacierMax(), 'nedorastie nad pôvodnú výšku');
+  assert.strictEqual(feed(r, 'snow'), D.GLACIER_GROW.snow);
+  assert.strictEqual(feed(r, 'sun'), 0);
+  for (let d = 0; d < 50; d++) { r.tick += D.TICKS_PER_DAY; feed(r, 'snow'); }
+  assert.strictEqual(Ice.glacierTotal(r.hory), Ice.glacierMax(), 'nedorastie nad pôvodnú výšku');
 });
 
 test('ľad v batohu sa do pol dňa roztopí, od najstaršieho', () => {
@@ -113,19 +124,19 @@ test('ľad v batohu sa do pol dňa roztopí, od najstaršieho', () => {
 
 test('jazierko: ľad len v zime, z políčka raz za deň, cez noc zamrzne', () => {
   const r = room(), i = find(r.tiles, 'water');
-  assert.strictEqual(Ice.digIce(r, r.tiles, i, 1).ok, false, 'v lete nie je zamrznuté');
-  assert.ok(Ice.digIce(r, r.tiles, i, 3).ok);
-  assert.strictEqual(Ice.digIce(r, r.tiles, i, 3).ok, false, 'druhý raz v ten istý deň nie');
-  assert.ok(Ice.dawnIce(r, 3, 'sun').includes('garden'));
+  assert.strictEqual(Ice.digIce(r.tiles, i, 1).ok, false, 'v lete nie je zamrznuté');
+  assert.ok(Ice.digIce(r.tiles, i, 3).ok);
+  assert.strictEqual(Ice.digIce(r.tiles, i, 3).ok, false, 'druhý raz v ten istý deň nie');
+  assert.ok(dawnIce(r, 3, 'sun').includes('garden'));
   assert.ok(!r.tiles[i].cut);
-  assert.ok(Ice.digIce(r, r.tiles, i, 3).ok);
-  assert.strictEqual(Ice.digIce(r, r.tiles, find(r.tiles, 'grass'), 3).ok, false);
+  assert.ok(Ice.digIce(r.tiles, i, 3).ok);
+  assert.strictEqual(Ice.digIce(r.tiles, find(r.tiles, 'grass'), 3).ok, false);
 });
 
 test('uloženie hôr zachová zásobu ľadu a otvory, nové hory majú plný ľadovec', () => {
   const r = room(), i = find(r.hory, 'glacier'), w = find(r.hory, 'water');
-  Ice.digIce(r, r.hory, i, 3); Ice.digIce(r, r.hory, w, 3);
-  const back = Ice.loadHory(JSON.parse(JSON.stringify(Ice.saveHory(r))));
+  Ice.digIce(r.hory, i, 3); Ice.digIce(r.hory, w, 3);
+  const back = Ice.loadHory(JSON.parse(JSON.stringify(Ice.saveHory(r.hory))));
   assert.strictEqual(back[i].ice, Ice.LEVELS[i] - 1);
   assert.strictEqual(back[w].cut, 1);
   assert.strictEqual(Ice.loadHory(undefined)[i].ice, Ice.LEVELS[i]);
@@ -146,54 +157,55 @@ test('krompáč sa kupuje raz, s dostatkom mincí', () => {
 
 test('ľadovňa: stavba na pozemku, reputácia, prekopaná zem', () => {
   const r = room(), sv = { coins: 1000, rep: 0, inv: {} };
-  assert.ok(Ice.buildIcehouse(r, sv), 'bez reputácie nie');
+  const build = () => Ice.buildIcehouse(r.icehouse, r.tiles, sv);
+  assert.ok(build(), 'bez reputácie nie');
   sv.rep = D.REP_LEVELS[D.ICEHOUSE.rep];
   const lot = Ice.lotIdx();
   r.tiles[lot[0]].s = { k: 'normal' };
-  assert.ok(Ice.buildIcehouse(r, sv), 'na prekopanej zemi nie');
+  assert.ok(build(), 'na prekopanej zemi nie');
   r.tiles[lot[0]].s = null;
-  assert.strictEqual(Ice.buildIcehouse(r, sv), null);
+  assert.strictEqual(build(), null);
   assert.strictEqual(sv.coins, 1000 - D.ICEHOUSE.price);
   assert.ok(lot.every(i => r.tiles[i].g === 'icehouse'));
-  assert.ok(Ice.buildIcehouse(r, sv), 'druhá ľadovňa nie');
+  assert.ok(build(), 'druhá ľadovňa nie');
 });
 
 test('ľadovňa sa plní do kapacity a topí sa podľa obdobia (v zime nie)', () => {
   const r = room();
-  assert.strictEqual(Ice.fillIcehouse(r, 5), 0, 'nepostavená');
+  assert.strictEqual(fill(r, 5), 0, 'nepostavená');
   r.icehouse = { built: true, ice: 0 };
-  assert.strictEqual(Ice.fillIcehouse(r, 100), D.ICEHOUSE.cap);
-  assert.strictEqual(Ice.fillIcehouse(r, 1), 0, 'plná');
-  assert.strictEqual(Ice.meltHourly(r, 3), false);
+  assert.strictEqual(fill(r, 100), D.ICEHOUSE.cap);
+  assert.strictEqual(fill(r, 1), 0, 'plná');
+  assert.strictEqual(melt(r, 3), false);
   assert.strictEqual(r.icehouse.ice, D.ICEHOUSE.cap, 'v zime sa netopí');
   let hours = 0, emptied = false;
-  while (!emptied && hours < 1000) { emptied = Ice.meltHourly(r, 1); hours++; }
+  while (!emptied && hours < 1000) { emptied = melt(r, 1); hours++; }
   assert.strictEqual(hours, Math.round(D.ICEHOUSE.cap / D.ICEHOUSE.melt[1]), 'v lete sa roztopí za cap / melt hodín');
   assert.strictEqual(r.icehouse.ice, 0);
-  assert.strictEqual(Ice.meltHourly(r, 1), false, 'prázdna sa už nevyprázdni znova');
+  assert.strictEqual(melt(r, 1), false, 'prázdna sa už nevyprázdni znova');
 });
 
 test('s ľadom v ľadovni kvety v sklade starnú pomalšie, vek sa pri zmene neskočí', () => {
   const r = room();
   r.icehouse = { built: true, ice: 0 };
-  I.addItems(I.storageC(r), 'fl_tulipan', 2, 0);
-  const age = () => I.batchesView(I.storageC(r), r.tick).fl_tulipan[0].age;
+  I.addItems(storage(r), 'fl_tulipan', 2, 0);
+  const age = () => I.batchesView(storage(r), r.tick).fl_tulipan[0].age;
   r.tick = 100;
   assert.strictEqual(age(), 100 * D.STORAGE_AGE_RATE);
-  Ice.fillIcehouse(r, 2);
-  assert.strictEqual(I.storageRate(r), D.ICEHOUSE.rate);
+  fill(r, 2);
+  assert.strictEqual(I.storageRate(r.icehouse), D.ICEHOUSE.rate);
   assert.strictEqual(age(), 50, 'pri naplnení sa vek nezmení');
   r.tick = 200;
   assert.strictEqual(age(), 50 + 100 * D.ICEHOUSE.rate);
-  Ice.setIce(r, 0);                         // roztopí sa
+  Ice.setIce(r.icehouse, r.storage, r.tick, 0); // roztopí sa
   assert.strictEqual(age(), 75, 'pri roztopení sa vek nezmení');
   r.tick = 300;
   assert.strictEqual(age(), 75 + 100 * D.STORAGE_AGE_RATE);
   // tulipán (4 dni) v chladenom sklade vydrží 4 / 0,25 = 16 dní
   const r2 = room(); r2.icehouse = { built: true, ice: D.ICEHOUSE.cap };
-  I.addItems(I.storageC(r2), 'fl_tulipan', 1, 0);
-  assert.deepStrictEqual(I.wiltSweep(I.storageC(r2), 16 * TPD - 1), {});
-  assert.deepStrictEqual(I.wiltSweep(I.storageC(r2), 16 * TPD), { 'Tulipán': 1 });
+  I.addItems(storage(r2), 'fl_tulipan', 1, 0);
+  assert.deepStrictEqual(I.wiltSweep(storage(r2), 16 * TPD - 1), {});
+  assert.deepStrictEqual(I.wiltSweep(storage(r2), 16 * TPD), { 'Tulipán': 1 });
 });
 
 test('ľad a krompáč: názvy, krompáč je náradie', () => {
@@ -236,9 +248,9 @@ test('ľad nedorastá pod hráčom a nikdy nie viac ako pol bloku nad suseda', (
   const r = room();
   for (const t of r.hory) if (t.ice != null) t.ice = 0;
   const top = r.hory.findIndex((t, i) => Ice.LEVELS[i] === Math.max(...Ice.LEVELS));
-  r.players = new Map([[1, { area: 'hory', x: top % D.W + 0.5, y: ((top / D.W) | 0) + 0.5 }], [2, { area: 'garden', x: 0.5, y: 0.5 }]]);
+  r.players = [{ area: 'hory', x: top % D.W + 0.5, y: ((top / D.W) | 0) + 0.5 }, { area: 'garden', x: 0.5, y: 0.5 }]; // snímka prítomnosti
   for (let d = 0; d < 30; d++) {
-    Ice.growGlacier(r, D.GLACIER_GROW.snow);
+    Ice.growGlacier(r.hory, D.GLACIER_GROW.snow, Ice.occupied(r.players));
     r.hory.forEach((t, i) => { if (t.g === 'glacier') assert.ok(t.ice <= Ice.LEVELS[i]); });
     // nikto nezostane zamurovaný: z každého políčka sa dá vyjsť na suseda
     r.hory.forEach((t, i) => {
@@ -249,7 +261,7 @@ test('ľad nedorastá pod hráčom a nikdy nie viac ako pol bloku nad suseda', (
     });
   }
   assert.strictEqual(r.hory[top].ice, 0, 'kde hráč stojí, ľad nedorastie');
-  r.players.clear();
-  for (let d = 0; d < 30; d++) Ice.growGlacier(r, D.GLACIER_GROW.snow);
-  assert.strictEqual(Ice.glacierTotal(r), Ice.glacierMax(), 'keď odíde, ľadovec dorastie do pôvodnej výšky');
+  r.players = [];
+  for (let d = 0; d < 30; d++) Ice.growGlacier(r.hory, D.GLACIER_GROW.snow, Ice.occupied(r.players));
+  assert.strictEqual(Ice.glacierTotal(r.hory), Ice.glacierMax(), 'keď odíde, ľadovec dorastie do pôvodnej výšky');
 });

@@ -14,7 +14,7 @@ const sha = s => crypto.createHash('sha256').update(s).digest('hex');
 const keyId = k => 'p-' + sha('mf-player:' + k).slice(0, 8);
 
 // ctx: { dataDir, debugDir, rooms (Map id → svet v pamäti), serialize(room) → JSON, migrate(stav) → stav,
-//        sim() → špecifikácia simulácie { handlers, periodic } pre stav reconcilera }
+//        sim() → špecifikácia simulácie { proposers, periodic } pre stav reconcilera }
 // Vráti handle(req, res) → true, ak požiadavku vybavil (inak ju server spracuje ako obyčajný súbor).
 function create(ctx) {
   const notFound = res => { res.writeHead(404); res.end('Not found'); return true; };
@@ -45,7 +45,7 @@ function create(ctx) {
 
   // Stav reconcilera (engine.js): čo je naplánované, čo chýba a čo by zahodil – len plán, svet sa nemení.
   // Kedy by sa chýbajúca udalosť naplánovala, sa počíta na kópii (next môže ťahať náhodu zo sveta).
-  const WHY = { 'neznámy typ': 'unknown type (no handler)', 'nedeklarovaná periodická': 'periodic, no longer declared', 'duplicita': 'duplicate' };
+  const WHY = { 'neznámy typ': 'unknown type (no proposer)', 'nedeklarovaná periodická': 'periodic, no longer declared', 'duplicita': 'duplicate' };
   function reconcilerView(state) {
     const sim = ctx.sim && ctx.sim();
     if (!sim) return null;
@@ -53,7 +53,7 @@ function create(ctx) {
     const wouldAt = def => { try { return E.planAt(Object.assign({}, state), def, state.tick + 1); } catch (e) { return null; } };
     const evs = state.events || [];
     return {
-      declared: (sim.periodic || []).length, handlers: Object.keys(sim.handlers).length,
+      declared: (sim.periodic || []).length, proposers: Object.keys(sim.proposers || {}).length,
       counts: { periodic: evs.filter(e => e.periodic).length, unique: evs.filter(e => e.key != null && !e.periodic).length, plain: evs.filter(e => e.key == null).length },
       periodic: [...plan.ok.map(o => ({ key: o.def.key, type: o.def.type, status: 'scheduled', at: o.ev.at })),
         ...plan.missing.map(d => ({ key: d.key, type: d.type, status: 'missing', at: wouldAt(d) }))].sort((a, b) => (a.at == null) - (b.at == null) || a.at - b.at),

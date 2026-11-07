@@ -43,24 +43,23 @@ module.exports = (query, tools) => {
   };
   if (!w.market) return out; // starý svet, kde sa trh ešte nezaložil (založí sa pri načítaní)
 
-  // Svet „ako miestnosť“ len s tým, čo ekonomika číta. Stav je kópia, no aj tak sa nič nezapisuje.
-  const room = { tick, market: w.market, events: w.events || [], contracts: w.contracts || { list: [] }, saves: w.saves || {} };
-  const m = room.market, hist = m.hist || {};
+  // Ekonomika číta len trh a čas. Stav je kópia, no aj tak sa nič nezapisuje.
+  const m = w.market, hist = m.hist || {}, contracts = w.contracts || { list: [] };
   const has = sp => m.seeds[sp] && m.flowers[sp];
 
   out.seeds = Econ.PLANTABLE.filter(has).map(sp => {
-    const parts = Econ.seedPriceParts(room, sp);
+    const parts = Econ.seedPriceParts(m, tick, sp);
     return {
       sp, name: spName(sp), seasons: D.SPECIES[sp].seasons, strict: !!D.SPECIES[sp].strict, days: D.SPECIES[sp].days,
-      minRep: D.MIN_SEED_REP[sp] || 0, parts, price: parts.price, sellBack: Econ.sellQuote(room, 'seed_' + sp), stock: parts.stock, hist: hist['seed_' + sp] || []
+      minRep: D.MIN_SEED_REP[sp] || 0, parts, price: parts.price, sellBack: Econ.sellQuote(m, tick, 'seed_' + sp), stock: parts.stock, hist: hist['seed_' + sp] || []
     };
   });
   out.flowers = Econ.PLANTABLE.filter(has).map(sp => {
-    const parts = Econ.flowerPriceParts(room, sp);
-    return { sp, name: spName(sp), seasons: D.SPECIES[sp].seasons, parts, price: parts.price, sellBack: Econ.sellQuote(room, 'fl_' + sp), stock: parts.stock, hist: hist['fl_' + sp] || [] };
+    const parts = Econ.flowerPriceParts(m, tick, sp);
+    return { sp, name: spName(sp), seasons: D.SPECIES[sp].seasons, parts, price: parts.price, sellBack: Econ.sellQuote(m, tick, 'fl_' + sp), stock: parts.stock, hist: hist['fl_' + sp] || [] };
   });
-  const cp = Econ.compostPriceParts(room);
-  out.compost = { parts: cp, price: cp.price, sellBack: Econ.sellQuote(room, 'compost'), stock: cp.stock, hist: hist.compost || [] };
+  const cp = Econ.compostPriceParts(m);
+  out.compost = { parts: cp, price: cp.price, sellBack: Econ.sellQuote(m, tick, 'compost'), stock: cp.stock, hist: hist.compost || [] };
 
   // NPC: Jano (mince, čo pestuje), Fero (mince a zásoba semienok v dnešných cenách)
   const npcs = m.npcs || {}, jano = npcs.jano || {}, fero = npcs.fero || {};
@@ -70,7 +69,7 @@ module.exports = (query, tools) => {
     fero: {
       coins: fero.coins, next: nextOf('npc_fero'),
       hold: Object.entries(fero.hold || {}).map(([sp, n]) => {
-        const p = m.seeds[sp] ? Econ.seedPrice(room, sp) : null;
+        const p = m.seeds[sp] ? Econ.seedPrice(m, tick, sp) : null;
         return { sp, name: spName(sp), n, price: p, value: p == null ? null : p * n, sellsAt: D.SPECIES[sp].seed * 1.5 };
       })
     },
@@ -79,9 +78,9 @@ module.exports = (query, tools) => {
   out.nextDelivery = nextOf('delivery');
   const fest = m.festival;
   out.festival = fest ? { id: fest.id, name: fest.name, icon: fest.icon, mult: fest.mult, until: fest.until } : null;
-  out.upcoming = Econ.upcomingFestival(room);
+  out.upcoming = Econ.upcomingFestival(w.events || [], tick);
   out.news = (m.news || []).slice();
   out.events = events.map(e => ({ at: e.at, type: e.type, data: e.data, text: describe(e) }));
-  out.contracts = (room.contracts.list || []).map(c => Object.assign({}, c, { name: spName(c.sp), giverName: D.GIVERS[c.giver] || c.giver, itemName: c.item ? D.itemName(c.item.id) : null }));
+  out.contracts = (contracts.list || []).map(c => Object.assign({}, c, { name: spName(c.sp), giverName: D.GIVERS[c.giver] || c.giver, itemName: c.item ? D.itemName(c.item.id) : null }));
   return out;
 };

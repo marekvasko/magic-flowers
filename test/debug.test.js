@@ -22,7 +22,7 @@ async function setup() {
   const saved = JSON.stringify({ v: 1, tick: 100, rng: 1, events: [{ at: 150, seq: 1, type: 'stary', data: null }, { at: 130, seq: 2, type: 'dawn', data: null, key: 'dawn', periodic: true }], saves: { [KEY]: { coins: 5 } }, contracts: { list: [{ by: KEY }] } });
   fs.writeFileSync(path.join(dataDir, 'room-stary.json'), saved);
   const rooms = new Map([['zivy', { tick: 7, state: { tick: 7, saves: { [KEY]: { coins: 9 } } }, players: new Map([[1, { name: 'Anka', area: 'hory', key: KEY }]]) }]]);
-  const sim = { handlers: { dawn() {}, hourly() {} }, periodic: [{ key: 'dawn', type: 'dawn', next: (w, from) => from + 50 }, { key: 'hourly', type: 'hourly', next: (w, from) => from + 12 }] };
+  const sim = { proposers: { dawn: {}, hourly: {} }, periodic: [{ key: 'dawn', type: 'dawn', next: from => from + 50 }, { key: 'hourly', type: 'hourly', next: from => from + 12 }] };
   const handle = Debug.create({ dataDir, debugDir, rooms, serialize: r => JSON.stringify(r.state), migrate: s => Object.assign({ migrated: true }, s), sim: () => sim });
   const srv = http.createServer((req, res) => { if (!handle(req, res)) { res.writeHead(404); res.end(); } });
   await new Promise(r => srv.listen(0, '127.0.0.1', r));
@@ -88,13 +88,13 @@ test('debug: stav reconcilera – naplánované, chýbajúce a zahodené udalost
   const s = await setup();
   try {
     const r = JSON.parse((await s.get('/api/debug/room?id=stary')).body).reconciler;
-    assert.deepStrictEqual([r.declared, r.handlers], [2, 2]);
+    assert.deepStrictEqual([r.declared, r.proposers], [2, 2]);
     assert.deepStrictEqual(r.counts, { periodic: 1, unique: 0, plain: 1 });
     assert.deepStrictEqual(r.periodic, [
       { key: 'hourly', type: 'hourly', status: 'missing', at: 113 },
       { key: 'dawn', type: 'dawn', status: 'scheduled', at: 130 }
     ]);
-    assert.deepStrictEqual(r.drop, [{ key: null, type: 'stary', at: 150, why: 'unknown type (no handler)' }]);
+    assert.deepStrictEqual(r.drop, [{ key: null, type: 'stary', at: 150, why: 'unknown type (no proposer)' }]);
     assert.strictEqual(fs.readFileSync(path.join(s.dataDir, 'room-stary.json'), 'utf8'), s.saved);
   } finally { s.close(); }
 });

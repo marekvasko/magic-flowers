@@ -1,10 +1,10 @@
 // Ľad: hory (druhá hracia plocha), ľadovec, zamrznutá voda, krompáč a ľadovňa.
-// Čisté funkcie nad stavom sveta (room) – server ich len volá a posiela zmeny hráčom.
-// room.hory = políčka hôr [{ g, ice?, cut? }], room.icehouse = { built, ice }
+// Čisté funkcie nad výrezmi sveta – server (alebo návrh udalosti) im dá len to, s čím pracujú:
+//   hory = políčka hôr [{ g, ice?, cut? }] (world.hory), tiles = políčka záhrady, icehouse = { built, ice } (world.icehouse),
+//   st = sklad { inv, fb } (výrez 'storage'), occupied = množina políčok hôr, na ktorých stojí hráč (z prítomnosti).
 // Na políčku ľadovca je ice = koľko vrstiev ľadu (po 1/4 bloku) na ňom ešte stojí; cut = 1 → do vody sa dnes už vysekal otvor.
 const D = require('./shared/data.js');
 const I = require('./items.js');
-const { areaTiles } = require('./areas.js');
 
 // pôvodná (najvyššia) výška ľadu na každom políčku hôr
 const LEVELS = D.glacierLevels(D.buildMountains());
@@ -20,7 +20,7 @@ function loadHory(saved) {
     return t;
   });
 }
-function saveHory(room) { return room.hory.map(t => t.ice != null || t.cut ? { ice: t.ice, cut: t.cut } : 0); }
+function saveHory(hory) { return hory.map(t => t.ice != null || t.cut ? { ice: t.ice, cut: t.cut } : 0); }
 
 // Pozemok ľadovne v záhrade: kým nie je postavená 'lot', potom 'icehouse'.
 function lotIdx() {
@@ -28,13 +28,12 @@ function lotIdx() {
   for (let y = L.y0; y <= L.y1; y++) for (let x = L.x0; x <= L.x1; x++) out.push(y * D.W + x);
   return out;
 }
-function applyIcehouse(room) {
-  room.icehouse = room.icehouse || { built: false, ice: 0 };
-  for (const i of lotIdx()) room.tiles[i].g = room.icehouse.built ? 'icehouse' : 'lot';
+function applyIcehouse(icehouse, tiles) {
+  for (const i of lotIdx()) tiles[i].g = icehouse && icehouse.built ? 'icehouse' : 'lot';
 }
 
-// Vysekanie ľadu krompáčom. Vráti { ok, msg } – pri ok sa hráčovi pridá 1 ľad.
-function digIce(room, tiles, i, season) {
+// Vysekanie ľadu krompáčom na políčku i plochy tiles. Vráti { ok, msg } – pri ok sa hráčovi pridá 1 ľad.
+function digIce(tiles, i, season) {
   const t = tiles[i];
   if (t.g === 'glacier') {
     if (!t.ice) return { ok: false, msg: 'Tu je ľad vysekaný až po dno. Ľadovec každé ráno trochu dorastie. 🧊' };
@@ -51,20 +50,20 @@ function digIce(room, tiles, i, season) {
 }
 
 // Topenie: n vrstiev od okrajov (najnižšie políčka ľadovca) dnu – ľadovec viditeľne ustupuje k skalám.
-function meltGlacier(room, n) {
-  const list = room.hory.map((t, i) => i).filter(i => room.hory[i].ice > 0).sort((a, b) => LEVELS[a] - LEVELS[b] || a - b);
+function meltGlacier(hory, n) {
+  const list = hory.map((t, i) => i).filter(i => hory[i].ice > 0).sort((a, b) => LEVELS[a] - LEVELS[b] || a - b);
   let k = 0;
   for (const i of list) {
-    const t = room.hory[i];
+    const t = hory[i];
     while (t.ice > 0 && k < n) { t.ice--; k++; }
     if (k >= n) break;
   }
   return k;
 }
-// Políčka hôr, na ktorých stojí hráč – pod nohami ľad nedorastá.
-function occupied(room) {
+// Políčka hôr, na ktorých stojí hráč – pod nohami ľad nedorastá. presence: [{ area, x, y }] (snímka pripojených hráčov)
+function occupied(presence) {
   const s = new Set();
-  if (room.players) for (const p of room.players.values()) if (p.area === 'hory') s.add(Math.floor(p.y) * D.W + Math.floor(p.x));
+  for (const p of presence || []) if (p.area === 'hory') s.add(Math.floor(p.y) * D.W + Math.floor(p.x));
   return s;
 }
 // Najnižšie priechodné susedné políčko (vo vrstvách ľadu) – ľadovec dorastá len tak, aby sa naň dalo vyliezť.
@@ -80,77 +79,76 @@ function lowestNeighbour(tiles, i) {
   return m;
 }
 // Dorastanie: n vrstiev, rovnomerne od najvyšších políčok pod skalami nadol, najviac do pôvodnej výšky.
-// Nedorastá pod hráčom a nikdy nie viac ako pol bloku nad najnižšieho suseda – nikoho nezamuruje.
-function growGlacier(room, n) {
-  const list = room.hory.map((t, i) => i).filter(i => LEVELS[i] > 0).sort((a, b) => LEVELS[b] - LEVELS[a] || a - b);
-  const occ = occupied(room);
+// Nedorastá pod hráčom (occ = occupied(prítomnosť)) a nikdy nie viac ako pol bloku nad najnižšieho suseda – nikoho nezamuruje.
+function growGlacier(hory, n, occ) {
+  const list = hory.map((t, i) => i).filter(i => LEVELS[i] > 0).sort((a, b) => LEVELS[b] - LEVELS[a] || a - b);
+  occ = occ || new Set();
   let k = 0, any = true;
   while (k < n && any) {
     any = false;
     for (const i of list) {
       if (k >= n) break;
-      const t = room.hory[i];
-      if (t.ice < LEVELS[i] && !occ.has(i) && D.level(t) + 1 <= lowestNeighbour(room.hory, i) + D.GLACIER_STEP) { t.ice++; k++; any = true; }
+      const t = hory[i];
+      if (t.ice < LEVELS[i] && !occ.has(i) && D.level(t) + 1 <= lowestNeighbour(hory, i) + D.GLACIER_STEP) { t.ice++; k++; any = true; }
     }
   }
   return k;
 }
-// Zrážky (dážď, sneh) – ľadovec dorastie najviac raz za deň. Vráti počet pribudnutých vrstiev.
-function feedGlacier(room, weather) {
-  const day = D.dayOfTick(room.tick), n = D.GLACIER_GROW[weather];
-  if (!n || room.glacierFed === day) return 0;
-  room.glacierFed = day;
-  return growGlacier(room, n);
+// Zrážky (dážď, sneh) – ľadovec dorastie. Vráti počet pribudnutých vrstiev. Najviac raz za deň: volajúci si pamätá
+// deň posledného kŕmenia (world.glacierFed) a keď sa zhoduje s dnešným, nevolá.
+function feedGlacier(hory, weather, occ) {
+  const n = D.GLACIER_GROW[weather];
+  return n ? growGlacier(hory, n, occ) : 0;
 }
 
-// Ráno: otvory vo vode zamrznú, ľadovec sa podľa obdobia topí a v daždi/snehu dorastie.
+// Ráno: otvory vo vode (v záhrade aj v horách) zamrznú, ľadovec sa podľa obdobia topí a v daždi/snehu dorastie.
 // Vráti zoznam plôch, ktoré sa zmenili.
-function dawnIce(room, season, weather) {
+function dawnIce(tiles, hory, season, weather, occ) {
   const changed = new Set();
-  for (const area of D.AREAS) for (const t of areaTiles(room, area) || []) if (t.cut) { delete t.cut; changed.add(area); }
-  if (meltGlacier(room, D.GLACIER_MELT[season])) changed.add('hory');
-  if (feedGlacier(room, weather)) changed.add('hory');
+  for (const [area, list] of [['garden', tiles], ['hory', hory]]) for (const t of list) if (t.cut) { delete t.cut; changed.add(area); }
+  if (meltGlacier(hory, D.GLACIER_MELT[season])) changed.add('hory');
+  if (feedGlacier(hory, weather, occ)) changed.add('hory');
   return [...changed];
 }
-function glacierTotal(room) { return room.hory.reduce((s, t) => s + (t.ice || 0), 0); }
+function glacierTotal(hory) { return hory.reduce((s, t) => s + (t.ice || 0), 0); }
 function glacierMax() { return LEVELS.reduce((s, v) => s + v, 0); }
 
-// Zmena množstva ľadu v ľadovni – ak sa tým zmení rýchlosť starnutia v sklade, várky sa najprv prepočítajú.
-function setIce(room, ice) {
-  const before = I.storageC(room);
+// Zmena množstva ľadu v ľadovni – ak sa tým zmení rýchlosť starnutia v sklade st, várky sa najprv prepočítajú (k času tick).
+function setIce(icehouse, st, tick, ice) {
+  const before = I.storageC(st, icehouse);
   const next = Math.max(0, Math.min(D.ICEHOUSE.cap, ice));
-  if ((room.icehouse.ice > 0) !== (next > 0)) I.rebase(before, room.tick);
-  room.icehouse.ice = next;
+  if ((icehouse.ice > 0) !== (next > 0)) I.rebase(before, tick);
+  icehouse.ice = next;
 }
 
 // Každú hernú hodinu sa časť ľadu roztopí (v zime nič). Vráti true, ak sa ľadovňa práve vyprázdnila.
-function meltHourly(room, season) {
-  const h = room.icehouse;
+function meltHourly(icehouse, st, tick, season) {
+  const h = icehouse;
   if (!h || !h.built || h.ice <= 0) return false;
   const left = h.ice - D.ICEHOUSE.melt[season];
-  setIce(room, left < 1e-6 ? 0 : +left.toFixed(4));
+  setIce(h, st, tick, left < 1e-6 ? 0 : +left.toFixed(4));
   return h.ice === 0;
 }
 
 // Doplnenie ľadovne – vráti, koľko blokov sa zmestilo (hráčovi ich odoberie server).
-function fillIcehouse(room, n) {
-  const h = room.icehouse;
+function fillIcehouse(icehouse, st, tick, n) {
+  const h = icehouse;
   if (!h || !h.built) return 0;
   const k = Math.max(0, Math.min(n, Math.floor(D.ICEHOUSE.cap - h.ice + 1e-6)));
-  if (k) setIce(room, h.ice + k);
+  if (k) setIce(h, st, tick, h.ice + k);
   return k;
 }
 
-// Kúpa ľadovne (spoločná stavba, platí ju hráč). Vráti chybu alebo null.
-function buildIcehouse(room, sv) {
+// Kúpa ľadovne (spoločná stavba, platí ju hráč): icehouse sa mení na mieste, pozemok v tiles dostane budovu. Vráti chybu alebo null.
+function buildIcehouse(icehouse, tiles, sv) {
   const B = D.ICEHOUSE;
-  if (room.icehouse && room.icehouse.built) return 'Ľadovňa už v záhrade stojí.';
+  if (icehouse.built) return 'Ľadovňa už v záhrade stojí.';
   if (D.repLevel(sv.rep || 0) < B.rep) return `Potrebuješ reputáciu úrovne ${B.rep}.`;
   if (sv.coins < B.price) return 'Nemáš dosť mincí. 🪙';
-  if (lotIdx().some(i => room.tiles[i].s)) return 'Na pozemku vedľa domčeka je prekopaná zem. Najprv ju zarovnaj motykou.';
+  if (lotIdx().some(i => tiles[i].s)) return 'Na pozemku vedľa domčeka je prekopaná zem. Najprv ju zarovnaj motykou.';
   sv.coins -= B.price;
-  room.icehouse = { built: true, ice: 0 };
-  applyIcehouse(room);
+  icehouse.built = true; icehouse.ice = 0;
+  applyIcehouse(icehouse, tiles);
   return null;
 }
 
@@ -166,4 +164,4 @@ function buyTool(sv, id) {
   return null;
 }
 
-module.exports = { LEVELS, areaTiles, loadHory, saveHory, lotIdx, applyIcehouse, digIce, dawnIce, meltGlacier, growGlacier, feedGlacier, glacierTotal, glacierMax, setIce, meltHourly, fillIcehouse, buildIcehouse, buyTool };
+module.exports = { LEVELS, loadHory, saveHory, lotIdx, applyIcehouse, digIce, dawnIce, meltGlacier, growGlacier, feedGlacier, occupied, glacierTotal, glacierMax, setIce, meltHourly, fillIcehouse, buildIcehouse, buyTool };

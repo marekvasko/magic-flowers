@@ -1,8 +1,8 @@
-# Simulation engine (`engine.js`, `draft.js`)
+# Simulation engine (`engine.js`)
 
 The game world is a **discrete-event simulation**. Time is a whole-number counter (`tick`, 288 per game day, 1 tick = 5 game minutes). Anything that should happen in the future is an **event** in one queue, and the engine moves the clock **from event to event**. Ticks with no events in them are never simulated.
 
-Since engine v2 (#105, phase 1 in #107) nothing changes the world directly. Everything that happens in a tick is a **proposal** evaluated on a frozen snapshot of the world; the engine then **commits** the accepted proposals, whole or not at all. The engine is still a set of stateless functions: no module-level state, no classes, no timers:
+Since engine v2 (#105; phase 1 in #107, phase 2 in #109) nothing changes the world directly. Everything that happens in a tick is a **proposal**: it declares which **slices** of the world it reads and writes, runs on plain copies of exactly those slices, and the engine then **commits** the accepted proposals, whole or not at all, and writes one entry per batch to a **journal**. The engine is still a set of stateless functions: no module-level state, no classes, no timers:
 
 - **all state** lives in the world object as plain JSON and is saved with it;
 - **all behaviour** (what each event does, which events are periodic) comes from a `spec` object the caller passes in.
@@ -19,6 +19,8 @@ So a world can be saved, loaded, copied or simulated headless (in tests or balan
 | `step` | counter of committed rounds; part of the derivation of every generator, so a replay from a save reproduces the run |
 | `seq` | counter of scheduled events; keeps the order stable within a tick |
 | `events` | the queue, sorted by `(at, seq)` |
+| `plotsUsed`, `maxRep` | derived counters (tilled garden plots; the highest reputation among the players) kept in state so that proposals can declare narrow keys instead of reading every tile or every save; recounted on load, maintained by whoever changes a plot or a reputation |
+| `glacierFed` | the day the glacier last grew from rain or snow (at most once a day) |
 
 An event in the queue:
 
@@ -34,21 +36,26 @@ Save format v8 replaced the shared generator state `rng` with `seed` and `step` 
 
 ```js
 const SIM = {
-  handlers:  { dawn(world, data, ev) { … }, cDue(world, data, ev) { … }, … },   // legacy handlers
-  proposers: { buy(draft, data, ctx) { … }, … },                               // pure proposals (from phase 2 on)
+  proposers: {                                   // by event type (later also by player action)
+    dawn:   { keys: (data, world) => ({ writes: ['tile:garden:*', 'save:*', 'weather', …], reads: ['eternal'] }),
+              run(slices, data, ctx) { … } },
+    cDue:   { keys: ({ id }, world) => …, run(slices, { id }, ctx) { … } },
+    …
+  },
   periodic: [
     { key: 'dawn',   type: 'dawn',   next: E.daily(D.DAWN_TICK) },
     { key: 'hourly', type: 'hourly', next: E.every(12) },
-    { key: 'festStart:jar', type: 'festStart', data: { id: 'jar' }, next: E.every(YEAR, startOfJar) },
+    { key: 'npc_jano', type: 'npc_jano', next: (from, rng) => E.nextDailyTick(from + TPD / 2, 96 + rng.int(120)) },
     …
   ],
-  transient: ['players', 'dirty', …],   // keys on the room that are not game state
-  resource(path) { … },                 // optional: path → resource key (default: Draft.resourceOf)
-  onError(err, ev, world) { … }         // optional; console.error by default
+  presence: world => [...],              // optional: a snapshot of what is not state (connected players), given to run as ctx.presence
+  onBatch: (world, out) => { … },        // optional: after every committed batch – send out.outbox, store out.entry (journal)
+  slice: (world, key) => { get(), set(v) } | null,   // optional: override the default key → slice mapping
+  onError(err, ev, world) { … }          // optional; console.error by default
 };
 ```
 
-**Handlers and proposers both receive a draft, never the world itself** (see below). A legacy handler looks exactly like before: it reads and writes `world.tiles[i].s`, calls `E.rand(world)`, `E.schedule(world, …)` and may send messages to players. The draft records what it did. A proposer is the pure form: it gets a `ctx` with its own random generator (`ctx.rng.rand() / int(n) / pick(list)`), `ctx.emit(msg)` for messages, `ctx.reject(msg)` for a refused action, and `ctx.schedule / scheduleIn / scheduleUnique / cancel / pending` for the queue. Neither kind schedules itself again.
+A **proposer** has two pure parts. `keys(data, world)` returns the keys it will read and write; it may look at read-only facts of the world (which saves exist, who took a contract) but must not change anything. `run(slices, data, ctx)` receives plain **copies** of exactly the declared slices, indexed by key (`slices['tile:garden:12']`, `slices['save:ana']`, `slices['market:*']`, `slices.weather`), mutates them with ordinary code and returns. `ctx` carries `tick`, `rng` (own generator: `rand() / int(n) / pick(list)`), `emit(msg)` for messages to players, `reject(msg)` for a refused action, `schedule / scheduleIn / scheduleUnique / cancel / pending` for the queue, and `presence`. A proposer never schedules itself again and never touches anything outside its slices: an undeclared slice is simply `undefined`, so touching it throws, and changing a slice declared only for reading is reported as an error of the proposal.
 
 ## Three kinds of events
 
@@ -118,24 +125,55 @@ Everything due in a tick forms one **batch**. Today a batch holds the due events
 ```
 round:
   for each input, in batch order:
-    result = evaluate(world, input)          ← on a draft of the frozen world, own random generator
-    if result.reads ∪ result.writes meets the writes of a proposal already applied in this round:
-        hold the input for the next round    ← it would have read state that just changed
-    else if result is a rejection:  tell the player, apply nothing
-    else:                            apply the patches and queue ops, whole
+    keys = proposer.keys(data, world)
+    if keys meet the writes of a proposal already applied in this round: hold the input (not even evaluated)
+    slices = copies of the declared slices; result = proposer.run(slices, data, ctx)   ← own random generator
+    if the result's keys (incl. event:<key> touched through ctx) meet earlier writes: hold
+    else if rejected: tell the player, apply nothing
+    else: write the slices back into the world (in place), then the queue ops; record the changes
   step += 1
   if anything was held: next round, same tick, against the committed world
+spec.onBatch(world, { applied, rejected, outbox, entry })
 ```
 
-- **Draft** (`draft.js`) — **transitional, phase 1 only.** The maintainer's decision in #105 is that proposals *declare* their keys and run on plain slices; the recorder below exists so that today's handlers can run on the pipeline unchanged, and phase 2 removes it. It is a copy-on-write proxy over the world. Reads pass through; the first write to an object copies it (and the path up to the top-level key), so the world is untouched until commit. Every write is also recorded as a patch `{ op: 'set' | 'del', path, value }`; `E.applyPatches` replays them on the live world **in place**, so objects the server holds (a player's save, a tile) keep their identity. Queue changes (`schedule`, `scheduleUnique`, `cancel`) are recorded as **ops** and executed at commit, where `seq` is assigned in commit order, so scheduling never conflicts.
-- **Resources**: reads and writes are recorded at resource granularity, not path granularity, so that unrelated proposals never conflict: `tile:garden:12`, `tile:hory:3`, `save:ana` (a player's save), `pos:ana` (their position: x, y, area, lastTick), `market:seed_mak`, `market:fl_mak`, `market:compost`, `market:festival`, `market:news`, `market:npc:jano`, `contracts`, `storage`, `weather`, `icehouse`, `event:cDue:7` (a keyed event), … Enumerating a collection (`for key in saves`, `tiles.length`) reads the collection key (`save:*`, `tile:garden:*`), which meets every member. `Draft.resourceOf(path)` is the mapping (a resource depends on at most the first three elements of a path); `spec.resource` can replace it.
-- **Rounds**: a held proposal is re-evaluated in the next round of the same tick against the committed world. It never runs against a half-built state, and it never waits for the next tick: `dawn` and `hourly` both fire at 6:00, both write every save, so `hourly` runs in round 2 of tick 72, also during a 30-day catch-up. Two buys of the last seed: the first applies in round 1, the second is re-priced in round 2 and refused with the normal "Vypredané" toast. Each round can only shrink, so the loop terminates.
-- **Atomicity**: a proposal is applied whole or not at all. A handler that throws after writing coins leaves the coins untouched; the error goes to `spec.onError` and the event is consumed, as before.
-- **Randomness**: proposal evaluation gets a mulberry32 generator seeded from `hash(seed, step, id)`, where `id` identifies the input (`ev#<seq>` for events). Streams never shift when another input is added or removed, and the result is the same whether proposals are evaluated sequentially or in parallel. `Math.random()` and `Date.now()` are banned from `engine.js` and `draft.js` (a test greps for them).
-- **Legacy handlers** (`spec.handlers`) declare `writes: '*'`: they conflict with everything, so within a round only the first of them applies and the rest are held. The engine evaluates a legacy handler **only when it is the first proposal to apply in its round**, so each one is evaluated exactly once and may keep its side effects (toasts, `broadcast`, `room.dirty = true`). That is what keeps `server.js` working unchanged through phase 1. A proposer in `spec.proposers` has no such guarantee: it may be evaluated several times (once per round it is held), so it must be pure and send messages through `ctx.emit`.
-- **What is not state**: keys listed in `spec.transient` (`players`, `dirty`, `ff`, `pomedzie`, …) plus `tick`, `wall`, `daySeconds`, `v`, `migratedFrom` pass straight through to the live room, untracked and uncopied. `rng` is local to the draft: `E.rand(world)` inside a handler draws from the proposal's own generator.
+### Slices and keys
 
-`E.evaluate(world, input, spec)` returns one proposal's result (`{ id, reads, writes, patches, ops, outbox, reject?, error? }`) without committing anything; tests use it to prove that shuffled evaluation gives identical proposals.
+A **key** names a slice of the world. `E.sliceOf(world, key)` is the default mapping (game knowledge: how the world is stored, see `serialize` in `server.js`):
+
+| Key | Slice |
+|---|---|
+| `tile:garden:12`, `tile:hory:3` | one tile of one area; `tile:garden:*` the whole tile array of the area (`garden` → `world.tiles`, `hory`, `les`) |
+| `save:ana` | one player's save (coins, inventory, reputation, position, …); `save:*` all saves |
+| `market:seed_mak`, `market:fl_mak`, `market:compost`, `market:festival`, `market:hist`, `market:news`, `market:npc:jano` | one market entry; `market:seed_*`, `market:fl_*`, `market:npc:*` a collection; `market:*` the whole market |
+| `contracts` | the board (`list`, `nextId`) |
+| `storage` | the shared storage as `{ inv, fb }` (`world.storage` + `world.storageFb`) |
+| `event:<key>` | a keyed event: added by the engine when `ctx.scheduleUnique / cancel / pending` is called with that key |
+| anything else | the world property with that name: `weather`, `eternal`, `fairyNight`, `icehouse`, `scav`, `scavSalt`, `up`, `plotsUsed`, `maxRep`, `glacierFed` |
+
+Rules:
+
+- A key ending in `*` is a collection and **meets** every key with the same prefix (`save:*` meets `save:ana`; `market:*` meets `market:seed_mak`). Two proposals whose keys never meet are independent and could be evaluated in parallel.
+- **Write-back is in place.** Objects already in the world are changed from the inside, so the objects the server holds (a player's save, a tile, the market) keep their identity. Arrays are synced element by element while their length is unchanged (tiles, a full news list); an array whose length changed is replaced as a whole. So an element removed from a list keeps its own values, but a list element is not a stable identity across a batch: look it up again by id.
+- **Granularity is the proposer's choice.** `dawn` legitimately changes every tile and every save and declares the collections (`tile:garden:*`, `save:*`): that only holds `hourly` and the market events to round 2 of the 6:00 tick, also during a 30-day catch-up. Market events (`delivery`, NPC visits, festivals) declare the whole market (`market:*`); finer keys exist for the player actions of phase 3 (`market:seed_mak` + `save:ana` for a buy). Reading every tile to count plots or every save to find the best reputation would make a hoe conflict with everything, which is why `plotsUsed` and `maxRep` live in state.
+- **Rounds**: a held proposal is re-evaluated in the next round of the same tick against the committed world, with a fresh generator (`step` advanced). It never runs against a half-built state and never waits for the next tick. Two buys of the last seed: the first applies in round 1, the second is re-priced in round 2 and refused with the normal "Vypredané" toast. Each round can only shrink, so the loop terminates.
+- **Atomicity**: a proposal is applied whole or not at all. A `run` that throws after writing coins leaves the coins untouched (it only wrote its copy); the error goes to `spec.onError` and the event is consumed.
+- **Randomness**: `ctx.rng` is a mulberry32 generator seeded from `hash(seed, step, id)`, where `id` identifies the input (`ev#<seq>` for events). Streams never shift when another input is added or removed, and the result is the same whether proposals are evaluated sequentially or in parallel. `Math.random()` and `Date.now()` are banned from `engine.js`, `events.js`, `economy.js`, `items.js`, `ice.js` and `scavenge.js` (a test greps for them). Actions that still mutate the world directly on the server (phase 3 moves them onto the engine) get the same kind of generator through `E.liveCtx(world, id)`.
+- **Messages**: `ctx.emit({ to, t, … })` goes to the batch outbox and is delivered by the server only after the proposal is applied (`to`: `'*'` everyone, `'area:hory'` the players on an area, otherwise a player's key). What else to refresh on the clients (tiles, inventory, market, board, storage) the server derives from the written keys and recorded changes, so a proposer never calls `sendMe` or `tileMsg` (first step of the notifier, phase 5 removes the manual calls from player actions too). `ctx.presence` is the snapshot `spec.presence(world)` took when the batch was formed (which players are connected, where they stand, whether they are searching the grass); it is input, not state.
+
+`E.evaluate(world, input, spec)` returns one proposal's result (`{ id, reads, writes, slices, ops, outbox, reject?, error? }`) without committing anything; tests use it to prove that shuffled evaluation gives identical proposals.
+
+### Journal
+
+Every committed batch produces an **entry** (`out.entry`), and the server appends it as one JSON line to `data/journal-<room>.jsonl`:
+
+```js
+{ wall, tick, step,
+  inputs:    [{ id, type, data, ev: { at, seq, key } }],                        // as they arrived / came due
+  proposals: [{ id, type, round, reads, writes, outcome, msg?, changes? }],       // one per proposal per round
+  outbox:    [{ to, t, … }] }
+```
+
+`outcome` is `applied`, `held` (re-evaluated in the next round), `rejected` (with `msg`) or `error` (with `msg`). `changes` lists, per written key, the leaves that actually changed inside the slice: `{ p: ['inv', 'fl_mak'], from, to }` (`to` missing = deleted), so a `dawn` over 1 000 tiles records only the plants that grew. The file is rotated when it exceeds `JOURNAL_MAX_MB` (20 MB by default; the previous file is kept as `.1`), `JOURNAL=0` disables it. `E.replay(world, entries, spec)` replays a journal on a saved world: due events come back from the queue, other inputs (player actions, from phase 3) are committed from the entries; the result and the new journal are identical to the original run (a test checks this). The debug page will show it (#106).
 
 ## Executor: jumping to the next event
 
@@ -159,13 +197,13 @@ advanceTo(world, target, spec):
 
 **Errors.** Each proposal is evaluated inside try/catch. The error goes to `spec.onError` (by default `console.error` with the event's key, tick and data), nothing of that proposal is applied, the event is consumed and the simulation goes on. A poison event therefore can't crash the server, can't leave a half-applied change, and can't crash it again when catch-up replays the same event after a restart.
 
-**Cost.** Each loop iteration costs one reconcile (O(queue length), and the queue holds a few dozen events) plus the proposals. Idle ticks cost nothing. Evaluating `dawn` through the draft (1 000 tiles behind a proxy) costs a few milliseconds; a 30-day catch-up with a full garden stays well under a second.
+**Cost.** Each loop iteration costs one reconcile (O(queue length), and the queue holds a few dozen events) plus the proposals: copying the declared slices, running, writing them back and diffing them for the journal. Idle ticks cost nothing. A 30-day catch-up with a full garden (≈1 000 events) takes about 30 ms, roughly 27 µs per event (the engine before #108, which mutated the world directly, took about 12 µs; the phase-1 recorder took about 200 µs). `test/proposals.test.js` prints the number.
 
 ## Drivers
 
 | Who | Call | What it does |
 |---|---|---|
-| server, every 100 ms | `E.advance(room, Date.now(), SIM, 50000)` | moves the world by as many whole ticks as have passed since `room.wall` (at most 50,000 per call) |
+| server, every 100 ms | `E.advance(room, Date.now(), SIM, 50000)` | moves the world by as many whole ticks as have passed since `room.wall` (at most 50,000 per call); after every batch `SIM.onBatch` sends the outbox and writes the journal |
 | loading a running world | `E.advance(room, Date.now(), SIM)` | catches up downtime (capped at `MAX_CATCHUP_DAYS` by moving `wall`) |
 | everyone asleep | `E.advanceTo(room, min(ff.until, tick + 5), SIM)` | fast-forwards the night, 5 ticks per 100 ms so clients can animate it |
 | tests, headless simulation | `E.advanceTo(world, world.tick + days * TPD, spec)` | runs any amount of game time as fast as the events allow |
@@ -177,14 +215,14 @@ advanceTo(world, target, spec):
 
 The queue, `seq`, `seed` and `step` are part of the save. Given the same saved world and the same spec, the simulation always produces the same result, whether it runs continuously, is saved and loaded halfway, jumps instead of stepping, or replays recorded batches of actions on a saved snapshot (`test/engine.test.js`, `test/proposals.test.js`).
 
-Save format version 5 added `key` and `periodic` to events (`migrate()` in `server.js` gives keys to the events of older saves). Version 8 added `seed` and `step`, dropped `rng`, and makes sure `scavSalt` exists (it used to be drawn lazily from the shared generator).
+Save format version 5 added `key` and `periodic` to events (`migrate()` in `server.js` gives keys to the events of older saves). Version 8 added `seed` and `step`, dropped `rng`, and makes sure `scavSalt` exists (it used to be drawn lazily from the shared generator). The derived counters `plotsUsed` and `maxRep` and `glacierFed` are saved too but need no version: they are recounted (or default) on load.
 
 ## Recipes
 
 **A new periodic event** (for example a weekly market day):
 
 ```js
-HANDLERS.marketDay = (room) => { … };   // just the effect
+PROPOSERS.marketDay = { keys: () => ({ writes: ['market:*'] }), run(s, d, ctx) { … s['market:*'] … } };
 PERIODIC.push({ key: 'marketDay', type: 'marketDay', next: E.every(7 * TPD, D.DAWN_TICK + 36) });
 ```
 
@@ -193,30 +231,36 @@ Existing worlds get it automatically on load.
 **Something a player starts, which can be restarted or interrupted:** use a unique key.
 
 ```js
-E.scheduleUnique(room, 'heat:' + pl.key, room.tick + TPD, 'heatEnd', { key: pl.key });
+E.scheduleUnique(room, 'heat:' + pl.key, room.tick + TPD, 'heatEnd', { key: pl.key });   // from a direct action
+ctx.scheduleUnique('heat:' + key, ctx.tick + TPD, 'heatEnd', { key });                      // from a proposer
 E.cancel(room, 'heat:' + pl.key);
 ```
 
-**A pure proposal** (phase-1 shape, still on a draft; from phase 2 a proposer declares its keys up front and receives only those slices — see #105):
+**A proposal** (events today, player actions from phase 3):
 
 ```js
-SIM.proposers.water = (d, { key, i }, ctx) => {
-  const sv = d.saves[key], t = d.tiles[i];
-  if (!t.s) return ctx.reject('Tu nie je záhon.');          // nothing is applied, the player gets the toast
-  if (sv.water <= 0) return ctx.reject('Krhla je prázdna.');
-  sv.water--; t.s.w = 1;                                     // recorded: writes save:<key>, tile:garden:<i>
-  ctx.emit({ to: key, t: 'fx', k: 'drops', i });             // sent only if the proposal is applied
+SIM.proposers.water = {
+  keys: ({ key, i }) => ({ writes: ['save:' + key, 'tile:garden:' + i] }),
+  run(s, { key, i }, ctx) {
+    const sv = s['save:' + key], t = s['tile:garden:' + i];
+    if (!t.s) return ctx.reject('Tu nie je záhon.');          // nothing is applied, the player gets the toast
+    if (sv.water <= 0) return ctx.reject('Krhla je prázdna.');
+    sv.water--; t.s.w = 1;                                     // copies; written back on commit
+    ctx.emit({ to: key, t: 'fx', k: 'drops', i });             // sent only if the proposal is applied
+  }
 };
 ```
 
-**Removing content:** delete the handler and/or the periodic declaration. Pending events in saved worlds are dropped on load, with a `[engine] zahodená udalosť …` line in the log.
+**A helper that the server also calls directly** (`Econ.deliverContract`, `Ice.fillIcehouse`, …) takes the slices it needs (`contracts`, `tick`, the save, `maxRep`, a `ctx`) instead of the room, so the same function runs on a proposal's copies and, until phase 3, on the live room with `E.liveCtx(room, id)`.
+
+**Removing content:** delete the proposer and/or the periodic declaration. Pending events in saved worlds are dropped on load, with a `[engine] zahodená udalosť …` line in the log.
 
 ## Current periodic events
 
 | Key | When | Defined in |
 |---|---|---|
-| `dawn` | every day at 6:00: plants grow, weather, market | `server.js` |
-| `hourly` | every full hour: flowers wilt, ice melts | `server.js` |
+| `dawn` | every day at 6:00: plants grow, weather, ice, market, composters, board | `events.js` (market part `Econ.DAWN`) |
+| `hourly` | every full hour: flowers wilt, ice melts | `events.js` |
 | `delivery` | every 2nd day at 7:00: wholesaler | `economy.js` |
 | `npc_jano`, `npc_fero`, `npc_zuzka` | once a day at a random time between 8:00 and 18:00, at least ½ day after the previous visit | `economy.js` |
 | `festAnnounce:<id>`, `festStart:<id>`, `festEnd:<id>` | yearly: 2 days before the festival, at its start, at its end | `economy.js` |

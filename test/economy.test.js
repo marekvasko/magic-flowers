@@ -6,15 +6,17 @@ const Econ = require('../economy.js');
 const TPD = D.TICKS_PER_DAY;
 
 function makeWorld(seed) {
-  const room = { tick: D.DAWN_TICK + 6, wall: 0, daySeconds: 1200, rng: seed, seq: 0, events: [], saves: {}, market: null, contracts: null };
+  const room = { tick: D.DAWN_TICK + 6, wall: 0, daySeconds: 1200, seed: 'ekonomika-' + seed, step: 0, seq: 0, events: [], saves: {}, market: null, contracts: null, maxRep: 0 };
   const spec = {
-    handlers: Object.assign({ dawn: Econ.onDawn }, Econ.HANDLERS),
+    proposers: Object.assign({ dawn: Econ.DAWN }, Econ.PROPOSERS),
     periodic: [{ key: 'dawn', type: 'dawn', next: E.daily(D.DAWN_TICK) }, ...Econ.PERIODIC],
-    onError(err) { throw err; } // v testoch chyba v handleri nesmie prejsť potichu
+    onError(err) { throw err; } // v testoch chyba v návrhu nesmie prejsť potichu
   };
   Econ.initEconomy(room);
   return { room, spec, run(days) { E.advanceTo(room, room.tick + days * TPD, spec); } };
 }
+// Kontext pre priame volania zákaziek v testoch (náhoda a plánovanie nad živým svetom)
+const ctxOf = room => E.liveCtx(room, 'test');
 
 test('64 dní simulácie bez hráčov: zásoby, ceny a fronta udalostí zostávajú v medziach', () => {
   const { room, run } = makeWorld(42);
@@ -26,7 +28,7 @@ test('64 dní simulácie bez hráčov: zásoby, ceny a fronta udalostí zostáva
       const s = room.market.seeds[sp].stock, f = room.market.flowers[sp].stock;
       assert.ok(Number.isInteger(s) && s >= 0 && s <= 40, `semienka ${sp}: ${s}`);
       assert.ok(Number.isInteger(f) && f >= 0, `kvety ${sp}: ${f}`);
-      const p = Econ.seedPrice(room, sp), q = Econ.flowerPrice(room, sp);
+      const p = Econ.seedPrice(room.market, room.tick, sp), q = Econ.flowerPrice(room.market, room.tick, sp);
       assert.ok(p >= 2 && p < 1000 && q >= 1 && q < 2000, `ceny ${sp}: ${p}/${q}`);
     }
   }
@@ -44,7 +46,7 @@ test('semienka sú v sezóne v priemere drahšie ako tesne pred sezónou (treba 
       const se = D.seasonOf(D.dayOfTick(room.tick)), dis = (D.dayOfTick(room.tick) - 1) % D.DAYS_PER_SEASON + 1;
       for (const sp of Econ.PLANTABLE) {
         if (D.SPECIES[sp].strict) continue;
-        const rel = Econ.seedPrice(room, sp) / D.SPECIES[sp].seed;
+        const rel = Econ.seedPrice(room.market, room.tick, sp) / D.SPECIES[sp].seed;
         const ph = Econ.phase(sp, se);
         if (ph === 'next' && dis >= 3) { pre += rel; n++; }
         if (ph === 'now' && dis >= 3) during += rel;
@@ -60,34 +62,37 @@ test('nákup zvyšuje cenu, predaj kvetov ju znižuje; vypredané sa kúpiť ned
   const { room } = makeWorld(7);
   const sv = { coins: 10000, inv: {}, rep: 0 };
   const sp = Econ.PLANTABLE.find(s => Econ.phase(s, 0) === 'now' && !D.SPECIES[s].strict);
-  const p0 = Econ.seedPrice(room, sp);
-  const r = Econ.buy(room, sv, 'seed_' + sp, 5);
+  const m = room.market, tick = room.tick;
+  const p0 = Econ.seedPrice(m, tick, sp);
+  const r = Econ.buy(m, tick, sv, 'seed_' + sp, 5);
   assert.strictEqual(r.n, 5);
-  assert.ok(Econ.seedPrice(room, sp) > p0);
-  Econ.buy(room, sv, 'seed_' + sp, 999);
+  assert.ok(Econ.seedPrice(m, tick, sp) > p0);
+  Econ.buy(m, tick, sv, 'seed_' + sp, 999);
   assert.strictEqual(room.market.seeds[sp].stock, 0);
-  assert.strictEqual(Econ.buy(room, sv, 'seed_' + sp, 1).n, 0);
+  assert.strictEqual(Econ.buy(m, tick, sv, 'seed_' + sp, 1).n, 0);
   sv.inv['fl_' + sp] = 10;
-  const f0 = Econ.flowerPrice(room, sp);
-  const s = Econ.sell(room, sv, 'fl_' + sp, 10);
-  assert.ok(s.earned < f0 * 10 && Econ.flowerPrice(room, sp) < f0);
-  assert.strictEqual(Econ.buy(room, { coins: 9999, inv: {}, rep: 0 }, 'seed_plesnivec', 1).n, 0, 'plesnivec len od reputácie 2');
+  const f0 = Econ.flowerPrice(m, tick, sp);
+  const s = Econ.sell(m, tick, sv, 'fl_' + sp, 10);
+  assert.ok(s.earned < f0 * 10 && Econ.flowerPrice(m, tick, sp) < f0);
+  assert.strictEqual(Econ.buy(m, tick, { coins: 9999, inv: {}, rep: 0 }, 'seed_plesnivec', 1).n, 0, 'plesnivec len od reputácie 2');
 });
 
 test('zákazka: rezervácia, odovzdanie po častiach, odmena; prepadnutá stojí reputáciu', () => {
   const { room, run } = makeWorld(9);
-  room.saves.anka = { coins: 0, inv: {}, rep: 0 };
-  const c = room.contracts.list[0];
-  assert.strictEqual(Econ.takeContract(room, 'anka', c.id), null);
-  assert.ok(Econ.takeContract(room, 'anka', room.contracts.list[1].id), 'na úrovni 0 len 1 zákazka');
-  room.saves.anka.inv['fl_' + c.sp] = c.n - 1;
-  Econ.deliverContract(room, 'anka', c.id);
+  const sv = room.saves.anka = { coins: 0, inv: {}, rep: 0 }, C = room.contracts;
+  const c = C.list[0];
+  assert.strictEqual(Econ.takeContract(C, room.tick, sv, 'anka', c.id), null);
+  assert.ok(Econ.takeContract(C, room.tick, sv, 'anka', C.list[1].id), 'na úrovni 0 len 1 zákazka');
+  sv.inv['fl_' + c.sp] = c.n - 1;
+  Econ.deliverContract(C, room.tick, sv, 'anka', c.id, 0, ctxOf(room));
   assert.strictEqual(c.got, c.n - 1);
-  room.saves.anka.inv['fl_' + c.sp] = 1;
-  const r = Econ.deliverContract(room, 'anka', c.id);
-  assert.ok(r.done && room.saves.anka.coins === c.reward && room.saves.anka.rep === c.rep);
-  const c2 = room.contracts.list.find(x => !x.takenBy);
-  Econ.takeContract(room, 'anka', c2.id);
+  sv.inv['fl_' + c.sp] = 1;
+  const r = Econ.deliverContract(C, room.tick, sv, 'anka', c.id, 0, ctxOf(room));
+  assert.ok(r.done && sv.coins === c.reward && sv.rep === c.rep);
+  assert.strictEqual(r.maxRep, c.rep, 'najvyššia reputácia záhrady stúpla');
+  room.maxRep = r.maxRep;
+  const c2 = C.list.find(x => !x.takenBy);
+  Econ.takeContract(C, room.tick, sv, 'anka', c2.id);
   const repBefore = room.saves.anka.rep;
   run(Math.ceil((c2.due - room.tick) / TPD) + 1);
   assert.ok(!room.contracts.list.includes(c2));
@@ -96,15 +101,15 @@ test('zákazka: rezervácia, odovzdanie po častiach, odmena; prepadnutá stojí
 
 test('zákazka: pri prebytku v inventári sa odovzdá len to, čo ešte chýba', () => {
   const { room } = makeWorld(9);
-  room.saves.anka = { coins: 0, inv: {}, rep: 0 };
-  const c = room.contracts.list[0], id = 'fl_' + c.sp;
-  Econ.takeContract(room, 'anka', c.id);
-  room.saves.anka.inv[id] = 1;
-  Econ.deliverContract(room, 'anka', c.id);
-  room.saves.anka.inv[id] = c.n + 5;
-  const r = Econ.deliverContract(room, 'anka', c.id);
+  const sv = room.saves.anka = { coins: 0, inv: {}, rep: 0 }, C = room.contracts;
+  const c = C.list[0], id = 'fl_' + c.sp;
+  Econ.takeContract(C, room.tick, sv, 'anka', c.id);
+  sv.inv[id] = 1;
+  Econ.deliverContract(C, room.tick, sv, 'anka', c.id, 0, ctxOf(room));
+  sv.inv[id] = c.n + 5;
+  const r = Econ.deliverContract(C, room.tick, sv, 'anka', c.id, 0, ctxOf(room));
   assert.ok(r.done);
-  assert.strictEqual(room.saves.anka.inv[id], 6, 'zostane prebytok');
+  assert.strictEqual(sv.inv[id], 6, 'zostane prebytok');
 });
 
 test('krátke zákazky sú len na kvety, ktoré sa dajú vypestovať v aktuálnom období', () => {
@@ -126,9 +131,9 @@ test('predaj starších kvetov vynesie menej než čerstvých', () => {
   I.addItems(I.playerC(fresh), 'fl_tulipan', 3, room.tick);
   I.addItems(I.playerC(old), 'fl_tulipan', 3, room.tick - 3 * TPD);
   const stock = room.market.flowers.tulipan.stock;
-  Econ.sell(room, fresh, 'fl_tulipan', 3);
+  Econ.sell(room.market, room.tick, fresh, 'fl_tulipan', 3);
   room.market.flowers.tulipan.stock = stock;
-  const r = Econ.sell(room, old, 'fl_tulipan', 3);
+  const r = Econ.sell(room.market, room.tick, old, 'fl_tulipan', 3);
   assert.ok(old.coins < fresh.coins * 0.8, `${old.coins} vs ${fresh.coins}`);
   assert.match(r.msg, /čerstvosť/);
 });
@@ -146,8 +151,8 @@ test('periodické udalosti ekonomiky: za rok každý sviatok raz ohlásený, za�
   const { room, spec, run } = makeWorld(5);
   const count = {};
   for (const type of ['festAnnounce', 'festStart', 'festEnd', 'npc_fero', 'delivery']) {
-    const h = spec.handlers[type];
-    spec.handlers[type] = (r, d, ev) => { count[ev.key] = (count[ev.key] || 0) + 1; h(r, d, ev); };
+    const p = spec.proposers[type];
+    spec.proposers[type] = { keys: p.keys, run(s, d, ctx) { const key = type.startsWith('fest') ? type + ':' + d.id : type; count[key] = (count[key] || 0) + 1; p.run(s, d, ctx); } };
   }
   const yearDays = 4 * D.DAYS_PER_SEASON;
   run(yearDays);
@@ -163,8 +168,8 @@ test('stratená periodická udalosť (napr. po chybe alebo zo starého uloženia
   run(1);
   room.events = room.events.filter(e => e.key !== 'npc_fero');
   let fero = 0;
-  const h = spec.handlers.npc_fero;
-  spec.handlers.npc_fero = (r, d, ev) => { fero++; h(r, d, ev); };
+  const p = spec.proposers.npc_fero;
+  spec.proposers.npc_fero = { keys: p.keys, run(s, d, ctx) { fero++; p.run(s, d, ctx); } };
   run(3);
   assert.ok(fero >= 2, 'Fero chodí znova: ' + fero);
 });
@@ -175,7 +180,7 @@ test('trh ukazuje začiatok najbližšieho sviatku aj pred jeho ohlásením a po
   const yearDays = 4 * D.DAYS_PER_SEASON;
   let announced = 0;
   for (let d = 0; d < yearDays; d++) {
-    const up = Econ.marketView(room).upcoming;
+    const up = Econ.marketView(room.market, room.tick, room.events).upcoming;
     assert.ok(Number.isFinite(up.start) && up.start > room.tick, `deň ${d}: ${up.start}`);
     const f = D.FESTIVALS.find(x => x.id === up.id);
     assert.strictEqual(up.start % (yearDays * TPD), Econ.festStartTick(f) % (yearDays * TPD));
