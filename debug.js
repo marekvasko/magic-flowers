@@ -50,7 +50,7 @@ function create(ctx) {
     const sim = ctx.sim && ctx.sim();
     if (!sim) return null;
     const plan = E.reconcilePlan({ tick: state.tick, events: state.events || [] }, sim);
-    const wouldAt = def => { try { return def.next(Object.assign({}, state), state.tick + 1); } catch (e) { return null; } };
+    const wouldAt = def => { try { return E.planAt(Object.assign({}, state), def, state.tick + 1); } catch (e) { return null; } };
     const evs = state.events || [];
     return {
       declared: (sim.periodic || []).length, handlers: Object.keys(sim.handlers).length,
@@ -63,6 +63,9 @@ function create(ctx) {
 
   // Kópia stavu sveta: z pamäte, ak je načítaný (rovnaký serialize ako pri ukladaní); inak len prečítaný súbor
   // (migrate na kópii). Svet v serveri sa nikdy nedostane von – rozšírenia dostanú len túto kópiu.
+  // Tajomstvá sveta (semienko náhody, soľ divých semienok) von nejdú – z nich by sa dali predvídať výsledky.
+  // Odstraňujú sa až pred odpoveďou: reconcilerView potrebuje semienko, aby ukázal ten istý čas, aký naplánuje engine.
+  function secretless(r) { if (r) { delete r.state.seed; delete r.state.scavSalt; } return r; }
   function loadState(id) {
     if (!ROOM_RE.test(id)) return null;
     const room = ctx.rooms.get(id);
@@ -81,7 +84,7 @@ function create(ctx) {
   function roomSnapshot(id) {
     const r = loadState(id);
     if (!r) return null;
-    return redact(Object.assign({}, r, { reconciler: reconcilerView(r.state) }), Object.keys(r.state.saves || {}));
+    return redact(secretless(Object.assign({}, r, { reconciler: reconcilerView(r.state) })), Object.keys(r.state.saves || {}));
   }
 
   // Rozšírenia API pre záložky: debug/api/<name>.js exportuje (query, tools) → objekt na odpoveď (null = 404).
@@ -94,7 +97,7 @@ function create(ctx) {
     const keys = new Set();
     const tools = {
       ROOM_RE, rooms: listRooms, sim: ctx.sim && ctx.sim(),
-      load: id => { const r = loadState(String(id || '')); if (r) for (const k of Object.keys(r.state.saves || {})) keys.add(k); return r; }
+      load: id => { const r = loadState(String(id || '')); if (r) for (const k of Object.keys(r.state.saves || {})) keys.add(k); return secretless(r); }
     };
     let body;
     try { body = require(file)(query, tools); } catch (e) { console.error('[debug]', name, e); return json(res, 500, { error: e.message }); }

@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const E = require('../engine.js');
 const TPD = E.TICKS_PER_DAY;
 
-function world(extra) { return Object.assign({ tick: 0, wall: 0, daySeconds: 300, rng: 12345, seq: 0, events: [] }, extra); }
+function world(extra) { return Object.assign({ tick: 0, wall: 0, daySeconds: 300, seed: "test-12345", step: 0, seq: 0, events: [] }, extra); }
 // V testoch chyba v handleri nesmie prejsť potichu, ak ju test nečaká.
 const rethrow = err => { throw err; };
 
@@ -56,7 +56,7 @@ test('dávka v jednom kroku je uzavretá: čo naplánuje „teraz“, príde až
 });
 
 test('skok na ďalšiu udalosť dá ten istý svet ako posun po jednom kroku', () => {
-  const mk = () => world({ rng: 99 });
+  const mk = () => world({ seed: "skok-99" });
   const spec = {
     handlers: {
       roll(w) { w.sum = (w.sum || 0) + E.randInt(w, 1000); if (E.rand(w) < 0.5) E.scheduleIn(w, 1 + E.randInt(w, 40), 'one'); },
@@ -71,7 +71,7 @@ test('skok na ďalšiu udalosť dá ten istý svet ako posun po jednom kroku', (
 });
 
 test('uloženie do JSON a pokračovanie dá rovnaký výsledok ako nepretržitý beh', () => {
-  const mk = () => world({ rng: 777 });
+  const mk = () => world({ seed: "ulozenie-777" });
   const spec = {
     handlers: { roll(w) { w.sum = (w.sum || 0) + E.randInt(w, 1000); } },
     periodic: [{ key: 'roll', type: 'roll', next: (w, from) => from + E.randInt(w, 50) }], onError: rethrow
@@ -84,7 +84,7 @@ test('uloženie do JSON a pokračovanie dá rovnaký výsledok ako nepretržitý
   E.advance(restored, 10 * TPD * E.tickMs(restored), spec);
   assert.strictEqual(restored.tick, a.tick);
   assert.strictEqual(restored.sum, a.sum);
-  assert.strictEqual(restored.rng, a.rng);
+  assert.strictEqual(restored.step, a.step);
   assert.deepStrictEqual(restored.events, a.events);
 });
 
