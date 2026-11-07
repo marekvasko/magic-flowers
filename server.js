@@ -397,7 +397,7 @@ function timeMsg(room) {
 // Z jedného hráča prejde v rámci najviac jedna akcia na políčku (act); ďalšie počkajú na ďalší rámec.
 // Udalosti a akcie nie sú nikdy v jednej dávke: dávka akcií sa vykoná v kroku, v ktorom správy prišli (svet sa medzi
 // rámcami nehýbe, takže to je práve aktuálny krok), až potom rámec posunie čas.
-const INBOX_MAX = 2000; // ochrana pred zaplavením: čo sa nezmestí, sa zahodí
+const INBOX_MAX = 2000, PLAYER_INBOX_MAX = 100, DEFER_MAX = 3; // ochrana pred zaplavením: čo sa nezmestí (na svet, na hráča, odložené akcie), sa zahodí
 const MESSAGES = new Set(['move', 'act', 'jump', 'sleep', 'emote', 'buy', 'sell', 'upgrade', 'ctake', 'cdeliver', 'brew', 'wish', 'settings', 'store', 'unstore', 'compostWilted', 'buyTool', 'build', 'icehouse', 'chat']);
 function inRing(p) { if (p.area !== 'garden') return false; const x = Math.floor(p.x), y = Math.floor(p.y); return x >= D.RING.x0 && x <= D.RING.x1 && y >= D.RING.y0 && y <= D.RING.y1; }
 
@@ -469,16 +469,14 @@ function toInput(room, pl, e, presence, inputs) {
       if (pl.sleep) return null;
       const me = presence.find(p => p.key === key);
       if (!me) return null;
-      const item = String(m.item || ''), x = m.x | 0, y = m.y | 0;
-      if (pl.scav) { // kým hľadá: to isté políčko znova = stále hľadá; čokoľvek iné hľadanie preruší
-        const i = y * D.areaSize(pl.area).w + x;
-        if (Actions.searchesWith(item) && pl.scav.i === i) return toast(pl, 'Ešte stále hľadáš… 🔍');
-        stopScavenge(pl, 'Prestal(a) si hľadať.', inputs);
-        me.scav = null;
-      }
       const r = Actions.resolveAct(room, presence, me, m);
       if (!r) return null;
       if (r.toast) return toast(pl, r.toast);
+      if (pl.scav) { // kým hľadá: to isté políčko znova = stále hľadá; čokoľvek iné (čo by sa naozaj stalo) hľadanie preruší
+        if (r.type === 'scavStart' && pl.scav.i === r.data.i) return toast(pl, 'Ešte stále hľadáš… 🔍');
+        stopScavenge(pl, 'Prestal(a) si hľadať.', inputs);
+        me.scav = null;
+      }
       return mk(r.type, r.data);
     }
     case 'buy': return mk('buy', { id: String(m.id), n: Math.max(1, Math.min(20, m.n | 0)) });
@@ -545,20 +543,21 @@ function presenceMessage(room, pl, m, inputs) {
 
 // Rozhodovacie kolo rámca: schránka → pohyb (zlúčený), správy o prítomnosti, dávka akcií enginu v aktuálnom kroku.
 // Správy hráčov, ktorí sa medzitým odpojili, sa zahodia. Druhá a ďalšia akcia na políčku od toho istého hráča počká
-// na ďalší rámec (ostane v schránke na začiatku, s pôvodným poradím).
+// na ďalší rámec (ostane v schránke na začiatku, s pôvodným poradím; najviac DEFER_MAX, ďalšie sa zahodia –
+// jeden klient tak nezaplní schránku celého sveta).
 function frame(room) {
   const list = room.inbox;
   if (!list.length) return;
   room.inbox = [];
   const alive = e => room.players.get(e.pl.id) === e.pl;
-  const inputs = [], moves = new Map(), acted = new Set(), later = [];
-  for (const e of list) if (alive(e) && e.m.t === 'move') moves.set(e.pl, e.m); // platí posledný pohyb
+  const inputs = [], moves = new Map(), acted = new Map(), later = [];
+  for (const e of list) { e.pl.inboxN = 0; if (alive(e) && e.m.t === 'move') moves.set(e.pl, e.m); } // platí posledný pohyb
   for (const [pl, m] of moves) applyMove(pl, m, inputs);
   const presence = presenceOf(room);
   for (const e of list) {
     if (!alive(e) || e.m.t === 'move') continue;
     const pl = e.pl, m = e.m;
-    if (m.t === 'act') { if (acted.has(pl)) { later.push(e); continue; } acted.add(pl); }
+    if (m.t === 'act') { const n = acted.get(pl) || 0; acted.set(pl, n + 1); if (n) { if (n <= DEFER_MAX) { later.push(e); pl.inboxN++; } continue; } }
     if (['jump', 'sleep', 'emote', 'settings', 'chat'].includes(m.t)) { presenceMessage(room, pl, m, inputs); continue; }
     let inp = null;
     try { inp = toInput(room, pl, e, presence, inputs); } catch (err) { console.error(`[${room.id}] správa ${m.t} od ${pl.key}:`, err); }
@@ -640,7 +639,8 @@ wss.on('connection', ws => {
     }
     if (!pl || !MESSAGES.has(m.t)) return;
     const room = pl.room;
-    if (room.inbox.length >= INBOX_MAX) return;
+    if (room.inbox.length >= INBOX_MAX || (pl.inboxN | 0) >= PLAYER_INBOX_MAX) return;
+    pl.inboxN = (pl.inboxN | 0) + 1;
     room.inbox.push({ pl, m, seq: ++room.inSeq, tick: room.tick }); // rámec (frame) to spracuje do 100 ms
   });
   ws.on('close', () => {

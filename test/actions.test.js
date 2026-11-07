@@ -455,6 +455,26 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
     bob.send({ t: 'ctake', id: board.list[0].id });
     await bob.wait(m => m.t === 'toast' && /Zákazka je tvoja/.test(m.text));
     await ana.wait(m => m.t === 'board' && m.list.find(c => c.id === board.list[0].id).takenBy);
+    // hľadanie v tráve: klik príliš ďaleko hľadanie nepreruší (ako pôvodný handler), ten istý klik = „stále hľadáš“, iná akcia preruší
+    const grass = w.tiles.findIndex(t => t.g === 'grass' && !t.s), gx = grass % D.W, gy = Math.floor(grass / D.W);
+    const seqA = ana.got.find(m => m.t === 'welcome').seq;
+    ana.send({ t: 'move', x: gx + 0.5, y: gy + 0.5, dir: 0, ar: seqA });
+    await ana.wait(m => m.t === 'pl' && m.list.some(p => p.name === 'Ana' && p.x === gx + 0.5));
+    ana.send({ t: 'act', x: gx, y: gy, item: '' });
+    await ana.wait(m => m.t === 'pl' && m.list.some(p => p.name === 'Ana' && p.si === grass));
+    const n0 = ana.got.length;
+    ana.send({ t: 'act', x: gx >= 10 ? gx - 10 : gx + 10, y: gy, item: '' }); // vnútri plochy, ale ďaleko
+    await ana.wait(m => m.t === 'toast' && m.text === 'Si príliš ďaleko.');
+    ana.send({ t: 'act', x: gx, y: gy, item: '' });
+    await ana.wait(m => m.t === 'toast' && /Ešte stále hľadáš/.test(m.text));
+    assert.ok(!ana.got.slice(n0).some(m => m.t === 'toast' && /Prestal/.test(m.text)), 'ďaleký klik hľadanie neprerušil');
+    ana.send({ t: 'act', x: gx, y: gy, item: 'hoe' });
+    await ana.wait(m => m.t === 'toast' && /Prestal\(a\) si hľadať/.test(m.text));
+    await ana.wait(m => m.t === 'pl' && m.list.some(p => p.name === 'Ana' && p.si === -1));
+    // záplava akcií jedného hráča nezablokuje správy ostatných
+    for (let k = 0; k < 300; k++) bob.send({ t: 'act', x, y, item: 'hoe' });
+    ana.send({ t: 'buy', id: 'compost', n: 1 });
+    await ana.wait(m => m.t === 'toast' && /Kúpené: 1× Kompost/.test(m.text), 1500);
     await sleep(250);
   } finally {
     if (ana) ana.ws.close(); if (bob) bob.ws.close();
