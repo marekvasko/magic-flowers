@@ -89,7 +89,7 @@ E.pending(world, key)                         // the pending event or null
 Periodic events are **never scheduled by hand**. `spec.periodic` declares them:
 
 ```js
-{ key, type, data?, next(world, from) }  // next returns the first tick >= from when it should happen
+{ key, type, data?, next(from, rng) }  // next returns the first tick >= from when it should happen; rng is a generator for random times
 ```
 
 The **reconciler** `E.reconcile(world, spec)` keeps the queue consistent with the declarations:
@@ -97,7 +97,7 @@ The **reconciler** `E.reconcile(world, spec)` keeps the queue consistent with th
 1. drops events whose `type` has no handler or proposer (content removed from the game),
 2. drops periodic events whose `key` is no longer declared (a removed festival or NPC),
 3. if a periodic key appears more than once, keeps only the earliest,
-4. for each declared key with no pending event, plans one at `next(world, tick + 1)`.
+4. for each declared key with no pending event, plans one at `next(tick + 1, rng)`.
 
 When a periodic event runs, it leaves the queue like any other event. The next reconcile sees that its key is missing and plans the next occurrence. So the reconciler is the **only** place that plans periodic events. Other than that, they go through the same queue and executor as everything else.
 
@@ -114,9 +114,9 @@ Helpers for `next`:
 |---|---|
 | `E.daily(tickOfDay)` | every day at that time (`E.daily(D.DAWN_TICK)` = 6:00) |
 | `E.every(period, offset)` | at `offset + k·period` (`E.every(12)` = every full hour, `E.every(2*TPD, 84)` = every 2nd day at 7:00, `E.every(YEAR, start)` = yearly) |
-| custom | anything, including random times. For example, an NPC visit: `(w, from) => E.nextDailyTick(from + TPD/2, 96 + E.randInt(w, 120))` |
+| custom | anything, including random times. For example, an NPC visit: `(from, rng) => E.nextDailyTick(from + TPD/2, 96 + rng.int(120))` |
 
-A `next` that uses `E.rand` is deterministic: `E.planAt(world, def, from)` gives it a generator seeded from `(seed, 'plan', key, from)`, so the planned time depends on nothing but the world's seed, the key and the moment it is planned. It is the same whether the engine jumps or steps.
+A `next` that draws random numbers is deterministic: `E.planAt(world, def, from)` gives it a generator seeded from `(seed, 'plan', key, from)`, so the planned time depends on nothing but the world's seed, the key and the moment it is planned. It is the same whether the engine jumps or steps.
 
 ## Proposals: how a tick is executed
 
@@ -129,7 +129,7 @@ round:
     if keys meet the writes of a proposal already applied in this round: hold the input (not even evaluated)
     slices = copies of the declared slices; result = proposer.run(slices, data, ctx)   ← own random generator
     if the result's keys (incl. event:<key> touched through ctx) meet earlier writes: hold
-    else if rejected: tell the player, apply nothing
+    else if rejected: apply nothing (out.rejected carries the message; events never reject, player actions will from phase 3)
     else: write the slices back into the world (in place), then the queue ops; record the changes
   step += 1
   if anything was held: next round, same tick, against the committed world
@@ -142,23 +142,23 @@ A **key** names a slice of the world. `E.sliceOf(world, key)` is the default map
 
 | Key | Slice |
 |---|---|
-| `tile:garden:12`, `tile:hory:3` | one tile of one area; `tile:garden:*` the whole tile array of the area (`garden` → `world.tiles`, `hory`, `les`) |
-| `save:ana` | one player's save (coins, inventory, reputation, position, …); `save:*` all saves |
+| `tile:garden:12`, `tile:hory:3` | one tile of one area; `tile:garden:*` the whole tile array of the area (`garden` → `world.tiles`, `hory`, `les`, `pomedzie`) |
+| `save:ana` | one player's save (coins, inventory, reputation, position, …; the key may contain `:`, never `*`); `save:*` all saves |
 | `market:seed_mak`, `market:fl_mak`, `market:compost`, `market:festival`, `market:hist`, `market:news`, `market:npc:jano` | one market entry; `market:seed_*`, `market:fl_*`, `market:npc:*` a collection; `market:*` the whole market |
 | `contracts` | the board (`list`, `nextId`) |
 | `storage` | the shared storage as `{ inv, fb }` (`world.storage` + `world.storageFb`) |
 | `event:<key>` | a keyed event: added by the engine when `ctx.scheduleUnique / cancel / pending` is called with that key |
-| anything else | the world property with that name: `weather`, `eternal`, `fairyNight`, `icehouse`, `scav`, `scavSalt`, `up`, `plotsUsed`, `maxRep`, `glacierFed` |
+| anything else | the world property with that name: `weather`, `eternal`, `fairyNight`, `icehouse`, `scav`, `scavSalt`, `up`, `plotsUsed`, `maxRep`, `glacierFed`. Collections (`saves`, `tiles`, `market`, …) and the queue are not slices under their property names |
 
 Rules:
 
-- A key ending in `*` is a collection and **meets** every key with the same prefix (`save:*` meets `save:ana`; `market:*` meets `market:seed_mak`). Two proposals whose keys never meet are independent and could be evaluated in parallel.
+- A key ending in `*` is a collection and **meets** every key with the same prefix (`save:*` meets `save:ana`; `market:*` meets `market:seed_mak`). Two proposals whose keys never meet are independent and could be evaluated in parallel. One proposal must not declare two keys that meet (`save:*` and `save:ana` would be two independent copies of the same data); writing to a slice it did not declare, or changing a slice declared only for reading, is an error of the proposal.
 - **Write-back is in place.** Objects already in the world are changed from the inside, so the objects the server holds (a player's save, a tile, the market) keep their identity. Arrays are synced element by element while their length is unchanged (tiles, a full news list); an array whose length changed is replaced as a whole. So an element removed from a list keeps its own values, but a list element is not a stable identity across a batch: look it up again by id.
 - **Granularity is the proposer's choice.** `dawn` legitimately changes every tile and every save and declares the collections (`tile:garden:*`, `save:*`): that only holds `hourly` and the market events to round 2 of the 6:00 tick, also during a 30-day catch-up. Market events (`delivery`, NPC visits, festivals) declare the whole market (`market:*`); finer keys exist for the player actions of phase 3 (`market:seed_mak` + `save:ana` for a buy). Reading every tile to count plots or every save to find the best reputation would make a hoe conflict with everything, which is why `plotsUsed` and `maxRep` live in state.
 - **Rounds**: a held proposal is re-evaluated in the next round of the same tick against the committed world, with a fresh generator (`step` advanced). It never runs against a half-built state and never waits for the next tick. Two buys of the last seed: the first applies in round 1, the second is re-priced in round 2 and refused with the normal "Vypredané" toast. Each round can only shrink, so the loop terminates.
 - **Atomicity**: a proposal is applied whole or not at all. A `run` that throws after writing coins leaves the coins untouched (it only wrote its copy); the error goes to `spec.onError` and the event is consumed.
 - **Randomness**: `ctx.rng` is a mulberry32 generator seeded from `hash(seed, step, id)`, where `id` identifies the input (`ev#<seq>` for events). Streams never shift when another input is added or removed, and the result is the same whether proposals are evaluated sequentially or in parallel. `Math.random()` and `Date.now()` are banned from `engine.js`, `events.js`, `economy.js`, `items.js`, `ice.js` and `scavenge.js` (a test greps for them). Actions that still mutate the world directly on the server (phase 3 moves them onto the engine) get the same kind of generator through `E.liveCtx(world, id)`.
-- **Messages**: `ctx.emit({ to, t, … })` goes to the batch outbox and is delivered by the server only after the proposal is applied (`to`: `'*'` everyone, `'area:hory'` the players on an area, otherwise a player's key). What else to refresh on the clients (tiles, inventory, market, board, storage) the server derives from the written keys and recorded changes, so a proposer never calls `sendMe` or `tileMsg` (first step of the notifier, phase 5 removes the manual calls from player actions too). `ctx.presence` is the snapshot `spec.presence(world)` took when the batch was formed (which players are connected, where they stand, whether they are searching the grass); it is input, not state.
+- **Messages**: `ctx.emit({ to, t, … })` goes to the batch outbox and is delivered by the server after the batch is committed, only for applied proposals (`to`: `E.ALL` everyone, `E.area('hory')` the players on an area, otherwise a player's key as a string). What else to refresh on the clients (tiles, inventory, market, board, storage) the server derives from the written keys and recorded changes, so a proposer never calls `sendMe` or `tileMsg` (first step of the notifier, phase 5 removes the manual calls from player actions too). `ctx.presence` is the snapshot `spec.presence(world)` took when the batch was formed (which players are connected, where they stand, whether they are searching the grass); it is input, not state.
 
 `E.evaluate(world, input, spec)` returns one proposal's result (`{ id, reads, writes, slices, ops, outbox, reject?, error? }`) without committing anything; tests use it to prove that shuffled evaluation gives identical proposals.
 
@@ -173,7 +173,7 @@ Every committed batch produces an **entry** (`out.entry`), and the server append
   outbox:    [{ to, t, … }] }
 ```
 
-`outcome` is `applied`, `held` (re-evaluated in the next round), `rejected` (with `msg`) or `error` (with `msg`). `changes` lists, per written key, the leaves that actually changed inside the slice: `{ p: ['inv', 'fl_mak'], from, to }` (`to` missing = deleted), so a `dawn` over 1 000 tiles records only the plants that grew. The file is rotated when it exceeds `JOURNAL_MAX_MB` (20 MB by default; the previous file is kept as `.1`), `JOURNAL=0` disables it. `E.replay(world, entries, spec)` replays a journal on a saved world: due events come back from the queue, other inputs (player actions, from phase 3) are committed from the entries; the result and the new journal are identical to the original run (a test checks this). The debug page will show it (#106).
+`outcome` is `applied`, `held` (re-evaluated in the next round), `rejected` (with `msg`) or `error` (with `msg`). When a world is loaded the server writes a marker line `{ load: true, tick, step, seq }` first, so a reader can tell where a run restarted (after a crash the ticks caught up on load are journaled again). `changes` lists, per written key, the leaves that actually changed inside the slice: `{ p: ['inv', 'fl_mak'], from, to }` (`to` missing = deleted), so a `dawn` over 1 000 tiles records only the plants that grew. The file is rotated when it exceeds `JOURNAL_MAX_MB` (20 MB by default; the previous file is kept as `.1`), `JOURNAL=0` disables it. `E.replay(world, entries, spec)` replays a journal on a saved world: due events come back from the queue, other inputs (player actions, from phase 3) are committed from the entries; the result and the new journal are identical to the original run (a test checks this). The debug page will show it (#106).
 
 ## Executor: jumping to the next event
 

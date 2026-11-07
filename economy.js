@@ -306,7 +306,7 @@ const PROPOSERS = {
       const f = D.FESTIVALS.find(x => x.id === d.id);
       const list = Object.entries(f.mult).map(([sp, x]) => `${D.SPECIES[sp].name} ×${String(x).replace('.', ',')}`).join(', ');
       news(s['market:*'], ctx.tick, `📅 O 2 dni: ${f.icon} ${f.name}! Výkupné ceny: ${list}.`);
-      ctx.emit({ to: '*', t: 'toast', text: `📅 O 2 dni bude ${f.icon} ${f.name} – kvetinárka bude platiť viac za: ${list}. Stihneš to vypestovať?`, kind: 'day' });
+      ctx.emit({ to: E.ALL, t: 'toast', text: `📅 O 2 dni bude ${f.icon} ${f.name} – kvetinárka bude platiť viac za: ${list}. Stihneš to vypestovať?`, kind: 'day' });
     }
   }),
   festStart: Object.assign({}, market, {
@@ -314,7 +314,7 @@ const PROPOSERS = {
       const f = D.FESTIVALS.find(x => x.id === d.id), m = s['market:*'];
       m.festival = { id: f.id, name: f.name, icon: f.icon, mult: f.mult, until: ctx.tick + f.len * TPD };
       news(m, ctx.tick, `${f.icon} Začína ${f.name}!`);
-      ctx.emit({ to: '*', t: 'toast', text: `${f.icon} Začína ${f.name}! Výkupné ceny vybraných kvetov sú vyššie.`, kind: 'magic' });
+      ctx.emit({ to: E.ALL, t: 'toast', text: `${f.icon} Začína ${f.name}! Výkupné ceny vybraných kvetov sú vyššie.`, kind: 'magic' });
     }
   }),
   festEnd: Object.assign({}, market, {
@@ -330,22 +330,23 @@ const PROPOSERS = {
     }
   },
   // Termín zákazky: prepadne; kto ju mal, príde o reputáciu (a dostane časť za odovzdané kvety).
-  // Reputácia klesá, preto sa najvyššia reputácia záhrady (maxRep) musí prepočítať zo všetkých uložení.
+  // Reputácia klesá, preto sa najvyššia reputácia záhrady (maxRep) musí prepočítať zo všetkých uložení – návrh
+  // preto deklaruje celú kolekciu uložení (kľúče sa nesmú prekrývať: 'save:*' a 'save:ana' naraz nejde).
   cDue: {
     keys(d, world) {
       const c = world.contracts && world.contracts.list.find(x => x.id === d.id);
-      const who = c && c.takenBy && world.saves && world.saves[c.takenBy] ? c.takenBy : null;
-      return who ? { writes: ['contracts', 'save:' + who, 'maxRep'], reads: ['save:*'] } : { writes: ['contracts'] };
+      const who = c && c.takenBy && world.saves && Object.prototype.hasOwnProperty.call(world.saves, c.takenBy) ? c.takenBy : null;
+      return who ? { writes: ['contracts', 'save:*', 'maxRep'] } : { writes: ['contracts'] };
     },
     run(s, d, ctx) {
       const c = s.contracts.list.find(x => x.id === d.id);
       if (!c) return;
       s.contracts.list = s.contracts.list.filter(x => x !== c);
-      const sv = c.takenBy && s['save:' + c.takenBy];
+      const sv = c.takenBy && s['save:*'] && s['save:*'][c.takenBy];
       if (!sv) return;
       const part = Math.round(c.got * D.SPECIES[c.sp].sell * 0.5);
       sv.coins += part; sv.rep = Math.max(0, (sv.rep || 0) - 5);
-      s.maxRep = maxRepOf(Object.assign({}, s['save:*'], { [c.takenBy]: sv }));
+      s.maxRep = maxRepOf(s['save:*']);
       ctx.emit({ to: c.takenBy, t: 'toast', text: `⌛ Zákazka pre ${D.GIVERS[c.giver]} (${c.n}× ${D.SPECIES[c.sp].name}) prepadla. −5 reputácie` + (part ? `, za ${c.got} odovzdaných dostávaš ${part} 🪙.` : '.'), kind: 'info' });
     }
   }

@@ -164,6 +164,8 @@ function getRoom(id) {
   room.maxRep = Econ.maxRepOf(room.saves);
   Econ.initEconomy(room, actionCtx(room));
   E.reconcile(room, SIM); // doplní chýbajúce periodické udalosti, zahodí udalosti obsahu, ktorý už v hre nie je
+  // značka načítania v denníku: odkiaľ (krok, kolo) beh pokračuje – po páde servera sa dobehnuté kroky zapíšu znova
+  appendJournal(room, { load: true, tick: room.tick, step: room.step, seq: room.seq, migratedFrom: room.migratedFrom || null });
   if (room.mode === 'running') {
     // Svet beží aj bez hráčov – dobehneme čas, kým bol server vypnutý (najviac MAX_CATCHUP_DAYS dní).
     const cap = MAX_CATCHUP_DAYS * TPD * E.tickMs(room);
@@ -208,13 +210,14 @@ function appendJournal(room, entry) {
   try {
     let j = journals.get(room.id);
     if (!j) { fs.mkdirSync(DATA_DIR, { recursive: true }); j = openJournal(room.id); journals.set(room.id, j); }
-    if (j.size + line.length > JOURNAL_MAX) {
+    if (j.size + Buffer.byteLength(line) > JOURNAL_MAX) {
+      journals.delete(room.id); // keby premenovanie zlyhalo, ďalší zápis denník otvorí znova namiesto písania do zavretého popisovača
       fs.closeSync(j.fd);
       fs.renameSync(journalFile(room.id), journalFile(room.id) + '.1');
       j = openJournal(room.id); journals.set(room.id, j);
     }
     j.size += fs.writeSync(j.fd, line);
-  } catch (err) { console.error('journal', err); }
+  } catch (err) { console.error('journal', err); journals.delete(room.id); }
 }
 
 // Ladiaca stránka /debug: svety len číta (z pamäte alebo zo súboru), nič nenačíta ani neuloží
@@ -294,15 +297,20 @@ function take(pl, id, n) { return I.removeItems(I.playerC(pl.save), id, n, pl.ro
 
 function playerByKey(room, key) { for (const p of room.players.values()) if (p.key === key) return p; return null; }
 
-const SIM = { proposers: Events.PROPOSERS, periodic: Events.PERIODIC, presence: presenceOf, onBatch(room, out) { notify(room, out); appendJournal(room, out.entry); } };
+const SIM = {
+  proposers: Events.PROPOSERS, periodic: Events.PERIODIC, presence: presenceOf,
+  // denník najprv (nech záznam nechýba), potom správy hráčom; chyba pri posielaní nesmie zhodiť simuláciu ani server
+  onBatch(room, out) { appendJournal(room, out.entry); try { notify(room, out); } catch (err) { console.error(`[${room.id}] notify`, err); } }
+};
 
-// Po vykonaní dávky: správy z návrhov (adresát to: '*' všetkým, 'area:<plocha>' hráčom na ploche, inak kľúč hráča)
+// Po vykonaní dávky: správy z návrhov (adresát to: E.ALL všetkým, E.area(plocha) hráčom na ploche, inak kľúč hráča)
 // a obnova toho, čo sa podľa zapísaných kľúčov zmenilo – políčka, batohy (me), trh, nástenka, sklad a ľadovňa (room), počasie (time).
 // Prvý krok notifikátora (#105, fáza 5 odstráni ručné volania aj z akcií hráčov).
 function notify(room, out) {
   if (!out.applied.length) return;
   room.dirty = true;
-  const tiles = { garden: new Set(), hory: new Set() }, me = new Set();
+  const tiles = {}, me = new Set();
+  for (const a of D.AREAS) tiles[a] = new Set();
   let info = false, time = false;
   for (const p of out.entry.proposals) {
     if (p.outcome !== 'applied') continue;
@@ -313,7 +321,7 @@ function notify(room, out) {
       else if (a === 'market') room.marketDirty = true;
       else if (key === 'contracts') room.boardDirty = true;
       else if (key === 'storage' || key === 'icehouse' || key === 'eternal') info = true;
-      else if (key === 'weather') time = true;
+      else if (key === 'weather') { time = true; info = true; } // nový deň: aj sklad (vek várok) a čas v room
     }
   }
   if (!room.players.size) return;
@@ -323,9 +331,9 @@ function notify(room, out) {
   }
   for (const msg of out.outbox) {
     const to = msg.to, body = Object.assign({}, msg); delete body.to;
-    if (to === '*') { broadcast(room, body); continue; }
-    if (typeof to === 'string' && to.startsWith('area:')) { broadcastArea(room, to.slice(5), body); continue; }
-    const pl = playerByKey(room, to);
+    if (to && to.all) { broadcast(room, body); continue; }
+    if (to && to.area) { broadcastArea(room, to.area, body); continue; }
+    const pl = typeof to === 'string' ? playerByKey(room, to) : null;
     if (!pl) continue;
     if (body.t === 'me') me.add(to);
     else if (body.t === 'scavDone') pl.scav = null;
@@ -692,7 +700,7 @@ wss.on('connection', ws => {
     if (!m || typeof m.t !== 'string') return;
     if (m.t === 'join' && !pl) {
       const roomId = String(m.room || 'zahrada').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 16) || 'zahrada';
-      const name = String(m.name || '').replace(/[<>]/g, '').trim().slice(0, 14) || 'Záhradník';
+      const name = String(m.name || '').replace(/[<>*]/g, '').trim().slice(0, 14) || 'Záhradník'; // '*' je zástupný znak kľúčov enginu
       const room = getRoom(roomId);
       const key = name.toLowerCase();
       // Rýchle znovupripojenie: nahrádza ešte živé (často už mŕtve, len nezistené) spojenie

@@ -156,11 +156,13 @@ function at(parent, prop) {
   if (!isObj(parent)) return null;
   return { get: () => parent[prop], set: (v, changes) => sync(parent, prop, v, [], changes) };
 }
+// Vlastnosti sveta, ktoré nie sú výrezom samy osebe (kolekcie majú vlastné kľúče, fronta ide cez ctx) – kľúč s týmto menom nevedie nikam.
+const NOT_A_SLICE = new Set(['saves', 'tiles', 'hory', 'les', 'pomedzie', 'market', 'storage', 'storageFb', 'events', 'seq', 'step', 'seed', 'tick', 'wall']);
 function sliceOf(world, key) {
   const [a, b, c] = key.split(':');
   switch (a) {
     case 'tile': { const coll = b === 'garden' ? 'tiles' : b; return c === '*' ? at(world, coll) : at(world[coll], +c); }
-    case 'save': return b === '*' ? at(world, 'saves') : at(world.saves, b);
+    case 'save': { const k = key.slice(5); return k === '*' ? at(world, 'saves') : at(world.saves, k); } // kľúč hráča smie obsahovať ':'
     case 'market': {
       const m = world.market;
       if (b === '*') return at(world, 'market');
@@ -176,7 +178,7 @@ function sliceOf(world, key) {
       get: () => ({ inv: world.storage, fb: world.storageFb || {} }),
       set: (v, changes) => { sync(world, 'storage', v.inv, ['inv'], changes); sync(world, 'storageFb', v.fb, ['fb'], changes); }
     };
-    default: return at(world, key);
+    default: return NOT_A_SLICE.has(key) ? null : at(world, key);
   }
 }
 // Stretávajú sa dva kľúče? ('x:*' = všetko s tým začiatkom)
@@ -220,7 +222,7 @@ function sync(parent, prop, src, stack, changes) {
 }
 // Rovnajú sa dve hodnoty JSON do hĺbky?
 function same(a, b) {
-  if (a === b) return true;
+  if (a === b || (a !== a && b !== b)) return true;
   if (!isObj(a) || !isObj(b) || Array.isArray(a) !== Array.isArray(b)) return false;
   if (Array.isArray(a)) { if (a.length !== b.length) return false; for (let i = 0; i < a.length; i++) if (!same(a[i], b[i])) return false; return true; }
   for (const k in a) if (!(k in b) || !same(a[k], b[k])) return false;
@@ -236,6 +238,11 @@ function mergeKeys(...list) {
 }
 
 // ---- Návrhy ----
+
+// Adresát správy z návrhu (ctx.emit({ to, … })): kľúč hráča ako reťazec, ALL = všetkým, area(plocha) = hráčom na ploche.
+// Objekty namiesto reťazcov '*' / 'area:x', aby sa meno hráča nikdy nepomýlilo s adresou.
+const ALL = Object.freeze({ all: true });
+function area(name) { return { area: name }; }
 
 class Reject { constructor(msg) { this.msg = msg; } }
 
@@ -295,6 +302,9 @@ function keysOf(world, input, spec) {
   try {
     const k = proposer.keys ? proposer.keys(input.data, world) : {};
     const writes = new Set(k.writes || []), reads = new Set((k.reads || []).filter(r => !writes.has(r)));
+    // dva deklarované kľúče sa nesmú prekrývať ('save:*' a 'save:ana' by boli dve nezávislé kópie toho istého)
+    const all = [...reads, ...writes];
+    for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) if (meets(all[i], all[j])) throw new Error(`návrh ${input.type} deklaruje prekrývajúce sa kľúče ${all[i]} a ${all[j]}`);
     return { reads, writes };
   } catch (error) { return { error }; }
 }
@@ -314,6 +324,7 @@ function evaluate(world, input, spec, presence) {
     const ctx = makeCtx(world, id, generator(seedOf(world.seed, world.step || 0, id)), draftQueue(world, res.ops), res.writes, presence);
     spec.proposers[input.type].run(res.slices, input.data, ctx);
     res.outbox = ctx.outbox;
+    for (const key in res.slices) if (!res.reads.has(key) && !res.writes.has(key)) throw new Error(`návrh ${id} zapísal do nedeklarovaného výrezu ${key}`);
     for (const key of res.reads) {
       const s = sliceOfKey(key);
       if (s && !same(res.slices[key], s.get())) throw new Error(`návrh ${id} zmenil výrez ${key}, ktorý deklaroval len na čítanie`);
@@ -458,5 +469,5 @@ module.exports = {
   schedule, scheduleIn, scheduleUnique, cancel, pending, nextAt,
   reconcile, reconcilePlan, planAt, keysOf, evaluate, applyResult, commitBatch, runBatch, advanceTo, advance, replay, liveCtx,
   nextEvery, nextDailyTick, daily, every,
-  sliceOf, meets, conflicts, clone, same, sync, mergeKeys
+  sliceOf, meets, conflicts, clone, same, sync, mergeKeys, ALL, area
 };

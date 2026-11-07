@@ -1,6 +1,6 @@
 // Udalosti sveta ako návrhy (engine.js): ráno, hodina, koniec hľadania v tráve, koniec elixíru víl.
 // Každý návrh deklaruje, čo číta a čo mení (keys), a beží na kópiách práve týchto výrezov (run) – pozri docs/engine.md.
-// Správy hráčom idú cez ctx.emit (server ich pošle po vykonaní: to = '*' všetkým, 'area:<plocha>' hráčom na ploche,
+// Správy hráčom idú cez ctx.emit (server ich pošle po vykonaní dávky: to = E.ALL všetkým, E.area(plocha) hráčom na ploche,
 // inak kľúč hráča); obnovu políčok, batohov, trhu, nástenky a skladu si server odvodí zo zapísaných kľúčov.
 // Prítomnosť pripojených hráčov (kde stoja, či hľadajú v tráve) dostane návrh ako ctx.presence – nie je to stav sveta.
 const D = require('./shared/data.js');
@@ -64,7 +64,9 @@ function revealWild(tiles, saves, i) {
 }
 
 // ---------- Udalosti ----------
+// Adresát správy: kľúč hráča (reťazec), E.ALL = všetkým, E.area('hory') = hráčom na ploche
 const toast$ = (to, text, kind) => ({ to, t: 'toast', text, kind: kind || 'info' });
+const ALL = E.ALL;
 const PROPOSERS = {
   // Ráno o 6:00: rastliny rastú, počasie, ľad, trh, kompostéry a nástenka.
   dawn: {
@@ -76,12 +78,13 @@ const PROPOSERS = {
       const r = ctx.rng.rand();
       s.weather = se === 3 ? (r < 0.4 ? 'snow' : 'sun') : (r < (se === 0 ? 0.35 : 0.25) ? 'rain' : 'sun');
       for (const t of tiles) if (t.s) t.s.w = s.weather === 'rain' ? 1 : 0;
-      Ice.dawnIce(tiles, s['tile:hory:*'], se, s.weather, Ice.occupied(ctx.presence)); // otvory vo vode zamrznú, ľadovec sa topí, v daždi/snehu dorastie
+      // otvory vo vode zamrznú, ľadovec sa topí a v daždi/snehu dorastie – najviac raz za deň (dážď z elixíru pred ránom sa ráta)
+      Ice.dawnIce(tiles, s['tile:hory:*'], se, s.glacierFed === day ? null : s.weather, Ice.occupied(ctx.presence));
       if (D.GLACIER_GROW[s.weather]) s.glacierFed = day;
       Econ.DAWN.run(s, d, ctx);
-      if ((day - 1) % D.DAYS_PER_SEASON === 0 && day > 1) ctx.emit(toast$('*', `Nastáva ${D.SEASONS[se].toLowerCase()} ${D.SEASON_ICONS[se]}`, 'day'));
+      if ((day - 1) % D.DAYS_PER_SEASON === 0 && day > 1) ctx.emit(toast$(ALL, `Nastáva ${D.SEASONS[se].toLowerCase()} ${D.SEASON_ICONS[se]}`, 'day'));
       const wtxt = { rain: 'Prší – záhrada sa poleje sama. 🌧️', snow: 'Sneží. ❄️', sun: 'Slnečno. ☀️' }[s.weather];
-      ctx.emit(toast$('*', `Deň ${day} · ${D.SEASONS[se]}. ${wtxt}`, 'day'));
+      ctx.emit(toast$(ALL, `Deň ${day} · ${D.SEASONS[se]}. ${wtxt}`, 'day'));
     }
   },
   // Každú hernú hodinu: kvety staršie než ich životnosť zvädnú (v batohoch aj v sklade, aj u offline hráčov), ľad sa topí.
@@ -98,7 +101,7 @@ const PROPOSERS = {
         if (k) ctx.emit(toast$(key, `💧 V batohu sa ti roztopil ľad (${k}×). Ľad treba rýchlo odniesť do ľadovne.`));
       }
       I.wiltSweep(I.storageC(s.storage, s.icehouse), tick);
-      if (Ice.meltHourly(s.icehouse, s.storage, tick, D.seasonOf(D.dayOfTick(tick)))) ctx.emit(toast$('*', '💧 Ľad v ľadovni sa roztopil. Sklad už nechladí tak dobre – doplň ľad z hôr alebo v zime z jazierka. 🧊'));
+      if (Ice.meltHourly(s.icehouse, s.storage, tick, D.seasonOf(D.dayOfTick(tick)))) ctx.emit(toast$(ALL, '💧 Ľad v ľadovni sa roztopil. Sklad už nechladí tak dobre – doplň ľad z hôr alebo v zime z jazierka. 🧊'));
     }
   },
   // Koniec hľadania v tráve (d: { key, n, i, seeds }); hráč musí podľa prítomnosti stále hľadať to isté (n) – inak už udalosť nič neurobí.
@@ -115,7 +118,7 @@ const PROPOSERS = {
       if (!sv) return;
       I.addItems(I.playerC(sv), id, 1, tick);
       ctx.emit(toast$(d.key, `🌾 Našiel(a) si ${D.itemName(id).toLowerCase()}!`, 'gift'));
-      ctx.emit({ to: 'area:garden', t: 'fx', k: 'pop', x: d.i % D.W + 0.5, y: Math.floor(d.i / D.W) + 0.5, c: '#9ccc65' });
+      ctx.emit({ to: E.area('garden'), t: 'fx', k: 'pop', x: d.i % D.W + 0.5, y: Math.floor(d.i / D.W) + 0.5, c: '#9ccc65' });
     }
   },
   // Elixír víl vyprchal: nič sa nemení (sv.vily je čas), hráč sa to len dozvie a klient si obnoví stav

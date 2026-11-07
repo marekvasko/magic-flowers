@@ -424,6 +424,51 @@ test('koniec hľadania v tráve: podľa prítomnosti hráča, semienko do ulože
   assert.strictEqual(typeof found, 'boolean');
 });
 
+test('kľúč hráča smie obsahovať dvojbodku: výrez save:<kľúč> aj adresa správy ho nesú celý; hviezdička je len kolekcia', () => {
+  const w = makeWorld(25);
+  w.saves['mia:)'] = JSON.parse(json(w.saves.ana));
+  const spec = { proposers: { pay: { keys: ({ key }) => ({ writes: ['save:' + key] }), run(s, { key }, ctx) { s['save:' + key].coins -= 7; ctx.emit({ to: key, t: 'toast', text: 'ok' }); } } }, onError: rethrow };
+  const r = E.commitBatch(w, [input('pay', { key: 'mia:)' })], spec);
+  assert.deepStrictEqual([w.saves['mia:)'].coins, w.saves.ana.coins], [493, 500]);
+  assert.deepStrictEqual(r.outbox, [{ to: 'mia:)', t: 'toast', text: 'ok' }]);
+  assert.ok(E.ALL.all && E.area('hory').area === 'hory');
+  assert.ok(E.meets('save:*', 'save:mia:)') && !E.meets('save:mia:)', 'save:mia'));
+});
+
+test('deklarácie: prekrývajúce sa kľúče, zápis do nedeklarovaného výrezu a kolekcia pod menom vlastnosti sú chyby návrhu', () => {
+  const w = makeWorld(26);
+  const spec = {
+    proposers: {
+      overlap: { keys: () => ({ writes: ['save:ana'], reads: ['save:*'] }), run() {} },
+      undeclared: { keys: () => ({ writes: ['weather'] }), run(s) { s.weather = 'rain'; s.eternal = true; } },
+      alias: { keys: () => ({ writes: ['saves'] }), run(s) { s.saves.ana.coins = 0; } }
+    }, onError: rethrow
+  };
+  const before = json(w);
+  assert.match(String(E.evaluate(w, input('overlap', null), spec).error), /prekrývajúce/);
+  assert.match(String(E.evaluate(w, input('undeclared', null), spec).error), /nedeklarovaného výrezu eternal/);
+  assert.match(String(E.evaluate(w, input('alias', null), spec).error), /TypeError/);
+  assert.strictEqual(json(w), before);
+});
+
+test('ráno: ľadovec zo zrážok dorastie najviac raz za deň – dážď z elixíru pred ránom sa ráta', () => {
+  // nájdeme semienko, pri ktorom ráno prší
+  for (let seed = 100; seed < 200; seed++) {
+    const mk = fed => { const w = makeWorld(seed, 0); for (const t of w.hory) if (t.ice != null) t.ice = 0; w.glacierFed = fed; return w; };
+    const a = mk(-1);
+    E.advanceTo(a, D.DAWN_TICK, SPEC);
+    if (a.weather !== 'rain') continue;
+    assert.strictEqual(Ice.glacierTotal(a.hory), D.GLACIER_GROW.rain, 'nekŕmený ľadovec ráno dorastie');
+    assert.strictEqual(a.glacierFed, D.dayOfTick(D.DAWN_TICK));
+    const b = mk(D.dayOfTick(D.DAWN_TICK)); // dnes už kŕmený (dážď zo studne o 5:00)
+    E.advanceTo(b, D.DAWN_TICK, SPEC);
+    assert.strictEqual(b.weather, 'rain');
+    assert.strictEqual(Ice.glacierTotal(b.hory), 0, 'druhýkrát v ten istý deň nedorastie');
+    return;
+  }
+  assert.fail('ani jedno semienko nedalo daždivé ráno');
+});
+
 // ---- Atomickosť ----
 
 test('návrh, ktorý zapíše mince a potom zlyhá, nezanechá nič', () => {
@@ -545,7 +590,7 @@ function startServer(dataDir, port, env) {
 }
 function stopServer(proc) { return new Promise(r => { proc.removeAllListeners('exit'); proc.on('exit', r); proc.kill('SIGTERM'); }); }
 
-test('server: denník sa píše do data/journal-<svet>.jsonl po každej dávke, prehranie zo záznamov sedí, veľký sa otočí', async () => {
+test('server: denník sa píše do data/journal-<svet>.jsonl – značka načítania, záznam po každej dávke, veľký sa otočí', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-journal-'));
   const port = 43000 + Math.floor(Math.random() * 2000);
   // bežiaci svet, ktorý bol 2 dni vypnutý: pri načítaní dobehne ~60 dávok
@@ -564,7 +609,9 @@ test('server: denník sa píše do data/journal-<svet>.jsonl po každej dávke, 
   const file = path.join(dir, 'journal-dennik.jsonl');
   assert.ok(fs.existsSync(file + '.1'), 'denník sa po prekročení veľkosti otočil');
   const read = f => fs.readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
-  const lines = [...read(file + '.1'), ...read(file)]; // starší otočený súbor, potom aktuálny
+  const all = [...read(file + '.1'), ...read(file)]; // starší otočený súbor, potom aktuálny
+  assert.ok(all[0].load === true && all[0].tick === save.tick && all[0].step === 0, 'prvý riadok je značka načítania: ' + json(all[0]));
+  const lines = all.filter(e => !e.load);
   assert.ok(lines.length > 40, 'záznamov: ' + lines.length);
   for (const e of lines) {
     assert.ok(Number.isInteger(e.tick) && Number.isInteger(e.step) && Number.isInteger(e.wall));

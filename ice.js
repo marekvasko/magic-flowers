@@ -102,6 +102,7 @@ function feedGlacier(hory, weather, occ) {
 }
 
 // Ráno: otvory vo vode (v záhrade aj v horách) zamrznú, ľadovec sa podľa obdobia topí a v daždi/snehu dorastie.
+// weather = dnešné počasie, ktorým sa ľadovec kŕmi; null, ak už dnes kŕmený bol (dážď z elixíru či studne pred ránom).
 // Vráti zoznam plôch, ktoré sa zmenili.
 function dawnIce(tiles, hory, season, weather, occ) {
   const changed = new Set();
