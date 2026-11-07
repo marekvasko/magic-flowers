@@ -50,18 +50,18 @@ test('rozklad cien: rovnaké ceny ako pôvodné vzorce (každý druh × obdobie 
       const room = { tick, market: { seeds: {}, flowers: {}, compost: { stock: st }, festival } };
       for (const sp of Econ.PLANTABLE) { room.market.seeds[sp] = { stock: st }; room.market.flowers[sp] = { stock: st }; }
       for (const sp of Econ.PLANTABLE) {
-        const sp1 = Econ.seedPriceParts(room, sp), fp = Econ.flowerPriceParts(room, sp);
+        const sp1 = Econ.seedPriceParts(room.market, room.tick, sp), fp = Econ.flowerPriceParts(room.market, room.tick, sp);
         assert.strictEqual(sp1.price, oldSeedPrice(room, sp), `semienko ${sp} obdobie ${se} zásoba ${st}`);
-        assert.strictEqual(Econ.seedPrice(room, sp), sp1.price);
+        assert.strictEqual(Econ.seedPrice(room.market, room.tick, sp), sp1.price);
         assert.strictEqual(fp.price, oldFlowerPrice(room, sp), `kvet ${sp} obdobie ${se} zásoba ${st} sviatok ${festival && festival.id}`);
-        assert.strictEqual(Econ.flowerPrice(room, sp), fp.price);
+        assert.strictEqual(Econ.flowerPrice(room.market, room.tick, sp), fp.price);
         assert.strictEqual(sp1.phase, oldPhase(sp, se));
-        for (const id of ['seed_' + sp, 'fl_' + sp]) assert.strictEqual(Econ.sellQuote(room, id), oldSellQuote(room, id), id);
+        for (const id of ['seed_' + sp, 'fl_' + sp]) assert.strictEqual(Econ.sellQuote(room.market, room.tick, id), oldSellQuote(room, id), id);
         n++;
       }
-      assert.strictEqual(Econ.compostPriceParts(room).price, oldCompostPrice(room));
-      assert.strictEqual(Econ.compostPrice(room), oldCompostPrice(room));
-      assert.strictEqual(Econ.sellQuote(room, 'compost'), oldSellQuote(room, 'compost'));
+      assert.strictEqual(Econ.compostPriceParts(room.market).price, oldCompostPrice(room));
+      assert.strictEqual(Econ.compostPrice(room.market), oldCompostPrice(room));
+      assert.strictEqual(Econ.sellQuote(room.market, room.tick, 'compost'), oldSellQuote(room, 'compost'));
     }
   }
   assert.ok(n > 10000, 'prešlo ' + n + ' kombinácií');
@@ -71,16 +71,16 @@ test('rozklad cien: činitele dávajú dokopy cenu a nič nemenia', () => {
   const room = { tick: D.DAWN_TICK, market: { seeds: {}, flowers: {}, compost: { stock: 2 }, festival: { id: 'matky', mult: D.FESTIVALS[0].mult } } };
   for (const sp of Econ.PLANTABLE) { room.market.seeds[sp] = { stock: 3 }; room.market.flowers[sp] = { stock: 30 }; }
   const before = JSON.stringify(room);
-  const s = Econ.seedPriceParts(room, 'tulipan');
+  const s = Econ.seedPriceParts(room.market, room.tick, 'tulipan');
   assert.strictEqual(s.raw, s.base * s.demand * s.scarcity);
   assert.strictEqual(s.price, Math.max(s.min, Math.round(s.raw)));
-  const f = Econ.flowerPriceParts(room, 'tulipan');
+  const f = Econ.flowerPriceParts(room.market, room.tick, 'tulipan');
   assert.strictEqual(f.fest, 2.2);
   assert.strictEqual(f.festival, 'matky');
   assert.strictEqual(f.sat, 0.35, 'plný trh: najnižšie nasýtenie');
   assert.ok(f.satRaw < f.sat);
   assert.strictEqual(f.raw, f.base * f.rare * f.fest * f.sat);
-  const c = Econ.compostPriceParts(room);
+  const c = Econ.compostPriceParts(room.market);
   assert.strictEqual(c.raw, c.base * c.scarcity);
   assert.strictEqual(JSON.stringify(room), before);
 });

@@ -8,9 +8,10 @@ const isFlower = id => id.startsWith('fl_');
 const batched = id => isFlower(id) || id === 'ice';
 
 function playerC(sv) { sv.fb = sv.fb || {}; return { inv: sv.inv, fb: sv.fb, rate: 1, sv }; }
-// V sklade kvety starnú pomalšie; kým je v ľadovni ľad, ešte pomalšie.
-function storageRate(room) { return room.icehouse && room.icehouse.ice > 0 ? D.ICEHOUSE.rate : D.STORAGE_AGE_RATE; }
-function storageC(room) { room.storageFb = room.storageFb || {}; return { inv: room.storage, fb: room.storageFb, rate: storageRate(room) }; }
+// V sklade kvety starnú pomalšie; kým je v ľadovni ľad (icehouse = world.icehouse), ešte pomalšie.
+function storageRate(icehouse) { return icehouse && icehouse.ice > 0 ? D.ICEHOUSE.rate : D.STORAGE_AGE_RATE; }
+// Sklad ako kontajner: st = výrez 'storage' { inv, fb } (world.storage + world.storageFb), icehouse = výrez 'icehouse'
+function storageC(st, icehouse) { st.fb = st.fb || {}; return { inv: st.inv, fb: st.fb, rate: storageRate(icehouse) }; }
 
 // Pred zmenou rýchlosti starnutia kontajnera zapíšeme každej várke jej doterajší vek k času tick,
 // aby nová rýchlosť platila až odteraz (vek sa nesmie skokovo zmeniť).

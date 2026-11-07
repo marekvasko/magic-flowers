@@ -20,7 +20,7 @@ test('kvety sa odoberajú od najstarších a inv vždy sedí so súčtom várok'
 
 test('kvety vädnú podľa životnosti druhu; v sklade 2× pomalšie', () => {
   const sv = { inv: {} }, c = I.playerC(sv);
-  const room = { storage: {} }, st = I.storageC(room);
+  const st = I.storageC({ inv: {}, fb: {} });
   I.addItems(c, 'fl_mak', 5, 0);         // mak vydrží 2 dni
   I.addItems(st, 'fl_mak', 5, 0);
   assert.deepStrictEqual(I.wiltSweep(c, 2 * TPD - 1), {});
@@ -32,7 +32,7 @@ test('kvety vädnú podľa životnosti druhu; v sklade 2× pomalšie', () => {
 });
 
 test('presun do skladu a späť zachová vek kvetov', () => {
-  const sv = { inv: {} }, c = I.playerC(sv), room = { storage: {} }, st = I.storageC(room);
+  const sv = { inv: {} }, c = I.playerC(sv), st = I.storageC({ inv: {}, fb: {} });
   I.addItems(c, 'fl_ruza', 2, 0);
   const b = I.removeItems(c, 'fl_ruza', 2, TPD);       // vek 1 deň
   I.addItems(st, 'fl_ruza', 2, TPD, b);

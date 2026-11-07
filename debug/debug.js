@@ -188,7 +188,7 @@
     const out = [
       h('h3', null, 'Reconciler ', h('span', { class: 'badge' + (healthy ? ' live' : ' warn') }, healthy ? 'in sync' : `${missing.length} missing · ${r.drop.length} to drop`)),
       h('div', { class: 'muted', style: 'margin-bottom:8px' },
-        `${r.declared} periodic declared, ${r.handlers} handlers · queue: ${r.counts.periodic} periodic, ${r.counts.unique} unique, ${r.counts.plain} plain. `,
+        `${r.declared} periodic declared, ${r.proposers} proposers · queue: ${r.counts.periodic} periodic, ${r.counts.unique} unique, ${r.counts.plain} plain. `,
         'The next reconcile (before every jump in time, and when the world loads) adds the missing ones and drops the rest. A loaded world should always be in sync; an old save read from file may not be yet.')
     ];
     out.push(h('div', { class: 'tablewrap' }, h('table', null,

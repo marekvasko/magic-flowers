@@ -23,7 +23,7 @@ function areaTiles(state, area) {
       return t;
     })
   };
-  Ice.applyIcehouse(room);
+  Ice.applyIcehouse(room.icehouse, room.tiles);
   return room.tiles.map(Scav.tileView); // druh divej rastliny ostane skrytý ako v hre
 }
 

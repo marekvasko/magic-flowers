@@ -18,25 +18,25 @@ test('povolenie na pole: najvyššia úroveň je 96 políčok', () => {
 test('povolenie na pole: patrí záhrade, kúpi ho ktokoľvek a obrobené políčka všetkých sa rátajú spolu', () => {
   const room = { up: { plots: 0 }, tiles: D.buildMap().map(g => ({ g, s: null })) };
   const eva = { coins: 500, rep: 0, up: { can: 0, composter: 0 } }, jan = { coins: 500, rep: 0, up: { can: 0, composter: 0 } };
-  assert.strictEqual(Econ.plotLimit(room), 8);
+  assert.strictEqual(Econ.plotLimit(room.up), 8);
   // Eva má 5 políčok, Ján 3 – spolu je povolenie plné
   for (let i = 0; i < 8; i++) room.tiles[400 + i].s = { k: 'normal', o: i < 5 ? 'eva' : 'jan' };
-  assert.strictEqual(Econ.plotsUsed(room), 8);
+  assert.strictEqual(Econ.plotsUsedOf(room.tiles), 8);
   // Ján kúpi ďalšiu úroveň: platí on, povolenie stúpne pre celú záhradu
-  assert.strictEqual(Econ.upgrade(room, jan, 'plots'), null);
+  assert.strictEqual(Econ.upgrade(room.up, jan, 'plots'), null);
   assert.strictEqual(jan.coins, 400);
   assert.strictEqual(eva.coins, 500);
   assert.strictEqual(room.up.plots, 1);
   assert.strictEqual(jan.up.plots, undefined, 'hráč vlastnú úroveň poľa nemá');
-  assert.strictEqual(Econ.plotLimit(room), 16);
+  assert.strictEqual(Econ.plotLimit(room.up), 16);
   // ďalšiu úroveň Eva bez reputácie nekúpi; s reputáciou áno
-  assert.match(Econ.upgrade(room, eva, 'plots'), /reputáciu úrovne 1/);
+  assert.match(Econ.upgrade(room.up, eva, 'plots'), /reputáciu úrovne 1/);
   eva.rep = D.REP_LEVELS[3]; eva.coins = 5000;
-  for (let k = 0; k < 3; k++) assert.strictEqual(Econ.upgrade(room, eva, 'plots'), null);
-  assert.strictEqual(Econ.plotLimit(room), 96);
-  assert.strictEqual(Econ.upgrade(room, eva, 'plots'), 'Záhrada už má najvyššiu úroveň.');
+  for (let k = 0; k < 3; k++) assert.strictEqual(Econ.upgrade(room.up, eva, 'plots'), null);
+  assert.strictEqual(Econ.plotLimit(room.up), 96);
+  assert.strictEqual(Econ.upgrade(room.up, eva, 'plots'), 'Záhrada už má najvyššiu úroveň.');
   // osobné vylepšenia ostávajú hráčovi
-  assert.strictEqual(Econ.upgrade(room, jan, 'can'), null);
+  assert.strictEqual(Econ.upgrade(room.up, jan, 'can'), null);
   assert.strictEqual(jan.up.can, 1);
   assert.strictEqual(eva.up.can, 0);
 });

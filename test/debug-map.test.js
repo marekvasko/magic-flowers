@@ -107,7 +107,7 @@ test('mapa: svet – jeho semienko, pôda a rastliny, ľadovňa, ľad a otvory a
 
   // záhrada ako getRoom v server.js + applyIcehouse
   const room = { tiles: garden.map((g, i) => { const t = { g, s: tiles[i].s || null }; if (g === 'water' && tiles[i].cut) t.cut = 1; return t; }), icehouse: state.icehouse };
-  Ice.applyIcehouse(room);
+  Ice.applyIcehouse(room.icehouse, room.tiles);
   const gm = M.buildTiles(D, 'garden', { state });
   assert.strictEqual(gm.source, 'room');
   assert.deepStrictEqual(gm.tiles.map(t => t.g), room.tiles.map(t => t.g));

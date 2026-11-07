@@ -51,7 +51,7 @@ test('world: hory s vysekaným ľadom a Les na pomedzí zo semienka sveta', () =
   const hory = Ice.loadHory(null);
   const gi = hory.findIndex(t => t.g === 'glacier');
   hory[gi].ice = 0;
-  const state = { tick: 0, hory: Ice.saveHory({ hory }), pomedzieSeed: 99, saves: {} };
+  const state = { tick: 0, hory: Ice.saveHory(hory), pomedzieSeed: 99, saves: {} };
   assert.strictEqual(world(q({ room: 'svet', area: 'hory' }), tools(state)).tiles[gi].ice, 0);
   assert.deepStrictEqual(world(q({ room: 'svet', area: 'pomedzie' }), tools(state)).tiles.map(t => t.g), D.buildPomedzie(99));
 });

@@ -4,15 +4,19 @@ const E = require('../engine.js');
 const TPD = E.TICKS_PER_DAY;
 
 function world(extra) { return Object.assign({ tick: 0, wall: 0, daySeconds: 300, seed: "test-12345", step: 0, seq: 0, events: [] }, extra); }
-// V testoch chyba v handleri nesmie prejsť potichu, ak ju test nečaká.
+// V testoch chyba v návrhu nesmie prejsť potichu, ak ju test nečaká.
 const rethrow = err => { throw err; };
+// Návrh bez deklarovaných kľúčov (nič zo sveta nečíta), len s vedľajším účinkom do testu – stačí mu ctx
+const fx = run => ({ keys: () => ({}), run: (s, d, ctx) => run(ctx, d) });
+// Návrh nad jednou vlastnosťou sveta
+const on = (key, run) => ({ keys: () => ({ writes: [key] }), run: (s, d, ctx) => run(s, d, ctx) });
 
 test('každý deň má presne TICKS_PER_DAY krokov, aj pri nepravidelnom časovači', () => {
   const w = world();
   const dayTicks = [];
   let last = 0;
   const spec = {
-    handlers: { dawn(w) { dayTicks.push(w.tick - last); last = w.tick; } },
+    proposers: { dawn: fx(ctx => { dayTicks.push(ctx.tick - last); last = ctx.tick; }) },
     periodic: [{ key: 'dawn', type: 'dawn', next: E.daily(0) }], onError: rethrow
   };
   let now = 0;
@@ -30,9 +34,9 @@ test('každý deň má presne TICKS_PER_DAY krokov, aj pri nepravidelnom časova
 test('udalosti sa spracujú v poradí (at, seq) a môžu plánovať ďalšie', () => {
   const w = world(), log = [];
   const spec = {
-    handlers: {
-      a(w, d) { log.push('a' + d); if (d === 1) E.scheduleIn(w, 2, 'a', 3); },
-      b(w, d) { log.push('b' + d); }
+    proposers: {
+      a: fx((ctx, d) => { log.push('a' + d); if (d === 1) ctx.scheduleIn(2, 'a', 3); }),
+      b: fx((ctx, d) => { log.push('b' + d); })
     }, onError: rethrow
   };
   E.schedule(w, 5, 'b', 1);
@@ -47,7 +51,7 @@ test('udalosti sa spracujú v poradí (at, seq) a môžu plánovať ďalšie', (
 test('dávka v jednom kroku je uzavretá: čo naplánuje „teraz“, príde až v ďalšom kroku', () => {
   const w = world(), log = [];
   const spec = {
-    handlers: { a(w) { log.push('a@' + w.tick); E.schedule(w, w.tick, 'b'); }, b(w) { log.push('b@' + w.tick); } },
+    proposers: { a: fx(ctx => { log.push('a@' + ctx.tick); ctx.schedule(ctx.tick, 'b'); }), b: fx(ctx => { log.push('b@' + ctx.tick); }) },
     onError: rethrow
   };
   E.schedule(w, 3, 'a');
@@ -58,11 +62,11 @@ test('dávka v jednom kroku je uzavretá: čo naplánuje „teraz“, príde až
 test('skok na ďalšiu udalosť dá ten istý svet ako posun po jednom kroku', () => {
   const mk = () => world({ seed: "skok-99" });
   const spec = {
-    handlers: {
-      roll(w) { w.sum = (w.sum || 0) + E.randInt(w, 1000); if (E.rand(w) < 0.5) E.scheduleIn(w, 1 + E.randInt(w, 40), 'one'); },
-      one(w) { w.ones = (w.ones || 0) + 1; }
+    proposers: {
+      roll: on('sum', (s, d, ctx) => { s.sum = (s.sum || 0) + ctx.rng.int(1000); if (ctx.rng.rand() < 0.5) ctx.scheduleIn(1 + ctx.rng.int(40), 'one'); }),
+      one: on('ones', s => { s.ones = (s.ones || 0) + 1; })
     },
-    periodic: [{ key: 'roll', type: 'roll', next: (w, from) => from + E.randInt(w, 30) }], onError: rethrow
+    periodic: [{ key: 'roll', type: 'roll', next: (from, g) => from + g.int(30) }], onError: rethrow
   };
   const a = mk(); E.advanceTo(a, 20 * TPD, spec);
   const b = mk(); while (b.tick < 20 * TPD) E.advanceTo(b, b.tick + 1, spec);
@@ -73,8 +77,8 @@ test('skok na ďalšiu udalosť dá ten istý svet ako posun po jednom kroku', (
 test('uloženie do JSON a pokračovanie dá rovnaký výsledok ako nepretržitý beh', () => {
   const mk = () => world({ seed: "ulozenie-777" });
   const spec = {
-    handlers: { roll(w) { w.sum = (w.sum || 0) + E.randInt(w, 1000); } },
-    periodic: [{ key: 'roll', type: 'roll', next: (w, from) => from + E.randInt(w, 50) }], onError: rethrow
+    proposers: { roll: on('sum', (s, d, ctx) => { s.sum = (s.sum || 0) + ctx.rng.int(1000); }) },
+    periodic: [{ key: 'roll', type: 'roll', next: (from, g) => from + g.int(50) }], onError: rethrow
   };
   const a = mk();
   E.advance(a, 10 * TPD * E.tickMs(a), spec);
@@ -88,20 +92,20 @@ test('uloženie do JSON a pokračovanie dá rovnaký výsledok ako nepretržitý
   assert.deepStrictEqual(restored.events, a.events);
 });
 
-test('periodická udalosť: handler sa neplánuje sám, engine ju naplánuje znova po každom vykonaní', () => {
+test('periodická udalosť: návrh sa neplánuje sám, engine ju naplánuje znova po každom vykonaní', () => {
   const w = world(), at = [];
-  const spec = { handlers: { hour(w) { at.push(w.tick); } }, periodic: [{ key: 'hour', type: 'hour', next: E.every(12, 5) }], onError: rethrow };
+  const spec = { proposers: { hour: fx(ctx => { at.push(ctx.tick); }) }, periodic: [{ key: 'hour', type: 'hour', next: E.every(12, 5) }], onError: rethrow };
   E.advanceTo(w, 60, spec);
   assert.deepStrictEqual(at, [5, 17, 29, 41, 53]);
   assert.strictEqual(w.events.length, 1);
   assert.strictEqual(E.pending(w, 'hour').at, 65);
 });
 
-test('chyba v handleri nezastaví periodickú udalosť ani simuláciu', () => {
+test('chyba v návrhu nezastaví periodickú udalosť ani simuláciu', () => {
   const w = world(), errors = [];
   let ok = 0;
   const spec = {
-    handlers: { boom() { throw new Error('bum'); }, fine() { ok++; } },
+    proposers: { boom: fx(() => { throw new Error('bum'); }), fine: fx(() => { ok++; }) },
     periodic: [{ key: 'boom', type: 'boom', next: E.every(10) }, { key: 'fine', type: 'fine', next: E.every(10) }],
     onError(err, ev) { errors.push(ev.key + ':' + err.message); }
   };
@@ -122,7 +126,7 @@ test('reconcile: doplní chýbajúce, zahodí duplicity, nedeklarované a nezná
   ];
   w.seq = 5;
   const spec = {
-    handlers: { dawn() {}, fest() {}, novy() {} },
+    proposers: { dawn: fx(() => {}), fest: fx(() => {}), novy: fx(() => {}) },
     periodic: [
       { key: 'dawn', type: 'dawn', next: E.daily(72) },
       { key: 'novy', type: 'novy', data: { a: 1 }, next: E.daily(84) }
@@ -146,7 +150,7 @@ test('reconcile: doplní chýbajúce, zahodí duplicity, nedeklarované a nezná
 
 test('unikátna udalosť: nová nahradí čakajúcu s rovnakým kľúčom, cancel ruší podľa kľúča', () => {
   const w = world(), log = [];
-  const spec = { handlers: { end(w, d) { log.push(d.who + '@' + w.tick); } }, onError: rethrow };
+  const spec = { proposers: { end: fx((ctx, d) => { log.push(d.who + '@' + ctx.tick); }) }, onError: rethrow };
   E.scheduleUnique(w, 'end:ana', 10, 'end', { who: 'ana' });
   E.scheduleUnique(w, 'end:ana', 20, 'end', { who: 'ana' });
   E.scheduleUnique(w, 'end:bob', 15, 'end', { who: 'bob' });
