@@ -141,7 +141,7 @@ test('server: osobné povolenia z verzie 4 prejdú na spoločné povolenie záhr
   } finally { await stopServer(proc); }
   const saved = JSON.parse(fs.readFileSync(path.join(dir, 'room-pole.json'), 'utf8'));
   try {
-    assert.strictEqual(saved.v, 7);
+    assert.strictEqual(saved.v, 8);
     assert.deepStrictEqual(saved.up, { plots: 4 });
     assert.strictEqual(saved.saves.eva.up.plots, undefined);
     assert.strictEqual(saved.saves.jan.up.can, 1);
