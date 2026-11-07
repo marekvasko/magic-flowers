@@ -49,6 +49,7 @@ test('rozklad cien: rovnaké ceny ako pôvodné vzorce (každý druh × obdobie 
     for (const festival of fests) for (const st of stocks) {
       const room = { tick, market: { seeds: {}, flowers: {}, compost: { stock: st }, festival } };
       for (const sp of Econ.PLANTABLE) { room.market.seeds[sp] = { stock: st }; room.market.flowers[sp] = { stock: st }; }
+      Econ.syncFestival(room.market); // násobky sviatku sú v položkách kvetov
       for (const sp of Econ.PLANTABLE) {
         const sp1 = Econ.seedPriceParts(room.market, room.tick, sp), fp = Econ.flowerPriceParts(room.market, room.tick, sp);
         assert.strictEqual(sp1.price, oldSeedPrice(room, sp), `semienko ${sp} obdobie ${se} zásoba ${st}`);
@@ -70,6 +71,7 @@ test('rozklad cien: rovnaké ceny ako pôvodné vzorce (každý druh × obdobie 
 test('rozklad cien: činitele dávajú dokopy cenu a nič nemenia', () => {
   const room = { tick: D.DAWN_TICK, market: { seeds: {}, flowers: {}, compost: { stock: 2 }, festival: { id: 'matky', mult: D.FESTIVALS[0].mult } } };
   for (const sp of Econ.PLANTABLE) { room.market.seeds[sp] = { stock: 3 }; room.market.flowers[sp] = { stock: 30 }; }
+  Econ.syncFestival(room.market);
   const before = JSON.stringify(room);
   const s = Econ.seedPriceParts(room.market, room.tick, 'tulipan');
   assert.strictEqual(s.raw, s.base * s.demand * s.scarcity);
