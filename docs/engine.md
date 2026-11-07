@@ -127,7 +127,7 @@ round:
   if anything was held: next round, same tick, against the committed world
 ```
 
-- **Draft** (`draft.js`): a copy-on-write proxy over the world. Reads pass through; the first write to an object copies it (and the path up to the top-level key), so the world is untouched until commit. Every write is also recorded as a patch `{ op: 'set' | 'del', path, value }`; `E.applyPatches` replays them on the live world **in place**, so objects the server holds (a player's save, a tile) keep their identity. Queue changes (`schedule`, `scheduleUnique`, `cancel`) are recorded as **ops** and executed at commit, where `seq` is assigned in commit order, so scheduling never conflicts.
+- **Draft** (`draft.js`) — **transitional, phase 1 only.** The maintainer's decision in #105 is that proposals *declare* their keys and run on plain slices; the recorder below exists so that today's handlers can run on the pipeline unchanged, and phase 2 removes it. It is a copy-on-write proxy over the world. Reads pass through; the first write to an object copies it (and the path up to the top-level key), so the world is untouched until commit. Every write is also recorded as a patch `{ op: 'set' | 'del', path, value }`; `E.applyPatches` replays them on the live world **in place**, so objects the server holds (a player's save, a tile) keep their identity. Queue changes (`schedule`, `scheduleUnique`, `cancel`) are recorded as **ops** and executed at commit, where `seq` is assigned in commit order, so scheduling never conflicts.
 - **Resources**: reads and writes are recorded at resource granularity, not path granularity, so that unrelated proposals never conflict: `tile:garden:12`, `tile:hory:3`, `save:ana` (a player's save), `pos:ana` (their position: x, y, area, lastTick), `market:seed_mak`, `market:fl_mak`, `market:compost`, `market:festival`, `market:news`, `market:npc:jano`, `contracts`, `storage`, `weather`, `icehouse`, `event:cDue:7` (a keyed event), … Enumerating a collection (`for key in saves`, `tiles.length`) reads the collection key (`save:*`, `tile:garden:*`), which meets every member. `Draft.resourceOf(path)` is the mapping (a resource depends on at most the first three elements of a path); `spec.resource` can replace it.
 - **Rounds**: a held proposal is re-evaluated in the next round of the same tick against the committed world. It never runs against a half-built state, and it never waits for the next tick: `dawn` and `hourly` both fire at 6:00, both write every save, so `hourly` runs in round 2 of tick 72, also during a 30-day catch-up. Two buys of the last seed: the first applies in round 1, the second is re-priced in round 2 and refused with the normal "Vypredané" toast. Each round can only shrink, so the loop terminates.
 - **Atomicity**: a proposal is applied whole or not at all. A handler that throws after writing coins leaves the coins untouched; the error goes to `spec.onError` and the event is consumed, as before.
@@ -197,7 +197,7 @@ E.scheduleUnique(room, 'heat:' + pl.key, room.tick + TPD, 'heatEnd', { key: pl.k
 E.cancel(room, 'heat:' + pl.key);
 ```
 
-**A pure proposal** (the form every action and event will take in later phases):
+**A pure proposal** (phase-1 shape, still on a draft; from phase 2 a proposer declares its keys up front and receives only those slices — see #105):
 
 ```js
 SIM.proposers.water = (d, { key, i }, ctx) => {
