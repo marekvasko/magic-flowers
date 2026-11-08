@@ -1,9 +1,19 @@
+# Zostavenie: zdieľané moduly v TypeScripte zbalí esbuild pre prehliadač (build/shared/, #122) – potrebuje dev závislosti.
+FROM node:24-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY scripts/build.mjs ./scripts/
+COPY src ./src
+RUN npm run build
+
 FROM node:24-alpine
 ENV NODE_ENV=production PORT=3000
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY src ./src
+COPY --from=build /app/build ./build
 COPY public ./public
 COPY debug ./debug
 RUN mkdir -p data && chown node:node data

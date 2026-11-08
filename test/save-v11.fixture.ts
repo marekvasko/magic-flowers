@@ -1,7 +1,7 @@
 // Uloženie sveta v11 zo skutočného servera (dvaja hráči Ana a Bob odohrali krátku hru: záhon, sadenie, nákup, predaj,
 // zákazka, hľadanie v tráve; ľadovňa a Dielňa s krosnami). Prekladač ho kontroluje voči typu SaveFile – ak sa formát
 // uloženia zmení bez úpravy typu (alebo naopak), `npm run typecheck` zlyhá. Pri zmene SAVE_VERSION treba fixtúru obnoviť.
-import type { SaveFile } from '../../src/shared/save.ts';
+import type { SaveFile } from '../src/shared/save.ts';
 
 export const SAVE_V11 = {
   "v": 11,

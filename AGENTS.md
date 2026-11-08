@@ -53,7 +53,7 @@ See `README.md` for gameplay and architecture. [`CONTRIBUTING.md`](CONTRIBUTING.
 | push to `dev` | dev (staging) | `https://dev.zahrada.spis-ai.com/` | persistent volume `mf-dev_magicflowers-data` |
 | tag `v*` on `main` (release) | production | `https://zahrada.spis-ai.com/` | volume `magicflowers_magicflowers-data` – **real players' gardens** |
 
-- Pipeline: `Testy` (syntax check, `npm run typecheck`, `npm run lint`, `npm test`) → `Docker image` (build, smoke test, push to `ghcr.io/marekvasko/magic-flowers`) → deploy.
+- Pipeline: `Testy` (syntax check, `npm run typecheck`, `npm run build`, `npm run lint`, `npm test`) → `Docker image` (build, smoke test, push to `ghcr.io/marekvasko/magic-flowers`) → deploy.
 - The deploy jobs run on a **self-hosted runner on the host** (label `magicflowers`) and call `scripts/deploy.sh`. One `docker-compose.yml` serves all environments via `NAME`, `DOMAIN` and `IMAGE`.
 - PRs from forks are tested but **never deployed**. Fork workflow runs need maintainer approval. Never approve one without reading its workflow changes, because the runner has Docker access on the host.
 - The `Testy` and `Docker image` checks must pass before merging into `dev` or `main`.
@@ -91,14 +91,16 @@ npm ci
 npm test                      # node:test, test/*.test.{js,ts}
 npm run typecheck             # tsc, strict (noEmit)
 npm run lint                  # ESLint: no any / object / {} / Function / Record<string, unknown>
+npm run build                 # esbuild: shared TS modules for the browser → build/shared/ (start and dev run it first)
 npm run dev                   # http://localhost:3000, 1 day = 60 s
 PORT=8099 DATA_DIR=/tmp/mf npm start   # isolated local server with its own data
 ```
 
-- Server-authoritative game state with discrete time (`src/server/engine.js`: ticks, event scheduler, seeded RNG). Economy is in `src/server/economy.js`, inventories in `src/server/items.js`, data shared with the client in `src/shared/data.js`.
+- Server-authoritative game state with discrete time (`src/server/engine.js`: ticks, event scheduler, seeded RNG). Economy is in `src/server/economy.js`, inventories in `src/server/items.js`, data shared with the client in `src/shared/data.ts`. The save file format is typed in `src/shared/save.ts` (checked against the real save in `test/save-v11.fixture.ts`), WebSocket messages in `src/shared/protocol.ts`; keep them in sync when the format or a message changes.
 - **TypeScript rewrite in progress (#122).** New and converted code is `.ts`, run directly by Node 24 (type stripping: only erasable syntax, no `enum` / `namespace` / parameter properties, `.ts` in import paths). Strict `tsconfig.json` plus ESLint ban `any`, `object`, `{}`, `Function` and `Record<string, unknown>`; an exception needs `// eslint-disable-next-line <rule> -- <reason>`. Tests are ported 1:1 (same cases, same names).
-- The Dockerfile copies `src/`, `public/` and `debug/` as whole directories; a new top-level directory must be added there.
-- A feature usually touches `public/game.js` (controls, UI, overlay) and `public/render3d.mjs` / `shared/world3d.js` (3D).
+- **Until the end of phase 4 the package is still CommonJS.** `.js` files `require('…/data.ts')` (Node 24 `require(esm)`), `.ts` files are ES modules (`tsconfig`: `module: preserve`, `moduleResolution: bundler`), and `npm test` silences `MODULE_TYPELESS_PACKAGE_JSON`. The browser can't run `.ts`: a shared module converted to TS is bundled by `scripts/build.mjs` into `build/shared/<name>.js` with the same global as before (`GameData`), and the server serves `/shared/<name>.js` from `build/shared/` first. Run `npm run build` after changing a shared `.ts` module (`npm start` / `npm run dev` do it).
+- The Dockerfile copies `src/`, `public/` and `debug/` as whole directories (a new top-level directory must be added there) and builds `build/` in a builder stage.
+- A feature usually touches `public/game.js` (controls, UI, overlay) and `public/render3d.mjs` / `src/shared/world3d.js` (3D).
 - Add or extend tests in `test/` for game logic. For UI, take a quick Playwright screenshot at a mobile portrait viewport (390×780).
 - When running local servers or containers, stop them by PID or exact name. Never `pkill node` or similar, because this host runs production and other projects.
 - Keep `README.md` up to date when gameplay or operations change.

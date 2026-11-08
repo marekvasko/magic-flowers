@@ -49,6 +49,8 @@ jobs:
         run: for f in src/server/*.js src/shared/*.js debug/api/*.js public/*.js public/*.mjs; do node --check "$f"; done
       - name: Kontrola typov (tsc)
         run: npm run typecheck
+      - name: Balík pre prehliadač (esbuild)
+        run: npm run build
       - name: Lint (ESLint)
         run: npm run lint
       - name: Testy (node:test)
