@@ -14,7 +14,7 @@ const Areas = require('./areas.ts');
 const P = require('./presence.ts');
 const Debug = require('./debug.js');
 const Events = require('./events.ts');
-const Actions = require('./actions.js');
+const Actions = require('./actions.ts');
 const Spiders = require('./spiders.ts');
 
 const PORT = +process.env.PORT || 3000;

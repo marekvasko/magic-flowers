@@ -388,6 +388,9 @@ export const isWild = (id: string): id is `wild_${Season}` => /^wild_[0-3]$/.tes
 // Id divého semienka obdobia se
 const WILD_IDS = ['wild_0', 'wild_1', 'wild_2', 'wild_3'] as const;
 export const wildId = (se: Season): `wild_${Season}` => WILD_IDS[se];
+// Obdobie divého semienka podľa jeho id
+const WILD_SEASON = { wild_0: 0, wild_1: 1, wild_2: 2, wild_3: 3 } as const;
+export const wildSeason = (id: `wild_${Season}`): Season => WILD_SEASON[id];
 
 export function itemName(id: string): string {
   if (isWild(id)) return 'Divé semienko (' + must(SEASONS[+id.slice(5)]).toLowerCase() + ')';

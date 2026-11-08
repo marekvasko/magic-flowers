@@ -115,7 +115,7 @@ export interface GameSlices extends Slices {
   contracts: Contracts;
   icehouse: Icehouse;
   dielna: Dielna;
-  redeem: Inventory;
+  redeem?: Inventory;   // join ho deklaruje, len keď je čo odovzdať
   scav: Scav;
   scavSalt: number;
   up: { plots: number };
@@ -131,14 +131,14 @@ export interface GameSlices extends Slices {
   storage: StorageSlice;
 }
 // Poloha hráča v uložení (výrez pos:<kľúč>)
-export type PosSlice = Partial<Pick<PlayerSave, 'x' | 'y' | 'area' | 'lastTick'>>;
+export type PosSlice = Pick<PlayerSave, 'x' | 'y'> & Partial<Pick<PlayerSave, 'area' | 'lastTick'>>;
 // Typ výrezu podľa kľúča s dvojbodkou (kľúče sú rovnaké ako v denníku – pozri engine.ts sliceOf)
 export type KeyedSlice<K extends string> =
   K extends 'save:*' ? Partial<Record<PlayerKey, PlayerSave>>
   : K extends `save:${string}` ? PlayerSave | undefined
   : K extends `pos:${string}` ? PosSlice | undefined
   : K extends `tile:${string}:*` ? Tile[]
-  : K extends `tile:${string}:${number}` ? Tile
+  : K extends `tile:${string}:${number}` ? Tile | undefined   // index mimo plochy → výrez bez hodnoty
   : K extends 'market:*' ? Market
   : K extends 'market:seed_*' ? Market['seeds']
   : K extends 'market:fl_*' ? Market['flowers']
@@ -156,6 +156,14 @@ export function sl<K extends string>(s: Slices, key: K): KeyedSlice<K> { return 
 export function maybe<K extends string>(s: Slices, key: K): KeyedSlice<K> | undefined { return s[key] as KeyedSlice<K> | undefined; }
 // Zápis výrezu s dvojbodkou (keď ho návrh nahradí celý, nemení ho na mieste)
 export function put<K extends string>(s: Slices, key: K, v: KeyedSlice<K>): void { s[key] = v; }
+
+// Svety v testoch (a pri ladení) nemajú všetky polia – kľúče návrhov (keys) ich čítajú cez tieto pomocné funkcie,
+// takže chýbajúce uloženia, dar Dielne či políčka záhrady sa správajú ako prázdne (ako predtým v JS)
+/* eslint-disable @typescript-eslint/no-unnecessary-condition -- čiastočné svety v testoch; na serveri sú polia vždy */
+export const savesOf = (w: Pick<GameWorld, 'saves'>): GameWorld['saves'] => w.saves || {};
+export const redeemOf = (w: Pick<GameWorld, 'redeem'>): Inventory => w.redeem || {};
+export const gardenOf = (w: Pick<GameWorld, 'tiles'>): Tile[] => w.tiles || [];
+/* eslint-enable @typescript-eslint/no-unnecessary-condition -- koniec čiastočných svetov */
 
 // ---- Návrhy ----
 export type GameCtx = Ctx<Presence, Msg>;

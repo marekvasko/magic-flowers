@@ -9,7 +9,7 @@ import type { ActiveFestival, Contract, ContractKind, Contracts, Market, PlayerK
 import { entries, isRecord, keys, must } from '../shared/util.ts';
 import * as E from './engine.ts';
 import type { EngineEvent, Slices } from './engine.ts';
-import { maybe, sl } from './game.ts';
+import { maybe, savesOf, sl } from './game.ts';
 import type { GameCtx, GamePeriodic, GameProposer, GameSlices, GameWorld } from './game.ts';
 import * as I from './items.ts';
 import type { Rng, Tile } from './world.ts';
@@ -91,7 +91,7 @@ export function compostPrice(m: MarketPart): number { return compostPriceParts(m
 // Výkupná cena kvetu: mimo sezóny vzácnejší, počas sviatku vyšší dopyt, plný trh cenu tlačí dole.
 // Sviatočný násobok je v položke kvetu (m.flowers[sp].fest, píšu ho festStart/festEnd), takže predaj kvetu
 // potrebuje len výrez 'market:fl_<sp>'; m.festival je iba súhrn pre klienta (id, meno, ikona, násobky, dokedy).
-export function flowerPriceParts(m: MarketPart, tick: number, sp: SpeciesId): {
+export function flowerPriceParts(m: Pick<MarketPart, 'flowers' | 'festival'>, tick: number, sp: SpeciesId): {
   base: number; stock: number; season: Season; inSeason: boolean; rare: number; fest: number; festival: FestivalId | null;
   satRaw: number; sat: number; raw: number; min: number; price: number;
 } {
@@ -111,7 +111,7 @@ export function setFestival(m: Pick<MarketPart, 'flowers'>, f: Pick<Festival, 'm
 }
 // Pri načítaní: násobky v položkách kvetov sa odvodia zo súhrnu (staršie uloženia ich nemajú; bez zmeny verzie uloženia).
 export function syncFestival(m: Market | null | undefined): void { if (m) setFestival(m, m.festival); }
-export function flowerPrice(m: MarketPart, tick: number, sp: SpeciesId): number { return flowerPriceParts(m, tick, sp).price; }
+export function flowerPrice(m: Pick<MarketPart, 'flowers' | 'festival'>, tick: number, sp: SpeciesId): number { return flowerPriceParts(m, tick, sp).price; }
 // Cena, za ktorú trh od hráča vykúpi 1 kus (null = nevykupuje)
 export function sellQuote(m: MarketPart, tick: number, id: string): number | null {
   if (id.startsWith('fl_')) { const sp = id.slice(3); return D.isSpeciesId(sp) && m.flowers[sp] ? flowerPrice(m, tick, sp) : null; }
@@ -210,7 +210,7 @@ export function initEconomy(world: GameWorld, ctx?: GameCtx): void {
     world.market = m;
     recordHistory(m, world.tick);
   }
-  if (!world.contracts) { world.contracts = { list: [], nextId: 1 }; fillBoard(world.contracts, world.tick, maxRepOf(world.saves), live); }
+  if (!world.contracts) { world.contracts = { list: [], nextId: 1 }; fillBoard(world.contracts, world.tick, maxRepOf(savesOf(world)), live); }
 }
 
 function recordHistory(m: Market, tick: number): void {
@@ -423,7 +423,7 @@ export const PROPOSERS: { [T in keyof EconInputs]: GameProposer<EconInputs[T]> }
   cDue: {
     keys(d, world) {
       const c = world.contracts && world.contracts.list.find(x => x.id === d.id);
-      const who = c && c.takenBy && Object.hasOwn(world.saves, c.takenBy) ? c.takenBy : null;
+      const who = c && c.takenBy && Object.hasOwn(savesOf(world), c.takenBy) ? c.takenBy : null;
       return who ? { writes: ['contracts', 'save:*', 'maxRep'] } : { writes: ['contracts'] };
     },
     run(s, d, ctx) {
@@ -547,7 +547,7 @@ function upgradeLevels(up: Levels, sv: PlayerSave, kind: UpgradeId): Levels {
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- uloženia spred vylepšení nemajú up
   return (sv.up = sv.up || { can: 0, composter: 0 });
 }
-const isUpgradeId = (k: string): k is UpgradeId => k === 'can' || k === 'plots' || k === 'composter';
+export const isUpgradeId = (k: string): k is UpgradeId => k === 'can' || k === 'plots' || k === 'composter';
 // up = spoločné vylepšenia záhrady (world.up), sv = uloženie hráča. Vráti chybu alebo null.
 export function upgrade(up: { plots: number }, sv: PlayerSave, kind: string): string | null {
   if (!isUpgradeId(kind)) return 'Neznáme vylepšenie.';

@@ -25,7 +25,7 @@ import Webs from '../shared/webs.js';
 import type { Analysis, CornerSpot, Home } from '../shared/webs.js';
 import * as E from './engine.ts';
 import type { Keys, Slice } from './engine.ts';
-import { maybe, put, sl } from './game.ts';
+import { maybe, put, savesOf, sl } from './game.ts';
 import type { GameCtx, GamePeriodic, GameProposer, GameSlices, GameWorld, Kriziak, Mover, Msg, SpiderState, To, TreeSpot } from './game.ts';
 import * as I from './items.ts';
 import { areaTiles, clampPos } from './areas.ts';
@@ -467,7 +467,7 @@ function spiderKeys(d: { id: string }, w: GameWorld): Keys {
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- svety v testoch Les divov nemajú
   if (w.les) forestOf(w);
   const writes = [`spider:${d.id}`];
-  if (s && s.tgt && s.st === 'chase' && w.saves[s.tgt]) writes.push(`save:${s.tgt}`); // zabalí ho a vezme hodváb
+  if (s && s.tgt && s.st === 'chase' && savesOf(w)[s.tgt]) writes.push(`save:${s.tgt}`); // zabalí ho a vezme hodváb
   return { writes, reads: ['webs', 'daySeconds', 'lesSeed'] };
 }
 // Les divov je vo svetoch testov voliteľný – rozbor sa pripraví, len keď je
@@ -674,7 +674,7 @@ function pushing(webs: WebState, key: PlayerKey, x0: number, y0: number, x1: num
 const wakeKeys = (w: GameWorld): string[] => (w.sps ? ['spider:*'] : []);
 // Kľúče navyše pre pohyb (d: { key, x, y }): vbehnutie do pavučiny (pavučiny a ich majitelia) alebo príchod do lesa (budí pavúky)
 export function posKeys(d: { key: PlayerKey; x: number; y: number }, w: GameWorld): Keys {
-  const sv = w.saves[d.key];
+  const sv = savesOf(w)[d.key];
   if (!sv || !Number.isFinite(d.x) || !Number.isFinite(d.y)) return {};
   const area = sv.area && D.AREAS.includes(sv.area) ? sv.area : 'garden', p = clampPos(area, d.x, d.y);
   if (area !== 'les') {
@@ -701,7 +701,7 @@ function nearIdle(w: GameWorld, p: Where): string[] {
 }
 // Po pohybe (from = poloha pred pohybom, pos = po ňom): ťahajúci, ktorý sa pohol, prestane ťahať; vbehnutie do pavučiny;
 // príchod do lesa zobudí pavúky.
-type Pos = { x: number; y: number; area: AreaId | undefined };
+type Pos = { x: number; y: number; area?: AreaId | undefined };
 export function onPos(s: GameSlices, d: { key: PlayerKey }, ctx: GameCtx, from: Pos, pos: Pos): void {
   const me = ctx.actor;
   if (me && me.pull && Math.hypot(pos.x - me.pull.px, pos.y - me.pull.py) > PULL_MOVE) {
@@ -749,7 +749,7 @@ function wake(s: GameSlices, ctx: GameCtx): void {
   if (!all) return;
   for (const [id, sp] of entries(all)) if (sp.next == null) { sp.next = ctx.tick + 1; ctx.cancel(`spider:${id}`); }
 }
-export const joinKeys = (d: { key: PlayerKey }, w: GameWorld): Keys => (w.saves[d.key] && w.saves[d.key]?.area === 'les' ? { writes: wakeKeys(w) } : {});
+export const joinKeys = (d: { key: PlayerKey }, w: GameWorld): Keys => (savesOf(w)[d.key]?.area === 'les' ? { writes: wakeKeys(w) } : {});
 export function onJoin(s: GameSlices, d: unknown, ctx: GameCtx, area: AreaId): void { if (area === 'les') wake(s, ctx); }
 
 // Klik na políčko (Actions.resolveAct): pavučina v lese → ťahať hodváb; kútová pavučina → odstrániť. null = nie je tu pavučina.
