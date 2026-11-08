@@ -31,7 +31,7 @@ function nearDielna(p) { const L = D.DIELNA.lot; return near(p, (L.x0 + L.x1 + 1
 function masterCheck(p, tick) {
   const m = D.masterAt(D.dayOfTick(tick), D.minOfTick(tick));
   if (!m) return 'Majster hodvábu je preč – do dedinky chodí len na jar a na jeseň. 🧵';
-  if (!m.still) return 'Majster hodvábu je práve na ceste. Počkaj, kým príde. 🧵';
+  if (!m.still) return D.masterRoadText(m);
   if (!near(p, m.x, m.y, 2.5)) return m.where === 'hut' ? 'Majster hodvábu je na noc u babky v chalúpke – podíď k nemu.' : 'Podíď bližšie k majstrovi hodvábu.';
   return '';
 }
