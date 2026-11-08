@@ -258,6 +258,7 @@
     if (id === 'ice') return 'Ľad';
     if (id === 'compost') return 'Kompost';
     if (id === 'wilted') return 'Zvädnuté kvety';
+    if (id === 'silk') return 'Pavúčí hodváb';
     if (id.startsWith('seed_')) return 'Semienka: ' + ((SPECIES[id.slice(5)] || {}).name || '?');
     if (id.startsWith('fl_')) return (SPECIES[id.slice(3)] || {}).name || '?';
     if (id.startsWith('po_')) return (POTIONS[id.slice(3)] || {}).name || '?';
@@ -751,6 +752,35 @@
     return 0;
   }
 
+  // ---- Pavúky a pavučiny (#57) ----
+  // Les divov: vlčiaky (nora pri chodníku, svoje územie) a stará pradlena (najvzdialenejšia čistina) – obe tkajú pavučiny.
+  // Všade inde: krížiak, ktorý tká len malé pavučiny v kútoch (nedá sa z nich nič získať).
+  // Rýchlosti v políčkach za sekundu (hráč chodí 3,8), časy v ms, vzdialenosti v políčkach.
+  const SPIDERS = {
+    vlciak: { n: 6, reach: 10, gap: 12, walk: 1.2, run: 3.4, sense: 2, lose: 4, lostMs: 4000, borderMs: 2000, takeMs: 3000, takeMax: 3, slow: 0.5, backMs: 2000, coolMs: 6000, eyes: 5,
+      climb: 1, guard: [0.5, 1.1], guardMs: [6000, 12000], high: 2 },
+    pradlena: { walk: 1.5, bite: 3, slow: 0.5, slowMs: 4000, push: 0.5, coolMs: 5000, eyes: 5,
+      climb: 0.8, guard: [0.7, 1.3], guardMs: [8000, 16000], high: 2.6, idleMs: [6000, 14000] },
+    kriziak: { run: 5, flee: 8, near: 1.5, perDay: 2, max: 3, tree: 4, climb: 3, gone: 2.5 },
+    // na strome (#57): pavúk čaká na kmeni pri svojej pavučine hlavou dole vo výške guard (políčka), guardMs; lezie climb
+    // políčok/s; pri zdvihnutom lampáši vylezie na high a pavučinu nechá tak; krížiak pri úteku vybehne na strom
+    // do tree políčok a zmizne vo výške gone
+    lamp: 2.5,      // k zdvihnutému lampášu sa vlčiak ani krížiak nepriblíži bližšie (pradlenu len pomaly odtláča)
+    entrance: 8,    // pri vstupe do lesa (toľko krokov od prechodu) je les ničí – bez pavúkov a pavučín
+    heart: 1        // o koľko políčok za okraj srdca lesa (slnečná čistina v strede) ešte nie sú pavúky
+  };
+  const WEB = {
+    silk: 3,                    // hodvábu v jednej pavučine
+    notice: [0.2, 0.5, 1],      // šanca, že si majiteľ všimne 1., 2. a 3. (posledné, roztrhne) potiahnutie
+    pullMs: 1000, stick: 0.3, stickMs: 1500, alert: 4,  // rozpätie, veľkosť a vzhľad pavučiny: shared/webs.js (WEB_PARAMS)
+    reweave: TICKS_PER_DAY,     // roztrhnutú pavučinu majiteľ utká znova o deň (inde vo svojom území)
+    count: { vlciak: [2, 2, 3, 1], pradlena: [3, 3, 5, 1] } // pavučín na pavúka: jar, leto, jeseň, zima
+  };
+  // opory pavučín (kmene, stromy, kry, spadnuté kmene) a steny, v ktorých kútoch tká krížiak
+  const WEB_ANCHOR = { tree: 1, giant: 1, trunk: 1, bush: 1, log: 1 };
+  const CORNER_WALL = { house: 1, hut: 1, stall: 1, icehouse: 1, boulder: 1, cliff: 1 };
+  const CORNER_AREAS = ['garden', 'hory'];
+
   // Chat: najdlhšia správa (pole na písanie aj server); server navyše vyhodí < > a medzery na krajoch
   const CHAT_MAX = 120;
   function chatText(raw) { return String(raw || '').replace(/[<>]/g, '').trim().slice(0, CHAT_MAX).trim(); }
@@ -760,6 +790,7 @@
     W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, TICKS_PER_HOUR, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
     RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, canLevel, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, BODY, arrivalTiles, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_HEART, sunZone, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt, viewDiagAt,
+    SPIDERS, WEB, WEB_ANCHOR, CORNER_WALL, CORNER_AREAS,
     sellPrice, itemName, buildMap, buildMountains, buildPomedzie, buildLes, buildArea, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
   };
   root.GameData = api;
