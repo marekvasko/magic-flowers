@@ -1,8 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const D = require('../shared/data.js');
-const Scav = require('../scavenge.js');
-const E = require('../engine.js');
+const D = require('../src/shared/data.js');
+const Scav = require('../src/server/scavenge.js');
+const E = require('../src/server/engine.js');
 const TPD = D.TICKS_PER_DAY, C = D.SCAVENGE;
 
 const tiles = D.buildMap().map(g => ({ g, s: null }));
@@ -123,7 +123,7 @@ test('klient nevidí druh divej rastliny, kým nevyklíči', () => {
 });
 
 test('divé semienka sa nedajú predať a majú slovenský názov', () => {
-  const Econ = require('../economy.js');
+  const Econ = require('../src/server/economy.js');
   for (let se = 0; se < 4; se++) {
     assert.strictEqual(Econ.sellQuote({}, 0, 'wild_' + se), null);
     assert.match(D.itemName('wild_' + se), /^Divé semienko \((jar|leto|jeseň|zima)\)$/);

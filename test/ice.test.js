@@ -1,9 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const D = require('../shared/data.js');
-const I = require('../items.js');
-const Ice = require('../ice.js');
-const Areas = require('../areas.js');
+const D = require('../src/shared/data.js');
+const I = require('../src/server/items.js');
+const Ice = require('../src/server/ice.js');
+const Areas = require('../src/server/areas.js');
 const TPD = D.TICKS_PER_DAY;
 
 // Minimálny svet: záhrada z generátora, hory, sklad

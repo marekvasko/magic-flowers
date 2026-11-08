@@ -7,12 +7,12 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
-const D = require('../shared/data.js');
-const E = require('../engine.js');
-const Econ = require('../economy.js');
-const Events = require('../events.js');
-const I = require('../items.js');
-const Ice = require('../ice.js');
+const D = require('../src/shared/data.js');
+const E = require('../src/server/engine.js');
+const Econ = require('../src/server/economy.js');
+const Events = require('../src/server/events.js');
+const I = require('../src/server/items.js');
+const Ice = require('../src/server/ice.js');
 const TPD = D.TICKS_PER_DAY;
 const rethrow = err => { throw err; };
 const SP = Econ.PLANTABLE.find(k => !D.SPECIES[k].strict); // bežný kvet
@@ -579,7 +579,7 @@ test('uložený svet + denník (alebo zaznamenané dávky akcií) dajú ten ist�
 });
 
 function startServer(dataDir, port, env) {
-  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server', 'server.js')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir }, env || {}), stdio: ['ignore', 'pipe', 'pipe']
   });
   return new Promise((resolve, reject) => {
@@ -628,15 +628,15 @@ test('server: denník sa píše do data/journal-<svet>.jsonl – značka načít
 
 test('v hre už nie je zapisovač cez Proxy, návrh (draft) ani náhoda zo sveta; v jadre simulácie nie je Math.random ani Date.now', () => {
   const root = path.join(__dirname, '..');
-  const files = [...fs.readdirSync(root).filter(f => f.endsWith('.js')), ...fs.readdirSync(path.join(root, 'test')).map(f => 'test/' + f), ...fs.readdirSync(path.join(root, 'debug', 'api')).map(f => 'debug/api/' + f)];
-  assert.ok(!fs.existsSync(path.join(root, 'draft.js')));
+  const files = [...fs.readdirSync(path.join(root, 'src', 'server')).filter(f => f.endsWith('.js')).map(f => 'src/server/' + f), ...fs.readdirSync(path.join(root, 'test')).map(f => 'test/' + f), ...fs.readdirSync(path.join(root, 'debug', 'api')).map(f => 'debug/api/' + f)];
+  assert.ok(!fs.existsSync(path.join(root, 'src', 'server', 'draft.js')));
   for (const f of files) {
     if (f === 'test/proposals.test.js') continue; // tento súbor obsahuje samotný vzor
     const src = fs.readFileSync(path.join(root, f), 'utf8');
     assert.ok(!/new Proxy|createDraft|applyPatches|rand\(room|rand\(w\)|randInt\(|E\.pick\(|\.handlers\b/.test(src), f);
   }
   for (const f of ['engine.js', 'events.js', 'actions.js', 'economy.js', 'items.js', 'ice.js', 'scavenge.js', 'spiders.js']) {
-    assert.ok(!/Math\.random|Date\.now/.test(fs.readFileSync(path.join(root, f), 'utf8')), f);
+    assert.ok(!/Math\.random|Date\.now/.test(fs.readFileSync(path.join(root, 'src', 'server', f), 'utf8')), f);
   }
 });
 

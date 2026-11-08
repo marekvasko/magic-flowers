@@ -1,8 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const D = require('../shared/data.js');
-const Ice = require('../ice.js');
-const Econ = require('../economy.js');
+const D = require('../src/shared/data.js');
+const Ice = require('../src/server/ice.js');
+const Econ = require('../src/server/economy.js');
 
 test('lampáš je náradie z trhu s menom a cenou', () => {
   const T = D.TOOLS.lamp;

@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const D = require('../shared/data.js');
-const W = require('../shared/world3d.js');
+const D = require('../src/shared/data.js');
+const W = require('../src/shared/world3d.js');
 
 const tiles = D.buildMap().map(g => ({ g }));
 

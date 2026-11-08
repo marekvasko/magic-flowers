@@ -3,7 +3,7 @@
 // room.tiles = záhrada, room.hory = hory (ice.js), room.pomedzie = Les na pomedzí (len zo semienka room.pomedzieSeed),
 // room.les = Les divov (rozloženie zo semienka room.lesSeed, uložené so svetom – saveLes / loadLes)
 const crypto = require('crypto');
-const D = require('./shared/data.js');
+const D = require('../shared/data.js');
 
 const AREA_TILES = { hory: 'hory', pomedzie: 'pomedzie', les: 'les' };
 function areaTiles(room, area) { return room[AREA_TILES[area] || 'tiles']; }

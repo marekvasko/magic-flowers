@@ -5,9 +5,9 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
-const D = require('../shared/data.js');
-const W3 = require('../shared/world3d.js');
-const Areas = require('../areas.js');
+const D = require('../src/shared/data.js');
+const W3 = require('../src/shared/world3d.js');
+const Areas = require('../src/server/areas.js');
 
 const SEEDS = Array.from({ length: 100 }, (_, i) => (i * 2654435761 + 17) >>> 0);
 const { w: LW, h: LH } = D.areaSize('les');
@@ -162,7 +162,7 @@ test('3D: Les divov – obrovské stromy a kmene ako modely, mriežka podľa ve�
 
 // ---------- Server: migrácia v4 → v5 a cesta Les na pomedzí ↔ Les divov ----------
 function startServer(dataDir, port) {
-  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server', 'server.js')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DEFAULT_MODE: 'paused' }), stdio: ['ignore', 'pipe', 'pipe']
   });
   return new Promise((resolve, reject) => {

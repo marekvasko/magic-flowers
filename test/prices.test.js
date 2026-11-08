@@ -1,8 +1,8 @@
 // Rozklad cien (#76): *PriceParts musia dať presne rovnaké ceny ako pôvodné vzorce.
 const test = require('node:test');
 const assert = require('node:assert');
-const D = require('../shared/data.js');
-const Econ = require('../economy.js');
+const D = require('../src/shared/data.js');
+const Econ = require('../src/server/economy.js');
 const TPD = D.TICKS_PER_DAY, DPS = D.DAYS_PER_SEASON;
 
 // ---- pôvodné vzorce (skopírované pred refaktorom, nemeniť) ----

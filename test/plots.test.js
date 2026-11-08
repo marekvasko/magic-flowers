@@ -5,8 +5,8 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
-const D = require('../shared/data.js');
-const Econ = require('../economy.js');
+const D = require('../src/shared/data.js');
+const Econ = require('../src/server/economy.js');
 
 // ---------- Spoločné povolenie na pole ----------
 test('povolenie na pole: najvyššia úroveň je 96 políčok', () => {
@@ -51,7 +51,7 @@ test('zarovnať: prázdne obrobené políčko môže zarovnať ktokoľvek, niele
 
 // ---------- Server: migrácia osobných povolení a spoločný limit ----------
 function startServer(dataDir, port) {
-  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server', 'server.js')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DEFAULT_MODE: 'paused' }), stdio: ['ignore', 'pipe', 'pipe']
   });
   return new Promise((resolve, reject) => {

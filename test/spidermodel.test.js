@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const SM = require('../shared/spidermodel.js');
+const SM = require('../src/shared/spidermodel.js');
 
 // rozmery pavúkov: rozpätie nôh, výška pradleny ako hráč
 function bounds(kind) {

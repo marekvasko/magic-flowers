@@ -5,11 +5,11 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
-const D = require('../shared/data.js');
-const E = require('../engine.js');
-const Actions = require('../actions.js');
-const Sp = require('../spiders.js');
-const Webs = require('../shared/webs.js');
+const D = require('../src/shared/data.js');
+const E = require('../src/server/engine.js');
+const Actions = require('../src/server/actions.js');
+const Sp = require('../src/server/spiders.js');
+const Webs = require('../src/shared/webs.js');
 
 const TPD = D.TICKS_PER_DAY, LW = D.LES_W, LH = D.LES_H;
 const SEASON_TICK = se => se * D.DAYS_PER_SEASON * TPD + D.DAWN_TICK; // prvé ráno obdobia se
@@ -493,7 +493,7 @@ test('uloženie: pavučiny a kúty sa po načítaní zachovajú, neplatné sa za
 // voľný port od systému (náhodný port sa občas zrazil s iným testom)
 function freePort() { return new Promise(r => { const srv = require('net').createServer(); srv.listen(0, () => { const { port } = srv.address(); srv.close(() => r(port)); }); }); }
 function startServer(dataDir, port) {
-  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server', 'server.js')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DEFAULT_MODE: 'paused' }), stdio: ['ignore', 'pipe', 'pipe']
   });
   return new Promise((resolve, reject) => {
@@ -668,7 +668,7 @@ test('kúty v budovách z minikociek: hrana steny so zemou a pod presahom strech
 });
 
 test('pavučina v budove: kotvy (aj zlom) sa navzájom vidia – medzi nimi nie je plná minikocka', () => {
-  const W3 = require('../shared/world3d.js');
+  const W3 = require('../src/shared/world3d.js');
   let webs = 0;
   for (const id of ['house', 'hut', 'stall', 'icehouse', 'well']) {
     const f = W3.FINE_MODELS.find(m => m.id === id).build(1, 0);
