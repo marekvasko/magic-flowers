@@ -23,7 +23,7 @@ const meetsAny = (keys, writes) => { const hits = []; for (const k of keys) for 
 // Jeden riadok časovej osi
 function row(rec) {
   const e = rec.entry, f = rec.filter || [];
-  const base = { n: rec.n, tick: rec.tick, source: rec.source, timing: rec.timing, filtered: f.filter(d => d.what !== 'input').length };
+  const base = { n: rec.n, tick: rec.tick, wall: rec.wall, source: rec.source, timing: rec.timing, filtered: f.filter(d => d.what !== 'input').length };
   if (!e) return Object.assign(base, { kind: 'filter', inputs: 0, requests: 0, events: 0, proposals: 0, applied: 0, held: 0, rejected: 0, errors: 0, rounds: 0 });
   const cnt = o => e.proposals.filter(p => p.outcome === o).length;
   const events = e.inputs.filter(i => i.ev).length;
@@ -162,6 +162,7 @@ module.exports = (query, tools) => {
   return { room: id, loaded: true, max: tr.max, total: tr.n, kept: tr.records.length, overwritten: Math.max(0, first - 1), rows: timeline(tr.records) };
 };
 module.exports.timeline = timeline;
+module.exports.row = row;
 module.exports.detail = detail;
 module.exports.queue = queue;
 module.exports.groupsOf = groupsOf;

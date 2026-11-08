@@ -148,7 +148,9 @@ function create(ctx) {
   // Rozšírenia API pre záložky: debug/api/<name>.js exportuje (query, tools) → objekt na odpoveď (null = 404).
   //   tools.load(id) → { id, source, file, online, state } kópia sveta (alebo null), tools.rooms() → zoznam svetov,
   //   tools.sim → špecifikácia simulácie, tools.trace(id) → { max, n, records, origins } kruhová pamäť dávok sveta
-  //   v pamäti (alebo null). Kľúče hráčov z načítaných svetov sa z odpovede odstránia samy.
+  //   v pamäti (alebo null), tools.journalFiles(id) → [{ path, name }] denník sveta na disku (najprv starší .1),
+  //   tools.redactKeys(zoznam) → ďalšie kľúče hráčov na odstránenie (napr. z denníka). Kľúče hráčov z načítaných svetov
+  //   sa z odpovede odstránia samy.
   function extension(res, name, query) {
     if (!/^[a-z][a-z0-9-]{0,30}$/.test(name)) return notFound(res);
     const file = path.join(ctx.debugDir, 'api', name + '.js');
@@ -163,7 +165,13 @@ function create(ctx) {
         for (const k of Object.keys(room.saves || {})) keys.add(k);
         for (const p of room.players ? room.players.values() : []) if (p.key) keys.add(p.key);
         return { max: room.trace.max, n: room.trace.n, records: traceList(room.trace), origins: room.trace.origins };
-      }
+      },
+      journalFiles: id => {
+        if (!ROOM_RE.test(String(id || ''))) return [];
+        const base = path.join(ctx.dataDir, 'journal-' + id + '.jsonl');
+        return [base + '.1', base].filter(f => fs.existsSync(f)).map(f => ({ path: f, name: path.basename(f) }));
+      },
+      redactKeys: list => { for (const k of list || []) if (typeof k === 'string' && k) keys.add(k); }
     };
     let body;
     try { body = require(file)(query, tools); } catch (e) { console.error('[debug]', name, e); return json(res, 500, { error: e.message }); }

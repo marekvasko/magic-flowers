@@ -252,8 +252,77 @@ test('server: dobiehanie po načítaní je v pamäti, filter správ (odložená 
     assert.match(deferred.rule, /one tile action per player per frame/);
     assert.strictEqual(deferred.actor.key, Debug.keyId('ana'));
     assert.match(coalesced.rule, /latest move/);
+    // ten istý súboj v denníku na disku (záložka Journal), kľúče hráčov odstránené
+    const httpRaw = p => new Promise((resolve, reject) => http.get({ host: '127.0.0.1', port, path: p }, res => { let b = ''; res.on('data', c => b += c); res.on('end', () => resolve(b)); }).on('error', reject));
+    const leak = /(^|[:"\s#])(ana|bob)(?=$|[:"\s,.])/;
+    const jl = await httpRaw('/api/debug/journal?room=ladenie&type=till');
+    assert.ok(!leak.test(jl), jl.slice(0, 300));
+    const jt = JSON.parse(jl);
+    assert.ok(jt.rows.length && jt.players.some(p => p.id === Debug.keyId('ana') && p.name === 'Ana'), json(jt.players));
+    const one = await httpRaw('/api/debug/journal?room=ladenie&g=' + jt.rows.find(r => r.rejected).g);
+    assert.ok(!leak.test(one));
+    assert.ok(JSON.parse(one).rounds[1].proposals.some(p => p.msg === 'Tu už je záhon.'));
+    assert.ok(JSON.parse(await httpRaw('/api/debug/journal?room=ladenie&kind=load')).matched >= 1);
   } finally {
     for (const c of [ana, bob]) if (c) c.ws.close();
     await stopServer(proc);
   }
+});
+
+// ---- záložka Journal: denník na disku ----
+const journalApi = require('../debug/api/journal.js');
+
+test('denník: riadky od najnovšieho, filtre (druh, typ, hráč odtlačkom, osud, kľúč, kroky, pohyby), strany, dočítanie a otočenie', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-dbg-journal-'));
+  const file = path.join(dir, 'journal-x.jsonl');
+  const w = makeWorld(7);
+  w.market.seeds[SP].stock = 1;
+  const spec = Object.assign(traced(w), { onBatch: (x, out) => fs.appendFileSync(file, json(Object.assign({ wall: 1700000000000 }, out.entry)) + '\n') });
+  fs.writeFileSync(file, json({ wall: 1700000000000, load: true, tick: w.tick, step: 0, seq: 0, migratedFrom: null }) + '\n');
+  E.commitBatch(w, [act('pos', 'ana', { x: 10.5, y: 10.5 })], spec);
+  E.commitBatch(w, [act('buy', 'ana', { id: 'seed_' + SP, n: 1 }), act('buy', 'bob', { id: 'seed_' + SP, n: 1 })], spec);
+  E.advanceTo(w, w.tick + TPD, spec);
+  const keys = new Set();
+  const tl = { ROOM_RE: /^[a-z0-9-]{1,16}$/, journalFiles: () => [file + '.1', file].filter(f => fs.existsSync(f)).map(f => ({ path: f, name: path.basename(f) })), load: () => ({ state: { saves: { ana: {}, bob: {} } } }), redactKeys: l => l.forEach(k => keys.add(k)) };
+  const q = p => journalApi(new URLSearchParams(Object.assign({ room: 'x' }, p)), tl);
+  const all = q({});
+  const lines = fs.readFileSync(file, 'utf8').trim().split('\n').length;
+  assert.strictEqual(all.total, lines);
+  assert.ok(all.rows.every((r, i) => i === 0 || all.rows[i - 1].g > r.g), 'od najnovšieho');
+  assert.strictEqual(all.rows[all.rows.length - 1].kind, 'load');
+  assert.deepStrictEqual([...keys].sort(), ['ana', 'bob'], 'kľúče hráčov idú na odstránenie');
+  assert.ok(all.types.includes('dawn') && all.types.includes('buy'));
+  assert.strictEqual(q({ kind: 'load' }).matched, 1);
+  assert.ok(q({ kind: 'events' }).rows.every(r => r.kind === 'events'));
+  const buys = q({ type: 'buy' });
+  assert.strictEqual(buys.matched, 1);
+  assert.deepStrictEqual([buys.rows[0].applied, buys.rows[0].held, buys.rows[0].rejected], [1, 1, 1]);
+  assert.strictEqual(q({ outcome: 'held' }).rows.filter(r => r.types.includes('buy')).length, 1);
+  assert.strictEqual(q({ actor: Debug.keyId('bob') }).matched, 1, 'hráč podľa odtlačku');
+  assert.strictEqual(q({ actor: 'Ana' }).matched, 2, 'alebo podľa mena');
+  assert.strictEqual(q({ key: 'save:' + Debug.keyId('bob') }).matched, 1, 'kľúč s odtlačkom hráča');
+  assert.strictEqual(q({ moves: '0', kind: 'actions' }).matched, 1, 'samotný pohyb bez sporu sa dá skryť');
+  const dawnTick = q({ type: 'dawn' }).rows[0].tick;
+  assert.ok(q({ from: dawnTick, to: dawnTick }).rows.every(r => r.tick === dawnTick));
+  // strany: limit + kurzor
+  const p1 = q({ limit: 5 }), p2 = q({ limit: 5, before: p1.next });
+  assert.strictEqual(p1.rows.length, 5);
+  assert.strictEqual(p2.rows[0].g, p1.rows[4].g - 1);
+  // jeden záznam: rozobraný ako v záložke Engine
+  const d = q({ g: buys.rows[0].g });
+  assert.deepStrictEqual(d.rounds.map(r => r.proposals.map(p => p.outcome)), [['applied', 'held'], ['rejected']]);
+  assert.strictEqual(d.row.source, 'journal');
+  assert.ok(q({ g: all.rows[all.rows.length - 1].g }).load.load);
+  // dočítanie: pribudne riadok (aj neúplný koniec počká), potom otočenie na .1
+  const before = q({}).total;
+  fs.appendFileSync(file, json({ wall: 1, load: true, tick: w.tick, step: w.step, seq: w.seq }) + '\n{"wall":2,"load":tr');
+  assert.strictEqual(q({}).total, before + 1);
+  fs.appendFileSync(file, 'ue,"tick":5}\n');
+  assert.strictEqual(q({}).total, before + 2);
+  fs.renameSync(file, file + '.1');
+  fs.writeFileSync(file, json({ wall: 3, load: true, tick: 9, step: 0, seq: 0 }) + '\n');
+  const rot = q({});
+  assert.strictEqual(rot.total, before + 3);
+  assert.deepStrictEqual(rot.files.map(f => f.name), ['journal-x.jsonl.1', 'journal-x.jsonl']);
+  assert.strictEqual(rot.rows[0].tick, 9);
 });

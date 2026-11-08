@@ -49,25 +49,109 @@ const CSS = `
 
 const PHASES = [['filter', '#5b8def'], ['schedule', '#8e6fd8'], ['evaluate', '#2f8a4c'], ['resolve', '#b7791f'], ['commit', '#c0392b'], ['journal', '#7a7368'], ['notify', '#3aa6a0']];
 const OUT = ['applied', 'held', 'rejected', 'error'];
-const SRC = { frame: 'player frame', live: 'running time', catchup: 'catch-up after load', ff: 'night fast-forward' };
+const SRC = { journal: 'journal file', frame: 'player frame', live: 'running time', catchup: 'catch-up after load', ff: 'night fast-forward' };
 const WHAT = { input: 'applied', coalesced: 'held', deferred: 'held', dropped: 'error', refused: 'rejected', ignored: 'rejected', presence: 'filter' };
 const ms = v => v == null ? '–' : v < 1 ? (v * 1000).toFixed(0) + ' µs' : v.toFixed(2) + ' ms';
 const val = v => v === undefined ? '∅' : JSON.stringify(v);
 
-export function mount(el, ctx0) {
-  if (!document.getElementById('tab-engine-css')) {
-    const st = document.createElement('style');
-    st.id = 'tab-engine-css'; st.textContent = CSS;
-    document.head.appendChild(st);
-  }
-  let ctx = ctx0, list = null, det = null, q = null, err = null, loadedRoom = null, seq = 0;
+// Spoločné so záložkou Journal: štýly a vykreslenie jednej dávky (výstup detail() z debug/api/engine.js)
+export function ensureCss() {
+  if (document.getElementById('tab-engine-css')) return;
+  const st = document.createElement('style');
+  st.id = 'tab-engine-css'; st.textContent = CSS;
+  document.head.appendChild(st);
+}
+export function renderer(ctx) {
   const { h, fmt } = ctx;
-  const view = () => ctx.param('ev') || 'timeline';
-  const sel = () => (ctx.param('eb') == null ? null : +ctx.param('eb'));
-  const opt = (k, def) => (ctx.param(k) == null ? def : ctx.param(k) === '1');
   const wrap = (...kids) => h('div', { class: 'tablewrap' }, h('table', null, ...kids));
   const outcome = o => h('span', { class: 'o c-' + o }, o);
   const actor = a => !a ? h('span', { class: 'muted' }, '–') : a.kind === 'player' ? h('span', { class: 'mono', title: 'player (key redacted)' }, a.name ? a.name + ' ' : '', h('small', { class: 'muted' }, a.key)) : h('span', { class: 'badge' }, a.kind);
+  function timingBar(t) {
+    if (!t) return null;
+    const total = PHASES.reduce((a, [k]) => a + (t[k] || 0), 0) || 1;
+    return h('div', null,
+      h('div', { class: 'tbar' }, PHASES.filter(([k]) => t[k]).map(([k, c]) => h('span', { style: `width:${(t[k] / total * 100).toFixed(2)}%;background:${c}`, title: `${k} ${ms(t[k])}` }))),
+      h('div', { class: 'legend' }, PHASES.filter(([k]) => t[k] != null).map(([k, c]) => h('span', null, h('i', { style: 'background:' + c }), `${k} ${ms(t[k])}`))));
+  }
+  function keys(p) {
+    return h('td', { class: 'keys' }, (p.writes || []).map(k => h('div', { class: 'w', title: 'writes' }, '✎ ' + k)), (p.reads || []).map(k => h('div', { title: 'reads' }, '👁 ' + k)));
+  }
+  function reason(p) {
+    if (p.outcome === 'held') return h('td', { class: 'wrap' }, p.blockedBy && p.blockedBy.length
+      ? p.blockedBy.map(b => h('div', null, 'held: ', h('b', { class: 'mono' }, b.id), ` (${b.type}) already wrote `, h('span', { class: 'mono' }, b.keys.join(', '))))
+      : 'held: a key it touched through the queue was written earlier in this round');
+    if (p.outcome === 'rejected') return h('td', { class: 'wrap' }, p.msg == null ? h('span', { class: 'muted' }, 'refused silently') : '“' + p.msg + '”');
+    if (p.outcome === 'error') return h('td', { class: 'wrap err' }, p.msg);
+    const n = p.changes ? Object.values(p.changes).reduce((a, l) => a + l.length, 0) : 0;
+    return h('td', { class: 'wrap muted' }, n ? `${n} change${n === 1 ? '' : 's'}` : 'no change',
+      p.emits.length ? ` · ${p.emits.length} message${p.emits.length === 1 ? '' : 's'} (${[...new Set(p.emits.map(m => m.t))].join(', ')})` : '',
+      p.ops.length ? ' · queue: ' + p.ops.map(o => o.op === 'cancel' ? `cancel ${o.key}` : `+${o.type}${o.key ? ' ' + o.key : ''} @${o.at}`).join(', ') : '');
+  }
+  function roundsGrid(d) {
+    // mriežka: riadky = vstupy v poradí dávky, stĺpce = kolá; v bunke osud návrhu v tom kole
+    const ids = d.inputs.map(i => i.id), R = d.rounds.length;
+    const cell = (id, r) => { const p = d.rounds[r].proposals.find(x => x.id === id); return h('td', { class: 'cell', title: p && p.blockedBy ? 'held by ' + p.blockedBy.map(b => b.id).join(', ') : null }, p ? outcome(p.outcome) : h('span', { class: 'muted' }, '·')); };
+    return wrap(h('tr', null, h('th', null, '#'), h('th', null, 'Input'), ...d.rounds.map(r => h('th', { class: 'cell' }, `Round ${r.round}`, h('br'), h('small', { class: 'muted' }, 'step ' + r.step)))),
+      ids.map((id, i) => h('tr', null, h('td', { class: 'num muted' }, i + 1), h('td', { class: 'mono' }, id, ' ', h('span', { class: 'muted' }, d.inputs[i].kind)), ...Array.from({ length: R }, (_, r) => cell(id, r)))));
+  }
+  function detail(d) {
+    const r = d.row, out = [];
+    out.push(h('h3', { style: 'margin-top:0' }, `Tick ${r.tick} · ${fmt.when(r.tick)} `, h('span', { class: 'src ' + r.source }, SRC[r.source] || r.source), ' ', h('span', { class: 'muted' }, `${r.source === 'journal' ? 'line' : 'batch'} #${r.n}${r.step != null ? ' · step ' + r.step : ''}${r.wall ? ' · ' + new Date(r.wall).toLocaleString() : ''}`)));
+    out.push(timingBar(r.timing));
+    if (d.filter.length) {
+      out.push(h('h3', null, `Actor filter (${d.filter.length})`));
+      out.push(h('div', { class: 'note' }, 'What the server’s frame did with each player message before the engine saw it, and under which rule.'));
+      out.push(wrap(h('tr', null, h('th', { class: 'num' }, 'Seq'), h('th', null, 'Player'), h('th', null, 'Msg'), h('th', null, 'Decision'), h('th', null, 'Rule'), h('th', null, '→')),
+        d.filter.map(f => h('tr', null, h('td', { class: 'num muted' }, f.seq == null ? '–' : f.seq), h('td', null, actor(f.actor)), h('td', { class: 'mono' }, f.t),
+          h('td', null, h('span', { class: 'o c-' + (WHAT[f.what] || 'filter') }, f.what)), h('td', { class: 'wrap' }, f.rule), h('td', { class: 'mono muted' }, f.id || (f.into ? 'seq ' + f.into : ''))))));
+    }
+    if (!d.inputs) return out;
+    out.push(h('h3', null, `Batch order (${d.inputs.length})`));
+    out.push(wrap(h('tr', null, h('th', { class: 'num' }, '#'), h('th', null, 'Stage'), h('th', null, 'Actor'), h('th', null, 'Kind'), h('th', null, 'Id'), h('th', null, 'Payload')),
+      d.inputs.map(i => h('tr', null, h('td', { class: 'num muted' }, i.pos), h('td', null, h('span', { class: 'badge' }, i.stage)), h('td', null, actor(i.actor)),
+        h('td', null, h('b', null, i.kind)), h('td', { class: 'mono muted', title: i.ev ? `queued event seq ${i.ev.seq}, due at ${i.ev.at}${i.ev.key ? ', key ' + i.ev.key : ''}` : null }, i.id),
+        h('td', { class: 'mono wrap' }, i.summary)))));
+    out.push(h('h3', null, `Proposals (${d.rounds.reduce((a, x) => a + x.proposals.length, 0)} in ${d.rounds.length} round${d.rounds.length === 1 ? '' : 's'})`));
+    if (d.rounds.length > 1) out.push(roundsGrid(d));
+    for (const rd of d.rounds) {
+      out.push(h('h4', { style: 'margin:12px 0 4px' }, `Round ${rd.round} `, h('span', { class: 'muted', title: 'every proposal of this round draws from hash(seed, step, id); the seed is never shown' }, `· random: hash(seed, step ${rd.step}, id)`)));
+      out.push(h('div', { class: 'groups' }, rd.groups.shared.length ? ['Resolved together (shared keys): ', ...rd.groups.shared.map(g => h('span', { class: 'g' }, g.join(' · ')))] : null,
+        rd.groups.independent.length ? h('span', { class: 'muted' }, `${rd.groups.shared.length ? ' · ' : ''}independent: ${rd.groups.independent.length}`) : null));
+      out.push(wrap(h('tr', null, h('th', null, 'Id'), h('th', null, 'Type'), h('th', null, 'Keys'), h('th', null, 'Decision'), h('th', null, 'Why / effect')),
+        rd.proposals.map(p => h('tr', null, h('td', { class: 'mono' }, p.id), h('td', null, h('b', null, p.type)), keys(p), h('td', null, outcome(p.outcome)), reason(p)))));
+    }
+    out.push(h('h3', null, `World changes (${d.changes.length} key${d.changes.length === 1 ? '' : 's'})`));
+    if (!d.changes.length) out.push(h('div', { class: 'muted' }, 'Nothing in the world changed.'));
+    const LIM = 60, LEAF = 40;
+    for (const c of d.changes.slice(0, LIM)) {
+      out.push(h('div', { class: 'chg' + (c.contenders.length ? ' hot' : '') },
+        h('h4', null, c.key, h('span', { class: 'muted', style: 'font-weight:400' }, `${c.leaves} leaf change${c.leaves === 1 ? '' : 's'}`)),
+        c.writes.map(w => h('div', null, h('div', { class: 'muted' }, 'written by ', h('b', { class: 'mono' }, w.id), ` (${w.type}, round ${w.round}${w.via !== c.key ? ', via ' + w.via : ''})`),
+          h('table', null, w.leaves.slice(0, LEAF).map(l => h('tr', null, h('td', { class: 'mono' }, l.p.length ? l.p.join('.') : '(whole)'),
+            h('td', { class: 'mono from wrap' }, val(l.from)), h('td', null, '→'), h('td', { class: 'mono to wrap' }, l.deleted ? 'deleted' : val(l.to)))),
+          w.leaves.length > LEAF ? h('tr', null, h('td', { colspan: 4, class: 'muted' }, `… ${w.leaves.length - LEAF} more`)) : null))),
+        c.contenders.length ? h('div', { style: 'margin-top:4px' }, 'also wanted this key: ', c.contenders.map(o => h('span', { style: 'margin-right:10px' }, h('span', { class: 'mono' }, o.id), ` ${o.type} r${o.round} `, outcome(o.outcome), o.msg ? h('small', { class: 'muted' }, ' “' + o.msg + '”') : ''))) : null));
+    }
+    if (d.changes.length > LIM) out.push(h('div', { class: 'muted' }, `… ${d.changes.length - LIM} more keys`));
+    if (d.outbox && d.outbox.length) {
+      out.push(h('h3', null, `Messages (${d.outbox.length})`));
+      out.push(h('pre', null, d.outbox.slice(0, 50).map(m => JSON.stringify(m)).join('\n') + (d.outbox.length > 50 ? `\n… ${d.outbox.length - 50} more` : '')));
+    }
+    out.push(h('details', null, h('summary', { class: 'muted', style: 'cursor:pointer;margin-top:14px' }, 'Raw batch (inputs, presence)'), h('pre', null, JSON.stringify({ inputs: d.inputs.map(i => ({ id: i.id, type: i.kind, data: i.data, ev: i.ev })), presence: d.presence }, null, 1))));
+    return out;
+  }
+
+  return { detail, wrap, outcome, actor };
+}
+
+export function mount(el, ctx0) {
+  ensureCss();
+  let ctx = ctx0, list = null, det = null, q = null, err = null, loadedRoom = null, seq = 0;
+  const { h, fmt } = ctx;
+  const R = renderer(ctx), { wrap, outcome, actor } = R;
+  const view = () => ctx.param('ev') || 'timeline';
+  const sel = () => (ctx.param('eb') == null ? null : +ctx.param('eb'));
+  const opt = (k, def) => (ctx.param(k) == null ? def : ctx.param(k) === '1');
 
   async function load() {
     const room = ctx.room, my = ++seq;
@@ -153,83 +237,11 @@ export function mount(el, ctx0) {
     return [head, strip(rows), h('div', { class: 'split' }, h('div', { class: 'rows' }, table), h('div', null, detailView()))];
   }
 
-  // ---------- jedna dávka ----------
-  function timingBar(t) {
-    if (!t) return null;
-    const total = PHASES.reduce((a, [k]) => a + (t[k] || 0), 0) || 1;
-    return h('div', null,
-      h('div', { class: 'tbar' }, PHASES.filter(([k]) => t[k]).map(([k, c]) => h('span', { style: `width:${(t[k] / total * 100).toFixed(2)}%;background:${c}`, title: `${k} ${ms(t[k])}` }))),
-      h('div', { class: 'legend' }, PHASES.filter(([k]) => t[k] != null).map(([k, c]) => h('span', null, h('i', { style: 'background:' + c }), `${k} ${ms(t[k])}`))));
-  }
-  function keys(p) {
-    return h('td', { class: 'keys' }, (p.writes || []).map(k => h('div', { class: 'w', title: 'writes' }, '✎ ' + k)), (p.reads || []).map(k => h('div', { title: 'reads' }, '👁 ' + k)));
-  }
-  function reason(p) {
-    if (p.outcome === 'held') return h('td', { class: 'wrap' }, p.blockedBy && p.blockedBy.length
-      ? p.blockedBy.map(b => h('div', null, 'held: ', h('b', { class: 'mono' }, b.id), ` (${b.type}) already wrote `, h('span', { class: 'mono' }, b.keys.join(', '))))
-      : 'held: a key it touched through the queue was written earlier in this round');
-    if (p.outcome === 'rejected') return h('td', { class: 'wrap' }, p.msg == null ? h('span', { class: 'muted' }, 'refused silently') : '“' + p.msg + '”');
-    if (p.outcome === 'error') return h('td', { class: 'wrap err' }, p.msg);
-    const n = p.changes ? Object.values(p.changes).reduce((a, l) => a + l.length, 0) : 0;
-    return h('td', { class: 'wrap muted' }, n ? `${n} change${n === 1 ? '' : 's'}` : 'no change',
-      p.emits.length ? ` · ${p.emits.length} message${p.emits.length === 1 ? '' : 's'} (${[...new Set(p.emits.map(m => m.t))].join(', ')})` : '',
-      p.ops.length ? ' · queue: ' + p.ops.map(o => o.op === 'cancel' ? `cancel ${o.key}` : `+${o.type}${o.key ? ' ' + o.key : ''} @${o.at}`).join(', ') : '');
-  }
-  function roundsGrid(d) {
-    // mriežka: riadky = vstupy v poradí dávky, stĺpce = kolá; v bunke osud návrhu v tom kole
-    const ids = d.inputs.map(i => i.id), R = d.rounds.length;
-    const cell = (id, r) => { const p = d.rounds[r].proposals.find(x => x.id === id); return h('td', { class: 'cell', title: p && p.blockedBy ? 'held by ' + p.blockedBy.map(b => b.id).join(', ') : null }, p ? outcome(p.outcome) : h('span', { class: 'muted' }, '·')); };
-    return wrap(h('tr', null, h('th', null, '#'), h('th', null, 'Input'), ...d.rounds.map(r => h('th', { class: 'cell' }, `Round ${r.round}`, h('br'), h('small', { class: 'muted' }, 'step ' + r.step)))),
-      ids.map((id, i) => h('tr', null, h('td', { class: 'num muted' }, i + 1), h('td', { class: 'mono' }, id, ' ', h('span', { class: 'muted' }, d.inputs[i].kind)), ...Array.from({ length: R }, (_, r) => cell(id, r)))));
-  }
   function detailView() {
     if (sel() == null) return h('div', { class: 'empty' }, 'Click a batch to see its proposals, decisions and world changes.');
     if (!det) return h('div', { class: 'empty' }, 'Loading…');
     if (det.gone != null) return h('div', { class: 'empty' }, `Batch #${det.gone} is no longer in the buffer.`);
-    const d = det, r = d.row, out = [];
-    out.push(h('h3', { style: 'margin-top:0' }, `Tick ${r.tick} · ${fmt.when(r.tick)} `, h('span', { class: 'src ' + r.source }, SRC[r.source] || r.source), ' ', h('span', { class: 'muted' }, `batch #${r.n}${r.step != null ? ' · step ' + r.step : ''}`)));
-    out.push(timingBar(r.timing));
-    if (d.filter.length) {
-      out.push(h('h3', null, `Actor filter (${d.filter.length})`));
-      out.push(h('div', { class: 'note' }, 'What the server’s frame did with each player message before the engine saw it, and under which rule.'));
-      out.push(wrap(h('tr', null, h('th', { class: 'num' }, 'Seq'), h('th', null, 'Player'), h('th', null, 'Msg'), h('th', null, 'Decision'), h('th', null, 'Rule'), h('th', null, '→')),
-        d.filter.map(f => h('tr', null, h('td', { class: 'num muted' }, f.seq == null ? '–' : f.seq), h('td', null, actor(f.actor)), h('td', { class: 'mono' }, f.t),
-          h('td', null, h('span', { class: 'o c-' + (WHAT[f.what] || 'filter') }, f.what)), h('td', { class: 'wrap' }, f.rule), h('td', { class: 'mono muted' }, f.id || (f.into ? 'seq ' + f.into : ''))))));
-    }
-    if (!d.inputs) return out;
-    out.push(h('h3', null, `Batch order (${d.inputs.length})`));
-    out.push(wrap(h('tr', null, h('th', { class: 'num' }, '#'), h('th', null, 'Stage'), h('th', null, 'Actor'), h('th', null, 'Kind'), h('th', null, 'Id'), h('th', null, 'Payload')),
-      d.inputs.map(i => h('tr', null, h('td', { class: 'num muted' }, i.pos), h('td', null, h('span', { class: 'badge' }, i.stage)), h('td', null, actor(i.actor)),
-        h('td', null, h('b', null, i.kind)), h('td', { class: 'mono muted', title: i.ev ? `queued event seq ${i.ev.seq}, due at ${i.ev.at}${i.ev.key ? ', key ' + i.ev.key : ''}` : null }, i.id),
-        h('td', { class: 'mono wrap' }, i.summary)))));
-    out.push(h('h3', null, `Proposals (${d.rounds.reduce((a, x) => a + x.proposals.length, 0)} in ${d.rounds.length} round${d.rounds.length === 1 ? '' : 's'})`));
-    if (d.rounds.length > 1) out.push(roundsGrid(d));
-    for (const rd of d.rounds) {
-      out.push(h('h4', { style: 'margin:12px 0 4px' }, `Round ${rd.round} `, h('span', { class: 'muted', title: 'every proposal of this round draws from hash(seed, step, id); the seed is never shown' }, `· random: hash(seed, step ${rd.step}, id)`)));
-      out.push(h('div', { class: 'groups' }, rd.groups.shared.length ? ['Resolved together (shared keys): ', ...rd.groups.shared.map(g => h('span', { class: 'g' }, g.join(' · ')))] : null,
-        rd.groups.independent.length ? h('span', { class: 'muted' }, `${rd.groups.shared.length ? ' · ' : ''}independent: ${rd.groups.independent.length}`) : null));
-      out.push(wrap(h('tr', null, h('th', null, 'Id'), h('th', null, 'Type'), h('th', null, 'Keys'), h('th', null, 'Decision'), h('th', null, 'Why / effect')),
-        rd.proposals.map(p => h('tr', null, h('td', { class: 'mono' }, p.id), h('td', null, h('b', null, p.type)), keys(p), h('td', null, outcome(p.outcome)), reason(p)))));
-    }
-    out.push(h('h3', null, `World changes (${d.changes.length} key${d.changes.length === 1 ? '' : 's'})`));
-    if (!d.changes.length) out.push(h('div', { class: 'muted' }, 'Nothing in the world changed.'));
-    const LIM = 60, LEAF = 40;
-    for (const c of d.changes.slice(0, LIM)) {
-      out.push(h('div', { class: 'chg' + (c.contenders.length ? ' hot' : '') },
-        h('h4', null, c.key, h('span', { class: 'muted', style: 'font-weight:400' }, `${c.leaves} leaf change${c.leaves === 1 ? '' : 's'}`)),
-        c.writes.map(w => h('div', null, h('div', { class: 'muted' }, 'written by ', h('b', { class: 'mono' }, w.id), ` (${w.type}, round ${w.round}${w.via !== c.key ? ', via ' + w.via : ''})`),
-          h('table', null, w.leaves.slice(0, LEAF).map(l => h('tr', null, h('td', { class: 'mono' }, l.p.length ? l.p.join('.') : '(whole)'),
-            h('td', { class: 'mono from wrap' }, val(l.from)), h('td', null, '→'), h('td', { class: 'mono to wrap' }, l.deleted ? 'deleted' : val(l.to)))),
-          w.leaves.length > LEAF ? h('tr', null, h('td', { colspan: 4, class: 'muted' }, `… ${w.leaves.length - LEAF} more`)) : null))),
-        c.contenders.length ? h('div', { style: 'margin-top:4px' }, 'also wanted this key: ', c.contenders.map(o => h('span', { style: 'margin-right:10px' }, h('span', { class: 'mono' }, o.id), ` ${o.type} r${o.round} `, outcome(o.outcome), o.msg ? h('small', { class: 'muted' }, ' “' + o.msg + '”') : ''))) : null));
-    }
-    if (d.changes.length > LIM) out.push(h('div', { class: 'muted' }, `… ${d.changes.length - LIM} more keys`));
-    if (d.outbox && d.outbox.length) {
-      out.push(h('h3', null, `Messages (${d.outbox.length})`));
-      out.push(h('pre', null, d.outbox.slice(0, 50).map(m => JSON.stringify(m)).join('\n') + (d.outbox.length > 50 ? `\n… ${d.outbox.length - 50} more` : '')));
-    }
-    out.push(h('details', null, h('summary', { class: 'muted', style: 'cursor:pointer;margin-top:14px' }, 'Raw batch (inputs, presence)'), h('pre', null, JSON.stringify({ inputs: d.inputs.map(i => ({ id: i.id, type: i.kind, data: i.data, ev: i.ev })), presence: d.presence }, null, 1))));
-    return out;
+    return R.detail(det);
   }
 
   // ---------- fronta ----------
