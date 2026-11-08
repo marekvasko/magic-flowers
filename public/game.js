@@ -377,7 +377,7 @@
         if (sel === 'blanket') return { i: '🧶', l: 'Izolovať' };
         return sel && sel !== 'ice' && !D.isTool(sel) ? { i: '🧊', l: 'Ľadovňa', ui: 'icehouse', only: true } : { i: '🧊', l: 'Ľadovňa', ui: 'icehouse' };
       case 'dielna': return { i: '🪚', l: 'Dielňa', ui: 'dielna' };
-      case 'majster': return { i: '🧵', l: 'Miesto majstra', info: true }; // majster tu práve nie je (inak ho chytí riadok vyššie)
+      case 'majster': return S.dielna.loom ? null : { i: '🧵', l: 'Miesto majstra', info: true }; // majster tu práve nie je (inak ho chytí riadok vyššie); po kúpe krosien už nič
       case 'lot': return { i: '🪧', l: 'Pozemok', info: true };
       case 'shroom': case 'ring': return { i: '🍄', l: 'Huby', info: true };
     }
@@ -462,7 +462,7 @@
       } else if (a.l === 'Otvor v ľade') toast('Tu už je otvor v ľade. Cez noc zamrzne – skús iné miesto. 🧊');
       else if (a.l === 'Pavučina') toast('S lampášom v ruke hodváb neutrhneš – potrebuješ voľnú ruku. Vyber si v lište niečo iné alebo prázdnu ruku. 🕸️');
       else if (a.l === 'Majster na ceste') toast(D.masterRoadText(a.ma));
-      else if (a.l === 'Miesto majstra') toast(S.dielna.loom ? 'Odkedy sú v Dielni krosná, majster hodvábu do dedinky nechodí. Prikrývky ti utkajú krosná. 🧶' : masterNow() ? 'Majster hodvábu je na noc u babky v chalúpke. Ráno o 6:00 sa vráti na trh. 🧵' : 'Tu predáva majster hodvábu – do dedinky chodí len na jar a na jeseň. 🧵');
+      else if (a.l === 'Miesto majstra') toast(masterNow() ? 'Majster hodvábu je na noc u babky v chalúpke. Ráno o 6:00 sa vráti na trh. 🧵' : 'Tu predáva majster hodvábu – do dedinky chodí len na jar a na jeseň. 🧵');
       else if (a.l === 'Pozemok') toast(onDielnaLot(tx, ty)
         ? `Pozemok pre Dielňu. Postaviť ju môže ktokoľvek zo záhrady na trhu (záložka Vylepšiť) za ${D.DIELNA.price} 🪙 (treba ⭐${D.DIELNA.rep}). 🪚`
         : `Pozemok pre ľadovňu. Postaviť ju môže ktokoľvek zo záhrady na trhu (záložka Vylepšiť) za ${D.ICEHOUSE.price} 🪙. 🧊`);
