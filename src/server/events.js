@@ -5,7 +5,7 @@
 // Prítomnosť pripojených hráčov (kde stoja, či hľadajú v tráve) dostane návrh ako ctx.presence – nie je to stav sveta.
 const D = require('../shared/data.ts');
 const E = require('./engine.ts');
-const Econ = require('./economy.js');
+const Econ = require('./economy.ts');
 const I = require('./items.ts');
 const Ice = require('./ice.ts');
 const Scav = require('./scavenge.ts');

@@ -1,0 +1,102 @@
+// Hra nad enginom (#122, fáza 3): svet v pamäti, výrezy návrhov, správy z návrhov a typ návrhu.
+// Engine (engine.ts) je všeobecný; tu sa dosadí, čo je herný svet, prítomnosť a správa.
+import type { AreaId } from '../shared/data.ts';
+import type { ServerMessage } from '../shared/protocol.ts';
+import type { Contracts, CornerArea, Dielna, Icehouse, Inventory, Market, PlayerKey, PlayerSave, SaveFile, Weather, Webs, WorldMode } from '../shared/save.ts';
+import type { Ctx, EngineWorld, Keys, PeriodicDef, Proposer, Slices, Spec } from './engine.ts';
+import type { Scav } from './scavenge.ts';
+import type { AreaTilesWorld, Presence, StorageSlice, Tile } from './world.ts';
+
+// ---- Svet v pamäti ----
+// Uložené polia (save.ts) plus to, čo server pri načítaní postaví (políčka plôch so zemou) a čo sa neukladá.
+export interface GameWorld extends EngineWorld, AreaTilesWorld {
+  mode?: WorldMode;
+  weather: Weather;
+  saves: Partial<Record<PlayerKey, PlayerSave>>;
+  storage: Inventory;
+  storageFb: SaveFile['storageFb'];
+  market: Market | null;
+  contracts: Contracts | null;
+  fairyNight: number;
+  eternal: boolean;
+  scav: Scav;
+  scavSalt: number;
+  icehouse: Icehouse;
+  dielna: Dielna;
+  redeem: Inventory;
+  pomedzieSeed: number;
+  up: { plots: number };
+  lesSeed: number;
+  glacierFed: number;
+  plotsUsed: number;
+  maxRep: number;
+  webs?: Webs | null;
+  corners?: Partial<Record<CornerArea, string[]>> | null;
+  migratedFrom?: number;
+}
+
+// ---- Správy z návrhov ----
+// Pokyny len pre server (notify v server.js), klient ich nedostane: pripojenie hotové, prechod do inej plochy,
+// obnov batoh (me), hľadanie v tráve a ťahanie hodvábu začalo / skončilo
+export type Directive =
+  | { t: 'joined' }
+  | { t: 'travel'; from: AreaId; area: AreaId }
+  | { t: 'me' }
+  | { t: 'scavStart'; i: number; n: string; seeds: boolean }
+  | { t: 'scavDone' }
+  | { t: 'pullStart'; id: number; n: string }
+  | { t: 'pullDone' };
+// Adresát: kľúč hráča, E.ALL = všetkým, E.area(plocha) = hráčom na ploche
+export type To = PlayerKey | { readonly all: true } | { readonly area: AreaId };
+export type Msg = { to: To } & (ServerMessage | Directive);
+
+// ---- Výrezy ----
+// Výrezy pomenované podľa vlastnosti sveta (bez dvojbodky): typované vlastnosti. Návrh smie siahnuť len na výrez,
+// ktorý deklaroval (inak je undefined a siahnutie zlyhá nahlas) – preto nie sú voliteľné.
+export interface GameSlices extends Slices {
+  weather: Weather;
+  contracts: Contracts;
+  icehouse: Icehouse;
+  dielna: Dielna;
+  redeem: Inventory;
+  scav: Scav;
+  scavSalt: number;
+  up: { plots: number };
+  plotsUsed: number;
+  maxRep: number;
+  eternal: boolean;
+  fairyNight: number;
+  glacierFed: number;
+  lesSeed: number;
+  webs: Webs;
+  corners: Partial<Record<CornerArea, string[]>>;
+  storage: StorageSlice;
+}
+// Poloha hráča v uložení (výrez pos:<kľúč>)
+export type PosSlice = Partial<Pick<PlayerSave, 'x' | 'y' | 'area' | 'lastTick'>>;
+// Typ výrezu podľa kľúča s dvojbodkou (kľúče sú rovnaké ako v denníku – pozri engine.ts sliceOf)
+export type KeyedSlice<K extends string> =
+  K extends 'save:*' ? Partial<Record<PlayerKey, PlayerSave>>
+  : K extends `save:${string}` ? PlayerSave | undefined
+  : K extends `pos:${string}` ? PosSlice | undefined
+  : K extends `tile:${string}:*` ? Tile[]
+  : K extends `tile:${string}:${number}` ? Tile
+  : K extends 'market:*' ? Market
+  : K extends 'market:seed_*' ? Market['seeds']
+  : K extends 'market:fl_*' ? Market['flowers']
+  : K extends 'market:compost' ? Market['compost']
+  : K extends `market:seed_${string}` ? NonNullable<Market['seeds'][keyof Market['seeds']]> | undefined
+  : K extends `market:fl_${string}` ? NonNullable<Market['flowers'][keyof Market['flowers']]> | undefined
+  : never;
+// Výrez s dvojbodkou v kľúči (save:ana, tile:garden:12, market:fl_mak…) s typom podľa kľúča.
+// Jediné miesto, kde sa hodnota výrezu (JSON) prevedie na herný typ – tvar zaručuje kľúč (engine.ts sliceOf).
+export function sl<K extends string>(s: Slices, key: K): KeyedSlice<K> { return s[key] as KeyedSlice<K>; }
+// Zápis výrezu s dvojbodkou (keď ho návrh nahradí celý, nemení ho na mieste)
+export function put<K extends string>(s: Slices, key: K, v: KeyedSlice<K>): void { s[key] = v; }
+
+// ---- Návrhy ----
+export type GameCtx = Ctx<Presence, Msg>;
+export type GameProposer<D> = Proposer<D, GameWorld, Presence, Msg, GameSlices>;
+export type GamePeriodic = PeriodicDef<GameWorld>;
+export type GameSpec = Spec<GameWorld, Presence, Msg>;
+export type { Keys };
