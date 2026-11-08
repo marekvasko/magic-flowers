@@ -11,7 +11,7 @@ const D = require('../src/shared/data.ts');
 const E = require('../src/server/engine.js');
 const Econ = require('../src/server/economy.js');
 const Events = require('../src/server/events.js');
-const I = require('../src/server/items.js');
+const I = require('../src/server/items.ts');
 const Ice = require('../src/server/ice.js');
 const TPD = D.TICKS_PER_DAY;
 const rethrow = err => { throw err; };
@@ -628,14 +628,14 @@ test('server: denník sa píše do data/journal-<svet>.jsonl – značka načít
 
 test('v hre už nie je zapisovač cez Proxy, návrh (draft) ani náhoda zo sveta; v jadre simulácie nie je Math.random ani Date.now', () => {
   const root = path.join(__dirname, '..');
-  const files = [...fs.readdirSync(path.join(root, 'src', 'server')).filter(f => f.endsWith('.js')).map(f => 'src/server/' + f), ...fs.readdirSync(path.join(root, 'test')).map(f => 'test/' + f), ...fs.readdirSync(path.join(root, 'debug', 'api')).map(f => 'debug/api/' + f)];
-  assert.ok(!fs.existsSync(path.join(root, 'src', 'server', 'draft.js')));
+  const files = [...fs.readdirSync(path.join(root, 'src', 'server')).filter(f => f.endsWith('.js') || f.endsWith('.ts')).map(f => 'src/server/' + f), ...fs.readdirSync(path.join(root, 'test')).map(f => 'test/' + f), ...fs.readdirSync(path.join(root, 'debug', 'api')).map(f => 'debug/api/' + f)];
+  assert.ok(!fs.existsSync(path.join(root, 'src', 'server', 'draft.js')) && !fs.existsSync(path.join(root, 'src', 'server', 'draft.ts')));
   for (const f of files) {
     if (f === 'test/proposals.test.js') continue; // tento súbor obsahuje samotný vzor
     const src = fs.readFileSync(path.join(root, f), 'utf8');
     assert.ok(!/new Proxy|createDraft|applyPatches|rand\(room|rand\(w\)|randInt\(|E\.pick\(|\.handlers\b/.test(src), f);
   }
-  for (const f of ['engine.js', 'events.js', 'actions.js', 'economy.js', 'items.js', 'ice.js', 'scavenge.js', 'spiders.js']) {
+  for (const f of ['engine.js', 'events.js', 'actions.js', 'economy.js', 'items.ts', 'ice.js', 'scavenge.js', 'spiders.js']) {
     assert.ok(!/Math\.random|Date\.now/.test(fs.readFileSync(path.join(root, 'src', 'server', f), 'utf8')), f);
   }
 });

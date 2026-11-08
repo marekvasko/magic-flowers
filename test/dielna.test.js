@@ -12,7 +12,7 @@ const E = require('../src/server/engine.js');
 const Econ = require('../src/server/economy.js');
 const Events = require('../src/server/events.js');
 const Actions = require('../src/server/actions.js');
-const I = require('../src/server/items.js');
+const I = require('../src/server/items.ts');
 const Ice = require('../src/server/ice.js');
 const Dielna = require('../src/server/dielna.js');
 const TPH = D.TICKS_PER_HOUR, TPD = D.TICKS_PER_DAY, MPT = D.MIN_PER_TICK;

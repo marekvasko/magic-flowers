@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const D = require('../src/shared/data.ts');
-const I = require('../src/server/items.js');
+const I = require('../src/server/items.ts');
 const TPD = D.TICKS_PER_DAY;
 
 const sum = c => id => (c.fb[id] || []).reduce((s, b) => s + b.n, 0);

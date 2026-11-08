@@ -4,7 +4,7 @@
 // c = nástenka zákaziek (world.contracts), sv = uloženie hráča, tick = herný čas; náhoda a plánovanie cez ctx (engine.js).
 const D = require('../shared/data.ts');
 const E = require('./engine.js');
-const I = require('./items.js');
+const I = require('./items.ts');
 
 const TPD = D.TICKS_PER_DAY, DPS = D.DAYS_PER_SEASON, YEAR_DAYS = 4 * DPS;
 const PLANTABLE = Object.keys(D.SPECIES).filter(k => !D.SPECIES[k].magic);

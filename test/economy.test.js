@@ -126,7 +126,7 @@ test('krátke zákazky sú len na kvety, ktoré sa dajú vypestovať v aktuálno
 
 test('predaj starších kvetov vynesie menej než čerstvých', () => {
   const { room } = makeWorld(5);
-  const I = require('../src/server/items.js');
+  const I = require('../src/server/items.ts');
   const fresh = { coins: 0, inv: {} }, old = { coins: 0, inv: {} };
   I.addItems(I.playerC(fresh), 'fl_tulipan', 3, room.tick);
   I.addItems(I.playerC(old), 'fl_tulipan', 3, room.tick - 3 * TPD);
