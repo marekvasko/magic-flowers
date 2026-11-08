@@ -385,6 +385,9 @@ export const SCAVENGE: {
   priceExp: 2         // divé semienko „pozná trh“: váha druhu = výkupná cena kvetu v čase sadenia ^ priceExp
 };
 export const isWild = (id: string): id is `wild_${Season}` => /^wild_[0-3]$/.test(id);
+// Id divého semienka obdobia se
+const WILD_IDS = ['wild_0', 'wild_1', 'wild_2', 'wild_3'] as const;
+export const wildId = (se: Season): `wild_${Season}` => WILD_IDS[se];
 
 export function itemName(id: string): string {
   if (isWild(id)) return 'Divé semienko (' + must(SEASONS[+id.slice(5)]).toLowerCase() + ')';

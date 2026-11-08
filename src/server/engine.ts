@@ -101,7 +101,7 @@ export interface Ctx<P, M> {
 // Návrh pre jeden typ vstupu. Metódy (nie vlastnosti s funkciou) zámerne: parametre metód TypeScript porovnáva
 // bivariantne, takže návrh s presnými dátami (napr. { key, i }) sa zmestí do zoznamu návrhov enginu s dátami unknown.
 export interface Proposer<D, W, P, M, S = Slices> {
-  keys?(data: D, world: W, presence: P[] | undefined): Keys;
+  keys?(data: D, world: W, presence?: P[]): Keys;
   run(slices: S, data: D, ctx: Ctx<P, M>): void;
 }
 // Periodická udalosť: kľúč, typ, dáta a kedy má nastať (od kroku from)

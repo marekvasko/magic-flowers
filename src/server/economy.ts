@@ -241,7 +241,7 @@ export function composters(saves: Partial<Record<PlayerKey, PlayerSave>>, tick: 
   return got;
 }
 // Ranná časť ekonomiky ako samostatný návrh (server ju volá zo svojho rána, testy a ladenie priamo).
-export const DAWN: GameProposer<unknown> = {
+export const DAWN: Required<GameProposer<unknown>> = {
   keys: () => ({ writes: ['market:*', 'save:*', 'contracts'], reads: ['maxRep'] }),
   run(s, d, ctx) {
     dawnMarket(sl(s, 'market:*'), ctx.tick);
