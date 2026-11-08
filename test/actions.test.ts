@@ -11,7 +11,7 @@ import type { ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import WebSocket from 'ws';
 import * as D from '../src/shared/data.ts';
-import type { FestivalId, ItemId, SpeciesId } from '../src/shared/data.ts';
+import type { ItemId, SpeciesId } from '../src/shared/data.ts';
 import type { ClientMessage, ServerMessage } from '../src/shared/protocol.ts';
 import type { ActiveFestival, Contracts, Icehouse, Market, PlayerSave, SaveFile, Soil } from '../src/shared/save.ts';
 import { entries, isRecord, keys } from '../src/shared/util.ts';
@@ -174,8 +174,8 @@ test('trh: kľúče po položkách – nákupy rôznych semienok v jednom kroku 
   // predaj kvetu číta sviatočný násobok z položky kvetu, nie zo súhrnu trhu
   const w2 = makeWorld(3);
   give(save(w2, 'ana'), `fl_${SP}`, 2, w2.tick);
-  // vymyslený sviatok len pre test (id mimo zoznamu sviatkov)
-  const f: ActiveFestival = { id: 'x' as FestivalId, name: 'Skúška', icon: '✨', mult: { [SP]: 2 }, until: w2.tick + TPD };
+  // skúšobný sviatok s id skutočného sviatku (id číta len festEnd, ktorý tu nenastane)
+  const f: ActiveFestival = { id: must(D.FESTIVALS[0]).id, name: 'Skúška', icon: '✨', mult: { [SP]: 2 }, until: w2.tick + TPD };
   w2.market.festival = f; Econ.setFestival(w2.market, f);
   const price = Econ.flowerPrice(w2.market, w2.tick, SP);
   assert.strictEqual(must(w2.market.flowers[SP]).fest, 2);
