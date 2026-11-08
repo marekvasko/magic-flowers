@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const D = require('../src/shared/data.ts');
 const I = require('../src/server/items.ts');
 const Ice = require('../src/server/ice.js');
-const Areas = require('../src/server/areas.js');
+const Areas = require('../src/server/areas.ts');
 const TPD = D.TICKS_PER_DAY;
 
 // Minimálny svet: záhrada z generátora, hory, sklad

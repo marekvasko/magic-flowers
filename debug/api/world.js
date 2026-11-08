@@ -4,8 +4,8 @@
 //   GET /api/debug/world?seed=<n>&area=<plocha>   – čerstvý svet len zo semienka (bez hráčov a bez uloženia)
 const D = require('../../src/shared/data.ts');
 const Ice = require('../../src/server/ice.js');
-const Areas = require('../../src/server/areas.js');
-const Scav = require('../../src/server/scavenge.js');
+const Areas = require('../../src/server/areas.ts');
+const Scav = require('../../src/server/scavenge.ts');
 const { keyId } = require('../../src/server/debug.js');
 
 // Políčka plochy zo (skopírovaného) stavu sveta – rovnako ako getRoom + tilesView v server.js

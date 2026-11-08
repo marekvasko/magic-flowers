@@ -13,7 +13,7 @@ const { spawn } = require('child_process');
 const WebSocket = require('ws');
 
 const Players = require('../src/shared/players.js');
-const P = require('../src/server/presence.js');
+const P = require('../src/server/presence.ts');
 
 // ---------- Klient: ostatní hráči podľa pl ----------
 const pl = (id, x, y, area) => ({ id, name: 'Hráč ' + id, x, y, area: area || 'garden', j: 0 });

@@ -19,7 +19,7 @@
 const D = require('../shared/data.ts');
 const E = require('./engine.js');
 const I = require('./items.ts');
-const { areaTiles, clampPos } = require('./areas.js');
+const { areaTiles, clampPos } = require('./areas.ts');
 const Webs = require('../shared/webs.js');
 const { analyze, cornerSpots, bfs } = Webs;
 

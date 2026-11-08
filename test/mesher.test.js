@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const D = require('../src/shared/data.ts');
 const W = require('../src/shared/world3d.js');
 const MS = require('../src/shared/mesher.js');
-const A = require('../src/server/areas.js');
+const A = require('../src/server/areas.ts');
 
 // Pôvodná sieť: každá viditeľná stena kocky samostatne – (stena, bunka, materiál, zatienenie rohov)
 function naive(dims, get, visible, occ) {
