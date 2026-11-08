@@ -159,10 +159,11 @@
   };
   // Kde je majster v deň day o minúte min: null = nie je tu (leto, zima); inak { x, y, still, where: 'market' | 'hut' | 'road', to, a }
   // (to = kam kráča: 'hut' večer k babke, 'market' ráno na trh; len keď where = 'road')
-  // (a = smer chôdze ako uhol v rovine x/y). Server aj klient ho počítajú rovnako, len z času.
-  function masterAt(day, min) {
+  // (a = smer chôdze ako uhol v rovine x/y). Server aj klient ho počítajú rovnako, z času a z toho, či sú v Dielni krosná:
+  // loom = krosná kúpené – odvtedy majster do dedinky nechodí vôbec (prikrývky tkajú krosná).
+  function masterAt(day, min, loom) {
     const M = MASTER;
-    if (!M.seasons.includes(seasonOf(day))) return null;
+    if (loom || !M.seasons.includes(seasonOf(day))) return null;
     const r = M.route, at = (p, where) => ({ x: p[0], y: p[1], still: true, where, a: Math.PI / 2 });
     let t = null, back = false; // t = podiel cesty z trhu k chalúpke
     if (min >= M.leave && min < M.leave + M.walk) t = (min - M.leave) / M.walk;

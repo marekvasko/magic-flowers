@@ -27,8 +27,10 @@ function applyDielna(dielna, tiles) {
 // Hráč stojí pri Dielni / pri majstrovi (p = záznam prítomnosti)
 function near(p, x, y, r) { return !!p && p.area === 'garden' && Math.hypot(p.x - x, p.y - y) <= r; }
 function nearDielna(p) { const L = D.DIELNA.lot; return near(p, (L.x0 + L.x1 + 1) / 2, (L.y0 + L.y1 + 1) / 2, 3); }
-// Majster hodvábu v kroku tick (D.masterAt): null, ak u neho hráč p nič nevybaví, inak dôvod odmietnutia alebo ''
-function masterCheck(p, tick) {
+// Majster hodvábu v kroku tick (D.masterAt): '' = hráč p u neho môže tkať, inak dôvod odmietnutia; dielna = world.dielna (krosná)
+const MASTER_GONE = 'Odkedy sú v Dielni krosná, majster hodvábu do dedinky nechodí. Prikrývky ti utkajú krosná. 🧶';
+function masterCheck(p, tick, dielna) {
+  if (dielna && dielna.loom) return MASTER_GONE;
   const m = D.masterAt(D.dayOfTick(tick), D.minOfTick(tick));
   if (!m) return 'Majster hodvábu je preč – do dedinky chodí len na jar a na jeseň. 🧵';
   if (!m.still) return D.masterRoadText(m);
