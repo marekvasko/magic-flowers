@@ -122,6 +122,7 @@
       case 'market': S.market = m; if (S.modal && S.modal.refresh) S.modal.refresh(); break;
       case 'board': S.board = m.list; if (S.modal && S.modal.refresh) S.modal.refresh(); break;
       case 'tile': S.tiles[m.i] = m.v; break;
+      case 'pos': S.me.x = m.x; S.me.y = m.y; stopWalk(); break; // server pohyb odmietol (neprechodná zem) – späť na potvrdené miesto
       case 'tiles': S.tiles = m.tiles; S.tilesGen++; findAnchors(); break;
       case 'time':
         // Server posiela celé číslo kroku; deň a minúta sa z neho odvodia, medzi krokmi len plynulo dopočítame.
@@ -243,7 +244,8 @@
   // Hráč hrabe v tráve (si = index hľadaného políčka, inak -1) – hlinku a trávu kreslia častice vo svete (particles3d.mjs).
   const searching = o => o && o.si != null && o.si >= 0;
   function curMin() { if (window.MF_TIME && window.MF_TIME.min != null) return window.MF_TIME.min; return realMin(); }
-  function realMin() { return (S.min + Math.min(D.MIN_PER_TICK, (performance.now() - S.timeAt) / S.tickMs * D.MIN_PER_TICK)) % 1440; }
+  // server posiela čas najviac raz za sekundu; medzitým ho dopočítame z tickMs (najviac o 1,5 s dopredu, keby správa meškala)
+  function realMin() { const el = Math.min(1500, performance.now() - S.timeAt); return (S.min + el / S.tickMs * D.MIN_PER_TICK) % 1440; }
   function season() { return window.MF_TIME && window.MF_TIME.season != null ? window.MF_TIME.season : D.seasonOf(S.day); }
   const GLACIER_MAX = D.glacierLevels(D.buildMountains()); // pôvodná výška ľadu na políčkach hôr
   function tileAt(x, y) { return (x < 0 || y < 0 || x >= S.W || y >= S.H) ? null : S.tiles[y * S.W + x]; }

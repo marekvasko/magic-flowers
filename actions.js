@@ -17,13 +17,16 @@ const Events = require('./events.js');
 
 const TPD = D.TICKS_PER_DAY;
 const HOUSE = { x: 3.5, y: 28.5 };
+const DANCE_MS = 6500; // ako dlho po emócii „tanec“ sa hráč ráta za tancujúceho
+const SCAV_MOVE = 0.35; // o koľko sa smie hľadajúci hráč pohnúť, kým hľadanie preruší
 const season = tick => D.seasonOf(D.dayOfTick(tick));
 const toast$ = (to, text, kind) => ({ to, t: 'toast', text, kind: kind || 'info' });
 const fx$ = (area, k, x, y, extra) => Object.assign({ to: E.area(area), t: 'fx', k, x, y }, extra || {});
 const input = (type, data) => ({ type, data });
 
 // ---------- Prítomnosť ----------
-// Záznam prítomnosti: { key, name, area, x, y, scav } – snímka pripojeného hráča (server: presenceOf)
+// Záznam prítomnosti: { key, name, area, x, y, scav: { i, n, px, py } | null, emote, emoteAt } – snímka pripojeného hráča (server: presenceOf)
+function inRing(p) { if (!p || p.area !== 'garden') return false; const x = Math.floor(p.x), y = Math.floor(p.y); return x >= D.RING.x0 && x <= D.RING.x1 && y >= D.RING.y0 && y <= D.RING.y1; }
 function nearHouse(p) { return !!p && p.area === 'garden' && Math.hypot(p.x - HOUSE.x, p.y - HOUSE.y) <= 3.5; }
 function nearIcehouse(p) {
   const L = D.ICEHOUSE.lot;
@@ -67,6 +70,37 @@ function rain(s, ctx) {
 }
 // Hľadá sa s čímkoľvek okrem motyky (kope) a elixírov (dajú sa použiť kdekoľvek)
 function searchesWith(item) { return item !== 'hoe' && !item.startsWith('po_'); }
+// Rohy tela hráča na (x, y): indexy políčok plochy, na ktorých telo leží (roh tesne za okrajom plochy sa ráta k okrajovému políčku –
+// stred je v ploche vďaka clampPos a klient sa k okraju dostane rovnako blízko)
+function bodyTiles(area, x, y) {
+  const { w, h } = D.areaSize(area), out = new Set();
+  for (const dy of [-D.BODY.ry, D.BODY.ry]) for (const dx of [-D.BODY.rx, D.BODY.rx]) {
+    const tx = Math.max(0, Math.min(w - 1, Math.floor(x + dx))), ty = Math.max(0, Math.min(h - 1, Math.floor(y + dy)));
+    out.add(ty * w + tx);
+  }
+  return out;
+}
+
+// ---------- Uloženie hráča ----------
+// Nový hráč začína chudobne: pár semienok sezónneho kvetu a malá krhla (povolenie na pole je spoločné pre záhradu).
+// start = { coins, rep } zo serverového prostredia (v náhľadoch viac), aby bol záznam v denníku úplný.
+function newSave(tick, start) {
+  const se = season(tick);
+  const sp = Econ.PLANTABLE.filter(k => !D.SPECIES[k].strict && D.SPECIES[k].seasons.includes(se))
+    .sort((a, b) => D.SPECIES[a].seed - D.SPECIES[b].seed)[0];
+  return {
+    coins: start.coins, water: 5, inv: { hoe: 1, can: 1, ['seed_' + sp]: 4 },
+    recipes: [], seen: [sp], vily: 0, look: null, talked: false, rep: start.rep, up: { can: 0, composter: 0 },
+    x: D.SPAWN.x, y: D.SPAWN.y, area: 'garden'
+  };
+}
+// Hráči zo starších verzií hry: nezoberieme im to, čo mali (krhla na 25; pole prešlo na záhradu v migrate).
+function migrateSave(sv, tick) {
+  if (!sv.up) sv.up = { can: 2, composter: 0 };
+  if (sv.rep == null) sv.rep = 0;
+  sv.water = Math.min(sv.water || 0, Econ.canCap(sv));
+  I.syncAll(I.playerC(sv), tick); // kvety bez várok dostanú vek 0 (čerstvo odrezané)
+}
 
 // ---------- Rozklad správy 'act' ----------
 // Z kliknutia na políčko (x, y) s predmetom item urobí konkrétny vstup { type, data }, alebo { toast } (odmietnutie
@@ -135,6 +169,95 @@ function resolveAct(world, presence, me, m) {
 
 // ---------- Návrhy ----------
 const PROPOSERS = {
+  // --- pohyb (d: { key, x, y }): poloha je stav sveta (pos:<kľúč>); prítomnosť ju už má, tu sa overí a zapíše ---
+  // Overenie: v ploche, celé telo na priechodnej zemi (rovnaké pravidlo ako klient, bez výšky skoku, ktorú server nepozná);
+  // dvaja hráči smú stáť na jednom políčku. Odmietnutý pohyb server vráti hráčovi ako opravu polohy (správa pos).
+  // Brána: prechod do inej plochy zapíše príchodové miesto a pošle pokyn travel. Hľadajúci hráč, ktorý sa pohol, prestane hľadať.
+  pos: {
+    keys(d, w) {
+      const sv = w.saves && w.saves[d.key], area = sv && D.AREAS.includes(sv.area) ? sv.area : 'garden';
+      const reads = new Set(), { w: aw } = D.areaSize(area);
+      if (Number.isFinite(+d.x) && Number.isFinite(+d.y)) {
+        const p = Areas.clampPos(area, +d.x, +d.y);
+        for (const i of bodyTiles(area, p.x, p.y)) reads.add('tile:' + area + ':' + i);
+        reads.add('tile:' + area + ':' + (Math.floor(p.y) * aw + Math.floor(p.x)));
+      }
+      return { writes: ['pos:' + d.key], reads: [...reads] };
+    },
+    run(s, d, ctx) {
+      const pos = s['pos:' + d.key];
+      if (!pos) return ctx.reject(null);
+      const area = D.AREAS.includes(pos.area) ? pos.area : 'garden';
+      if (!(Number.isFinite(+d.x) && Number.isFinite(+d.y))) return ctx.reject(null);
+      const p = Areas.clampPos(area, +d.x, +d.y);
+      const body = bodyTiles(area, p.x, p.y);
+      for (const i of body) if (!D.passable(s['tile:' + area + ':' + i])) return ctx.reject(null);
+      pos.x = p.x; pos.y = p.y; pos.lastTick = ctx.tick;
+      const me = ctx.actor;
+      if (me && me.scav && Math.hypot(p.x - me.scav.px, p.y - me.scav.py) > SCAV_MOVE) {
+        ctx.cancel('scavDone:' + d.key);
+        ctx.emit({ to: d.key, t: 'scavDone' });
+        ctx.emit(toast$(d.key, 'Pohol(a) si sa skôr, než si dohľadal(a).'));
+      }
+      const { w: aw } = D.areaSize(area), under = s['tile:' + area + ':' + (Math.floor(p.y) * aw + Math.floor(p.x))];
+      if (under && under.g === 'gate') {
+        const g = D.gateAt(area, Math.floor(p.x), Math.floor(p.y)), a = g && D.arrival(area, g.to);
+        if (a) {
+          if (me && me.scav) { ctx.cancel('scavDone:' + d.key); ctx.emit({ to: d.key, t: 'scavDone' }); }
+          pos.area = g.to; pos.x = a.x; pos.y = a.y;
+          ctx.emit({ to: d.key, t: 'travel', from: area, area: g.to });
+        }
+      }
+    }
+  },
+  // hráč je pripojený (každých 15 s) / odišiel: „naposledy videný“ (d: { key })
+  seen: { keys: d => ({ writes: ['pos:' + d.key] }), run(s, d, ctx) { const pos = s['pos:' + d.key]; if (!pos) return ctx.reject(null); pos.lastTick = ctx.tick; } },
+  leave: { keys: d => ({ writes: ['pos:' + d.key] }), run(s, d, ctx) { const pos = s['pos:' + d.key]; if (!pos) return ctx.reject(null); pos.lastTick = ctx.tick; } },
+  // pripojenie (d: { key, name, look, start: { coins, rep }, quick }): nové alebo prevedené uloženie, vzhľad, uvítanie;
+  // server po vykonaní pošle hráčovi svet (pokyn joined). quick = rýchle znovupripojenie (bez hlásení)
+  join: {
+    keys: (d, w) => ({ writes: ['save:' + d.key, 'maxRep'], reads: w.saves && w.saves[d.key] ? ['pos:' + d.key] : [] }),
+    run(s, d, ctx) {
+      let sv = s['save:' + d.key];
+      const fresh = !sv;
+      if (fresh) { sv = s['save:' + d.key] = newSave(ctx.tick, d.start || { coins: 30, rep: 0 }); s.maxRep = Math.max(s.maxRep || 0, sv.rep); }
+      else migrateSave(sv, ctx.tick);
+      sv.look = d.look && typeof d.look === 'object' ? { shirt: String(d.look.shirt || '#4a90d9').slice(0, 9), hair: String(d.look.hair || '#5b3a1a').slice(0, 9), hat: !!d.look.hat } : sv.look;
+      const pos = s['pos:' + d.key], area = pos && D.AREAS.includes(pos.area) ? pos.area : 'garden';
+      ctx.emit({ to: d.key, t: 'joined' });
+      if (!d.quick) ctx.emit(toast$(E.ALL, area === 'garden' ? `${d.name} prišiel(a) do záhrady 🌼` : `${d.name} prišiel(a) – je ${D.AREA_IN[area]} ${D.AREA_FX[area].icon}`));
+      const days = d.quick || !pos || pos.lastTick == null ? 0 : Math.max(0, Math.floor((ctx.tick - pos.lastTick) / TPD));
+      if (days) ctx.emit(toast$(d.key, `Kým si bol(a) preč, ubehlo ${days} ${days === 1 ? 'deň' : days < 5 ? 'dni' : 'dní'}. Pozri sa, čo sa v záhrade zmenilo. 🌱`, 'day'));
+      if (!sv.talked) { sv.talked = true; ctx.emit(toast$(d.key, 'Vitaj! Začínaš s pár semienkami a prázdnym vreckom. Pri babke na severe je nástenka so zákazkami. 👵', 'gift')); }
+    }
+  },
+  // tanec v kruhu z húb (d: { key, now }): v noci sa k dvom tancujúcim (alebo jednému, ktorý vidí víly) zlietnu víly,
+  // raz za noc; now = reálny čas správy (prítomnosť má emoteAt v ms), aby záznam v denníku bol úplný
+  dance: {
+    keys(d, w, presence) {
+      const dancers = (presence || []).filter(p => inRing(p) && p.emote === 'dance' && d.now - p.emoteAt < DANCE_MS);
+      return { writes: ['fairyNight', ...new Set(dancers.map(p => 'save:' + p.key))] };
+    },
+    run(s, d, ctx) {
+      const me = who(ctx), tick = ctx.tick, min = D.minOfTick(tick);
+      if (!inRing(me)) return ctx.reject(null);
+      if (!D.isNight(min)) return ctx.reject('Huby pokojne spia. Možno v noci… 🌙');
+      const day = D.dayOfTick(tick), nightId = min / 60 >= 12 ? day : day - 1;
+      if (s.fairyNight === nightId) return ctx.reject('Víly už dnes v noci odleteli. Príď zajtra. 🧚');
+      const dancers = (ctx.presence || []).filter(p => inRing(p) && p.emote === 'dance' && d.now - p.emoteAt < DANCE_MS && s['save:' + p.key]);
+      const seeFairies = dancers.some(p => s['save:' + p.key].vily > tick);
+      if (dancers.length >= 2 || (dancers.length >= 1 && seeFairies)) {
+        s.fairyNight = nightId;
+        for (const p of dancers) { give(s['save:' + p.key], 'seed_papradie', 1, tick); give(s['save:' + p.key], 'seed_duhova', 1, tick); }
+        ctx.emit(fx$('garden', 'fairies', 3.5, 3.5));
+        ctx.emit(toast$(E.ALL, '🧚✨ Z húb sa vzniesli víly a roztancovali sa s ' + dancers.map(p => p.name).join(' a ') + '! Každému darovali papraďové semienko a dúhové semienko.', 'magic'));
+      } else {
+        ctx.emit(fx$('garden', 'glimmer', 3.5, 3.5));
+        ctx.emit(toast$(d.key, 'Huby sa jemne rozžiarili… akoby čakali, kým sa k tancu pridá ešte niekto. ✨', 'magic'));
+      }
+    }
+  },
+
   // --- políčka záhrady (d: { key, i }) ---
   till: {
     keys: d => ({ writes: ['tile:garden:' + d.i, 'plotsUsed'], reads: ['up', 'weather'] }),
@@ -561,4 +684,4 @@ function storeCheck(id, ctx) {
   if (!nearHouse(who(ctx))) ctx.reject('Sklad je v domčeku – podíď bližšie.');
 }
 
-module.exports = { PROPOSERS, resolveAct, searchesWith, nearHouse, nearIcehouse, playerAt, HOUSE };
+module.exports = { PROPOSERS, resolveAct, searchesWith, nearHouse, nearIcehouse, playerAt, inRing, bodyTiles, newSave, migrateSave, HOUSE };

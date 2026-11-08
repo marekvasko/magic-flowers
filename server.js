@@ -256,27 +256,6 @@ function saveRoom(room, sync) {
   fs.writeFile(tmp, data, err => { if (err) return console.error('save', err); fs.rename(tmp, file, () => {}); });
 }
 
-function season(room) { return D.seasonOf(room.day); }
-function hour(room) { return room.min / 60; }
-
-// Nový hráč začína chudobne: pár semienok sezónneho kvetu a malá krhla (povolenie na pole je spoločné pre záhradu).
-function newSave(room) {
-  const se = season(room);
-  const sp = Econ.PLANTABLE.filter(k => !D.SPECIES[k].strict && D.SPECIES[k].seasons.includes(se))
-    .sort((a, b) => D.SPECIES[a].seed - D.SPECIES[b].seed)[0];
-  return {
-    coins: START.coins, water: 5, inv: { hoe: 1, can: 1, ['seed_' + sp]: 4 },
-    recipes: [], seen: [sp], vily: 0, look: null, talked: false, rep: START.rep, up: { can: 0, composter: 0 }
-  };
-}
-// Hráči zo starších verzií hry: nezoberieme im to, čo mali (krhla na 25; pole prešlo na záhradu v migrate).
-function migrateSave(sv, room) {
-  if (!sv.up) sv.up = { can: 2, composter: 0 };
-  if (sv.rep == null) sv.rep = 0;
-  sv.water = Math.min(sv.water || 0, Econ.canCap(sv));
-  I.syncAll(I.playerC(sv), room.tick); // kvety bez várok dostanú vek 0 (čerstvo odrezané)
-}
-
 // ---------- Komunikácia ----------
 function send(ws, msg) { if (ws.readyState === 1) ws.send(JSON.stringify(msg)); }
 function broadcast(room, msg) { const s = JSON.stringify(msg); for (const p of room.players.values()) if (p.ws.readyState === 1) p.ws.send(s); }
@@ -309,13 +288,10 @@ function roomInfo(room) {
     storageRate: I.storageRate(room.icehouse), icehouse: room.icehouse, tick: room.tick, names: [...room.players.values()].map(p => p.name)
   };
 }
-// Snímka toho, čo nie je stav sveta, ale návrhy to potrebujú: kto je pripojený, kde stojí a či hľadá v tráve
+// Snímka toho, čo nie je stav sveta, ale návrhy to potrebujú: kto je pripojený, kde stojí, či hľadá v tráve (a odkiaľ), emócia (tanec)
 function presenceOf(room) {
-  return [...room.players.values()].map(p => ({ key: p.key, name: p.name, area: p.area, x: p.x, y: p.y, scav: p.scav ? { i: p.scav.i, n: p.scav.n } : null }));
+  return [...room.players.values()].map(p => ({ key: p.key, name: p.name, area: p.area, x: p.x, y: p.y, scav: p.scav ? { i: p.scav.i, n: p.scav.n, px: p.scav.px, py: p.scav.py } : null, emote: p.emote, emoteAt: p.emoteAt }));
 }
-
-// Všetky zmeny inventára idú cez items.js (kvety majú várky s vekom). take vráti odobraté várky alebo null.
-function give(pl, id, n, batches) { I.addItems(I.playerC(pl.save), id, n, pl.room.tick, batches); }
 
 function playerByKey(room, key) { for (const p of room.players.values()) if (p.key === key) return p; return null; }
 
@@ -329,10 +305,21 @@ const SIM = {
 // E.area(plocha) hráčom na ploche, inak kľúč hráča) a obnova toho, čo sa podľa zapísaných kľúčov zmenilo –
 // políčka (zmena typu zeme, napr. stavba, pošle celú plochu – klient vtedy prestavia 3D svet), batohy (me), trh,
 // nástenka, sklad a ľadovňa (room), povolenie na pole (plots), počasie (time).
-// Správy scavStart / scavDone sú pokyny pre prítomnosť (hráč začal / prestal hľadať), nie správy klientovi.
+// Správy scavStart / scavDone / travel / joined sú pokyny pre prítomnosť (hráč začal / prestal hľadať, prešiel do inej
+// plochy, pripojil sa), nie správy klientovi. Odmietnutý pohyb vráti prítomnosť na potvrdené miesto a pošle hráčovi opravu.
 function notify(room, out) {
   if (!room.players.size) { if (out.applied.length) room.dirty = true; return; }
-  for (const r of out.rejected) { const pl = r.input.actor != null ? playerByKey(room, r.input.actor) : null; if (pl && r.reject) toast(pl, r.reject); }
+  for (const r of out.rejected) {
+    const pl = r.input.actor != null ? playerByKey(room, r.input.actor) : null;
+    if (!pl) continue;
+    if (r.reject) toast(pl, r.reject);
+    if (r.input.type === 'pos') { pl.x = pl.save.x; pl.y = pl.save.y; send(pl.ws, { t: 'pos', x: pl.x, y: pl.y }); }
+  }
+  for (const p of out.entry.proposals) { // pripojenie, ktoré zlyhalo chybou: klient by čakal na svet donekonečna
+    if (p.outcome !== 'error' || p.type !== 'join') continue;
+    const inp = out.entry.inputs.find(i => i.id === p.id), pl = inp && playerByKey(room, inp.actor);
+    if (pl) { send(pl.ws, { t: 'error', text: 'Pripojenie zlyhalo. Skús to znova.' }); pl.ws.close(); }
+  }
   if (!out.applied.length) return;
   room.dirty = true;
   const tiles = {}, me = new Set(), whole = new Set();
@@ -368,6 +355,8 @@ function notify(room, out) {
     if (body.t === 'me') me.add(to);
     else if (body.t === 'scavDone') pl.scav = null;
     else if (body.t === 'scavStart') pl.scav = { i: body.i, n: body.n, px: pl.x, py: pl.y, seeds: body.seeds };
+    else if (body.t === 'travel') arrived(pl, body.from, body.area);
+    else if (body.t === 'joined') { joined(pl); me.add(to); }
     else send(pl.ws, body);
   }
   if (everyone) for (const p of room.players.values()) sendMe(p);
@@ -386,6 +375,7 @@ function flushEconomy(room) {
 // ---------- Spánok ----------
 // Keď spia všetci pripojení hráči, svet pretočí noc zrýchlene (FF_STEPS krokov za 100 ms) až do 6:00.
 const FF_STEPS = 5 * TICK_SCALE; // noc (12 h) prebehne za ~3 s
+const TIME_MS = 1000; // čas sa klientom posiela najviac raz za sekundu (krokov je ~10 za sekundu); klient si ho medzitým dopočíta
 const nearHouse = Actions.nearHouse;
 function sleepMsg(room) {
   const ps = [...room.players.values()];
@@ -415,15 +405,17 @@ function timeMsg(room) {
 
 // ---------- Akcie hráčov ----------
 // Správy hráčov nič nemenia hneď: handler socketu ich len overí a vloží do schránky miestnosti (room.inbox, poradie seq,
-// krok príchodu tick). Rámec (frame, raz za 100 ms) ich vyhodnotí v rozhodovacom kole: pohyb sa zlúči (platí posledný)
-// a použije priamo (prítomnosť; fáza 4), správy o prítomnosti (emócie, spánok, nastavenia, chat) sa vybavia priamo
-// a všetko, čo mení herný stav, sa stane vstupom enginu a jednou dávkou akcií v aktuálnom kroku (actions.js).
+// krok príchodu tick). Rámec (frame, raz za 100 ms) ich vyhodnotí v rozhodovacom kole: pohyb sa zlúči (platí posledný),
+// hneď sa premietne do prítomnosti a ako vstup pos ho engine overí a zapíše do stavu (poloha je stav sveta),
+// správy len o prítomnosti (spánok, skok, nastavenia, chat) sa vybavia priamo a všetko ostatné (akcie, pripojenie,
+// odchod, tanec) sa stane vstupom enginu a jednou dávkou v aktuálnom kroku (actions.js).
 // Z jedného hráča prejde v rámci najviac jedna akcia na políčku (act); ďalšie počkajú na ďalší rámec.
 // Udalosti a akcie nie sú nikdy v jednej dávke: dávka akcií sa vykoná v kroku, v ktorom správy prišli (svet sa medzi
 // rámcami nehýbe, takže to je práve aktuálny krok), až potom rámec posunie čas.
 const INBOX_MAX = 2000, PLAYER_INBOX_MAX = 100, DEFER_MAX = 3; // ochrana pred zaplavením: čo sa nezmestí (na svet, na hráča, odložené akcie), sa zahodí
 const MESSAGES = new Set(['move', 'act', 'jump', 'sleep', 'emote', 'buy', 'sell', 'upgrade', 'ctake', 'cdeliver', 'brew', 'wish', 'settings', 'store', 'unstore', 'compostWilted', 'buyTool', 'build', 'icehouse', 'chat']);
-function inRing(p) { if (p.area !== 'garden') return false; const x = Math.floor(p.x), y = Math.floor(p.y); return x >= D.RING.x0 && x <= D.RING.x1 && y >= D.RING.y0 && y <= D.RING.y1; }
+// Správa servera samému sebe do schránky (odchod, „naposledy videný“) – nie od klienta
+function enqueue(room, pl, m) { room.inbox.push({ pl, m, seq: ++room.inSeq, tick: room.tick, internal: true }); }
 
 // Vstup enginu z akcie hráča: id podľa poradia v schránke, actor = kľúč hráča (aj v data, lebo kľúče návrhu ho potrebujú)
 function actionInput(room, pl, seq, type, data) {
@@ -438,21 +430,16 @@ function stopScavenge(pl, msg, inputs) {
   if (msg) toast(pl, msg);
 }
 
-// Prechod do inej plochy: hráč dostane políčka novej plochy (aj jej veľkosť) a príchodové miesto.
-// seq rozlíši staré správy o pohybe, ktoré klient poslal ešte z predchádzajúcej plochy.
+// Prechod do inej plochy (pokyn travel z návrhu pos): poloha je už v uložení; hráč dostane políčka novej plochy
+// (aj jej veľkosť) a príchodové miesto. seq rozlíši staré správy o pohybe, ktoré klient poslal ešte z predchádzajúcej plochy.
 function areaMsg(pl) {
   const { w, h } = D.areaSize(pl.area);
   return { t: 'area', area: pl.area, seq: pl.areaSeq, w, h, tiles: tilesView(pl.room, pl.area), x: pl.x, y: pl.y };
 }
-function travel(pl, to, inputs) {
-  const a = D.arrival(pl.area, to);
-  if (!a) return;
-  if (pl.scav) stopScavenge(pl, null, inputs);
-  const from = pl.area;
-  pl.area = pl.save.area = to;
-  pl.x = pl.save.x = a.x; pl.y = pl.save.y = a.y;
+function arrived(pl, from, to) {
+  pl.area = to; pl.x = pl.save.x; pl.y = pl.save.y;
   pl.areaSeq++;
-  pl.emote = null;
+  pl.emote = null; pl.scav = null;
   send(pl.ws, areaMsg(pl));
   toast(pl, to === 'hory'
     ? '🏔️ Vystúpil(a) si do hôr. Na ľadovci pod skalami vysekáš krompáčom ľad. Chodníkom dole sa vrátiš do záhrady.'
@@ -465,23 +452,32 @@ function travel(pl, to, inputs) {
           : '🌳 Prišiel(a) si do Lesa na pomedzí. Na juhu je lúka, na sever les hustne a stmieva sa… Na západe sa vrátiš do záhrady, na severe vedie chodník do Lesa divov.')
         : from === 'pomedzie' ? '🏡 Vrátil(a) si sa z lesa do záhrady.' : '🏡 Vrátil(a) si sa do záhrady.', 'day');
 }
+// Pripojenie vykonané (pokyn joined z návrhu join): hráč dostane svet, čas, trh, nástenku, batoh a stav záhrady
+function joined(pl) {
+  const room = pl.room;
+  pl.joining = false;
+  send(pl.ws, { t: 'welcome', id: pl.id, room: room.id, w: D.areaSize(pl.area).w, h: D.areaSize(pl.area).h, tiles: tilesView(room, pl.area), area: pl.area, seq: pl.areaSeq, x: pl.x, y: pl.y });
+  send(pl.ws, timeMsg(room));
+  send(pl.ws, Econ.marketView(room.market, room.tick, room.events));
+  send(pl.ws, Econ.boardView(room.contracts));
+  broadcast(room, roomInfo(room));
+  broadcast(room, sleepMsg(room));
+}
 
-// Pohyb (zatiaľ priamo do prítomnosti; fáza 4 ho urobí stavom): poloha, smer, plazenie, lampáš; prechod cez bránu
-function applyMove(pl, m, inputs) {
-  const room = pl.room, sv = pl.save;
-  if (pl.sleep) return; // spiaci hráč leží v posteli
-  if ((m.ar | 0) !== pl.areaSeq) return; // pohyb ešte z predchádzajúcej plochy
-  if (!(typeof m.x === 'number' && typeof m.y === 'number' && isFinite(m.x) && isFinite(m.y))) return;
+// Pohyb: smer, plazenie a lampáš sú len prítomnosť (ozdoba); poloha sa premietne do prítomnosti hneď (vysielanie polôh
+// 10× za sekundu) a zároveň ide ako vstup pos do enginu, ktorý ju overí a zapíše do uloženia (poloha je stav sveta).
+function moveInput(room, pl, e) {
+  const m = e.m, sv = pl.save;
+  if (pl.sleep || pl.joining) return null; // spiaci hráč leží v posteli
+  if ((m.ar | 0) !== pl.areaSeq) return null; // pohyb ešte z predchádzajúcej plochy
+  if (!(typeof m.x === 'number' && typeof m.y === 'number' && isFinite(m.x) && isFinite(m.y))) return null;
   const pos = Areas.clampPos(pl.area, m.x, m.y); // z plochy sa vyjsť nedá – len cez prechod
   pl.x = pos.x; pl.y = pos.y;
   pl.dir = m.dir | 0;
   if (typeof m.a === 'number' && isFinite(m.a)) pl.a = +m.a.toFixed(3); // presný smer pohľadu (3D: 8 smerov)
   pl.cr = !!m.cr; // plazí sa
   pl.lp = !!m.lp && !!sv.inv.lamp; // drží lampáš (svieti)
-  sv.x = pl.x; sv.y = pl.y;
-  if (pl.scav && Math.hypot(pl.x - pl.scav.px, pl.y - pl.scav.py) > 0.35) stopScavenge(pl, 'Pohol(a) si sa skôr, než si dohľadal(a).', inputs);
-  const to = Areas.gateTarget(Areas.areaTiles(room, pl.area), pl.area, pl.x, pl.y);
-  if (to) travel(pl, to, inputs);
+  return actionInput(room, pl, e.seq, 'pos', { x: pos.x, y: pos.y });
 }
 
 // Správa, ktorá mení herný stav → vstup enginu (alebo null). Prítomnosť presence je snímka po pohyboch tohto rámca.
@@ -489,6 +485,8 @@ function toInput(room, pl, e, presence, inputs) {
   const m = e.m, sv = pl.save, key = pl.key;
   const mk = (type, data) => actionInput(room, pl, e.seq, type, data);
   switch (m.t) {
+    case 'seen': case 'leave': return e.internal ? mk(m.t, {}) : null;
+    case 'join': return e.internal ? mk('join', { name: m.name, look: m.look, start: START, quick: !!m.quick }) : null;
     case 'act': {
       if (pl.sleep) return null;
       const me = presence.find(p => p.key === key);
@@ -543,10 +541,10 @@ function presenceMessage(room, pl, m, inputs) {
       }
       break;
     }
-    case 'emote': {
+    case 'emote': { // emócia je prítomnosť; tanec v kruhu z húb je navyše vstup enginu (víly) s časom správy
       const e = ['dance', 'wave', 'heart', 'laugh', 'flower'].includes(m.e) ? m.e : 'wave';
       pl.emote = e; pl.emoteAt = Date.now();
-      if (e === 'dance') checkFairies(room, pl);
+      if (e === 'dance' && Actions.inRing(pl)) inputs.push(actionInput(room, pl, ++room.inSeq, 'dance', { now: pl.emoteAt }));
       break;
     }
     case 'settings': {
@@ -575,12 +573,13 @@ function frame(room) {
   room.inbox = [];
   const alive = e => room.players.get(e.pl.id) === e.pl;
   const inputs = [], moves = new Map(), acted = new Map(), later = [];
-  for (const e of list) { e.pl.inboxN = 0; if (alive(e) && e.m.t === 'move') moves.set(e.pl, e.m); } // platí posledný pohyb
-  for (const [pl, m] of moves) applyMove(pl, m, inputs);
+  for (const e of list) { e.pl.inboxN = 0; if (alive(e) && e.m.t === 'move') moves.set(e.pl, e); } // platí posledný pohyb
+  for (const [pl, e] of moves) { const inp = moveInput(room, pl, e); if (inp) inputs.push(inp); }
   const presence = presenceOf(room);
   for (const e of list) {
-    if (!alive(e) || e.m.t === 'move') continue;
+    if (e.m.t === 'move' || (!alive(e) && e.m.t !== 'leave')) continue;
     const pl = e.pl, m = e.m;
+    if (pl.joining && !e.internal) { later.push(e); pl.inboxN++; continue; } // kým nie je pripojený, správy počkajú
     if (m.t === 'act') { const n = acted.get(pl) || 0; acted.set(pl, n + 1); if (n) { if (n <= DEFER_MAX) { later.push(e); pl.inboxN++; } continue; } }
     if (['jump', 'sleep', 'emote', 'settings', 'chat'].includes(m.t)) { presenceMessage(room, pl, m, inputs); continue; }
     let inp = null;
@@ -589,27 +588,6 @@ function frame(room) {
   }
   room.inbox = later.concat(room.inbox);
   if (inputs.length) E.commitBatch(room, inputs, SIM);
-}
-
-function checkFairies(room, pl) {
-  if (!inRing(pl)) return;
-  if (!D.isNight(room.min)) return toast(pl, 'Huby pokojne spia. Možno v noci… 🌙');
-  const nightId = hour(room) >= 12 ? room.day : room.day - 1;
-  if (room.fairyNight === nightId) return toast(pl, 'Víly už dnes v noci odleteli. Príď zajtra. 🧚');
-  const now = Date.now();
-  const dancers = [...room.players.values()].filter(p => inRing(p) && p.emote === 'dance' && now - p.emoteAt < 6500);
-  const seeFairies = dancers.some(p => p.save.vily > room.tick);
-  if (dancers.length >= 2 || (dancers.length >= 1 && seeFairies)) {
-    room.fairyNight = nightId;
-    for (const d of dancers) { give(d, 'seed_papradie', 1); give(d, 'seed_duhova', 1); sendMe(d); }
-    fx(room, 'fairies', 3.5, 3.5);
-    toastAll(room, '🧚✨ Z húb sa vzniesli víly a roztancovali sa s ' + dancers.map(d => d.name).join(' a ') +
-      '! Každému darovali papraďové semienko a dúhové semienko.', 'magic');
-    room.dirty = true;
-  } else {
-    fx(room, 'glimmer', 3.5, 3.5);
-    toast(pl, 'Huby sa jemne rozžiarili… akoby čakali, kým sa k tancu pridá ešte niekto. ✨', 'magic');
-  }
 }
 
 // ---------- WebSocket ----------
@@ -632,33 +610,18 @@ wss.on('connection', ws => {
       // Rýchle znovupripojenie: nahrádza ešte živé (často už mŕtve, len nezistené) spojenie
       // alebo prichádza krátko po odchode. Vtedy nehlásime príchod ani „kým si bol(a) preč“.
       let quick = false;
-      for (const o of room.players.values()) if (o.key === key) { o.save.lastTick = room.tick; o.ws.close(); room.players.delete(o.id); quick = true; }
+      for (const o of room.players.values()) if (o.key === key) { o.ws.close(); room.players.delete(o.id); enqueue(room, o, { t: 'leave' }); quick = true; }
       if (room.players.size >= MAX_PLAYERS) { send(ws, { t: 'error', text: 'Záhrada je plná (max ' + MAX_PLAYERS + ' hráči).' }); return ws.close(); }
       if (leaving.back(roomId + ':' + key)) quick = true;
-      if (!room.saves[key]) { room.saves[key] = newSave(room); room.maxRep = Math.max(room.maxRep || 0, START.rep); }
+      // prítomnosť hneď (poloha z uloženia alebo štart); uloženie založí či prevedie návrh join a až potom hráč dostane svet
       const sv = room.saves[key];
-      migrateSave(sv, room);
-      const look = m.look && typeof m.look === 'object' ? { shirt: String(m.look.shirt || '#4a90d9').slice(0, 9), hair: String(m.look.hair || '#5b3a1a').slice(0, 9), hat: !!m.look.hat } : sv.look;
-      sv.look = look;
-      const area = D.AREAS.includes(sv.area) ? sv.area : 'garden';
-      const pos = Areas.clampPos(area, sv.x || D.SPAWN.x, sv.y || D.SPAWN.y);
-      pl = { id: nextId++, key, name, ws, room, save: sv, area, areaSeq: 0, x: pos.x, y: pos.y, dir: 0, emote: null, emoteAt: 0, look };
+      const area = sv && D.AREAS.includes(sv.area) ? sv.area : 'garden';
+      const pos = Areas.clampPos(area, (sv && sv.x) || D.SPAWN.x, (sv && sv.y) || D.SPAWN.y);
+      pl = { id: nextId++, key, name, ws, room, get save() { return room.saves[key]; }, area, areaSeq: 0, x: pos.x, y: pos.y, dir: 0, emote: null, emoteAt: 0, look: null, joining: true };
       room.players.set(pl.id, pl);
-      send(ws, {
-        t: 'welcome', id: pl.id, room: roomId, w: D.areaSize(area).w, h: D.areaSize(area).h, tiles: tilesView(room, area), area, seq: pl.areaSeq, x: pl.x, y: pl.y
-      });
-      send(ws, timeMsg(room));
-      send(ws, Econ.marketView(room.market, room.tick, room.events));
-      send(ws, Econ.boardView(room.contracts));
-      sendMe(pl);
-      broadcast(room, roomInfo(room));
-      broadcast(room, sleepMsg(room));
-      if (!quick) toastAll(room, area === 'garden' ? `${name} prišiel(a) do záhrady 🌼` : `${name} prišiel(a) – je ${D.AREA_IN[area]} ${D.AREA_FX[area].icon}`);
-      const days = quick ? 0 : P.awayDays(sv.lastTick, room.tick, TPD);
-      if (days) {
-        toast(pl, `Kým si bol(a) preč, ubehlo ${days} ${days === 1 ? 'deň' : days < 5 ? 'dni' : 'dní'}. Pozri sa, čo sa v záhrade zmenilo. 🌱`, 'day');
-      }
-      if (!sv.talked) { sv.talked = true; toast(pl, 'Vitaj! Začínaš s pár semienkami a prázdnym vreckom. Pri babke na severe je nástenka so zákazkami. 👵', 'gift'); }
+      const look = m.look && typeof m.look === 'object' ? { shirt: String(m.look.shirt || ''), hair: String(m.look.hair || ''), hat: !!m.look.hat } : null;
+      pl.look = look || (sv && sv.look) || null;
+      enqueue(room, pl, { t: 'join', name, look, quick });
       return;
     }
     if (!pl || !MESSAGES.has(m.t)) return;
@@ -672,14 +635,12 @@ wss.on('connection', ws => {
     const room = pl.room;
     if (room.players.get(pl.id) === pl) {
       room.players.delete(pl.id);
-      pl.save.lastTick = room.tick;
+      enqueue(room, pl, { t: 'leave' }); // „naposledy videný“ zapíše návrh leave
       const name = pl.name;
       leaving.leave(room.id + ':' + pl.key, () => toastAll(room, `${name} odišiel(a) zo záhrady.`));
       broadcast(room, roomInfo(room));
       broadcast(room, sleepMsg(room));
       checkSleep(room); // ak odišiel posledný bdejúci, ostatní môžu zaspať
-      room.dirty = true;
-      saveRoom(room);
     }
   });
 });
@@ -693,7 +654,7 @@ setInterval(() => {
     if (room.ff) { fastForward(room, now); flushEconomy(room); continue; }
     if (room.mode === 'paused' && !room.players.size) { room.wall = now; continue; }
     const n = E.advance(room, now, SIM, 50000);
-    if (n) { room.dirty = true; if (room.players.size) broadcast(room, timeMsg(room)); }
+    if (n) { room.dirty = true; if (room.players.size && now - (room.timeAt || 0) >= TIME_MS) { room.timeAt = now; broadcast(room, timeMsg(room)); } }
     flushEconomy(room);
   }
 }, 100);
@@ -709,14 +670,18 @@ setInterval(() => {
     for (const area of D.AREAS) broadcastArea(room, area, { t: 'pl', list: list.filter(p => p.area === area) });
   }
 }, 100);
-// Priebežne ukladáme aj „naposledy videný“ – po páde servera tak dni neprítomnosti sedia (±15 s).
+// Priebežne ukladáme aj „naposledy videný“ (vstup seen) – po páde servera tak dni neprítomnosti sedia (±15 s).
 setInterval(() => {
-  for (const room of rooms.values()) { for (const p of room.players.values()) p.save.lastTick = room.tick; saveRoom(room); }
+  for (const room of rooms.values()) { for (const p of room.players.values()) if (!p.joining) enqueue(room, p, { t: 'seen' }); saveRoom(room); }
 }, 15000);
 setInterval(() => P.heartbeat(wss.clients), HEARTBEAT_MS);
 
 function shutdown() {
-  for (const room of rooms.values()) { for (const p of room.players.values()) p.save.lastTick = room.tick; saveRoom(room, true); }
+  for (const room of rooms.values()) {
+    for (const p of room.players.values()) if (!p.joining) enqueue(room, p, { t: 'seen' });
+    frame(room); // posledná dávka: čo ešte prišlo a „naposledy videný“ všetkých
+    saveRoom(room, true);
+  }
   process.exit(0);
 }
 process.on('SIGINT', shutdown);

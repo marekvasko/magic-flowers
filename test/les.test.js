@@ -226,8 +226,13 @@ test('server: svet z verzie 4 dostane (cez v7) Les divov (záhrada aj Les na pom
     assert.match((await c.wait(m => m.t === 'toast' && /Lesa divov/.test(m.text))).text, /tma/);
     // veľká plocha: dá sa ísť aj ďaleko za hranice záhrady, ale nie von z mriežky
     c.send({ t: 'move', x: 300, y: 300, dir: 0, ar: toLes.seq });
-    const pl = await c.wait(m => m.t === 'pl' && m.list.some(p => p.name === 'Eva' && p.area === 'les' && p.x > D.W));
-    assert.deepStrictEqual(pl.list.map(p => [p.x, p.y]), [[LW - 0.2, LH - 0.2]]);
+    if (D.passable(toLes.tiles[(LH - 1) * LW + LW - 1])) { // roh plochy je priechodný: poloha sa udrží na ploche
+      const pl = await c.wait(m => m.t === 'pl' && m.list.some(p => p.name === 'Eva' && p.area === 'les' && p.x > D.W));
+      assert.deepStrictEqual(pl.list.map(p => [p.x, p.y]), [[LW - 0.2, LH - 0.2]]);
+    } else { // neprechodná zem: server pohyb odmietne a vráti hráčku na príchodové miesto
+      const fix = await c.wait(m => m.t === 'pos');
+      assert.deepStrictEqual([fix.x, fix.y], [a.x, a.y]);
+    }
     // v Lese divov sa nepestuje
     c.send({ t: 'move', x: a.x, y: a.y, dir: 0, ar: toLes.seq });
     await c.wait(m => m.t === 'pl' && m.list.some(p => p.name === 'Eva' && p.x === a.x));

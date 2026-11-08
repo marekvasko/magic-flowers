@@ -8,11 +8,14 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
+const net = require('net');
 const D = require('../shared/data.js');
 
 const json = v => JSON.stringify(v);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// Voľný port od systému (náhodné porty z rozsahov sa občas zrazia medzi testami)
+function freePort() { return new Promise(r => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => r(p)); }); }); }
 function startServer(dataDir, port) {
   const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, JOURNAL: '0' }), stdio: ['ignore', 'pipe', 'pipe']
@@ -46,7 +49,7 @@ const fmt = s => `min ${s.min.toFixed(0)} · medián ${s.median.toFixed(0)} · p
 
 test('oneskorenie: pohyb jedného hráča uvidí druhý do ~200 ms; vlastná akcia na políčku sa vráti ako tile do ~200 ms', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-latencia-'));
-  const port = 47000 + Math.floor(Math.random() * 2000);
+  const port = await freePort();
   const proc = await startServer(dir, port);
   let ana, bob;
   try {

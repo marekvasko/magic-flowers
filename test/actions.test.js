@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
+const net = require('net');
 const D = require('../shared/data.js');
 const E = require('../engine.js');
 const Econ = require('../economy.js');
@@ -379,6 +380,8 @@ test('denník s akciami a prítomnosťou sa prehrá na ten istý svet a ten ist�
 
 // ---- Server: skutočné správy ----
 
+// Voľný port od systému (náhodné porty z rozsahov sa občas zrazia medzi testami)
+function freePort() { return new Promise(r => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => r(p)); }); }); }
 function startServer(dataDir, port, env) {
   const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DAY_SECONDS: '100000' }, env || {}), stdio: ['ignore', 'pipe', 'pipe']
@@ -403,7 +406,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 test('server: správy hráčov idú cez schránku a dávku akcií – stav, toasty, obnova klientov, denník s prítomnosťou, prehranie', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-akcie-'));
-  const port = 45000 + Math.floor(Math.random() * 2000);
+  const port = await freePort();
   const w = makeWorld(16);
   delete w.presence;
   const ti = tillable(w);
@@ -484,10 +487,11 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
   // denník: záznamy akcií s id a#, actor a prítomnosťou; prehranie zo začiatočného uloženia dá ten istý svet
   const lines = fs.readFileSync(path.join(dir, 'journal-akcie.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
   const entries = lines.filter(e => !e.load);
-  assert.ok(entries.length >= 5 && entries.every(e => e.inputs.every(i => /^a#\d+$/.test(i.id) && typeof i.actor === 'string') && Array.isArray(e.presence) && e.presence.length === 2), 'denník: ' + entries.length);
+  assert.ok(entries.length >= 5 && entries.every(e => e.inputs.every(i => /^a#\d+$/.test(i.id) && typeof i.actor === 'string') && Array.isArray(e.presence)), 'denník: ' + entries.length);
+  assert.ok(entries.some(e => e.presence.length === 2 && e.inputs.some(i => i.type === 'pos')), 'pohyb je v denníku');
   assert.ok(entries.every(e => !e.inputs.some(i => i.ev)), 'akcie a udalosti nikdy v jednej dávke');
   const types = entries.flatMap(e => e.inputs.map(i => i.type));
-  for (const t of ['till', 'plant', 'water', 'buy', 'sell', 'store', 'fillIce', 'build', 'ctake']) assert.ok(types.includes(t), t);
+  for (const t of ['join', 'pos', 'till', 'plant', 'water', 'buy', 'sell', 'store', 'fillIce', 'build', 'ctake', 'leave']) assert.ok(types.includes(t), t);
   const final = JSON.parse(fs.readFileSync(path.join(dir, 'room-akcie.json'), 'utf8'));
   const start = JSON.parse(json(save));
   const room = Object.assign(start, { tiles: D.buildMap().map((g, i) => ({ g, s: start.tiles[i].s })), hory: Ice.loadHory(start.hory) });
@@ -511,7 +515,7 @@ test('hygiena: server už nemení svet priamo – liveCtx len pri založení sve
 
 test('uloženie v8 (288 krokov za deň) sa prevedie na v9: každý krok ×40 – ten istý deň a hodina, udalosti, várky, rastliny, zákazky, sviatok', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-v9-'));
-  const port = 46000 + Math.floor(Math.random() * 2000);
+  const port = await freePort();
   const K = D.TICKS_PER_DAY / 288;
   const f = D.FESTIVALS[1];
   const old = { // svet vo verzii 8: deň 3, 7:30 (tick 2*288 + 90)

@@ -148,7 +148,9 @@ function reconcile(world, spec) {
 // ---- Výrezy (slices) ----
 // Kľúč deklarovaný návrhom → kde vo svete výrez leží (herná znalosť: ako je uložený svet, pozri serialize v server.js).
 //   tile:<plocha>:<i> | tile:<plocha>:*   políčko / všetky políčka plochy (garden → world.tiles, hory → world.hory, les…)
-//   save:<kľúč> | save:*                  uloženie hráča / všetky uloženia
+//   save:<kľúč> | save:*                  uloženie hráča / všetky uloženia – bez polohy (pozri pos)
+//   pos:<kľúč>                            poloha hráča v jeho uložení { x, y, area, lastTick }: píše ju každý pohyb,
+//                                         preto je to vlastný výrez a uloženie (save:) ju nikdy neprepíše
 //   market:seed_<sp> | market:fl_<sp> | market:compost | market:festival | market:hist | market:news | market:npc:<meno>
 //   market:seed_* | market:fl_* | market:npc:* | market:*     kolekcie trhu / celý trh
 //   storage                               sklad ako { inv, fb } (world.storage + world.storageFb)
@@ -161,11 +163,45 @@ function at(parent, prop) {
 }
 // Vlastnosti sveta, ktoré nie sú výrezom samy osebe (kolekcie majú vlastné kľúče, fronta ide cez ctx) – kľúč s týmto menom nevedie nikam.
 const NOT_A_SLICE = new Set(['saves', 'tiles', 'hory', 'les', 'pomedzie', 'market', 'storage', 'storageFb', 'events', 'seq', 'step', 'seed', 'tick', 'wall']);
+// Polia uloženia, ktoré patria výrezu pos:<kľúč>, nie save:<kľúč>
+const POS_FIELDS = ['x', 'y', 'area', 'lastTick'];
+const POS = new Set(POS_FIELDS);
+const pick = (o, fields) => { const out = {}; for (const f of fields) if (f in o) out[f] = o[f]; return out; };
+const omit = (o, skip) => { const out = {}; for (const k in o) if (!skip.has(k)) out[k] = o[k]; return out; };
+// Zapíše polia src do cur na mieste, polia v skip nechá tak; stack = cesta pre záznam zmien
+function syncFields(cur, src, skip, stack, changes) {
+  for (const k in cur) if (!(k in src) && !skip.has(k)) { if (changes) changes.push({ p: stack.concat(k), from: clone(cur[k]) }); delete cur[k]; }
+  for (const k in src) if (!skip.has(k)) { stack.push(k); sync(cur, k, src[k], stack, changes); stack.pop(); }
+}
+// Uloženie hráča bez polohy; nové uloženie (ešte neexistuje) sa zapíše celé
+function saveSlice(saves, k) {
+  if (!isObj(saves)) return null;
+  return {
+    get: () => (isObj(saves[k]) ? omit(saves[k], POS) : saves[k]),
+    set: (v, changes) => { if (isObj(saves[k]) && isObj(v)) syncFields(saves[k], v, POS, [], changes); else sync(saves, k, v, [], changes); }
+  };
+}
+function savesSlice(world) {
+  const saves = world.saves;
+  return {
+    get: () => { const out = {}; for (const k in saves) out[k] = isObj(saves[k]) ? omit(saves[k], POS) : saves[k]; return out; },
+    set: (v, changes) => {
+      for (const k in saves) if (!(k in v)) { if (changes) changes.push({ p: [k], from: clone(saves[k]) }); delete saves[k]; }
+      for (const k in v) { if (isObj(saves[k]) && isObj(v[k])) syncFields(saves[k], v[k], POS, [k], changes); else sync(saves, k, v[k], [k], changes); }
+    }
+  };
+}
+function posSlice(saves, k) {
+  const sv = isObj(saves) ? saves[k] : null;
+  if (!isObj(sv)) return null;
+  return { get: () => pick(sv, POS_FIELDS), set: (v, changes) => { for (const f of POS_FIELDS) if (f in v || f in sv) sync(sv, f, v[f], [f], changes); } };
+}
 function sliceOf(world, key) {
   const [a, b, c] = key.split(':');
   switch (a) {
     case 'tile': { const coll = b === 'garden' ? 'tiles' : b; return c === '*' ? at(world, coll) : at(world[coll], +c); }
-    case 'save': { const k = key.slice(5); return k === '*' ? at(world, 'saves') : at(world.saves, k); } // kľúč hráča smie obsahovať ':'
+    case 'save': { const k = key.slice(5); return k === '*' ? savesSlice(world) : saveSlice(world.saves, k); } // kľúč hráča smie obsahovať ':'
+    case 'pos': return posSlice(world.saves, key.slice(4));
     case 'market': {
       const m = world.market;
       if (b === '*') return at(world, 'market');
@@ -482,5 +518,5 @@ module.exports = {
   schedule, scheduleIn, scheduleUnique, cancel, pending, nextAt,
   reconcile, reconcilePlan, planAt, keysOf, evaluate, applyResult, commitBatch, runBatch, advanceTo, advance, replay, liveCtx,
   nextEvery, nextDailyTick, daily, every,
-  sliceOf, meets, conflicts, clone, same, sync, mergeKeys, ALL, area
+  sliceOf, meets, conflicts, clone, same, sync, mergeKeys, ALL, area, POS_FIELDS
 };
