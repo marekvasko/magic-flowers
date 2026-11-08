@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const D = require('../src/shared/data.js');
+const D = require('../src/shared/data.ts');
 const Ice = require('../src/server/ice.js');
 const Econ = require('../src/server/economy.js');
 

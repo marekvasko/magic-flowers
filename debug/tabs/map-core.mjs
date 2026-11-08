@@ -1,5 +1,5 @@
 // Záložka Mapa (#77): čisté výpočty bez DOM – políčka plochy (zo semienka alebo zo sveta), druh políčka,
-// výška, priechodnosť, štatistiky plochy a hráči. Všetko z herných generátorov v shared/data.js (D),
+// výška, priechodnosť, štatistiky plochy a hráči. Všetko z herných generátorov v src/shared/data.ts (D),
 // aby mapa vždy sedela s hrou. D sa odovzdáva ako parameter (v prehliadači window.GameData, v teste require).
 
 // Ako sa ktorý typ zeme kreslí. cls: ground (len zem), path (chodník, aj korene), clearing (čistina),

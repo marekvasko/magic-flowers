@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const D = require('../src/shared/data.js');
+const D = require('../src/shared/data.ts');
 const W = require('../src/shared/world3d.js');
 const MS = require('../src/shared/mesher.js');
 const A = require('../src/server/areas.js');

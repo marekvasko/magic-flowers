@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
-const D = require('../src/shared/data.js');
+const D = require('../src/shared/data.ts');
 const Econ = require('../src/server/economy.js');
 
 function startServer(dataDir, port) {

@@ -3,7 +3,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
-const D = require('../shared/data.js');
+const D = require('../shared/data.ts');
 const E = require('./engine.js');
 const Econ = require('./economy.js');
 const I = require('./items.js');
@@ -29,6 +29,10 @@ const ROOT = path.join(__dirname, '..', '..');
 const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const SHARED_DIR = path.join(__dirname, '..', 'shared');
+// Zdieľané moduly prepísané do TypeScriptu zbalí `npm run build` (scripts/build.mjs) do build/shared/ – prehliadač
+// .ts nespustí. /shared/<x>.js sa hľadá najprv tam, potom v src/shared/ (moduly, ktoré sú ešte v JS).
+const BUILD_SHARED_DIR = path.join(ROOT, 'build', 'shared');
+if (!fs.existsSync(path.join(BUILD_SHARED_DIR, 'data.js'))) console.warn('[server] chýba build/shared/data.js – spusti `npm run build`, inak sa hra v prehliadači nenačíta');
 
 // ---------- Statické súbory ----------
 const zlib = require('zlib');
@@ -45,7 +49,7 @@ const server = http.createServer((req, res) => {
   if (url === '/3d' || url === '/3d/') { const q = (req.url || '').indexOf('?'); res.writeHead(301, { Location: '/' + (q >= 0 ? req.url.slice(q) : '') }); return res.end(); }
   if (url === '/') url = '/index.html';
   let base = PUBLIC_DIR, rel = url.slice(1);
-  if (url.startsWith('/shared/')) { base = SHARED_DIR; rel = url.slice(8); }
+  if (url.startsWith('/shared/')) { rel = url.slice(8); base = fs.existsSync(path.join(BUILD_SHARED_DIR, path.basename(rel))) && path.dirname(rel) === '.' ? BUILD_SHARED_DIR : SHARED_DIR; }
   else if (url.startsWith('/vendor/three/')) { base = THREE_DIR; rel = url.slice(14); }
   const file = path.normalize(path.join(base, rel));
   if (!file.startsWith(base + path.sep)) { res.writeHead(403); return res.end(); }

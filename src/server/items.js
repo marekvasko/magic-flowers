@@ -1,7 +1,7 @@
 // Predmety v batohu a v sklade. Odrezané kvety (fl_*) majú várky s vekom, aby mohli postupne vädnúť.
 // Kontajner: { inv: {id: počet}, fb: {id: [várka]}, rate, sv? }   várka: { n, a: vek v krokoch k času at, at }
 // Pravidlo: inv[id] je vždy súčet várok fb[id]. Odoberá sa najstaršie (FIFO).
-const D = require('../shared/data.js');
+const D = require('../shared/data.ts');
 
 const isFlower = id => id.startsWith('fl_');
 // várky s vekom majú odrezané kvety (vädnú) a ľad (topí sa)

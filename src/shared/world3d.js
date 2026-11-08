@@ -1,7 +1,7 @@
 // 3D svet z kociek: mriežka podkociek (1 blok = 2×2×2 podkocky), terén, generované low-poly modely,
 // poloha slnka a mäkké tiene. Zdieľa ho klient (3D vykresľovanie) aj server (neskôr: hodiny slnka pre rastliny).
 (function (root) {
-  const D = root.GameData || (typeof require !== 'undefined' ? require('./data.js') : null);
+  const D = root.GameData || (typeof require !== 'undefined' ? require('./data.ts') : null);
   const R = 2;                   // podkocky na blok
   // rozmery mriežky záhrady; každá mriežka (plocha) má vlastné g.NX, g.NZ podľa veľkosti plochy
   const NX = D.W * R, NZ = D.H * R, NY = 12;

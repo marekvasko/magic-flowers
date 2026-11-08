@@ -1,7 +1,7 @@
 // Ladiaca stránka, záložka World (#78): políčka plochy z kópie sveta rovnako ako v hre, hráči na ploche
 const test = require('node:test');
 const assert = require('node:assert');
-const D = require('../src/shared/data.js');
+const D = require('../src/shared/data.ts');
 const Ice = require('../src/server/ice.js');
 const { keyId } = require('../src/server/debug.js');
 const world = require('../debug/api/world.js');

@@ -9,7 +9,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
 const net = require('net');
-const D = require('../src/shared/data.js');
+const D = require('../src/shared/data.ts');
 
 const json = v => JSON.stringify(v);
 const sleep = ms => new Promise(r => setTimeout(r, ms));

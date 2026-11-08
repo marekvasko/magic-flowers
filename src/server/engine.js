@@ -39,7 +39,7 @@
 // Plánovanie udalostí ide cez ctx (schedule, scheduleUnique, cancel, pending) ako operácie vykonané pri commite;
 // unikátna udalosť je zároveň kľúč 'event:<kľúč>', ktorý engine k návrhu pridá sám.
 const crypto = require('crypto');
-const { TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, dayOfTick, minOfTick } = require('../shared/data.js');
+const { TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, dayOfTick, minOfTick } = require('../shared/data.ts');
 
 // Reálne milisekundy na jeden krok
 function tickMs(world) { return world.daySeconds * 1000 / TICKS_PER_DAY; }

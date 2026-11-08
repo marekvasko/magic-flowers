@@ -22,6 +22,8 @@ export default tseslint.config(
         },
       }],
       '@typescript-eslint/consistent-type-imports': 'error',
+      // test() z node:test vracia Promise, ktorý spúšťač testov sleduje sám – testy sa prenášajú 1:1 bez await/void
+      '@typescript-eslint/no-floating-promises': ['error', { allowForKnownSafeCalls: [{ from: 'package', package: 'node:test', name: ['test', 'describe', 'it', 'suite'] }] }],
       '@typescript-eslint/explicit-module-boundary-types': 'error',
       '@eslint-community/eslint-comments/require-description': ['error', { ignore: [] }],
       '@eslint-community/eslint-comments/no-unlimited-disable': 'error',
