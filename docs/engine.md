@@ -1,4 +1,4 @@
-# Simulation engine (`engine.js`)
+# Simulation engine (`engine.ts`)
 
 The game world is a **discrete-event simulation**. Time is a whole-number counter (`tick`, 11 520 per game day, 1 tick = 7.5 game seconds; before save version 9 it was 288 per day and `migrate()` scales every stored tick ×40). Anything that should happen in the future is an **event** in one queue, and the engine moves the clock **from event to event**. Ticks with no events in them are never simulated.
 
@@ -36,7 +36,7 @@ Save format v8 replaced the shared generator state `rng` with `seed` and `step` 
 
 ```js
 const SIM = {
-  proposers: {                                   // by input type: event types (events.js, economy.js) and player actions (actions.js)
+  proposers: {                                   // by input type: event types (events.ts, economy.ts) and player actions (actions.ts)
     dawn:   { keys: (data, world, presence) => ({ writes: ['tile:garden:*', 'save:*', 'weather', …], reads: ['eternal'] }),
               run(slices, data, ctx) { … } },
     cDue:   { keys: ({ id }, world) => …, run(slices, { id }, ctx) { … } },
@@ -161,7 +161,7 @@ Rules:
 - **Granularity is the proposer's choice.** `dawn` legitimately changes every tile and every save and declares the collections (`tile:garden:*`, `save:*`): that only holds `hourly` and the market events to round 2 of the 6:00 tick, also during a 30-day catch-up. Market events (`delivery`, NPC visits, festivals) declare the whole market (`market:*`); player actions declare one item (`Econ.marketKey(id)`: `market:seed_mak` + `save:ana` for a buy, so two players buying different seeds in one frame never wait for each other). Reading every tile to count plots or every save to find the best reputation would make a hoe conflict with everything, which is why `plotsUsed` and `maxRep` live in state. A proposal whose effect depends on its own dice (the wishing well may bring rain) declares the keys of every outcome up front.
 - **Rounds**: a held proposal is re-evaluated in the next round of the same tick against the committed world, with a fresh generator (`step` advanced). It never runs against a half-built state and never waits for the next tick. Two buys of the last seed: the first applies in round 1, the second is re-priced in round 2 and refused with the normal "Vypredané" toast; two hoes on the same tile: the second is refused with "Tu už je záhon.". Each round can only shrink, so the loop terminates.
 - **Atomicity**: a proposal is applied whole or not at all. A `run` that throws after writing coins leaves the coins untouched (it only wrote its copy); the error goes to `spec.onError` and the event is consumed.
-- **Randomness**: `ctx.rng` is a mulberry32 generator seeded from `hash(seed, step, id)`, where `id` identifies the input (`ev#<seq>` for events, `a#<n>` for player actions). Streams never shift when another input is added or removed, and the result is the same whether proposals are evaluated sequentially or in parallel. `Math.random()` and `Date.now()` are banned from `engine.js`, `events.js`, `actions.js`, `economy.js`, `items.js`, `ice.js` and `scavenge.js` (a test greps for them). The only thing that still runs over the live world is the creation of the market and the board when a world is loaded (`E.liveCtx(world, 'ekonomika')`).
+- **Randomness**: `ctx.rng` is a mulberry32 generator seeded from `hash(seed, step, id)`, where `id` identifies the input (`ev#<seq>` for events, `a#<n>` for player actions). Streams never shift when another input is added or removed, and the result is the same whether proposals are evaluated sequentially or in parallel. `Math.random()` and `Date.now()` are banned from `engine.ts`, `events.ts`, `actions.ts`, `economy.ts`, `items.ts`, `ice.ts` and `scavenge.ts` (a test greps for them). The only thing that still runs over the live world is the creation of the market and the board when a world is loaded (`E.liveCtx(world, 'ekonomika')`).
 - **Messages**: `ctx.emit({ to, t, … })` goes to the batch outbox and is delivered by the server after the batch is committed, only for applied proposals (`to`: `E.ALL` everyone, `E.area('hory')` the players on an area, otherwise a player's key as a string). A refused proposal's message goes as a toast to its actor. What else to refresh on the clients (tiles, inventory, market, board, storage, plot permit, weather) the server derives from the written keys and recorded changes, so a proposer never calls `sendMe` or `tileMsg`. A few messages addressed to a player are directives for the server's presence instead of client messages: `scavStart` / `scavDone` (the player started / stopped searching the grass), `me` (refresh the inventory view). `ctx.presence` is the snapshot `spec.presence(world)` took when the batch was formed (which players are connected, where they stand, whether they are searching the grass); each proposal gets its own copy, `ctx.actor` is the acting player's entry, and the snapshot is recorded in the journal entry so a replay sees the same presence. It is input, not state.
 
 `E.evaluate(world, input, spec, presence)` returns one proposal's result (`{ id, reads, writes, slices, ops, outbox, reject?, error? }`) without committing anything; tests use it to prove that shuffled evaluation gives identical proposals.
@@ -174,7 +174,7 @@ Phases 3–5 (#111) made every message that changes game state an input of the e
 2. **One action batch** `E.commitBatch(room, inputs, SIM)` at the current tick. Because the world only moves inside the frame, the current tick is exactly the tick every message that arrived since the last frame was stamped with, so those actions evaluate against the world as it was when they arrived, after the events of that tick and before the events of the next. A deferred tile action is committed in a later frame at that frame's tick (the stamp is kept on the inbox entry only for inspection).
 3. **Advance** game time (`E.advance`), which commits the due event batches.
 
-So the journal is an exact timeline of alternating event batches (inputs with `ev`) and action batches (inputs with `actor`), never mixed. `actions.js` holds the proposers; `Econ.*`, `Ice.*`, `Scav.*` and `I.*` are the same helpers the events use, called on slices. Stopping a grass search (acting elsewhere, going to sleep) is itself an input (`scavStop`) that cancels the `scavDone` event, so nothing touches the queue outside a batch.
+So the journal is an exact timeline of alternating event batches (inputs with `ev`) and action batches (inputs with `actor`), never mixed. `actions.ts` holds the proposers; `Econ.*`, `Ice.*`, `Scav.*` and `I.*` are the same helpers the events use, called on slices. Stopping a grass search (acting elsewhere, going to sleep) is itself an input (`scavStop`) that cancels the `scavDone` event, so nothing touches the queue outside a batch.
 
 **Movement is state.** The `pos` proposer writes `pos:<key>` and reads the tiles under the four corners of the player's body. It clamps the point to the area, refuses it silently if any corner stands on impassable ground (the client's own rule, minus the jump height the server cannot know; there is no speed check), lets players share a tile, and sets `lastTick`. On a gate tile it writes the arrival point of the target area and emits a `travel` directive; a searching player who moved more than 0.35 tiles from where the search started gets the search cancelled. A refused move makes the server reset presence to the committed position and send the client a `pos` correction, so the two can never drift apart for long. `join` creates or migrates the save (start capital and look come in the input, so the journal is complete) and emits a `joined` directive on which the server sends the welcome, time, market, board, inventory and room; `leave` and `seen` only write `lastTick`; `dance` reads the dancers from presence (`emote`, `emoteAt` against the input's `now`) and pays the fairies' seeds once per night.
 
@@ -257,7 +257,7 @@ ctx.scheduleUnique('heat:' + key, ctx.tick + TPD, 'heatEnd', { key });   // the 
 ctx.cancel('heat:' + key);
 ```
 
-**A player action** (`actions.js`): a proposer per message type, with the actor's key in `data`; the server builds the input from the message and the socket's player.
+**A player action** (`actions.ts`): a proposer per message type, with the actor's key in `data`; the server builds the input from the message and the socket's player.
 
 ```js
 PROPOSERS.water = {
@@ -282,13 +282,13 @@ A new message type needs: the type in the server's `MESSAGES` set, a case in `to
 
 | Key | When | Defined in |
 |---|---|---|
-| `dawn` | every day at 6:00: plants grow, weather, ice, market, composters, board | `events.js` (market part `Econ.DAWN`) |
-| `hourly` | every full hour: flowers wilt, ice melts | `events.js` |
-| `delivery` | every 2nd day at 7:00: wholesaler | `economy.js` |
-| `npc_jano`, `npc_fero`, `npc_zuzka` | once a day at a random time between 8:00 and 18:00, at least ½ day after the previous visit | `economy.js` |
-| `festAnnounce:<id>`, `festStart:<id>`, `festEnd:<id>` | yearly: 2 days before the festival, at its start, at its end | `economy.js` |
-| `spider:s0` … `spider:s6` | one per spider in Les divov: planned from the spider's own state (`world.sps[id].next`: every 200 ms of real time while it moves, its own deadline while idle, a week ahead while it sleeps). Whoever wakes a spider (a move, a pull, walking into a web) sets `next` and cancels the event, and the next reconcile plans it again | `spiders.js` |
-| `kz:garden`, `kz:hory` | the krížiak on its way to a corner (`world.kz[area].next`), likewise | `spiders.js` |
-| `weave:0` … `weave:6` | a spider weaves again the webs torn a day ago: planned from the earliest due time in `webs.pend[o]` (a week ahead when there is none); tearing a web cancels it so reconcile re-plans it | `spiders.js` |
-| `webDawn` | every day at 6:00: the number of webs per spider by season | `spiders.js` |
-| `kriziakTrip` | at a random time, on average twice a day (twice as often in autumn): a krížiak sets out to a free corner | `spiders.js` |
+| `dawn` | every day at 6:00: plants grow, weather, ice, market, composters, board | `events.ts` (market part `Econ.DAWN`) |
+| `hourly` | every full hour: flowers wilt, ice melts | `events.ts` |
+| `delivery` | every 2nd day at 7:00: wholesaler | `economy.ts` |
+| `npc_jano`, `npc_fero`, `npc_zuzka` | once a day at a random time between 8:00 and 18:00, at least ½ day after the previous visit | `economy.ts` |
+| `festAnnounce:<id>`, `festStart:<id>`, `festEnd:<id>` | yearly: 2 days before the festival, at its start, at its end | `economy.ts` |
+| `spider:s0` … `spider:s6` | one per spider in Les divov: planned from the spider's own state (`world.sps[id].next`: every 200 ms of real time while it moves, its own deadline while idle, a week ahead while it sleeps). Whoever wakes a spider (a move, a pull, walking into a web) sets `next` and cancels the event, and the next reconcile plans it again | `spiders.ts` |
+| `kz:garden`, `kz:hory` | the krížiak on its way to a corner (`world.kz[area].next`), likewise | `spiders.ts` |
+| `weave:0` … `weave:6` | a spider weaves again the webs torn a day ago: planned from the earliest due time in `webs.pend[o]` (a week ahead when there is none); tearing a web cancels it so reconcile re-plans it | `spiders.ts` |
+| `webDawn` | every day at 6:00: the number of webs per spider by season | `spiders.ts` |
+| `kriziakTrip` | at a random time, on average twice a day (twice as often in autumn): a krížiak sets out to a free corner | `spiders.ts` |
