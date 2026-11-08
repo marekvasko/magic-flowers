@@ -25,3 +25,9 @@ export function mapValues<K extends string, A, B>(o: Readonly<Record<K, A>>, f: 
   for (const k of keys(o)) out[k] = f(o[k], k);
   return out as Record<K, B>;
 }
+
+// Nedôveryhodný JSON (uloženie zo staršej verzie, správa od klienta) pred overením: objekt s ľubovoľnými kľúčmi.
+// Výnimka z prísnych typov – len na čítanie a overenie vstupu, hodnoty sa pred použitím skontrolujú.
+export type JsonRecord = { [key: string]: unknown };
+export const isRecord = (v: unknown): v is JsonRecord => v !== null && typeof v === 'object';
+export const isArray = (v: unknown): v is unknown[] => Array.isArray(v);
