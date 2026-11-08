@@ -45,7 +45,7 @@
     const s = Math.max(0, (serverNow - ms) / 1000);
     return s < 60 ? Math.round(s) + ' s ago' : s < 3600 ? Math.round(s / 60) + ' min ago' : s < 86400 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' d ago';
   }
-  const hhmm = min => String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(min % 60).padStart(2, '0');
+  const hhmm = min => String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(Math.floor(min % 60)).padStart(2, '0');
   const when = tick => `day ${D.dayOfTick(tick)} ${hhmm(D.minOfTick(tick))}`;
   function inTicks(dt) {
     const m = dt * D.MIN_PER_TICK;

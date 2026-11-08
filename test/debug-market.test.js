@@ -68,6 +68,7 @@ test('debug trh: sviatok počas sviatku a najbližší sviatok', () => {
   const f = D.FESTIVALS[1];
   state.tick = Econ.festStartTick(f) + 3;
   state.market.festival = { id: f.id, name: f.name, icon: f.icon, mult: f.mult, until: state.tick + TPD };
+  Econ.setFestival(state.market, f); // ako festStart: násobky aj do položiek kvetov
   state.events = []; // staré uloženie bez udalostí: najbližší sviatok sa dopočíta
   const r = market(q('x'), { load: () => ({ id: 'x', source: 'file', file: null, online: [], state }) });
   assert.strictEqual(r.festival.id, f.id);

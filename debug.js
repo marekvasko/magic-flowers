@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const E = require('./engine.js');
+const Econ = require('./economy.js');
 
 const ROOM_RE = /^[a-z0-9-]{1,16}$/; // rovnaké mená svetov ako pri pripojení hráča
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
@@ -73,7 +74,9 @@ function create(ctx) {
     let text;
     try { text = fs.readFileSync(roomFile(id), 'utf8'); } catch (e) { return null; }
     const st = fs.statSync(roomFile(id));
-    return { id, source: 'file', file: { size: st.size, saved: st.mtimeMs }, online: [], state: ctx.migrate(JSON.parse(text)) };
+    const state = ctx.migrate(JSON.parse(text));
+    if (state.market) Econ.syncFestival(state.market); // ako pri načítaní na serveri: sviatočné násobky v položkách kvetov
+    return { id, source: 'file', file: { size: st.size, saved: st.mtimeMs }, online: [], state };
   }
   // Kľúče hráčov (z načítaných svetov) nahradí v celej odpovedi odtlačkom
   function redact(obj, keys) {

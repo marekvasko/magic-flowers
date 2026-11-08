@@ -45,7 +45,7 @@ test('server: udalosti zo svetu verzie 4 dostanú kľúče, duplicity a odstrán
     ws.close();
   } finally { await stopServer(proc); }
   const saved = JSON.parse(fs.readFileSync(path.join(dir, 'room-stary.json'), 'utf8'));
-  assert.strictEqual(saved.v, 8);
+  assert.strictEqual(saved.v, 9);
   // v8: semienko sveta a počítadlo kôl namiesto spoločného rng
   assert.ok(/^[0-9a-f]{32}$/.test(saved.seed), 'seed: ' + saved.seed);
   assert.strictEqual(typeof saved.step, 'number');
@@ -55,12 +55,16 @@ test('server: udalosti zo svetu verzie 4 dostanú kľúče, duplicity a odstrán
   assert.deepStrictEqual([saved.plotsUsed, saved.maxRep, saved.glacierFed], [0, 0, -1]);
   assert.deepStrictEqual(saved.storageFb, {});
   const byKey = k => saved.events.filter(e => e.key === k);
-  // pôvodné udalosti ostali tam, kde boli
-  assert.deepStrictEqual(byKey('hourly').map(e => e.at), [1012]);
-  assert.deepStrictEqual(byKey('dawn').map(e => e.at), [1100]);
-  assert.deepStrictEqual(byKey('npc_fero').map(e => e.at), [1050], 'duplicita zmizla');
-  assert.deepStrictEqual(byKey('festAnnounce:' + f.id).map(e => [e.at, e.data]), [[5000, { id: f.id }]]);
-  assert.deepStrictEqual(byKey('vilyEnd:eva').map(e => [e.at, !!e.periodic]), [[1200, false]]);
+  // pôvodné udalosti ostali tam, kde boli – v jemnejšej mriežke času (v9: každý krok ×40; aj čas sveta a elixír víl)
+  const K = D.TICKS_PER_DAY / 288;
+  assert.strictEqual(K, 40);
+  assert.strictEqual(saved.tick, 1000 * K);
+  assert.strictEqual(saved.saves.eva.vily, 1200 * K);
+  assert.deepStrictEqual(byKey('hourly').map(e => e.at), [1012 * K]);
+  assert.deepStrictEqual(byKey('dawn').map(e => e.at), [1100 * K]);
+  assert.deepStrictEqual(byKey('npc_fero').map(e => e.at), [1050 * K], 'duplicita zmizla');
+  assert.deepStrictEqual(byKey('festAnnounce:' + f.id).map(e => [e.at, e.data]), [[5000 * K, { id: f.id }]]);
+  assert.deepStrictEqual(byKey('vilyEnd:eva').map(e => [e.at, !!e.periodic]), [[1200 * K, false]]);
   assert.ok(!saved.events.some(e => e.type === 'zrusena_udalost'), 'odstránený typ zmizol');
   // chýbajúce periodické udalosti (dodávky, ostatné NPC, sviatky) sa doplnili, každá práve raz
   for (const def of Econ.PERIODIC) assert.strictEqual(byKey(def.key).length, 1, def.key);

@@ -595,7 +595,7 @@ test('server: denník sa píše do data/journal-<svet>.jsonl – značka načít
   const port = 43000 + Math.floor(Math.random() * 2000);
   // bežiaci svet, ktorý bol 2 dni vypnutý: pri načítaní dobehne ~60 dávok
   const w = makeWorld(23, D.DAWN_TICK + 6);
-  const save = Object.assign(JSON.parse(json(w)), { v: 8, mode: 'running', wall: Date.now() - 2 * TPD * (1200 * 1000 / TPD), seed: E.newSeed(), scavSalt: 7, pomedzieSeed: 1, lesSeed: 1, les: null, hory: null, tiles: w.tiles.map(t => ({ s: t.s })) });
+  const save = Object.assign(JSON.parse(json(w)), { v: 9, mode: 'running', wall: Date.now() - 2 * TPD * (1200 * 1000 / TPD), seed: E.newSeed(), scavSalt: 7, pomedzieSeed: 1, lesSeed: 1, les: null, hory: null, tiles: w.tiles.map(t => ({ s: t.s })) });
   fs.writeFileSync(path.join(dir, 'room-dennik.json'), JSON.stringify(save));
   const proc = await startServer(dir, port, { JOURNAL_MAX_MB: '0.02' });
   try {
@@ -635,7 +635,7 @@ test('v hre už nie je zapisovač cez Proxy, návrh (draft) ani náhoda zo sveta
     const src = fs.readFileSync(path.join(root, f), 'utf8');
     assert.ok(!/new Proxy|createDraft|applyPatches|rand\(room|rand\(w\)|randInt\(|E\.pick\(|\.handlers\b/.test(src), f);
   }
-  for (const f of ['engine.js', 'events.js', 'economy.js', 'items.js', 'ice.js', 'scavenge.js']) {
+  for (const f of ['engine.js', 'events.js', 'actions.js', 'economy.js', 'items.js', 'ice.js', 'scavenge.js']) {
     assert.ok(!/Math\.random|Date\.now/.test(fs.readFileSync(path.join(root, f), 'utf8')), f);
   }
 });

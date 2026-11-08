@@ -64,17 +64,25 @@ function compostPriceParts(m) {
 }
 function compostPrice(m) { return compostPriceParts(m).price; }
 // Výkupná cena kvetu: mimo sezóny vzácnejší, počas sviatku vyšší dopyt, plný trh cenu tlačí dole.
+// Sviatočný násobok je v položke kvetu (m.flowers[sp].fest, píšu ho festStart/festEnd), takže predaj kvetu
+// potrebuje len výrez 'market:fl_<sp>'; m.festival je iba súhrn pre klienta (id, meno, ikona, násobky, dokedy).
 function flowerPriceParts(m, tick, sp) {
-  const P = PRICING, s = D.SPECIES[sp], base = s.sell, stock = m.flowers[sp].stock, se = season(tick);
+  const P = PRICING, s = D.SPECIES[sp], base = s.sell, f = m.flowers[sp], stock = f.stock, se = season(tick);
   const inSeason = s.seasons.includes(se);
   const rare = inSeason ? 1 : P.flowerOffSeason;
-  const festival = m.festival;
-  const fest = (festival && festival.mult[sp]) || 1;
+  const fest = f.fest || 1;
   const satRaw = P.flowerSat.start - P.flowerSat.perUnit * stock;
   const sat = Math.max(P.flowerSat.min, satRaw);
   const raw = base * rare * fest * sat;
-  return { base, stock, season: se, inSeason, rare, fest, festival: fest !== 1 ? festival.id : null, satRaw, sat, raw, min: P.flowerMin, price: Math.max(P.flowerMin, Math.round(raw)) };
+  return { base, stock, season: se, inSeason, rare, fest, festival: fest !== 1 && m.festival ? m.festival.id : null, satRaw, sat, raw, min: P.flowerMin, price: Math.max(P.flowerMin, Math.round(raw)) };
 }
+// Sviatok v položkách kvetov: zmaže staré násobky a zapíše násobky sviatku f (null = žiadny sviatok).
+function setFestival(m, f) {
+  for (const sp in m.flowers) delete m.flowers[sp].fest;
+  if (f) for (const sp in f.mult) if (m.flowers[sp]) m.flowers[sp].fest = f.mult[sp];
+}
+// Pri načítaní: násobky v položkách kvetov sa odvodia zo súhrnu (staršie uloženia ich nemajú; bez zmeny verzie uloženia).
+function syncFestival(m) { if (m) setFestival(m, m.festival); }
 function flowerPrice(m, tick, sp) { return flowerPriceParts(m, tick, sp).price; }
 // Cena, za ktorú trh od hráča vykúpi 1 kus (null = nevykupuje)
 function sellQuote(m, tick, id) {
@@ -95,6 +103,23 @@ function stockOf(m, id) {
   if (id.startsWith('seed_')) return m.seeds[id.slice(5)];
   if (id.startsWith('fl_')) return m.flowers[id.slice(3)];
   return null;
+}
+// Kľúč výrezu trhu, ktorý nákup či predaj tovaru id potrebuje ('market:seed_mak', 'market:fl_mak', 'market:compost'),
+// alebo null – elixíry, zvädnuté kvety a ľad majú pevné ceny a trh sa nemení.
+function marketKey(id) {
+  if (id === 'compost') return 'market:compost';
+  if (id.startsWith('seed_') && PLANTABLE.includes(id.slice(5))) return 'market:seed_' + id.slice(5);
+  if (id.startsWith('fl_') && PLANTABLE.includes(id.slice(3))) return 'market:fl_' + id.slice(3);
+  return null;
+}
+// Čiastočný trh z výrezov návrhu: len položka tovaru id (buy/sell/sellQuote sa jej držia), ostatné kolekcie prázdne.
+function marketSlice(slices, id) {
+  const m = { seeds: {}, flowers: {}, compost: null }, key = marketKey(id);
+  if (key) {
+    const v = slices[key];
+    if (id === 'compost') m.compost = v; else if (id.startsWith('seed_')) m.seeds[id.slice(5)] = v; else m.flowers[id.slice(3)] = v;
+  }
+  return m;
 }
 
 // Nákup po kusoch – každý kus zvýši cenu ďalšieho (ubúda zásoba).
@@ -191,12 +216,12 @@ const DAWN = {
 // ---------- Udalosti: veľkoobchodník, NPC, sviatky ----------
 // Periodické udalosti ekonomiky. Plánuje ich engine (E.reconcile), návrhy sa samy znova neplánujú.
 // NPC prídu raz za deň medzi 8:00 a 18:00, najskôr pol dňa po predchádzajúcej návšteve.
-const npcVisit = (from, g) => E.nextDailyTick(from + TPD / 2, 96 + g.int(120));
+const npcVisit = (from, g) => E.nextDailyTick(from + TPD / 2, 8 * D.TICKS_PER_HOUR + g.int(10 * D.TICKS_PER_HOUR));
 // Sviatok začína o 6:00 svojho dňa v roku; ohlásenie je 2 dni vopred, koniec po f.len dňoch.
 const festStartTick = f => (f.season * DPS + f.day - 1) * TPD + D.DAWN_TICK;
 const yearly = at => E.every(YEAR_DAYS * TPD, at);
 const PERIODIC = [
-  { key: 'delivery', type: 'delivery', next: E.every(2 * TPD, 84) }, // každé 2 dni o 7:00
+  { key: 'delivery', type: 'delivery', next: E.every(2 * TPD, 7 * D.TICKS_PER_HOUR) }, // každé 2 dni o 7:00
   ...['jano', 'fero', 'zuzka'].map(n => ({ key: 'npc_' + n, type: 'npc_' + n, next: npcVisit })),
   ...D.FESTIVALS.flatMap(f => [
     { key: 'festAnnounce:' + f.id, type: 'festAnnounce', data: { id: f.id }, next: yearly(festStartTick(f) - 2 * TPD) },
@@ -206,7 +231,7 @@ const PERIODIC = [
 ];
 
 // Návrhy udalostí ekonomiky: { keys, run } (pozri engine.js). Udalosti trhu deklarujú celý trh ('market:*'):
-// sú to jednotky za deň a jemnejšie kľúče (market:seed_mak…) zostávajú pre akcie hráčov vo fáze 3.
+// sú to jednotky za deň; akcie hráčov (actions.js) deklarujú len položku tovaru (marketKey: market:seed_mak…).
 // Správy hráčom idú cez ctx.emit – server ich pošle až po vykonaní návrhu; obnovu trhu a nástenky odvodí zo zapísaných kľúčov.
 const market = { keys: () => ({ writes: ['market:*'] }) };
 const PROPOSERS = {
@@ -292,7 +317,7 @@ const PROPOSERS = {
       for (const sp of PLANTABLE) {
         const st = m.flowers[sp].stock;
         if (!st) continue;
-        const fest = m.festival && m.festival.mult[sp] ? 3 : 0;
+        const fest = m.flowers[sp].fest ? 3 : 0;
         const k = Math.min(st, Math.ceil(st * 0.3) + fest);
         m.flowers[sp].stock -= k; bought += k;
         if (!best || k > best.k) best = { sp, k };
@@ -309,16 +334,18 @@ const PROPOSERS = {
       ctx.emit({ to: E.ALL, t: 'toast', text: `📅 O 2 dni bude ${f.icon} ${f.name} – kvetinárka bude platiť viac za: ${list}. Stihneš to vypestovať?`, kind: 'day' });
     }
   }),
+  // Sviatok: násobky do položiek kvetov (cena) a súhrn pre klienta (m.festival); naraz je najviac jeden sviatok.
   festStart: Object.assign({}, market, {
     run(s, d, ctx) {
       const f = D.FESTIVALS.find(x => x.id === d.id), m = s['market:*'];
       m.festival = { id: f.id, name: f.name, icon: f.icon, mult: f.mult, until: ctx.tick + f.len * TPD };
+      setFestival(m, f);
       news(m, ctx.tick, `${f.icon} Začína ${f.name}!`);
       ctx.emit({ to: E.ALL, t: 'toast', text: `${f.icon} Začína ${f.name}! Výkupné ceny vybraných kvetov sú vyššie.`, kind: 'magic' });
     }
   }),
   festEnd: Object.assign({}, market, {
-    run(s, d) { const m = s['market:*']; if (m.festival && m.festival.id === d.id) m.festival = null; }
+    run(s, d) { const m = s['market:*']; if (m.festival && m.festival.id === d.id) { m.festival = null; setFestival(m, null); } }
   }),
 
   // Zákazka, ktorú nikto nezobral, zmizne z nástenky
@@ -420,13 +447,13 @@ function takeContract(c, tick, sv, key, id) {
 }
 
 // Odovzdanie aj po častiach; po splnení vyplatí odmenu a reputáciu a doplní nástenku.
-// maxRep: doterajšia najvyššia reputácia záhrady; vráti { msg, done, maxRep } s novou hodnotou.
+// maxRep: doterajšia najvyššia reputácia záhrady; vráti { n: odovzdané kusy (0 = nič sa nestalo), msg, done, maxRep }.
 function deliverContract(c, tick, sv, key, id, maxRep, ctx) {
   const k = c.list.find(x => x.id === id);
-  if (!k || k.takenBy !== key) return { msg: 'Táto zákazka nie je tvoja.', maxRep };
+  if (!k || k.takenBy !== key) return { n: 0, msg: 'Táto zákazka nie je tvoja.', maxRep };
   const have = sv.inv['fl_' + k.sp] || 0;
   const n = Math.min(have, k.n - k.got);
-  if (!n) return { msg: `Nemáš žiadny ${D.SPECIES[k.sp].name}.`, maxRep };
+  if (!n) return { n: 0, msg: `Nemáš žiadny ${D.SPECIES[k.sp].name}.`, maxRep };
   I.removeItems(I.playerC(sv), 'fl_' + k.sp, n, tick);
   k.got += n;
   let msg = `Odovzdané ${n}× ${D.SPECIES[k.sp].name} (${k.got}/${k.n}).`, done = false;
@@ -443,7 +470,7 @@ function deliverContract(c, tick, sv, key, id, maxRep, ctx) {
     done = true;
     fillBoard(c, tick, maxRep, ctx);
   }
-  return { msg, done, maxRep };
+  return { n, msg, done, maxRep };
 }
 
 // ---------- Vylepšenia ----------
@@ -508,7 +535,7 @@ function startCapital(env) {
 
 module.exports = {
   startCapital, initEconomy, dawnMarket, composters, DAWN, PROPOSERS, PERIODIC, news, buy, sell, sellQuote, buyQuote, seedPrice, flowerPrice, compostPrice,
-  seedPriceParts, flowerPriceParts, compostPriceParts, festStartTick, upcomingFestival,
+  seedPriceParts, flowerPriceParts, compostPriceParts, festStartTick, upcomingFestival, setFestival, syncFestival, marketKey, marketSlice,
   fillBoard, takeContract, deliverContract, upgrade, canCap, plotLimit, maxRepOf, plotsUsedOf, maxActive, marketView, boardView, phase, PLANTABLE,
   PRICING, SEED_TARGET, COMPOST_TARGET, HIST_LEN, SEED_CAP, COMPOST_CAP, YEAR_DAYS
 };

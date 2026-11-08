@@ -8,10 +8,11 @@
 //   world.seq     – počítadlo naplánovaných udalostí (stabilné poradie v rámci jedného kroku)
 //   world.events  – fronta udalostí zoradená podľa (at, seq)
 // Správanie dodáva volajúci v „špecifikácii“ (spec), ktorá sa neukladá:
-//   spec.proposers – { typ: { keys(data, world) → { reads, writes }, run(slices, data, ctx) } }   návrhy (pozri nižšie)
+//   spec.proposers – { typ: { keys(data, world, presence) → { reads, writes }, run(slices, data, ctx) } }   návrhy (pozri nižšie)
 //   spec.periodic  – [{ key, type, data?, next(from, rng) }]   periodické udalosti (pozri reconcile)
 //   spec.slice     – (world, key) => { get(), set(value, changes?) } | null   mapovanie kľúča na výrez (predvolené sliceOf)
-//   spec.presence  – (world) => ľubovoľná snímka toho, čo nie je stav (pripojení hráči); návrh ju dostane ako ctx.presence
+//   spec.presence  – (world) => snímka toho, čo nie je stav (pripojení hráči: [{ key, … }]); návrh dostane vlastnú kópiu
+//                    ako ctx.presence a záznam dávky ju nesie (prehranie ju dostane z denníka)
 //   spec.onBatch   – (world, out) => void   po každej dávke: správy pre hráčov (out.outbox) a záznam do denníka (out.entry)
 //   spec.onError   – (err, ev, world) => void   voliteľné, inak console.error
 //
@@ -23,7 +24,8 @@
 // Čas sa neposúva po krokoch, ale skokom na najbližšiu udalosť (advanceTo). Podrobný popis: docs/engine.md.
 //
 // ---- Návrhy, výrezy, kolá a vykonanie (commitBatch) ----
-// Dávka = všetko, čo má v jednom kroku nastať (dnes udalosti, neskôr aj akcie hráčov). Nikto nemení svet priamo:
+// Dávka = všetko, čo má v jednom kroku nastať: udalosti fronty, alebo akcie hráčov (vstupy { type, data, id, actor }).
+// Udalosti a akcie nikdy nie sú v jednej dávke (akcie prídu až po udalostiach svojho kroku). Nikto nemení svet priamo:
 //   1. návrh najprv deklaruje kľúče (keys): čo číta a čo mení – 'tile:garden:12', 'save:ana', 'market:*', 'contracts'…
 //      Kľúč končiaci '*' je celá kolekcia ('save:*' = všetky uloženia) a stretáva sa s každým kľúčom s tým istým začiatkom.
 //   2. engine mu dá obyčajné kópie práve týchto výrezov (slices[kľúč]) a vlastný generátor náhody; run ich mení
@@ -31,7 +33,8 @@
 //   3. návrhy sa vykonajú v poradí dávky: deklarované výrezy sa zapíšu späť do sveta na mieste (objekty, ktoré
 //      server drží – uloženie hráča, políčko – si zachovajú identitu). Návrh, ktorého kľúče sa stretávajú so zápismi
 //      už vykonaného návrhu, sa odloží (hold) a vyhodnotí znova v ďalšom kole toho istého kroku nad zmeneným svetom,
-//   4. návrh sa vykoná celý alebo vôbec (chyba v run nezanechá nič); zmena výrezu deklarovaného len na čítanie je chyba.
+//   4. návrh sa vykoná celý alebo vôbec (chyba v run nezanechá nič); zmena výrezu deklarovaného len na čítanie je chyba;
+//      ctx.reject(msg) návrh odmietne – nič sa nevykoná a hráč (input.actor) dostane msg ako správu (null = potichu).
 // Vyhodnotenia v jednom kole na sebe nezávisia (mohli by bežať paralelne); poradie určuje len vykonanie.
 // Plánovanie udalostí ide cez ctx (schedule, scheduleUnique, cancel, pending) ako operácie vykonané pri commite;
 // unikátna udalosť je zároveň kľúč 'event:<kľúč>', ktorý engine k návrhu pridá sám.
@@ -145,7 +148,9 @@ function reconcile(world, spec) {
 // ---- Výrezy (slices) ----
 // Kľúč deklarovaný návrhom → kde vo svete výrez leží (herná znalosť: ako je uložený svet, pozri serialize v server.js).
 //   tile:<plocha>:<i> | tile:<plocha>:*   políčko / všetky políčka plochy (garden → world.tiles, hory → world.hory, les…)
-//   save:<kľúč> | save:*                  uloženie hráča / všetky uloženia
+//   save:<kľúč> | save:*                  uloženie hráča / všetky uloženia – bez polohy (pozri pos)
+//   pos:<kľúč>                            poloha hráča v jeho uložení { x, y, area, lastTick }: píše ju každý pohyb,
+//                                         preto je to vlastný výrez a uloženie (save:) ju nikdy neprepíše
 //   market:seed_<sp> | market:fl_<sp> | market:compost | market:festival | market:hist | market:news | market:npc:<meno>
 //   market:seed_* | market:fl_* | market:npc:* | market:*     kolekcie trhu / celý trh
 //   storage                               sklad ako { inv, fb } (world.storage + world.storageFb)
@@ -158,11 +163,45 @@ function at(parent, prop) {
 }
 // Vlastnosti sveta, ktoré nie sú výrezom samy osebe (kolekcie majú vlastné kľúče, fronta ide cez ctx) – kľúč s týmto menom nevedie nikam.
 const NOT_A_SLICE = new Set(['saves', 'tiles', 'hory', 'les', 'pomedzie', 'market', 'storage', 'storageFb', 'events', 'seq', 'step', 'seed', 'tick', 'wall']);
+// Polia uloženia, ktoré patria výrezu pos:<kľúč>, nie save:<kľúč>
+const POS_FIELDS = ['x', 'y', 'area', 'lastTick'];
+const POS = new Set(POS_FIELDS);
+const pick = (o, fields) => { const out = {}; for (const f of fields) if (f in o) out[f] = o[f]; return out; };
+const omit = (o, skip) => { const out = {}; for (const k in o) if (!skip.has(k)) out[k] = o[k]; return out; };
+// Zapíše polia src do cur na mieste, polia v skip nechá tak; stack = cesta pre záznam zmien
+function syncFields(cur, src, skip, stack, changes) {
+  for (const k in cur) if (!(k in src) && !skip.has(k)) { if (changes) changes.push({ p: stack.concat(k), from: clone(cur[k]) }); delete cur[k]; }
+  for (const k in src) if (!skip.has(k)) { stack.push(k); sync(cur, k, src[k], stack, changes); stack.pop(); }
+}
+// Uloženie hráča bez polohy; nové uloženie (ešte neexistuje) sa zapíše celé
+function saveSlice(saves, k) {
+  if (!isObj(saves)) return null;
+  return {
+    get: () => (isObj(saves[k]) ? omit(saves[k], POS) : saves[k]),
+    set: (v, changes) => { if (isObj(saves[k]) && isObj(v)) syncFields(saves[k], v, POS, [], changes); else sync(saves, k, v, [], changes); }
+  };
+}
+function savesSlice(world) {
+  const saves = world.saves;
+  return {
+    get: () => { const out = {}; for (const k in saves) out[k] = isObj(saves[k]) ? omit(saves[k], POS) : saves[k]; return out; },
+    set: (v, changes) => {
+      for (const k in saves) if (!(k in v)) { if (changes) changes.push({ p: [k], from: clone(saves[k]) }); delete saves[k]; }
+      for (const k in v) { if (isObj(saves[k]) && isObj(v[k])) syncFields(saves[k], v[k], POS, [k], changes); else sync(saves, k, v[k], [k], changes); }
+    }
+  };
+}
+function posSlice(saves, k) {
+  const sv = isObj(saves) ? saves[k] : null;
+  if (!isObj(sv)) return null;
+  return { get: () => pick(sv, POS_FIELDS), set: (v, changes) => { for (const f of POS_FIELDS) if (f in v || f in sv) sync(sv, f, v[f], [f], changes); } };
+}
 function sliceOf(world, key) {
   const [a, b, c] = key.split(':');
   switch (a) {
     case 'tile': { const coll = b === 'garden' ? 'tiles' : b; return c === '*' ? at(world, coll) : at(world[coll], +c); }
-    case 'save': { const k = key.slice(5); return k === '*' ? at(world, 'saves') : at(world.saves, k); } // kľúč hráča smie obsahovať ':'
+    case 'save': { const k = key.slice(5); return k === '*' ? savesSlice(world) : saveSlice(world.saves, k); } // kľúč hráča smie obsahovať ':'
+    case 'pos': return posSlice(world.saves, key.slice(4));
     case 'market': {
       const m = world.market;
       if (b === '*') return at(world, 'market');
@@ -250,15 +289,16 @@ class Reject { constructor(msg) { this.msg = msg; } }
 // iného vstupu v dávke nezmení jeho výsledok.
 function inputId(input) { return input.id != null ? String(input.id) : input.ev && input.ev.seq != null ? 'ev#' + input.ev.seq : input.type; }
 
-// Kontext návrhu (aj „živý“ pre akcie, ktoré ešte nebežia cez engine – pozri liveCtx): náhoda, správy, fronta.
-// queue: funkcie nad frontou; events: množina kľúčov 'event:…', ktorých sa návrh dotkol (null = nezaznamenáva)
-function makeCtx(world, id, rng, queue, events, presence) {
+// Kontext návrhu (aj „živý“ pre založenie sveta – pozri liveCtx): náhoda, správy, fronta, prítomnosť.
+// queue: funkcie nad frontou; events: množina kľúčov 'event:…', ktorých sa návrh dotkol (null = nezaznamenáva);
+// presence: kópia snímky prítomnosti pre tento návrh; actor: záznam konajúceho hráča v nej (input.actor), ak tam je
+function makeCtx(world, id, rng, queue, events, presence, actor) {
   const touch = key => { if (events) events.add('event:' + key); };
   const outbox = [];
   return {
-    tick: world.tick, id, rng, presence, outbox,
+    tick: world.tick, id, rng, presence, actor, outbox,
     emit: msg => { outbox.push(msg); },
-    reject: msg => { throw new Reject(msg); },
+    reject: msg => { throw new Reject(msg === undefined ? null : msg); },
     schedule: (at, type, data) => queue.insert(at, type, data),
     scheduleIn: (ticks, type, data) => queue.insert(world.tick + Math.max(1, ticks), type, data),
     scheduleUnique: (key, at, type, data) => { touch(key); queue.cancel(key); return queue.insert(at, type, data, key); },
@@ -266,8 +306,7 @@ function makeCtx(world, id, rng, queue, events, presence) {
     pending: key => { touch(key); return queue.pending(key); }
   };
 }
-// Kontext nad živým svetom: pre akcie hráčov, ktoré ešte menia svet priamo (fáza 3 ich prevedie na návrhy),
-// a pre založenie sveta. Náhoda z (semienko, kolo, id) – id nech je pre každú akciu iné.
+// Kontext nad živým svetom: len pre založenie sveta (initEconomy pri načítaní). Náhoda z (semienko, kolo, id).
 function liveCtx(world, id) {
   const queue = {
     insert: (at, type, data, key) => insert(world, at, type, data, key),
@@ -296,11 +335,11 @@ function draftQueue(world, ops) {
 }
 
 // Deklarované kľúče vstupu (bez vyhodnotenia). Vráti { reads: Set, writes: Set } alebo { error }.
-function keysOf(world, input, spec) {
+function keysOf(world, input, spec, presence) {
   const proposer = spec.proposers && spec.proposers[input.type];
   if (!proposer) return { error: new Error(`neznámy typ vstupu ${input.type}`) };
   try {
-    const k = proposer.keys ? proposer.keys(input.data, world) : {};
+    const k = proposer.keys ? proposer.keys(input.data, world, presence) : {};
     const writes = new Set(k.writes || []), reads = new Set((k.reads || []).filter(r => !writes.has(r)));
     // dva deklarované kľúče sa nesmú prekrývať ('save:*' a 'save:ana' by boli dve nezávislé kópie toho istého)
     const all = [...reads, ...writes];
@@ -311,17 +350,20 @@ function keysOf(world, input, spec) {
 
 // Vyhodnotí jeden vstup nad snímkom `world` (bez zmeny sveta). Vráti výsledok návrhu:
 //   { id, input, reads, writes, slices, ops, outbox }    – návrh na vykonanie (slices = zmenené kópie výrezov)
-//   { …, reject: msg }                                   – odmietnutie (nič sa nevykoná, hráč dostane správu)
+//   { …, reject: msg }                                   – odmietnutie (nič sa nevykoná, hráč dostane správu; null = bez správy)
 //   { …, error }                                         – chyba (nič sa nevykoná, vstup sa spotrebuje)
+// presence je snímka dávky; návrh dostane vlastnú kópiu a v nej (ak je to zoznam záznamov s key) záznam input.actor ako ctx.actor.
 function evaluate(world, input, spec, presence) {
   const id = inputId(input);
-  const k = keysOf(world, input, spec);
+  const k = keysOf(world, input, spec, presence);
   const res = { id, input, reads: k.reads || new Set(), writes: k.writes || new Set(), slices: {}, ops: [], outbox: [] };
   if (k.error) { res.error = k.error; return res; }
   const sliceOfKey = key => (spec.slice ? spec.slice(world, key) : sliceOf(world, key));
   try {
     for (const key of [...res.reads, ...res.writes]) { const s = sliceOfKey(key); if (s) res.slices[key] = clone(s.get()); }
-    const ctx = makeCtx(world, id, generator(seedOf(world.seed, world.step || 0, id)), draftQueue(world, res.ops), res.writes, presence);
+    const pr = clone(presence);
+    const actor = input.actor != null && Array.isArray(pr) ? pr.find(p => p && p.key === input.actor) : undefined;
+    const ctx = makeCtx(world, id, generator(seedOf(world.seed, world.step || 0, id)), draftQueue(world, res.ops), res.writes, pr, actor);
     spec.proposers[input.type].run(res.slices, input.data, ctx);
     res.outbox = ctx.outbox;
     for (const key in res.slices) if (!res.reads.has(key) && !res.writes.has(key)) throw new Error(`návrh ${id} zapísal do nedeklarovaného výrezu ${key}`);
@@ -352,14 +394,19 @@ function applyResult(world, r, spec, changes) {
   }
 }
 
-// Vykoná dávku vstupov v kolách (pozri hlavičku). inputs: [{ type, data, ev?, id? }] v poradí dávky.
+// Vykoná dávku vstupov v kolách (pozri hlavičku). inputs: [{ type, data, ev?, id?, actor? }] v poradí dávky
+// (ev = udalosť z fronty; actor = kľúč konajúceho hráča pri akcii).
 // Vráti { tick, rounds, applied: [výsledky], rejected: [výsledky], outbox: [správy], entry } a zavolá spec.onBatch.
-// entry je záznam dávky do denníka: vstupy, poradie, kľúče a osud každého návrhu v každom kole, zmeny, správy.
+// entry je záznam dávky do denníka: vstupy, snímka prítomnosti, poradie, kľúče a osud každého návrhu v každom kole, zmeny, správy.
 function commitBatch(world, inputs, spec) {
   const journal = !!spec.onBatch;
-  const entry = { tick: world.tick, step: world.step || 0, inputs: inputs.map(i => ({ id: inputId(i), type: i.type, data: i.data, ev: i.ev ? { at: i.ev.at, seq: i.ev.seq, key: i.ev.key } : undefined })), proposals: [], outbox: [] };
-  const out = { tick: world.tick, rounds: 0, applied: [], rejected: [], outbox: entry.outbox, entry };
   const presence = spec.presence ? spec.presence(world) : undefined;
+  const entry = {
+    tick: world.tick, step: world.step || 0,
+    inputs: inputs.map(i => ({ id: inputId(i), type: i.type, data: i.data, ev: i.ev ? { at: i.ev.at, seq: i.ev.seq, key: i.ev.key } : undefined, actor: i.actor != null ? i.actor : undefined })),
+    presence: presence === undefined ? undefined : clone(presence), proposals: [], outbox: []
+  };
+  const out = { tick: world.tick, rounds: 0, applied: [], rejected: [], outbox: entry.outbox, entry };
   let todo = inputs;
   while (todo.length) {
     out.rounds++;
@@ -368,7 +415,7 @@ function commitBatch(world, inputs, spec) {
     for (const input of todo) {
       // kolízia už z deklarácie: netreba ani vyhodnocovať, návrh počká na ďalšie kolo
       if (written.length) {
-        const k = keysOf(world, input, spec);
+        const k = keysOf(world, input, spec, presence);
         if (!k.error && conflicts([...k.reads, ...k.writes], written)) { held.push(input); record({ id: inputId(input), input, reads: k.reads, writes: k.writes }, 'held'); continue; }
       }
       const r = evaluate(world, input, spec, presence);
@@ -438,13 +485,15 @@ function advance(world, nowMs, spec, maxTicks) {
 }
 
 // Prehrá záznamy denníka (entry z commitBatch) nad uloženým svetom: udalosti vzniknú znova z fronty,
-// ostatné vstupy (akcie) sa vykonajú ako vlastná dávka v kroku záznamu. Vráti počet prehraných dávok.
+// akcie hráčov sa vykonajú ako vlastná dávka v kroku záznamu (po udalostiach toho kroku, ako na serveri).
+// Prítomnosť hráčov dostane každá dávka zo svojho záznamu, nie zo spec.presence. Vráti počet prehraných dávok.
 function replay(world, entries, spec) {
   let n = 0;
   for (const e of entries) {
-    advanceTo(world, e.tick, spec);
-    const inputs = e.inputs.filter(i => !i.ev).map(i => ({ type: i.type, data: i.data, id: i.id }));
-    if (inputs.length) commitBatch(world, inputs, spec);
+    const sp = 'presence' in e ? Object.assign({}, spec, { presence: () => e.presence }) : spec;
+    advanceTo(world, e.tick, sp);
+    const inputs = e.inputs.filter(i => !i.ev).map(i => ({ type: i.type, data: i.data, id: i.id, actor: i.actor }));
+    if (inputs.length) commitBatch(world, inputs, sp);
     n++;
   }
   return n;
@@ -469,5 +518,5 @@ module.exports = {
   schedule, scheduleIn, scheduleUnique, cancel, pending, nextAt,
   reconcile, reconcilePlan, planAt, keysOf, evaluate, applyResult, commitBatch, runBatch, advanceTo, advance, replay, liveCtx,
   nextEvery, nextDailyTick, daily, every,
-  sliceOf, meets, conflicts, clone, same, sync, mergeKeys, ALL, area
+  sliceOf, meets, conflicts, clone, same, sync, mergeKeys, ALL, area, POS_FIELDS
 };

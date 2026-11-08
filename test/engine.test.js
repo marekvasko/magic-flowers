@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const E = require('../engine.js');
+const D = require('../shared/data.js');
 const TPD = E.TICKS_PER_DAY;
 
 function world(extra) { return Object.assign({ tick: 0, wall: 0, daySeconds: 300, seed: "test-12345", step: 0, seq: 0, events: [] }, extra); }
@@ -128,7 +129,7 @@ test('reconcile: doplní chýbajúce, zahodí duplicity, nedeklarované a nezná
   const spec = {
     proposers: { dawn: fx(() => {}), fest: fx(() => {}), novy: fx(() => {}) },
     periodic: [
-      { key: 'dawn', type: 'dawn', next: E.daily(72) },
+      { key: 'dawn', type: 'dawn', next: E.daily(D.DAWN_TICK) },
       { key: 'novy', type: 'novy', data: { a: 1 }, next: E.daily(84) }
     ]
   };
@@ -164,7 +165,7 @@ test('unikátna udalosť: nová nahradí čakajúcu s rovnakým kľúčom, cance
 test('nextEvery a nextDailyTick nájdu najbližší vhodný krok', () => {
   assert.strictEqual(E.nextDailyTick(0, 72), 72);
   assert.strictEqual(E.nextDailyTick(72, 72), 72);
-  assert.strictEqual(E.nextDailyTick(73, 72), TPD + 72);
+  assert.strictEqual(E.nextDailyTick(73, 72), TPD + 72); // ľubovoľný krok dňa
   assert.strictEqual(E.nextEvery(0, 12), 0);
   assert.strictEqual(E.nextEvery(1, 12), 12);
   assert.strictEqual(E.nextEvery(100, 1000, -2), 998); // záporný posun (napr. ohlásenie 2 dni pred začiatkom roka)
