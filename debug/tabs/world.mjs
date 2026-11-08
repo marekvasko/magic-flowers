@@ -49,13 +49,16 @@ function loadScript(src) {
     document.head.appendChild(s);
   });
 }
-// Herné moduly: world3d.js, mesher.js a art.js sú klasické skripty (globály), render3d.mjs a three sú moduly
+// Herné moduly: world3d.js, mesher.js, art.js, webs.js a spidermodel.js sú klasické skripty (globály), render3d.mjs a three sú moduly
 let depsP = null;
 function loadDeps() {
   if (!depsP) depsP = (async () => {
     if (!window.World3D) await loadScript('/shared/world3d.js');
     if (!window.Mesher) await loadScript('/shared/mesher.js');
     if (!window.Art) await loadScript('/art.js');
+    // pavúky a pavučiny v render3d.mjs (spiders3d.mjs, #99) čítajú globály Webs a SpiderModel
+    if (!window.Webs) await loadScript('/shared/webs.js');
+    if (!window.SpiderModel) await loadScript('/shared/spidermodel.js');
     const THREE = await import('/vendor/three/three.module.js');
     await import('/render3d.mjs');
     return THREE;
@@ -104,7 +107,9 @@ export function mount(el, ctx0) {
   const S = {
     W: D.W, H: D.H, tiles: [], area: 'garden', tilesGen: 0, worldGen: 0, tick: 0, day: 1, weather: 'sun',
     me: { x: D.W / 2, y: D.H / 2, dir: 0, phase: 0 }, look: null, name: '', id: -1, myEmote: null, mySi: -1, sel: null,
-    others: new Map(), anchors: {}, fx: [], screenFx: [], bubbles: {}, tapMark: null, kbd: false
+    others: new Map(), anchors: {}, fx: [], screenFx: [], bubbles: {}, tapMark: null, kbd: false,
+    // pavúky (#57, #99): render3d ich kreslí vždy, tu zatiaľ prázdne (pavučiny ani pavúky sa sem nenačítavajú)
+    webs: [], webTile: new Map(), homes: [], websGen: 0, corner: [], cornerGen: 0, spiders: new Map(), slowK: 1, slowUntil: 0, web: null
   };
   let world = null, worldKey = '', tilesSig = '', loadSeq = 0, offline = [], panelSig = '';
 
