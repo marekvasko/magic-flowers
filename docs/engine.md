@@ -84,6 +84,8 @@ E.pending(world, key)                         // the pending event or null
 | `vilyEnd:<player>` | the fairy potion wears off (drinking another one moves it) |
 | `scavDone:<player>` | searching the grass finishes (moving or acting cancels it) |
 | `cExpire:<contract>` / `cDue:<contract>` | a contract leaves the board / its deadline (delivering it cancels both) |
+| `weave:<spider>` | a spider weaves again the webs torn a day ago (due times in `webs.pend`) |
+| `pull:<player>` | pulling silk from a web finishes (`pullDone`; moving or raising the lantern cancels it) |
 
 ### 3. Periodic (declared)
 
@@ -150,7 +152,8 @@ A **key** names a slice of the world. `E.sliceOf(world, key)` is the default map
 | `contracts` | the board (`list`, `nextId`) |
 | `storage` | the shared storage as `{ inv, fb }` (`world.storage` + `world.storageFb`) |
 | `event:<key>` | a keyed event: added by the engine when `ctx.scheduleUnique / cancel / pending` is called with that key |
-| anything else | the world property with that name: `weather`, `eternal`, `fairyNight`, `icehouse`, `scav`, `scavSalt`, `up`, `plotsUsed`, `maxRep`, `glacierFed`. Collections (`saves`, `tiles`, `market`, …) and the queue are not slices under their property names |
+| `spider:<id>`, `spider:*`, `kz:<area>` | one spider in Les divov / all of them (`world.sps`), a krížiak on its way to a corner (`world.kz`): mapped by `spec.slice` (`Spiders.slice`, falling back to `sliceOf`) |
+| anything else | the world property with that name: `weather`, `eternal`, `fairyNight`, `icehouse`, `scav`, `scavSalt`, `up`, `plotsUsed`, `maxRep`, `glacierFed`, `webs`, `corners` (spiders), `daySeconds`, `lesSeed`. Collections (`saves`, `tiles`, `market`, …) and the queue are not slices under their property names |
 
 Rules:
 
@@ -285,3 +288,7 @@ A new message type needs: the type in the server's `MESSAGES` set, a case in `to
 | `delivery` | every 2nd day at 7:00: wholesaler | `economy.js` |
 | `npc_jano`, `npc_fero`, `npc_zuzka` | once a day at a random time between 8:00 and 18:00, at least ½ day after the previous visit | `economy.js` |
 | `festAnnounce:<id>`, `festStart:<id>`, `festEnd:<id>` | yearly: 2 days before the festival, at its start, at its end | `economy.js` |
+| `spider:s0` … `spider:s6` | one per spider in Les divov: planned from the spider's own state (`world.sps[id].next`: every 2 ticks while it moves, its own deadline while idle, a week ahead while it sleeps). Whoever wakes a spider (a move, a pull, walking into a web) sets `next` and cancels the event, and the next reconcile plans it again | `spiders.js` |
+| `kz:garden`, `kz:hory` | the krížiak on its way to a corner (`world.kz[area].next`), likewise | `spiders.js` |
+| `webDawn` | every day at 6:00: the number of webs per spider by season | `spiders.js` |
+| `kriziakTrip` | at a random time, on average twice a day (twice as often in autumn): a krížiak sets out to a free corner | `spiders.js` |

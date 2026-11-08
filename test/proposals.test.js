@@ -635,7 +635,7 @@ test('v hre už nie je zapisovač cez Proxy, návrh (draft) ani náhoda zo sveta
     const src = fs.readFileSync(path.join(root, f), 'utf8');
     assert.ok(!/new Proxy|createDraft|applyPatches|rand\(room|rand\(w\)|randInt\(|E\.pick\(|\.handlers\b/.test(src), f);
   }
-  for (const f of ['engine.js', 'events.js', 'actions.js', 'economy.js', 'items.js', 'ice.js', 'scavenge.js']) {
+  for (const f of ['engine.js', 'events.js', 'actions.js', 'economy.js', 'items.js', 'ice.js', 'scavenge.js', 'spiders.js']) {
     assert.ok(!/Math\.random|Date\.now/.test(fs.readFileSync(path.join(root, f), 'utf8')), f);
   }
 });
