@@ -16,7 +16,7 @@ export function playerC(sv: PlayerSave): Container { sv.fb = sv.fb || {}; return
 // V sklade kvety starnú pomalšie; kým je v ľadovni ľad (icehouse = world.icehouse), ešte pomalšie.
 export function storageRate(icehouse: Pick<Icehouse, 'ice'> | null | undefined): number { return icehouse && icehouse.ice > 0 ? D.ICEHOUSE.rate : D.STORAGE_AGE_RATE; }
 // Sklad ako kontajner: st = výrez 'storage' { inv, fb } (world.storage + world.storageFb), icehouse = výrez 'icehouse'
-export function storageC(st: Pick<Container, 'inv'> & Partial<Pick<Container, 'fb'>>, icehouse: Pick<Icehouse, 'ice'> | null | undefined): Container {
+export function storageC(st: Pick<Container, 'inv'> & Partial<Pick<Container, 'fb'>>, icehouse?: Pick<Icehouse, 'ice'> | null): Container {
   const fb = st.fb = st.fb || {};
   return { inv: st.inv, fb, rate: storageRate(icehouse) };
 }

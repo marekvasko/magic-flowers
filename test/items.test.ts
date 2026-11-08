@@ -1,13 +1,17 @@
-const test = require('node:test');
-const assert = require('node:assert');
-const D = require('../src/shared/data.ts');
-const I = require('../src/server/items.ts');
+import test from 'node:test';
+import assert from 'node:assert';
+import * as D from '../src/shared/data.ts';
+import type { ItemId } from '../src/shared/data.ts';
+import type { PlayerSave } from '../src/shared/save.ts';
+import * as I from '../src/server/items.ts';
+import type { Container } from '../src/server/world.ts';
+import { must, partial } from './helpers.ts';
 const TPD = D.TICKS_PER_DAY;
 
-const sum = c => id => (c.fb[id] || []).reduce((s, b) => s + b.n, 0);
+const sum = (c: Container) => (id: ItemId): number => (c.fb[id] || []).reduce((s, b) => s + b.n, 0);
 
 test('kvety sa odoberajú od najstarších a inv vždy sedí so súčtom várok', () => {
-  const sv = { inv: {}, seen: [] }, c = I.playerC(sv);
+  const sv = partial<PlayerSave>({ inv: {}, seen: [] }), c = I.playerC(sv);
   I.addItems(c, 'fl_tulipan', 3, 0);
   I.addItems(c, 'fl_tulipan', 2, TPD);          // o deň neskôr
   const out = I.removeItems(c, 'fl_tulipan', 4, 2 * TPD);
@@ -19,20 +23,20 @@ test('kvety sa odoberajú od najstarších a inv vždy sedí so súčtom várok'
 });
 
 test('kvety vädnú podľa životnosti druhu; v sklade 2× pomalšie', () => {
-  const sv = { inv: {} }, c = I.playerC(sv);
+  const sv = partial<PlayerSave>({ inv: {} }), c = I.playerC(sv);
   const st = I.storageC({ inv: {}, fb: {} });
   I.addItems(c, 'fl_mak', 5, 0);         // mak vydrží 2 dni
   I.addItems(st, 'fl_mak', 5, 0);
   assert.deepStrictEqual(I.wiltSweep(c, 2 * TPD - 1), {});
   assert.deepStrictEqual(I.wiltSweep(c, 2 * TPD), { 'Mak vlčí': 5 });
   assert.strictEqual(sv.inv.wilted, 5);
-  assert.ok(!sv.inv.fl_mak && !sv.fb.fl_mak);
+  assert.ok(!sv.inv.fl_mak && !must(sv.fb).fl_mak);
   assert.deepStrictEqual(I.wiltSweep(st, 2 * TPD), {}, 'v sklade ešte nie');
   assert.deepStrictEqual(I.wiltSweep(st, 4 * TPD), { 'Mak vlčí': 5 });
 });
 
 test('presun do skladu a späť zachová vek kvetov', () => {
-  const sv = { inv: {} }, c = I.playerC(sv), st = I.storageC({ inv: {}, fb: {} });
+  const sv = partial<PlayerSave>({ inv: {} }), c = I.playerC(sv), st = I.storageC({ inv: {}, fb: {} });
   I.addItems(c, 'fl_ruza', 2, 0);
   const b = I.removeItems(c, 'fl_ruza', 2, TPD);       // vek 1 deň
   I.addItems(st, 'fl_ruza', 2, TPD, b);
