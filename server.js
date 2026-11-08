@@ -456,6 +456,7 @@ function arrived(pl, from, to) {
 function joined(pl) {
   const room = pl.room;
   pl.joining = false;
+  pl.look = pl.save.look; // vzhľad ako v uložení (návrh join ho doplnil o predvolené farby)
   send(pl.ws, { t: 'welcome', id: pl.id, room: room.id, w: D.areaSize(pl.area).w, h: D.areaSize(pl.area).h, tiles: tilesView(room, pl.area), area: pl.area, seq: pl.areaSeq, x: pl.x, y: pl.y });
   send(pl.ws, timeMsg(room));
   send(pl.ws, Econ.marketView(room.market, room.tick, room.events));
