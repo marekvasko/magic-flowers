@@ -371,7 +371,8 @@ const Art = (() => {
     }
     if (g === 'lot') { // stavebný pozemok: štrk a kolíky v rohoch
       for (let i = 0; i < 5; i++) circ(c, x + hash(tx, ty, i) * s, y + hash(tx, ty, i + 5) * s, s * 0.03, 'rgba(110,100,85,0.4)');
-      c.fillStyle = '#8b5a2b'; c.fillRect(x + s * (tx % 2 ? 0.82 : 0.08), y + s * (ty % 2 ? 0.8 : 0.08), s * 0.1, s * 0.12);
+      const DL = D.DIELNA && D.DIELNA.lot, L = DL && tx >= DL.x0 && tx <= DL.x1 && ty >= DL.y0 && ty <= DL.y1 ? DL : { x0: 0, y0: 0 }; // kolíky v rohoch pozemku (ľadovne či Dielne)
+      c.fillStyle = '#8b5a2b'; c.fillRect(x + s * ((tx - L.x0) % 2 ? 0.82 : 0.08), y + s * ((ty - L.y0) % 2 ? 0.8 : 0.08), s * 0.1, s * 0.12);
       return;
     }
     if (g === 'water') {
@@ -542,6 +543,14 @@ const Art = (() => {
       ell(c, 32, 40, 15, 13, 0, '#e9eef2'); ell(c, 28, 36, 8, 6, -0.4, '#ffffff');
       c.strokeStyle = '#b7c3cc'; c.lineWidth = 1.5;
       for (let i = 0; i < 5; i++) { c.beginPath(); c.ellipse(32, 40, 15 - i * 2, 6 + i * 1.5, 0.6 + i * 0.5, 0, TAU); c.stroke(); }
+    } else if (id === 'blanket') { // hodvábna prikrývka: zložená, so strieborným leskom a prešívaním
+      const fold = (y, h, col) => { c.fillStyle = col; c.beginPath(); c.moveTo(10, y); c.quadraticCurveTo(32, y - 4, 54, y); c.lineTo(54, y + h); c.quadraticCurveTo(32, y + h - 4, 10, y + h); c.fill(); };
+      fold(40, 16, '#c9ced6'); fold(28, 14, '#dfe4ea'); fold(16, 14, '#f4f6f9');
+      c.strokeStyle = '#9aa5b1'; c.lineWidth = 1.2; c.setLineDash([3, 3]);
+      for (const y of [23, 35, 48]) { c.beginPath(); c.moveTo(14, y); c.quadraticCurveTo(32, y - 3, 50, y); c.stroke(); }
+      c.setLineDash([]);
+      c.strokeStyle = 'rgba(255,255,255,0.9)'; c.lineWidth = 2; c.beginPath(); c.moveTo(18, 19); c.quadraticCurveTo(26, 17, 34, 18); c.stroke();
+      c.fillStyle = '#b48a5a'; c.fillRect(30, 14, 4, 44); // stužka
     } else if (/^wild_[0-3]$/.test(id)) { // divé semienko: hrsť semien v tráve s otáznikom
       for (let i = 0; i < 7; i++) leaf(c, 10 + i * 7, 58, 14 + (i % 3) * 4, -Math.PI / 2 + (i - 3) * 0.12, i % 2 ? '#7cb342' : '#558b2f');
       ell(c, 30, 40, 7, 4, 0.5, '#8d6e3f'); ell(c, 38, 44, 6, 3.5, -0.4, '#a1824a'); ell(c, 26, 47, 5, 3, 0.2, '#7a5a30');
