@@ -308,7 +308,7 @@ const Art = (() => {
     const h = hash(tx, ty);
     let base;
     switch (g) {
-      case 'path': base = se === 3 ? '#e0dccf' : '#d9b77e'; break;
+      case 'path': case 'majster': base = se === 3 ? '#e0dccf' : '#d9b77e'; break;
       case 'sand': base = se === 3 ? '#efece0' : '#ecd9a0'; break;
       case 'rock': case 'boulder': base = se === 3 ? '#d8dcde' : '#a9a39a'; break;
       case 'water': base = se === 3 ? '#a9d4ec' : '#4aa3df'; break;

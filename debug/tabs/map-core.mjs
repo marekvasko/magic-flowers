@@ -13,7 +13,7 @@ export const KINDS = {
   water: 'water', glacier: 'glacier',
   tree: 'tree', spruce: 'tree', giant: 'giant', trunk: 'trunk', bush: 'bush', shroom: 'shroom',
   boulder: 'rock', log: 'log',
-  hut: 'building', house: 'building', stall: 'building', well: 'building', cauldron: 'building', babka: 'building', icehouse: 'building', dielna: 'building', majster: 'building',
+  hut: 'building', house: 'building', stall: 'building', well: 'building', cauldron: 'building', babka: 'building', icehouse: 'building', dielna: 'building', majster: 'lot',
   lot: 'lot', gate: 'gate'
 };
 export function kindOf(D, g) { return KINDS[g] || (D.BLOCK[g] ? 'building' : 'ground'); }

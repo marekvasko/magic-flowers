@@ -708,6 +708,8 @@ wss.on('connection', ws => {
       const name = String(m.name || '').replace(/[<>*]/g, '').trim().slice(0, 14) || 'Záhradník'; // '*' je zástupný znak kľúčov enginu
       const room = getRoom(roomId);
       const key = name.toLowerCase();
+      // mená postáv z hry (Babka, Majster hodvábu) – nový hráč si ich nedá; kto už s takým menom hrá, o záhradu nepríde
+      if (D.reservedName(name) && !room.saves[key]) { send(ws, { t: 'error', text: `Meno „${name}“ patrí postave v hre. Vyber si, prosím, iné meno.` }); return ws.close(); }
       // Rýchle znovupripojenie: nahrádza ešte živé (často už mŕtve, len nezistené) spojenie
       // alebo prichádza krátko po odchode. Vtedy nehlásime príchod ani „kým si bol(a) preč“.
       let quick = false;

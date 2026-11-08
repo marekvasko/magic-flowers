@@ -27,7 +27,14 @@ function applyDielna(dielna, tiles) {
 // Hráč stojí pri Dielni / pri majstrovi (p = záznam prítomnosti)
 function near(p, x, y, r) { return !!p && p.area === 'garden' && Math.hypot(p.x - x, p.y - y) <= r; }
 function nearDielna(p) { const L = D.DIELNA.lot; return near(p, (L.x0 + L.x1 + 1) / 2, (L.y0 + L.y1 + 1) / 2, 3); }
-function nearMaster(p) { return near(p, D.MASTER.x + 0.5, D.MASTER.y + 0.5, 2.5); }
+// Majster hodvábu v kroku tick (D.masterAt): null, ak u neho hráč p nič nevybaví, inak dôvod odmietnutia alebo ''
+function masterCheck(p, tick) {
+  const m = D.masterAt(D.dayOfTick(tick), D.minOfTick(tick));
+  if (!m) return 'Majster hodvábu je preč – do dedinky chodí len na jar a na jeseň. 🧵';
+  if (!m.still) return 'Majster hodvábu je práve na ceste. Počkaj, kým príde. 🧵';
+  if (!near(p, m.x, m.y, 2.5)) return m.where === 'hut' ? 'Majster hodvábu je na noc u babky v chalúpke – podíď k nemu.' : 'Podíď bližšie k majstrovi hodvábu.';
+  return '';
+}
 
 const take = (sv, id, n) => I.removeItems(I.playerC(sv), id, n, 0);
 const give = (sv, id, n) => I.addItems(I.playerC(sv), id, n, 0);
@@ -135,4 +142,4 @@ function handRedeem(redeem, sv, tick) {
   return out;
 }
 
-module.exports = { newDielna, loadDielna, lotIdx, applyDielna, nearDielna, nearMaster, buildDielna, buyLoom, masterWeave, loomStart, loomDone, loomTake, redeemOf, clearedIdx, clearForDielna, handRedeem };
+module.exports = { newDielna, loadDielna, lotIdx, applyDielna, nearDielna, masterCheck, buildDielna, buyLoom, masterWeave, loomStart, loomDone, loomTake, redeemOf, clearedIdx, clearForDielna, handRedeem };
