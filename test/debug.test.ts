@@ -1,10 +1,13 @@
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const http = require('http');
-const Debug = require('../src/server/debug.ts');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import http from 'node:http';
+import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
+import * as Debug from '../src/server/debug.ts';
+import type { GameProposer, GameSpec } from '../src/server/game.ts';
+import { must, parseJson, partial, portOf } from './helpers.ts';
 
 const KEY = 'abc123hracov-kluc';
 
@@ -21,15 +24,17 @@ async function setup() {
   fs.writeFileSync(path.join(dir, 'secret.txt'), 'nie');
   const saved = JSON.stringify({ v: 1, tick: 100, rng: 1, events: [{ at: 150, seq: 1, type: 'stary', data: null }, { at: 130, seq: 2, type: 'dawn', data: null, key: 'dawn', periodic: true }], saves: { [KEY]: { coins: 5 } }, contracts: { list: [{ by: KEY }] } });
   fs.writeFileSync(path.join(dataDir, 'room-stary.json'), saved);
-  const rooms = new Map([['zivy', { tick: 7, state: { tick: 7, saves: { [KEY]: { coins: 9 } } }, players: new Map([[1, { name: 'Anka', area: 'hory', key: KEY }]]) }]]);
-  const sim = { proposers: { dawn: {}, hourly: {} }, periodic: [{ key: 'dawn', type: 'dawn', next: from => from + 50 }, { key: 'hourly', type: 'hourly', next: from => from + 12 }] };
+  type Room = Debug.DebugRoom & { state: { tick: number; saves: Partial<Record<string, { coins: number }>> } };
+  const rooms = new Map<string, Room>([['zivy', { tick: 7, state: { tick: 7, saves: { [KEY]: { coins: 9 } } }, players: new Map([[1, { name: 'Anka', area: 'hory', key: KEY }]]) }]]);
+  const sim: GameSpec = { proposers: { dawn: partial<GameProposer<unknown>>({}), hourly: partial<GameProposer<unknown>>({}) }, periodic: [{ key: 'dawn', type: 'dawn', next: from => from + 50 }, { key: 'hourly', type: 'hourly', next: from => from + 12 }] };
   const handle = Debug.create({ dataDir, debugDir, rooms, serialize: r => JSON.stringify(r.state), migrate: s => Object.assign({ migrated: true }, s), sim: () => sim });
   const srv = http.createServer((req, res) => { if (!handle(req, res)) { res.writeHead(404); res.end(); } });
-  await new Promise(r => srv.listen(0, '127.0.0.1', r));
-  const request = (method, p) => new Promise((resolve, reject) => http.request({ host: '127.0.0.1', port: srv.address().port, path: p, method }, res => {
-    let body = ''; res.on('data', c => body += c); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
+  await new Promise<void>(r => srv.listen(0, '127.0.0.1', r));
+  type Reply = { status: number | undefined; headers: IncomingHttpHeaders; body: string };
+  const request = (method: string, p: string): Promise<Reply> => new Promise((resolve, reject) => http.request({ host: '127.0.0.1', port: portOf(srv), path: p, method }, res => {
+    let body = ''; res.on('data', (c: Buffer) => { body += c.toString(); }); res.on('end', () => { resolve({ status: res.statusCode, headers: res.headers, body }); });
   }).on('error', reject).end());
-  return { dir, dataDir, rooms, saved, handle, request, get: p => request('GET', p), close: () => srv.close() };
+  return { dir, dataDir, rooms, saved, handle, request, get: (p: string) => request('GET', p), close: () => srv.close() };
 }
 
 test('debug: stránka je prístupná priamo, ale len na čítanie a len zo svojho priečinka', async () => {
@@ -45,19 +50,19 @@ test('debug: stránka je prístupná priamo, ale len na čítanie a len zo svojh
     assert.strictEqual((await s.get('/debug/%2e%2e/secret.txt')).status, 404);
     assert.strictEqual((await s.get('/api/debug/nic')).status, 404);
     assert.strictEqual((await s.request('POST', '/api/debug/room?id=stary')).status, 404, 'nič sa nedá poslať ani zmeniť');
-    assert.strictEqual(await s.handle({ url: '/index.html', method: 'GET', headers: {} }, {}), false, 'hru nechá na server');
+    assert.strictEqual(s.handle(partial<IncomingMessage>({ url: '/index.html', method: 'GET', headers: {} }), partial<ServerResponse>({})), false, 'hru nechá na server');
   } finally { s.close(); }
 });
 
 test('debug: zoznam svetov zo súborov aj z pamäte, kto je online', async () => {
   const s = await setup();
   try {
-    const r = JSON.parse((await s.get('/api/debug/rooms')).body);
+    const r = parseJson<{ rooms: Debug.RoomInfo[] }>((await s.get('/api/debug/rooms')).body);
     const ids = r.rooms.map(x => x.id);
     assert.deepStrictEqual(ids, ['zivy', 'stary']);
-    assert.deepStrictEqual(r.rooms[0].online, [{ name: 'Anka', area: 'hory', player: Debug.keyId(KEY) }]);
-    assert.strictEqual(r.rooms[1].loaded, false);
-    assert.strictEqual(r.rooms[1].size, s.saved.length);
+    assert.deepStrictEqual(must(r.rooms[0]).online, [{ name: 'Anka', area: 'hory', player: Debug.keyId(KEY) }]);
+    assert.strictEqual(must(r.rooms[1]).loaded, false);
+    assert.strictEqual(must(r.rooms[1]).size, s.saved.length);
   } finally { s.close(); }
 });
 
@@ -65,14 +70,15 @@ test('debug: snímka sveta je len na čítanie a bez kľúčov hráčov', async 
   const s = await setup();
   const file = path.join(s.dataDir, 'room-stary.json'), before = fs.statSync(file).mtimeMs;
   try {
-    const f = await s.get('/api/debug/room?id=stary'), snap = JSON.parse(f.body);
+    const f = await s.get('/api/debug/room?id=stary');
+    const snap = parseJson<{ source: string; state: { migrated: boolean; saves: Partial<Record<string, { coins: number }>>; contracts: { list: { by: string }[] } } }>(f.body);
     assert.strictEqual(snap.source, 'file');
     assert.strictEqual(snap.state.migrated, true, 'uloženie zo súboru prejde migrate() na kópii');
     assert.ok(!f.body.includes(KEY), 'kľúč hráča nesmie byť vo výstupe');
     assert.deepStrictEqual(Object.keys(snap.state.saves), [Debug.keyId(KEY)]);
-    assert.strictEqual(snap.state.contracts.list[0].by, Debug.keyId(KEY));
+    assert.strictEqual(must(snap.state.contracts.list[0]).by, Debug.keyId(KEY));
     const m = await s.get('/api/debug/room?id=zivy');
-    assert.strictEqual(JSON.parse(m.body).source, 'memory');
+    assert.strictEqual(parseJson<{ source: string }>(m.body).source, 'memory');
     assert.ok(!m.body.includes(KEY));
     // neexistujúci svet sa nevytvorí, zlé meno sa ani neskúša
     assert.strictEqual((await s.get('/api/debug/room?id=novy')).status, 404);
@@ -87,7 +93,8 @@ test('debug: snímka sveta je len na čítanie a bez kľúčov hráčov', async 
 test('debug: stav reconcilera – naplánované, chýbajúce a zahodené udalosti (svet sa nezmení)', async () => {
   const s = await setup();
   try {
-    const r = JSON.parse((await s.get('/api/debug/room?id=stary')).body).reconciler;
+    type Reconciler = { declared: number; proposers: number; counts: Record<'periodic' | 'unique' | 'plain', number>; periodic: { key: string; type: string; status: string; at: number | null }[]; drop: { key: string | null; type: string; at: number; why: string }[] };
+    const r = parseJson<{ reconciler: Reconciler }>((await s.get('/api/debug/room?id=stary')).body).reconciler;
     assert.deepStrictEqual([r.declared, r.proposers], [2, 2]);
     assert.deepStrictEqual(r.counts, { periodic: 1, unique: 0, plain: 1 });
     assert.deepStrictEqual(r.periodic, [
@@ -105,10 +112,10 @@ test('debug: rozšírenia API z debug/api/<name>.js dostanú len kópiu sveta, b
     const f = await s.get('/api/debug/coins?id=stary');
     assert.strictEqual(f.status, 200);
     assert.ok(!f.body.includes(KEY));
-    assert.deepStrictEqual(JSON.parse(f.body), { source: 'file', coins: [[Debug.keyId(KEY), 5]] });
+    assert.deepStrictEqual(parseJson<unknown>(f.body), { source: 'file', coins: [[Debug.keyId(KEY), 5]] });
     const m = await s.get('/api/debug/coins?id=zivy');
-    assert.deepStrictEqual(JSON.parse(m.body), { source: 'memory', coins: [[Debug.keyId(KEY), 9]] });
-    assert.strictEqual(s.rooms.get('zivy').state.saves[KEY].coins, 9, 'živý svet ostal nedotknutý (rozšírenie zmenilo len kópiu)');
+    assert.deepStrictEqual(parseJson<unknown>(m.body), { source: 'memory', coins: [[Debug.keyId(KEY), 9]] });
+    assert.strictEqual(must(must(s.rooms.get('zivy')).state.saves[KEY]).coins, 9, 'živý svet ostal nedotknutý (rozšírenie zmenilo len kópiu)');
     assert.strictEqual((await s.get('/api/debug/coins?id=nie')).status, 404);
     assert.strictEqual((await s.get('/api/debug/neexistuje')).status, 404);
     assert.strictEqual((await s.get('/api/debug/..%2Fx')).status, 404);

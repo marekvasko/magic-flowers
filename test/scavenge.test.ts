@@ -1,27 +1,35 @@
-const test = require('node:test');
-const assert = require('node:assert');
-const D = require('../src/shared/data.ts');
-const Scav = require('../src/server/scavenge.ts');
-const E = require('../src/server/engine.ts');
+import test from 'node:test';
+import assert from 'node:assert';
+import * as D from '../src/shared/data.ts';
+import type { Ground, SpeciesId } from '../src/shared/data.ts';
+import type { Soil } from '../src/shared/save.ts';
+import * as Scav from '../src/server/scavenge.ts';
+import * as E from '../src/server/engine.ts';
+import * as Econ from '../src/server/economy.ts';
+import type { Rng, Tile } from '../src/server/world.ts';
+import { must, partial } from './helpers.ts';
 const TPD = D.TICKS_PER_DAY, C = D.SCAVENGE;
 
-const tiles = D.buildMap().map(g => ({ g, s: null }));
+const tiles: Tile[] = D.buildMap().map(g => ({ g, s: null }));
 // tick v prvý deň jari o danej hodine
-const at = (h, day = 1) => (day - 1) * TPD + Math.round(h * 60 / D.MIN_PER_TICK);
+const at = (h: number, day = 1): number => (day - 1) * TPD + Math.round(h * 60 / D.MIN_PER_TICK);
 // Svet hľadania: políčka, prehľadané políčka, tajná soľ (zo semienka) a generátor náhody
-function room(tick, seed) { return { tick, tiles, scav: {}, scavSalt: E.seedOf('test', seed || 7), g: E.generator(seed || 7) }; }
-const density = (r, i) => Scav.density(r.tiles, r.tick, i);
-const hasSeed = (r, i) => Scav.hasSeed(r.scavSalt, r.scav, r.tiles, r.tick, i);
-const chance = (r, i) => Scav.chance(r.scavSalt, r.scav, r.tiles, r.tick, i);
-const roll = (r, i) => Scav.roll(r.scavSalt, r.scav, r.tiles, r.tick, i, r.g);
+interface Room { tick: number; tiles: Tile[]; scav: Scav.Scav; scavSalt: number; g: Rng }
+function room(tick: number, seed?: number): Room { return { tick, tiles, scav: {}, scavSalt: E.seedOf('test', seed || 7), g: E.generator(seed || 7) }; }
+const density = (r: Room, i: number): number => Scav.density(r.tiles, r.tick, i);
+const hasSeed = (r: Room, i: number): boolean => Scav.hasSeed(r.scavSalt, r.scav, r.tiles, r.tick, i);
+const chance = (r: Room, i: number): number => Scav.chance(r.scavSalt, r.scav, r.tiles, r.tick, i);
+const roll = (r: Room, i: number): boolean => Scav.roll(r.scavSalt, r.scav, r.tiles, r.tick, i, r.g);
+const has = (list: readonly string[], v: string): boolean => list.includes(v);
 // tráva ďaleko od lesa a ciest, aj tráva na okraji lesa
-const field = (() => { for (let i = 0; i < tiles.length; i++) if (tiles[i].g === 'grass' && Scav.tileFactor(tiles, i) === 1) return i; })();
-const edge = (() => { for (let i = 0; i < tiles.length; i++) if (tiles[i].g === 'grass' && Scav.tileFactor(tiles, i) > 1.2) return i; })();
+const field = must(((): number | undefined => { for (let i = 0; i < tiles.length; i++) if (must(tiles[i]).g === 'grass' && Scav.tileFactor(tiles, i) === 1) return i; return undefined; })());
+const edge = ((): number | undefined => { for (let i = 0; i < tiles.length; i++) if (must(tiles[i]).g === 'grass' && Scav.tileFactor(tiles, i) > 1.2) return i; return undefined; })();
 
 test('hľadať sa dá len v neprekopanej tráve', () => {
   assert.ok(Scav.canSearch({ g: 'grass', s: null }));
-  assert.ok(!Scav.canSearch({ g: 'grass', s: { k: 'normal' } }));
-  for (const g of ['forest', 'path', 'sand', 'rock', 'water', 'tree']) assert.ok(!Scav.canSearch({ g, s: null }), g);
+  assert.ok(!Scav.canSearch({ g: 'grass', s: partial<Soil>({ k: 'normal' }) }));
+  const grounds: Ground[] = ['forest', 'path', 'sand', 'rock', 'water', 'tree'];
+  for (const g of grounds) assert.ok(!Scav.canSearch({ g, s: null }), g);
 });
 
 test('hustota semienok závisí od dennej hodiny: ráno najviac, v noci takmer nič', () => {
@@ -37,8 +45,8 @@ test('okraj lesa má viac semienok, zima menej', () => {
   assert.ok(summer > spring && spring > winter);
 });
 
-const grass = tiles.map((t, i) => i).filter(i => tiles[i].g === 'grass');
-const spots = r => grass.filter(i => hasSeed(r, i));
+const grass = tiles.map((t, i) => i).filter(i => must(tiles[i]).g === 'grass');
+const spots = (r: Room): number[] => grass.filter(i => hasSeed(r, i));
 
 test('semienka sú len na niektorých políčkach, počas hodiny ostávajú a potom sa premiestnia', () => {
   const r = room(at(13), 3);
@@ -53,7 +61,7 @@ test('semienka sú len na niektorých políčkach, počas hodiny ostávajú a po
 });
 
 test('prehľadané políčko je do konca hodiny prázdne, staré záznamy sa vyhodia', () => {
-  const r = room(at(13), 3), i = spots(r)[0];
+  const r = room(at(13), 3), i = must(spots(r)[0]);
   roll(r, i);
   assert.strictEqual(hasSeed(r, i), false);
   assert.strictEqual(roll(r, i), false, 'druhýkrát nič');
@@ -77,7 +85,7 @@ test('za deň poctivého hľadania z políčka na políčko (pokus každý krok 
     const r = room(0, 1000 + d);
     for (let k = 0; k < 180; k++) {
       r.tick = at(6 + k * 15 / 180, 1 + (d % 4)); // od 6:00 do 21:00, jeden pokus za krok
-      if (roll(r, grass[(d * 31 + k * 7) % grass.length])) found++;
+      if (roll(r, must(grass[(d * 31 + k * 7) % grass.length]))) found++;
     }
   }
   const avg = found / days;
@@ -85,7 +93,7 @@ test('za deň poctivého hľadania z políčka na políčko (pokus každý krok 
 });
 
 test('divé semienko: len sezónne, nemagické a nie prísne druhy', () => {
-  for (let se = 0; se < 4; se++) {
+  for (const se of [0, 1, 2, 3] as const) {
     const list = Scav.wildCandidates(se);
     assert.ok(list.length > 0, 'obdobie ' + se);
     for (const sp of list) {
@@ -98,13 +106,14 @@ test('divé semienko: len sezónne, nemagické a nie prísne druhy', () => {
 });
 
 test('divé semienko „pozná trh“: drahší kvet v čase sadenia padne oveľa častejšie (váha cena²)', () => {
-  const r = room(0, 99), n = 4000, cnt = {};
-  const price = sp => sp === 'slnecnica' ? 100 : 20; // leto: slnečnica sa práve predáva za 5× viac
+  const r = room(0, 99), n = 4000, cnt: Partial<Record<string, number>> = {};
+  const price = (sp: SpeciesId): number => sp === 'slnecnica' ? 100 : 20; // leto: slnečnica sa práve predáva za 5× viac
   for (let k = 0; k < n; k++) { const sp = Scav.pickWild(r.g, 1, price); cnt[sp] = (cnt[sp] || 0) + 1; }
   const others = Scav.wildCandidates(1).length - 1;
   const expected = 25 / (25 + others); // 100² : 20² = 25 : 1
-  assert.ok(Math.abs(cnt.slnecnica / n - expected) < 0.03, `${cnt.slnecnica / n} vs ${expected}`);
-  for (const sp in cnt) assert.ok(Scav.wildCandidates(1).includes(sp));
+  const sl = must(cnt['slnecnica']);
+  assert.ok(Math.abs(sl / n - expected) < 0.03, `${sl / n} vs ${expected}`);
+  for (const sp in cnt) assert.ok(has(Scav.wildCandidates(1), sp));
 });
 
 test('rovnaké semienko náhody → rovnaký druh (deterministické)', () => {
@@ -113,19 +122,18 @@ test('rovnaké semienko náhody → rovnaký druh (deterministické)', () => {
 });
 
 test('klient nevidí druh divej rastliny, kým nevyklíči', () => {
-  const t = { g: 'grass', s: { k: 'normal', w: 0, r: 0, o: 'jano', p: { sp: 'slnecnica', prog: 0, q: 3, dry: 0, wild: 1 } } };
-  const v = Scav.tileView(t);
-  assert.strictEqual(v.s.p.sp, 'wild');
-  assert.strictEqual(t.s.p.sp, 'slnecnica', 'stav na serveri ostáva');
-  assert.strictEqual(D.stageOf(v.s.p), 0);
-  const sprouted = { g: 'grass', s: Object.assign({}, t.s, { p: { sp: 'slnecnica', prog: 1, q: 3, dry: 0 } }) };
+  const t: Tile & { s: Soil } = { g: 'grass', s: { k: 'normal', w: 0, r: 0, o: 'jano', p: { sp: 'slnecnica', prog: 0, q: 3, dry: 0, wild: 1 } } };
+  const v = Scav.tileView(t), vp = must(v.s?.p ?? undefined);
+  assert.strictEqual(vp.sp, 'wild');
+  assert.strictEqual(t.s.p?.sp, 'slnecnica', 'stav na serveri ostáva');
+  assert.strictEqual(D.stageOf(vp), 0);
+  const sprouted: Tile = { g: 'grass', s: { ...t.s, p: { sp: 'slnecnica', prog: 1, q: 3, dry: 0 } } };
   assert.strictEqual(Scav.tileView(sprouted), sprouted);
 });
 
 test('divé semienka sa nedajú predať a majú slovenský názov', () => {
-  const Econ = require('../src/server/economy.ts');
   for (let se = 0; se < 4; se++) {
-    assert.strictEqual(Econ.sellQuote({}, 0, 'wild_' + se), null);
+    assert.strictEqual(Econ.sellQuote(partial<Econ.MarketPart>({}), 0, 'wild_' + se), null);
     assert.match(D.itemName('wild_' + se), /^Divé semienko \((jar|leto|jeseň|zima)\)$/);
   }
 });

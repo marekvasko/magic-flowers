@@ -125,17 +125,17 @@ type DebugApi = (query: URLSearchParams, tools: Tools) => unknown;
 export interface RoomInfo { id: string; size: number | null; saved: number | null; loaded: boolean; online: Loaded['online']; tick?: number }
 // ctx: { dataDir, debugDir, rooms (Map id → svet v pamäti), serialize(room) → JSON, migrate(stav) → stav,
 //        sim() → špecifikácia simulácie { proposers, periodic } pre stav reconcilera }
-export interface DebugCtx {
+export interface DebugCtx<R extends DebugRoom> {
   dataDir: string;
   debugDir: string;
-  rooms: Map<string, DebugRoom>;
-  serialize: (room: DebugRoom) => string;
+  rooms: Map<string, R>;
+  serialize: (room: R) => string;
   migrate: (state: DebugState) => DebugState;
   sim?: () => GameSpec | null | undefined;
 }
 
 // Vráti handle(req, res) → true, ak požiadavku vybavil (inak ju server spracuje ako obyčajný súbor).
-export function create(ctx: DebugCtx): (req: Pick<IncomingMessage, 'url' | 'method'>, res: Pick<ServerResponse, 'writeHead' | 'end'>) => boolean {
+export function create<R extends DebugRoom>(ctx: DebugCtx<R>): (req: Pick<IncomingMessage, 'url' | 'method'>, res: Pick<ServerResponse, 'writeHead' | 'end'>) => boolean {
   type Res = Pick<ServerResponse, 'writeHead' | 'end'>;
   const notFound = (res: Res): true => { res.writeHead(404); res.end('Not found'); return true; };
   const json = (res: Res, code: number, obj: unknown): true => {
