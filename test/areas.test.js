@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
-const D = require('../src/shared/data.js');
+const D = require('../src/shared/data.ts');
 const W3 = require('../src/shared/world3d.js');
 const Areas = require('../src/server/areas.js');
 

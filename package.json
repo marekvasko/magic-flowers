@@ -4,9 +4,10 @@
   "description": "Čarovná záhrada – multiplayerová hra o pestovaní kvetov (mobil, vertikálne)",
   "main": "src/server/server.js",
   "scripts": {
-    "start": "node src/server/server.js",
-    "dev": "DAY_SECONDS=60 node src/server/server.js",
-    "test": "node --test 'test/*.test.js' 'test/*.test.ts'",
+    "build": "node scripts/build.mjs",
+    "start": "npm run build && node src/server/server.js",
+    "dev": "npm run build && DAY_SECONDS=60 node src/server/server.js",
+    "test": "NODE_OPTIONS=--disable-warning=MODULE_TYPELESS_PACKAGE_JSON node --test 'test/*.test.js' 'test/*.test.ts'",
     "typecheck": "tsc",
     "lint": "eslint --no-error-on-unmatched-pattern ."
   },
@@ -19,6 +20,7 @@
     "@eslint-community/eslint-plugin-eslint-comments": "^4.8.1",
     "@types/node": "^24.19.2",
     "@types/ws": "^8.18.2",
+    "esbuild": "^0.28.2",
     "eslint": "^9.39.5",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.1"

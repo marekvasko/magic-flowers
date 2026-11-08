@@ -16,7 +16,7 @@
 // pavučiny, ťahanie hodvábu, príchod hráča do lesa), nastaví mu next a zruší jeho udalosť – reconcile ju hneď naplánuje znova.
 // Hráčov (kde stoja, lampáš, kam idú, ťahanie hodvábu) vidia návrhy len cez ctx.presence; náhoda len ctx.rng.
 // Rýchlosti sú v políčkach za sekundu reálneho času, časy v D.SPIDERS / D.WEB v ms – na kroky ich prepočíta daySeconds.
-const D = require('../shared/data.js');
+const D = require('../shared/data.ts');
 const E = require('./engine.js');
 const I = require('./items.js');
 const { areaTiles, clampPos } = require('./areas.js');

@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const E = require('../src/server/engine.js');
-const D = require('../src/shared/data.js');
+const D = require('../src/shared/data.ts');
 const TPD = E.TICKS_PER_DAY;
 
 function world(extra) { return Object.assign({ tick: 0, wall: 0, daySeconds: 300, seed: "test-12345", step: 0, seq: 0, events: [] }, extra); }

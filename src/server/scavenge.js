@@ -2,7 +2,7 @@
 // Stav (len na serveri): world.scavSalt – tajné číslo, z ktorého sa odvodí, kde sú semienka (klient ho nikdy nedostane);
 // world.scav = { index políčka: hodina (okno), v ktorej ho niekto prehľadal }.
 // Funkcie dostávajú výrezy: tiles = políčka záhrady, scav = world.scav, salt = world.scavSalt, tick = herný čas, g = generátor náhody.
-const D = require('../shared/data.js');
+const D = require('../shared/data.ts');
 const C = D.SCAVENGE, TPD = D.TICKS_PER_DAY;
 
 const WILDISH = { forest: 1, tree: 1, shroom: 1, ring: 1 };

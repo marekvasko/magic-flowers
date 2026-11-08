@@ -6,7 +6,7 @@
 // Prítomnosť (kde hráči stoja, či hľadajú v tráve) je ctx.presence a ctx.actor (záznam konajúceho hráča) – nie je to stav.
 // Správa 'act' (klik na políčko s predmetom v ruke) sa najprv rozloží (resolveAct) na konkrétnu akciu podľa políčka,
 // predmetu a prítomnosti; server to urobí pri skladaní dávky, aby v denníku bolo, čo hráč naozaj urobil (pick, till…).
-const D = require('../shared/data.js');
+const D = require('../shared/data.ts');
 const E = require('./engine.js');
 const Econ = require('./economy.js');
 const I = require('./items.js');

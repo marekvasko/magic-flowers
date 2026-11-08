@@ -2,7 +2,7 @@
 // (základ z generátora + uložená pôda, rastliny, ľad a ľadovňa), a hráči na ploche. Len číta kópiu sveta.
 //   GET /api/debug/world?room=<id>&area=<plocha>  – svet zo zoznamu
 //   GET /api/debug/world?seed=<n>&area=<plocha>   – čerstvý svet len zo semienka (bez hráčov a bez uloženia)
-const D = require('../../src/shared/data.js');
+const D = require('../../src/shared/data.ts');
 const Ice = require('../../src/server/ice.js');
 const Areas = require('../../src/server/areas.js');
 const Scav = require('../../src/server/scavenge.js');

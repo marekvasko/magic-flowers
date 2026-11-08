@@ -6,7 +6,7 @@
 //  - cornerSpots: kúty pre krížiaka.
 // Shader, ktorý z parametrov kreslí vlákna, je v public/spiders3d.mjs (webMaterial).
 (function (root) {
-  const D = root.GameData || require('./data.js');
+  const D = root.GameData || require('./data.ts');
   const SP = D.SPIDERS, V = SP.vlciak;
   const LW = D.LES_W, LH = D.LES_H;
   const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];

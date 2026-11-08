@@ -1,18 +1,19 @@
 {
-  // Fáza 1 prepisu do TypeScriptu (#122): JS súbory sa ešte nekontrolujú (checkJs vypnuté),
+  // Prepis do TypeScriptu (#122): JS súbory sa ešte nekontrolujú (checkJs vypnuté),
   // prísne pravidlá platia pre každý nový .ts súbor. Node 24 spúšťa .ts priamo (odstránenie typov),
   // preto len vymazateľná syntax (žiadne enum, namespace ani parameter properties) a prípony .ts v importoch.
+  // Prechodne (do konca fázy 4) je balík CommonJS a .ts súbory sú ES moduly – preto module "preserve" a
+  // moduleResolution "bundler"; potom "type": "module" v package.json a späť na "nodenext".
   "compilerOptions": {
     "target": "es2024",
     "lib": ["es2024"],
-    "module": "nodenext",
-    "moduleResolution": "nodenext",
+    "module": "preserve",
+    "moduleResolution": "bundler",
     "types": ["node"],
     "noEmit": true,
     "allowJs": true,
     "checkJs": false,
     "allowImportingTsExtensions": true,
-    "rewriteRelativeImportExtensions": false,
     "verbatimModuleSyntax": true,
     "erasableSyntaxOnly": true,
     "isolatedModules": true,

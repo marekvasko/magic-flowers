@@ -3,7 +3,7 @@
 // Správy hráčom idú cez ctx.emit (server ich pošle po vykonaní dávky: to = E.ALL všetkým, E.area(plocha) hráčom na ploche,
 // inak kľúč hráča); obnovu políčok, batohov, trhu, nástenky a skladu si server odvodí zo zapísaných kľúčov.
 // Prítomnosť pripojených hráčov (kde stoja, či hľadajú v tráve) dostane návrh ako ctx.presence – nie je to stav sveta.
-const D = require('../shared/data.js');
+const D = require('../shared/data.ts');
 const E = require('./engine.js');
 const Econ = require('./economy.js');
 const I = require('./items.js');

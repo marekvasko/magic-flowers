@@ -1,6 +1,6 @@
-const test = require('node:test');
-const assert = require('node:assert');
-const D = require('../src/shared/data.js');
+import test from 'node:test';
+import assert from 'node:assert';
+import * as D from '../src/shared/data.ts';
 
 test('chat: správa sa oreže na D.CHAT_MAX znakov', () => {
   assert.strictEqual(D.CHAT_MAX, 120);

@@ -2,7 +2,7 @@
 // Všetko, čo sa deje v čase, je udalosť v plánovači (engine.js) a celý stav je v world.market / world.contracts.
 // Funkcie nedostávajú svet, ale výrezy (slices), s ktorými pracujú: m = trh (world.market alebo jeho kópia z návrhu),
 // c = nástenka zákaziek (world.contracts), sv = uloženie hráča, tick = herný čas; náhoda a plánovanie cez ctx (engine.js).
-const D = require('../shared/data.js');
+const D = require('../shared/data.ts');
 const E = require('./engine.js');
 const I = require('./items.js');
 

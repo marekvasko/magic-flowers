@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const D = require('../src/shared/data.js');
+const D = require('../src/shared/data.ts');
 const Scav = require('../src/server/scavenge.js');
 const E = require('../src/server/engine.js');
 const TPD = D.TICKS_PER_DAY, C = D.SCAVENGE;
