@@ -174,7 +174,7 @@ test('trh: kľúče po položkách – nákupy rôznych semienok v jednom kroku 
   // predaj kvetu číta sviatočný násobok z položky kvetu, nie zo súhrnu trhu
   const w2 = makeWorld(3);
   give(save(w2, 'ana'), `fl_${SP}`, 2, w2.tick);
-  // skúšobný sviatok s id skutočného sviatku (id číta len festEnd, ktorý tu nenastane)
+  // skúšobný sviatok s id skutočného sviatku (test na id nič neoveruje; festEnd tu nenastane)
   const f: ActiveFestival = { id: must(D.FESTIVALS[0]).id, name: 'Skúška', icon: '✨', mult: { [SP]: 2 }, until: w2.tick + TPD };
   w2.market.festival = f; Econ.setFestival(w2.market, f);
   const price = Econ.flowerPrice(w2.market, w2.tick, SP);
