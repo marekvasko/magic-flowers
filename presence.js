@@ -40,4 +40,15 @@ function watch(ws) {
   ws.on('pong', () => { ws.isAlive = true; });
 }
 
-module.exports = { awayDays, createLeaving, heartbeat, watch };
+// Polohy hráčov (správa pl): každý dostane zoznam hráčov svojej plochy. Kto sa ešte pripája (nedostal welcome), nedostane
+// nič – nepoznal by vlastné id a vlastnú postavičku by si nechal medzi ostatnými ako zamrznutého „ducha“ (#125).
+function sendPlayers(players, list) {
+  const msgs = new Map(); // plocha → JSON (raz pre všetkých na ploche)
+  for (const p of players) {
+    if (p.joining || p.ws.readyState !== 1) continue;
+    if (!msgs.has(p.area)) msgs.set(p.area, JSON.stringify({ t: 'pl', list: list.filter(q => q.area === p.area) }));
+    p.ws.send(msgs.get(p.area));
+  }
+}
+
+module.exports = { awayDays, createLeaving, heartbeat, watch, sendPlayers };

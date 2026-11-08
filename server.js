@@ -280,7 +280,7 @@ function broadcast(room, msg) { const s = JSON.stringify(msg); for (const p of r
 function toast(pl, text, kind) { send(pl.ws, { t: 'toast', text, kind: kind || 'info' }); }
 function toastAll(room, text, kind) { broadcast(room, { t: 'toast', text, kind: kind || 'info' }); }
 // Hráči sú vždy na jednej ploche (záhrada / hory / Les na pomedzí / Les divov) – políčka a efekty dostanú len tí, ktorí sú na nej.
-function broadcastArea(room, area, msg, to) { const s = JSON.stringify(msg); for (const p of room.players.values()) if (p.area === area && p.ws.readyState === 1 && (!to || to(p))) p.ws.send(s); }
+function broadcastArea(room, area, msg) { const s = JSON.stringify(msg); for (const p of room.players.values()) if (p.area === area && p.ws.readyState === 1) p.ws.send(s); }
 function fx(room, k, x, y, extra, area) { broadcastArea(room, area || 'garden', Object.assign({ t: 'fx', k, x, y }, extra || {})); }
 // Políčka záhrady posielame cez Scav.tileView – druh divej rastliny ostane skrytý, kým nevyklíči (hory rastliny nemajú).
 function tileView(area, t) { return area === 'garden' ? Scav.tileView(t) : t; }
@@ -772,8 +772,7 @@ setInterval(() => {
       e: p.sleep ? 'sleep' : p.scav ? 'search' : p.pull ? 'pull' : p.emote && now - p.emoteAt < 6000 ? p.emote : null,
       wb: webLeft(p, now) // koľko pavučiny ešte na hráčovi zostáva (1 → 0)
     }));
-    // kto sa ešte pripája (nedostal welcome), polohy nedostane – nevedel by, ktorá postavička je on, a videl by svojho „ducha“ (#125)
-    for (const area of D.AREAS) broadcastArea(room, area, { t: 'pl', list: list.filter(p => p.area === area) }, p => !p.joining);
+    P.sendPlayers(room.players.values(), list); // kto sa ešte pripája, polohy nedostane (#125)
     // pavúky a krížiak (stav sveta, mení ho len engine): kým nejaké sú, a raz prázdny zoznam, keď zmiznú
     for (const area of D.AREAS) {
       const sp = Spiders.entities(room, area), key = area + 'Sp';

@@ -1,6 +1,6 @@
 // Čarovná záhrada – klient
 (() => {
-  const D = window.GameData;
+  const D = window.GameData, Players = window.Players;
   const $ = id => document.getElementById(id);
 
   const SHIRTS = ['#4a90d9', '#e05a5a', '#5cb85c', '#f0ad4e', '#9b59d0', '#20b2aa', '#ff7eb6', '#555555'];
@@ -133,16 +133,12 @@
         S.weather = m.weather; S.mode = m.mode; S.daySeconds = m.daySeconds; S.timeAt = performance.now(); updateHud();
         break;
       case 'pl': {
-        const seen = new Set();
-        for (const p of m.list) {
-          seen.add(p.id);
-          if (p.id === S.id) { S.myEmote = p.e; S.mySi = p.si; S.others.delete(p.id); continue; } // vlastná postavička nikdy medzi ostatnými (#125)
-          let o = S.others.get(p.id);
-          if (!o) { o = { x: p.x, y: p.y, phase: 0, jz: 0, jv: 0, j: p.j }; S.others.set(p.id, o); }
+        // vlastná postavička nikdy medzi ostatnými (#125)
+        const mine = Players.syncOthers(S.others, m.list, S.id, (o, p) => {
           if (p.j !== o.j && !o.jz) o.jv = JUMP_V; // iný hráč skočil
           Object.assign(o, { id: p.id, tx: p.x, ty: p.y, dir: p.dir, a: p.a, look: p.look || {}, name: p.name, e: p.e, cr: !!p.cr, lp: !!p.lp, j: p.j, si: p.si, wb: p.wb || 0 });
-        }
-        for (const id of [...S.others.keys()]) if (!seen.has(id)) S.others.delete(id);
+        });
+        if (mine) { S.myEmote = mine.e; S.mySi = mine.si; }
         break;
       }
       case 'sleep': {

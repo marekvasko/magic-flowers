@@ -1,6 +1,8 @@
-// #125: hráč nesmie dostať polohy hráčov (pl) skôr ako welcome – inak nevie, ktorá postavička je on, a vidí svojho „ducha“.
-// Na serveri sa to stane, keď časovač polôh predbehne časovač rámca (stačí jeden rámec dlhší ako 100 ms). Lokálne ide rámec
-// skoro vždy prvý, takže tento test chybu sám nevyvolá – stráži pravidlo (overené ručne zdržaním prvého rámca o 150 ms).
+// #125: duch vlastnej postavičky na mieste pripojenia. Rámec (join → welcome) a polohy hráčov (pl) sú dva časovače po 100 ms;
+// po jednom rámci dlhšom ako 100 ms ide pl prvý a pripájajúci sa hráč dostane polohy skôr ako welcome. Ešte nepozná vlastné id,
+// a tak si seba pridá medzi ostatných – a tá postavička zamrzne na mieste pripojenia.
+// Klient aj server testujeme priamo (presne táto postupnosť); test naživo na konci chybu sám nevyvolá
+// (lokálne ide rámec skoro vždy prvý), stráži len pravidlo „welcome pred pl“.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -10,6 +12,56 @@ const net = require('net');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
 
+const Players = require('../shared/players.js');
+const P = require('../presence.js');
+
+// ---------- Klient: ostatní hráči podľa pl ----------
+const pl = (id, x, y, area) => ({ id, name: 'Hráč ' + id, x, y, area: area || 'garden', j: 0 });
+const move = (o, p) => Object.assign(o, { id: p.id, tx: p.x, ty: p.y, name: p.name });
+
+test('klient: pl prišiel skôr ako welcome – vlastná postavička nezostane medzi ostatnými ako duch (#125)', () => {
+  const others = new Map();
+  // pripájam sa ako hráč 7 na štarte (10, 30); id ešte nepoznám, Anna (1) už hrá
+  Players.syncOthers(others, [pl(1, 3, 3), pl(7, 10, 30)], undefined, move);
+  assert.deepStrictEqual([...others.keys()].sort(), [1, 7], 'bez vlastného id je každý „ostatný“');
+  // welcome: som 7; odídem zo štartu, ďalšie pl už má moju novú polohu
+  const me = Players.syncOthers(others, [pl(1, 3, 3), pl(7, 15, 30)], 7, move);
+  assert.deepStrictEqual([...others.keys()], [1], 'zamrznutý duch hráča 7 na štarte zmizol');
+  assert.strictEqual(me.x, 15, 'vlastná položka sa vráti (emócia, hľadanie)');
+  assert.strictEqual(others.get(1).tx, 3);
+});
+
+test('klient: ostatní hráči – noví pribudnú, kto odišiel, zmizne, vlastná postavička nikdy', () => {
+  const others = new Map();
+  assert.strictEqual(Players.syncOthers(others, [pl(1, 1, 1), pl(2, 2, 2), pl(5, 5, 5)], 5, move).id, 5);
+  assert.deepStrictEqual([...others.keys()], [1, 2]);
+  const anna = others.get(1);
+  Players.syncOthers(others, [pl(1, 4, 1), pl(5, 5, 5), pl(3, 3, 3)], 5, move);
+  assert.deepStrictEqual([...others.keys()], [1, 3], 'hráč 2 odišiel, hráč 3 prišiel');
+  assert.strictEqual(others.get(1), anna, 'postavička ostáva tá istá (plynulý pohyb)');
+  assert.deepStrictEqual([anna.x, anna.tx], [1, 4], 'kreslí sa z doterajšej polohy, k cieľu sa len posúva');
+  assert.strictEqual(Players.syncOthers(others, [], 5, move), null);
+  assert.strictEqual(others.size, 0);
+});
+
+// ---------- Server: komu idú polohy hráčov ----------
+test('server: hráč, ktorý sa ešte pripája, polohy nedostane; ostatní dostanú hráčov svojej plochy (#125)', () => {
+  const ws = (open) => ({ readyState: open === false ? 3 : 1, got: [], send(s) { this.got.push(JSON.parse(s)); } });
+  const anna = { id: 1, area: 'garden', ws: ws() }, eva = { id: 2, area: 'hory', ws: ws() };
+  const marek = { id: 3, area: 'garden', ws: ws(), joining: true }, gone = { id: 4, area: 'garden', ws: ws(false) };
+  const list = [anna, eva, marek, gone].map(p => pl(p.id, p.id, p.id, p.area));
+  P.sendPlayers([anna, eva, marek, gone], list);
+  assert.deepStrictEqual(marek.ws.got, [], 'pripájajúci sa hráč nedostal nič (welcome ešte neprišiel)');
+  assert.deepStrictEqual(gone.ws.got, []);
+  assert.deepStrictEqual(anna.ws.got.map(m => [m.t, m.list.map(p => p.id)]), [['pl', [1, 3, 4]]], 'Anna vidí aj Mareka, ktorý sa práve pripája');
+  assert.deepStrictEqual(eva.ws.got.map(m => [m.t, m.list.map(p => p.id)]), [['pl', [2]]], 'v horách len hráči z hôr');
+  // po welcome (joining = false) už polohy dostane aj Marek – vrátane seba, podľa toho si nastaví emóciu
+  marek.joining = false;
+  P.sendPlayers([marek], list);
+  assert.deepStrictEqual(marek.ws.got[0].list.map(p => p.id), [1, 3, 4]);
+});
+
+// ---------- Server naživo ----------
 const freePort = () => new Promise(r => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
 function startServer(dataDir, port) {
   const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
