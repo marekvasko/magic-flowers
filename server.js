@@ -303,6 +303,13 @@ function presenceOf(room) {
     lp: !!p.lp, ...velocity(p), pull: p.pull ? { id: p.pull.id, n: p.pull.n, px: p.pull.px, py: p.pull.py } : null })); // lampáš, rýchlosť (kam pavúk beží) a ťahanie hodvábu – pre pavúky
 }
 
+// Pavučina na hráčovi (pavúk ho zabalil): 1 hneď po zabalení, postupne do 0 (zoderie sa)
+function webLeft(p, now) {
+  if (!p.web) return 0;
+  const k = 1 - (now - p.web.at) / p.web.ms;
+  if (k <= 0) { p.web = null; return 0; }
+  return Math.round(k * 100) / 100;
+}
 // Rýchlosť hráča z posledných pohybov (políčka/s); kto 250 ms neposlal pohyb, stojí. Zaokrúhlená (ide do každého záznamu denníka).
 function velocity(p) {
   if (!p.movedAt || Date.now() - p.movedAt > 250) return { vx: 0, vy: 0 };
@@ -392,6 +399,7 @@ function notify(room, out) {
     else if (body.t === 'scavStart') pl.scav = { i: body.i, n: body.n, px: pl.x, py: pl.y, seeds: body.seeds };
     else if (body.t === 'pullStart') pl.pull = { id: body.id, n: body.n, px: pl.x, py: pl.y };
     else if (body.t === 'pullDone') pl.pull = null;
+    else if (body.t === 'webbed') { pl.web = { at: Date.now(), ms: body.ms }; pl.pull = null; send(pl.ws, body); } // zabalený do pavučiny – vidia to aj ostatní (pl)
     else if (body.t === 'travel') arrived(pl, body.from, body.area);
     else if (body.t === 'joined') { joined(pl); me.add(to); }
     else send(pl.ws, body);
@@ -741,7 +749,8 @@ setInterval(() => {
     // poloha z uloženia (potvrdená enginom), nie z prítomnosti: pohyb, ktorý engine ešte neoveril (alebo odmietne), ostatní neuvidia
     const list = [...room.players.values()].map(p => ({
       id: p.id, name: p.name, x: +(p.save && p.save.x != null ? p.save.x : p.x).toFixed(3), y: +(p.save && p.save.y != null ? p.save.y : p.y).toFixed(3), dir: p.dir, a: p.a, look: p.look, cr: p.cr ? 1 : 0, lp: p.lp ? 1 : 0, j: p.jn | 0, si: p.scav ? p.scav.i : -1, area: p.area,
-      e: p.sleep ? 'sleep' : p.scav ? 'search' : p.pull ? 'pull' : p.emote && now - p.emoteAt < 6000 ? p.emote : null
+      e: p.sleep ? 'sleep' : p.scav ? 'search' : p.pull ? 'pull' : p.emote && now - p.emoteAt < 6000 ? p.emote : null,
+      wb: webLeft(p, now) // koľko pavučiny ešte na hráčovi zostáva (1 → 0)
     }));
     for (const area of D.AREAS) broadcastArea(room, area, { t: 'pl', list: list.filter(p => p.area === area) });
     // pavúky a krížiak (stav sveta, mení ho len engine): kým nejaké sú, a raz prázdny zoznam, keď zmiznú

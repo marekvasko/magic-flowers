@@ -25,7 +25,7 @@
     skyTaps: [], tipIdx: Math.floor(Math.random() * D.TIPS.length), stuckT: 0,
     // pavúky (#57): pavučiny v Lese divov (webTile: políčko → pavučina), nory a čistina pradleny, kútové pavučiny krížiaka,
     // pavúky na ploche (plynulo dobiehajú polohu zo servera) a spomalenie (lepkavá pavučina, pavúk na chrbte)
-    webs: [], webTile: new Map(), homes: [], websGen: 0, corner: [], cornerGen: 0, spiders: new Map(), slowK: 1, slowUntil: 0
+    webs: [], webTile: new Map(), homes: [], websGen: 0, corner: [], cornerGen: 0, spiders: new Map(), slowK: 1, slowUntil: 0, web: null
   };
 
   window.MF = S; // pre ladenie v konzole
@@ -140,7 +140,7 @@
           let o = S.others.get(p.id);
           if (!o) { o = { x: p.x, y: p.y, phase: 0, jz: 0, jv: 0, j: p.j }; S.others.set(p.id, o); }
           if (p.j !== o.j && !o.jz) o.jv = JUMP_V; // iný hráč skočil
-          Object.assign(o, { id: p.id, tx: p.x, ty: p.y, dir: p.dir, a: p.a, look: p.look || {}, name: p.name, e: p.e, cr: !!p.cr, lp: !!p.lp, j: p.j, si: p.si });
+          Object.assign(o, { id: p.id, tx: p.x, ty: p.y, dir: p.dir, a: p.a, look: p.look || {}, name: p.name, e: p.e, cr: !!p.cr, lp: !!p.lp, j: p.j, si: p.si, wb: p.wb || 0 });
         }
         for (const id of [...S.others.keys()]) if (!seen.has(id)) S.others.delete(id);
         break;
@@ -170,6 +170,7 @@
         break;
       }
       case 'slow': S.slowK = m.k; S.slowUntil = performance.now() + m.ms; break;
+      case 'webbed': { const now = performance.now(); S.web = { start: now, stuck: m.stuck, end: now + m.ms, k: m.k }; stopWalk(); break; } // pavúk ťa zabalil do pavučiny
       case 'shove': S.me.x = m.x; S.me.y = m.y; stopWalk(); break; // stará pradlena odhodila hráča za okraj čistiny
       case 'brewed': S.brewed = m.k; S.cauldron = []; sfx(m.k === 'sliz' ? 'bad' : 'magic'); if (S.modal && S.modal.refresh) S.modal.refresh(); break;
       case 'error': alert(m.text); S.joined = false; $('conn').classList.add('hidden'); break;
@@ -184,7 +185,7 @@
     S.area = m.area; S.areaSeq = m.seq; S.tiles = m.tiles; S.tilesGen++;
     S.W = m.w || D.W; S.H = m.h || D.H; // každá plocha má vlastnú veľkosť
     S.me.x = m.x; S.me.y = m.y; S.others.clear(); stopWalk();
-    setWebs([], []); S.corner = []; S.cornerGen++; S.spiders.clear(); S.slowUntil = 0;
+    setWebs([], []); S.corner = []; S.cornerGen++; S.spiders.clear(); S.slowUntil = 0; S.web = null;
     findAnchors();
   }
   function setWebs(webs, homes) {
@@ -605,6 +606,15 @@
   const REACH = 1.7;
   function inReach(tx, ty) { return Math.hypot(S.me.x - (tx + 0.5), S.me.y - (ty + 0.5)) <= REACH; }
   function stopWalk() { S.path = null; S.pendingAct = null; }
+  // Zabalený do pavučiny: najprv stojí (stuck), potom sa rýchlosť s pavučinou, ktorá sa zodiera, vracia od k k plnej
+  function webSpeed(now) {
+    const w = S.web;
+    if (!w || now >= w.end) return 1;
+    if (now < w.start + w.stuck) return 0;
+    return w.k + (1 - w.k) * (now - w.start - w.stuck) / Math.max(1, w.end - w.start - w.stuck);
+  }
+  // koľko pavučiny je ešte na mne (1 → 0) – pre kreslenie postavičky
+  S.webLeft = () => { const w = S.web, now = performance.now(); if (!w || now >= w.end) return 0; return (w.end - now) / (w.end - w.start); };
 
   // BFS po políčkach – nájde cestu k prvému políčku, ktoré spĺňa podmienku
   function findPath(goal) {
@@ -1290,7 +1300,7 @@
     if (me.moving) {
       // ťažký ľad v náručí spomaľuje
       // lepkavá pavučina a pavúk na chrbte spomaľujú (server pošle 'slow')
-      const slowK = performance.now() < S.slowUntil ? S.slowK : 1;
+      const slowK = (performance.now() < S.slowUntil ? S.slowK : 1) * webSpeed(performance.now());
       const sp = 3.8 * dt * (me.crawl ? CRAWL_SPEED : 1) * Math.max(0.4, 1 - D.ICE_SLOW * (S.inv.ice || 0)) * slowK;
       const ox = me.x, oy = me.y;
       const { rx, ry } = D.BODY;

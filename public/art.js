@@ -605,6 +605,44 @@ const Art = (() => {
     c.strokeStyle = 'rgba(232,240,246,0.7)'; c.strokeRect(1, 1, w - 2, h - 2); // nosné vlákna k oporám
     c.restore();
   }
+  // Postavička zabalená do pavučiny (#57; postavička nakreslená na (x, y) veľkosťou s ako v char): hodvábny závoj len na
+  // jej pixeloch, vlákna ovinuté okolo tela a pri zodieraní strapky. left = koľko pavučiny ešte zostáva (1 → 0): vlákna
+  // miznú v náhodnom poradí (podľa k), tie, ktoré práve odchádzajú, visia ako potrhané konce.
+  function cocoon(c, x, y, s, left, k) {
+    if (!(left > 0)) return;
+    c.save();
+    c.globalCompositeOperation = 'source-atop'; // závoj len na postavičke
+    c.fillStyle = `rgba(232,238,244,${0.42 * left})`;
+    c.fillRect(x - s * 0.5, y - s, s, s);
+    c.globalCompositeOperation = 'source-over';
+    c.lineCap = 'round';
+    const N = 16, w = Math.max(1.2, s * 0.022);
+    for (let i = 0; i < N; i++) {
+      const r = hash(k, i + 40); // poradie zodierania
+      if (r > left + 0.18) continue;
+      const fray = r > left; // práve sa trhá – len kúsok, ktorý visí
+      const hy = y - s * (0.1 + 0.78 * hash(k, i + 70)), tilt = (hash(k, i + 90) - 0.5) * s * 0.22;
+      const half = s * (0.2 + 0.08 * hash(k, i + 110)) * (hy < y - s * 0.62 ? 0.8 : 1); // pri hlave užšie
+      const x0 = x - half, x1 = x + half, y0 = hy - tilt, y1 = hy + tilt, sag = s * (0.03 + 0.04 * hash(k, i + 130));
+      c.strokeStyle = `rgba(246,249,252,${fray ? 0.55 : 0.92})`;
+      c.lineWidth = w * (fray ? 0.8 : 1);
+      c.beginPath();
+      if (!fray) { c.moveTo(x0, y0); c.quadraticCurveTo(x, (y0 + y1) / 2 + sag, x1, y1); }
+      else { // potrhané vlákno: kus od jednej strany a voľný koniec visí dole
+        const side = hash(k, i + 150) < 0.5 ? -1 : 1, sx = x + side * half, sy = side < 0 ? y0 : y1;
+        c.moveTo(sx, sy); c.quadraticCurveTo(sx - side * half * 0.5, sy + sag, sx - side * half * 0.55, sy + s * 0.12);
+      }
+      c.stroke();
+    }
+    // pár šikmých vlákien krížom (zmiznú medzi prvými)
+    for (let i = 0; i < 4; i++) {
+      if (hash(k, i + 200) * 0.6 + 0.4 > left) continue;
+      const ya = y - s * (0.2 + 0.6 * hash(k, i + 210)), yb = ya - s * (0.25 + 0.15 * hash(k, i + 220)), d = i % 2 ? 1 : -1;
+      c.strokeStyle = 'rgba(246,249,252,0.75)'; c.lineWidth = w * 0.9;
+      c.beginPath(); c.moveTo(x - d * s * 0.2, ya); c.lineTo(x + d * s * 0.2, yb); c.stroke();
+    }
+    c.restore();
+  }
   // Bublina chatu nad hráčom: zalomí slová do max. 4 riadkov (šírka ~4,5 políčka), zvyšok skončí „…“.
   // (x, y) = účiarie menovky; bublina (biely obdĺžnik) sa kreslí nad ňu.
   function wrapText(c, text, maxW, maxLines) {
@@ -640,6 +678,6 @@ const Art = (() => {
     c.textBaseline = 'alphabetic';
   }
 
-  return { plant, char, ground, soil, shroom, icon, hash, circ, bubble, web };
+  return { plant, char, ground, soil, shroom, icon, hash, circ, bubble, web, cocoon };
 })();
 window.Art = Art; // pre 3D modul (render3d.mjs)

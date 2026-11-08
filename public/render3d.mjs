@@ -1346,6 +1346,7 @@ void main() {
     const jz = opts.jz || 0;
     o.ctx.clearRect(0, 0, 96, 128);
     Art.char(o.ctx, 48, 124, 100, look || {}, opts.dance ? 0 : dir8(a), phase, Object.assign({ noShadow: true }, opts, { jz: 0 }));
+    if (opts.web > 0) Art.cocoon(o.ctx, 48, 124, 100, opts.web, typeof id === 'number' ? id : 7); // zabalený do pavučiny – zodiera sa
     o.tex.needsUpdate = true;
     o.sp.position.set(x, o.h + jz, z);
     o.ghost.position.copy(o.sp.position);
@@ -1692,8 +1693,8 @@ void main() {
     }
     for (const o of chars.values()) o.alive = false;
     const me = S.me;
-    const meO = api.noPlayer ? null : drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : DIR_ANGLE[me.dir], S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz, crawl: me.crawl, dig: api.searching({ si: S.mySi }) && t, lamp: S.sel === 'lamp' && lampState }, dt);
-    for (const o of S.others.values()) drawChar(o.id, o.x, o.y, o.look, o.a != null ? o.a : DIR_ANGLE[o.dir || 0], o.e === 'dance' ? t * 4 : o.phase, { dance: o.e === 'dance', jz: o.jz, crawl: o.cr, dig: api.searching(o) && t, lamp: o.lp && lampState }, dt);
+    const meO = api.noPlayer ? null : drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : DIR_ANGLE[me.dir], S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz, crawl: me.crawl, dig: api.searching({ si: S.mySi }) && t, lamp: S.sel === 'lamp' && lampState, web: S.webLeft ? S.webLeft() : 0 }, dt);
+    for (const o of S.others.values()) drawChar(o.id, o.x, o.y, o.look, o.a != null ? o.a : DIR_ANGLE[o.dir || 0], o.e === 'dance' ? t * 4 : o.phase, { dance: o.e === 'dance', jz: o.jz, crawl: o.cr, dig: api.searching(o) && t, lamp: o.lp && lampState, web: o.wb || 0 }, dt);
     if (S.area !== 'garden') babka = null; // babka býva v záhrade (bez alive ju upratovanie nižšie odstráni)
     else if (!babka) babka = drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, 0, { babka: true }, 1);
     else { babka.alive = true; if (Math.floor(t) !== babka.lastT) { babka.lastT = Math.floor(t); drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, Math.sin(t) * 0.3, { babka: true }, 1); } }

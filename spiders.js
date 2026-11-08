@@ -189,7 +189,7 @@ function treeFor(z, from) {
 // ---------- Pavúky v lese ----------
 function homeState(h, o) {
   return { id: 's' + o, k: h.k, o, hx: h.x + 0.5, hy: h.y + 0.5, x: h.x + 0.5, y: h.y + 0.5, a: Math.PI / 2, st: 'home', until: 0,
-    cool: 0, scared: 0, path: null, tgt: null, loot: 0, taken: 0, z: 0, tr: null, web: null, moving: false, up: false, next: null };
+    cool: 0, scared: 0, path: null, tgt: null, z: 0, tr: null, web: null, moving: false, up: false, next: null };
 }
 const tileOf = (x, y) => Math.floor(y) * LW + Math.floor(x);
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -277,7 +277,7 @@ function chase(s, key, now) { s.z = 0; s.tr = null; s.st = 'chase'; s.tgt = key;
 // Pavučinu niekto potiahol alebo do nej vbehol – majiteľ sa rozbehne k nej (pradlena rovno k hráčovi). Mení výrez pavúka
 // (spider:<id>) z iného návrhu; ten mu potom zruší udalosť, aby ho engine naplánoval hneď. false = nechá to tak.
 function alert(f, s, wb, key, now) {
-  if (!s || s.st === 'cling' || hiding(s, wb, now)) return false;
+  if (!s || hiding(s, wb, now)) return false;
   s.z = 0; s.tr = null; // z kmeňa zoskočí
   if (s.k === 'p') { if (s.st !== 'chase') chase(s, key, now); }
   else if (s.st === 'guard' && s.web === wb.id) chase(s, key, now); // čakal priamo pri nej
@@ -318,9 +318,11 @@ function vlciak(f, s, ps, sv, ctx, dt, T) {
     case 'totree': if (stepTo(s, s.tr.x, s.tr.y, V.walk, dt)) startGuard(s, V, now, ctx.rng, T); break;
     case 'guard': guard(f, s, V, lamps, now, dt, T); break;
     case 'pause': if (now >= s.until) goHome(f, s, now); break;
-    case 'return':
-      if (walkPath(s, V.walk * 1.5, dt) && stepTo(s, s.hx, s.hy, V.walk, dt)) { s.st = 'home'; s.loot = 0; s.until = now + T(3000 + ctx.rng.rand() * 5000); }
+    case 'return': { // po zabalení hráča uteká (fast)
+      const sp = s.fast ? V.run : V.walk * 1.5;
+      if (walkPath(s, sp, dt) && stepTo(s, s.hx, s.hy, sp, dt)) { s.st = 'home'; s.fast = false; s.until = now + T(3000 + ctx.rng.rand() * 5000); }
       break;
+    }
     case 'alert': {
       const p = byKey(s.tgt);
       if (p && dist(s, p) <= WEB.alert && inTerr(f, s, p.x, p.y)) { chase(s, p.key, now); break; }
@@ -352,38 +354,18 @@ function vlciak(f, s, ps, sv, ctx, dt, T) {
         break;
       }
       const d = dist(s, p);
-      if (d < 0.55) { s.st = 'cling'; s.taken = 0; setPath(s, null); s.clingNext = now; break; } // chytil ho
+      if (d < 0.55) { // dobehol ho: zabalí ho do pavučiny, vezme hodváb a uteká (uloženie obete návrh deklaroval, kým ho naháňal)
+        if (!sv) break;
+        const k = wrap(f, s, p, sv, V, ctx, T);
+        ctx.emit(toast$(p.key, k ? `🕸️ Vlčiak ťa zabalil do pavučiny, vzal ti ${k}× hodváb a ušiel! Počkaj, kým sa pavučina zoderie.` : '🕸️ Vlčiak ťa zabalil do pavučiny a ušiel. Počkaj, kým sa pavučina zoderie.'));
+        break;
+      }
       const t = ahead(p, dt); // kam hráč o krok dobehne (cieľ cesty z diaľky)
       if (d < 1.2) stepTo(s, p.x, p.y, V.run, dt); // na blízko rovno na hráča (stojaci hráč nemá kam „dobehnúť“)
       else {
         const pi = inTerr(f, s, t.x, t.y) ? tileOf(t.x, t.y) : tileOf(p.x, p.y);
         if (!pathLeft(s) || now >= s.repath || s.goal !== pi) { setPath(s, pathTo(f, s, i => i === pi)); s.goal = pi; s.repath = now + T(400); }
         walkPath(s, V.run, dt);
-      }
-      break;
-    }
-    case 'cling': {
-      const p = byKey(s.tgt);
-      if (!p || !inTerr(f, s, p.x, p.y)) { goHome(f, s, now); s.cool = now + T(V.coolMs); break; } // za hranicou územia sa pustí
-      s.x = p.x; s.y = p.y;
-      if (!sv) break; // uloženie obete návrh nedeklaroval (chytil ho v tomto kroku) – berie sa od ďalšieho kroku
-      if (p.lp) { // zľakne sa lampáša, pustí sa a hodváb pustí na zem – hráč ho hneď zdvihne
-        if (s.loot) { I.addItems(I.playerC(sv), 'silk', s.loot, now); ctx.emit(toast$(p.key, `🏮 Vlčiak sa zľakol lampáša, pustil sa ťa a pustil aj hodváb. Zdvihol(a) si ${s.loot}× 🕸️.`, 'gift')); }
-        else ctx.emit(toast$(p.key, '🏮 Vlčiak sa zľakol lampáša a pustil sa ťa.'));
-        s.loot = 0; ctx.emit({ to: p.key, t: 'slow', k: 1, ms: 0 });
-        chase(s, p.key, now); s.scared = now + T(V.backMs);
-        break;
-      }
-      if (now >= s.clingNext) {
-        if (s.taken < V.takeMax && (sv.inv.silk || 0) > 0) {
-          I.removeItems(I.playerC(sv), 'silk', 1, now); s.loot++; s.taken++;
-          ctx.emit({ to: p.key, t: 'slow', k: V.slow, ms: V.takeMs + 300 });
-          ctx.emit(toast$(p.key, s.taken === 1 ? '🕷️ Vlčiak ťa chytil a vzal ti 1 hodváb! Zdvihni lampáš, nech ťa pustí.' : '🕷️ Vlčiak ti vzal ďalší hodváb!'));
-          s.clingNext = now + T(V.takeMs);
-        } else {
-          if (!s.taken) { ctx.emit({ to: p.key, t: 'slow', k: V.slow, ms: 1000 }); ctx.emit(toast$(p.key, '🕷️ Vlčiak ťa chytil, ale nemáš žiaden hodváb – pustil sa ťa.')); }
-          goHome(f, s, now); s.cool = now + T(V.coolMs);
-        }
       }
       break;
     }
@@ -411,7 +393,7 @@ function pradlena(f, s, ps, sv, ctx, dt, T) {
     }
     case 'totree': if (stepTo(s, s.tr.x, s.tr.y, PR.walk, dt)) startGuard(s, PR, now, ctx.rng, T); return;
     case 'guard': guard(f, s, PR, lamps, now, dt, T); return;
-    case 'return': if (walkPath(s, PR.walk, dt) && stepTo(s, s.hx, s.hy, PR.walk, dt)) { s.st = 'home'; s.until = 0; } return;
+    case 'return': { const sp = s.fast ? PR.walk * 1.6 : PR.walk; if (walkPath(s, sp, dt) && stepTo(s, s.hx, s.hy, sp, dt)) { s.st = 'home'; s.fast = false; s.until = 0; } return; }
   }
   // naháňa toho, kto jej siahol na pavučinu – len po svojej čistine
   const p = ps.find(o => o.key === s.tgt);
@@ -428,22 +410,28 @@ function pradlena(f, s, ps, sv, ctx, dt, T) {
     walkPath(s, PR.walk, dt);
   }
 }
-// Uhryznutie: vezme až PR.bite hodvábu, spomalí a odhodí hráča za okraj čistiny (hráč si polohu posúva sám – pokyn shove).
+// Zabalenie do pavučiny: pavúk vezme hodváb (P.take), hráča zabalí – hráč chvíľu stojí, potom sa pavučina zodiera
+// (pokyn webbed: server ho pridá do prítomnosti, aby to videli aj ostatní) – a pavúk hneď uteká domov.
+function wrap(f, s, p, sv, P, ctx, T) {
+  const n = Math.min(P.take, sv.inv.silk || 0); // vezme, koľko má (removeItems pri nedostatku nevezme nič)
+  const k = n > 0 && I.removeItems(I.playerC(sv), 'silk', n, ctx.tick) ? n : 0; // removeItems vráti várky, nie počet
+  ctx.emit({ to: p.key, t: 'webbed', stuck: P.webStuckMs, ms: P.webMs, k: P.webSlow, sp: s.k });
+  goHome(f, s, ctx.tick); s.fast = true; s.cool = ctx.tick + T(P.coolMs);
+  return k;
+}
+// Pradlena: zabalí, vezme hodváb a odhodí hráča za okraj čistiny (hráč si polohu posúva sám – pokyn shove).
 function bite(f, s, p, sv, ctx, T) {
-  const k = I.removeItems(I.playerC(sv), 'silk', PR.bite, ctx.tick);
-  ctx.emit({ to: p.key, t: 'slow', k: PR.slow, ms: PR.slowMs });
   const start = tileOf(p.x, p.y), webs = new Set(ctx.webs.list.flatMap(webTiles));
   const { dist: dd } = bfs(LW, LH, [start], n => !!f.pass[n], 12);
   let out = -1;
   for (let i = 0; i < dd.length; i++) if (dd[i] > 0 && f.owner[i] !== s.o && !webs.has(i) && (out < 0 || dd[i] < dd[out])) out = i;
   if (out >= 0) ctx.emit({ to: p.key, t: 'shove', x: out % LW + 0.5, y: ((out / LW) | 0) + 0.5 });
-  ctx.emit(toast$(p.key, k ? `🕷️ Stará pradlena ťa uhryzla a vzala ti ${k}× hodváb! Bez lampáša a kamaráta sa k nej nepribližuj.` : '🕷️ Stará pradlena ťa odhodila zo svojej čistiny!'));
-  s.loot += k;
-  goHome(f, s, ctx.tick); s.cool = ctx.tick + T(PR.coolMs);
+  const k = wrap(f, s, p, sv, PR, ctx, T);
+  ctx.emit(toast$(p.key, k ? `🕸️ Stará pradlena ťa zabalila do pavučiny, vzala ti ${k}× hodváb a odhodila ťa zo svojej čistiny! Bez lampáša a kamaráta sa k nej nepribližuj.` : '🕸️ Stará pradlena ťa zabalila do pavučiny a odhodila zo svojej čistiny!'));
 }
 // Kedy chce pavúk znova konať: hýbe sa (alebo naháňa, drží sa) → o STEP krokov; nečinný → svoj termín (najneskôr IDLE_MS).
 // Hráča, ktorý sa k nečinnému pavúkovi priblíži (alebo pri ňom zdvihne lampáš), ohlási pohyb – posKeys / onPos ho zobudia.
-const busy = s => s.moving || ['chase', 'cling', 'alert', 'walk', 'return', 'totree'].includes(s.st);
+const busy = s => s.moving || ['chase', 'alert', 'walk', 'return', 'totree'].includes(s.st);
 function plan(s, now, T) {
   if (busy(s)) return now + T(STEP_MS);
   const due = [s.until, s.scared, s.cool].filter(t => t > now);
@@ -456,7 +444,7 @@ function spiderKeys(d, w) {
   const s = w.sps && w.sps[d.id];
   if (w.les) forestOf(w);
   const writes = ['spider:' + d.id];
-  if (s && s.tgt && (s.st === 'chase' || s.st === 'cling') && w.saves && w.saves[s.tgt]) writes.push('save:' + s.tgt);
+  if (s && s.tgt && s.st === 'chase' && w.saves && w.saves[s.tgt]) writes.push('save:' + s.tgt); // zabalí ho a vezme hodváb
   return { writes, reads: ['webs', 'daySeconds', 'lesSeed'] };
 }
 const PROPOSERS = {
@@ -470,8 +458,8 @@ const PROPOSERS = {
       const wasBusy = busy(sp);
       sp.moving = false;
       const near = ps.some(p => Math.hypot(p.x - sp.x, p.y - sp.y) <= ACTIVE_R || Math.hypot(p.x - sp.hx, p.y - sp.hy) <= ACTIVE_R);
-      if (!ps.length || (!near && sp.st !== 'chase' && sp.st !== 'cling')) { // nikto nablízku – domov a spí
-        Object.assign(sp, { x: sp.hx, y: sp.hy, st: 'home', tgt: null, path: null, pi: 0, loot: 0, until: 0, z: 0, tr: null, web: null, next: null });
+      if (!ps.length || (!near && sp.st !== 'chase')) { // nikto nablízku – domov a spí
+        Object.assign(sp, { x: sp.hx, y: sp.hy, st: 'home', tgt: null, path: null, pi: 0, fast: false, until: 0, z: 0, tr: null, web: null, next: null });
         return;
       }
       const f = forestBy(s.lesSeed), ds = s.daySeconds, T = ms => ticksOf(ms, ds);
@@ -723,7 +711,7 @@ function areaViews(world, area) {
 function entities(world, area) {
   const out = [], r = v => +(+v).toFixed(2);
   const tree = (o, s) => { if (s.tr && s.st !== 'totree' && s.st !== 'flee') Object.assign(o, { z: r(s.z || 0), n: [r(s.tr.nx), r(s.tr.ny)], u: s.moving && s.up ? 1 : 0 }); return o; };
-  if (area === 'les' && world.sps) for (const s of Object.values(world.sps)) out.push(tree({ id: s.id, k: s.k, x: r(s.x), y: r(s.y), a: r(s.a), m: s.moving ? 1 : 0, c: s.st === 'cling' ? 1 : 0, h: s.st === 'home' ? 1 : 0 }, s));
+  if (area === 'les' && world.sps) for (const s of Object.values(world.sps)) out.push(tree({ id: s.id, k: s.k, x: r(s.x), y: r(s.y), a: r(s.a), m: s.moving ? 1 : 0, h: s.st === 'home' ? 1 : 0 }, s));
   const z = world.kz && world.kz[area];
   if (z) out.push(tree({ id: z.id, k: 'k', x: r(z.x), y: r(z.y), a: r(z.a), m: z.moving ? 1 : 0 }, z));
   return out;

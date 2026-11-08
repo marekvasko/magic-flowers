@@ -180,26 +180,30 @@ test('ťahanie hodvábu: akcia pullStart, o WEB.pullMs udalosť pullDone; +1 hod
   assert.strictEqual(E.pending(w, 'pull:eva'), null, 'pohol sa – ťahanie zrušené');
 });
 
-test('vlčiak: chytí hráča, berie hodváb každé 3 s (najviac 3), lampáš ho odplaší a hodváb vráti', () => {
-  const w = mkWorld(SEEDS[3]);
+test('vlčiak: dobehne hráča, zabalí ho do pavučiny, vezme 3 hodváb naraz a hneď uteká domov', () => {
+  const w = mkWorld(SEEDS[3]), V = D.SPIDERS.vlciak;
   const s = w.sps.s0, f = Sp.forestOf(w);
   const i = f.owner.findIndex((o, i) => o === 0 && Math.hypot(i % LW + 0.5 - s.hx, ((i / LW) | 0) + 0.5 - s.hy) > 2 && Math.hypot(i % LW + 0.5 - s.hx, ((i / LW) | 0) + 0.5 - s.hy) < 4);
-  const p = join(w, 'eva', i % LW + 0.5, ((i / LW) | 0) + 0.5, 5);
+  join(w, 'eva', i % LW + 0.5, ((i / LW) | 0) + 0.5, 5);
   Object.assign(s, { st: 'chase', tgt: 'eva', seen: w.tick, cool: 0, scared: 0 });
   wake(w, ['s0']);
   const out = [];
-  run(w, T(4000), out);
-  assert.strictEqual(s.st, 'cling', s.st);
-  assert.strictEqual(w.saves.eva.inv.silk, 4, 'hneď vzal 1');
-  assert.ok(out.some(m => m.t === 'slow' && m.k === D.SPIDERS.vlciak.slow));
-  run(w, T(3000) + 2);
-  assert.strictEqual(w.saves.eva.inv.silk, 3, 'po 3 s ďalší');
-  // lampáš: pustí sa a hodváb vráti
-  p.lp = true;
-  run(w, 2, out);
-  assert.strictEqual(w.saves.eva.inv.silk, 5, 'hodváb späť');
-  assert.notStrictEqual(s.st, 'cling');
-  assert.ok(out.some(m => m.t === 'toast' && /zľakol lampáša/.test(m.text)));
+  for (let k = 0; k < T(4000) && !out.some(m => m.t === 'webbed'); k++) run(w, 1, out);
+  const wb = out.find(m => m.t === 'webbed');
+  assert.ok(wb, 'zabalil ho');
+  assert.deepStrictEqual([wb.to, wb.stuck, wb.ms, wb.k], ['eva', V.webStuckMs, V.webMs, V.webSlow]);
+  assert.strictEqual(w.saves.eva.inv.silk, 5 - V.take, 'vzal hodváb naraz');
+  assert.ok(out.some(m => m.t === 'toast' && /zabalil do pavučiny/.test(m.text)));
+  assert.strictEqual(s.st, 'return');
+  assert.ok(s.fast, 'uteká');
+  assert.ok(s.cool > w.tick, 'chvíľu si hráča nevšíma');
+  // uteká rýchlosťou behu
+  const before = { x: s.x, y: s.y };
+  run(w, Sp.ticksOf(Sp.STEP_MS, 1200));
+  const moved = Math.hypot(s.x - before.x, s.y - before.y);
+  assert.ok(moved > V.walk * 1.5 * Sp.ticksOf(Sp.STEP_MS, 1200) * SEC + 0.01, 'rýchlejšie než chôdza: ' + moved);
+  run(w, T(6000));
+  assert.strictEqual(w.saves.eva.inv.silk, 5 - V.take, 'viac nevezme');
 });
 
 test('vlčiak: za hranicou územia to po 2 s vzdá, a ide domov', () => {
@@ -243,10 +247,10 @@ test('naháňanie: z diaľky beží k políčku, kde hráč o krok bude; na blí
   Object.assign(s2, { st: 'chase', tgt: 'eva', seen: w2.tick, cool: 0, scared: 0 });
   wake(w2, ['s0']);
   run(w2, T(2000));
-  assert.strictEqual(s2.st, 'cling', 'chytil ho: ' + s2.st);
+  assert.strictEqual(w2.saves.eva.inv.silk || 0, 0, 'dobehol ho a zabalil (vzal aj posledné 2 hodvábu): ' + s2.st);
 });
 
-test('stará pradlena: na siahnutie na pavučinu príde, uhryzne (3 hodváb) a odhodí za okraj; lampáš ju len pomaly odtláča', () => {
+test('stará pradlena: na siahnutie na pavučinu príde, zabalí hráča (3 hodváb, dlhšie) a odhodí za okraj; lampáš ju len pomaly odtláča', () => {
   const w = mkWorld(SEEDS[5]);
   const o = Sp.forestOf(w).homes.length - 1, s = w.sps['s' + o], f = Sp.forestOf(w);
   const i = f.owner.findIndex((x, i) => x === o && Math.hypot(i % LW + 0.5 - s.hx, ((i / LW) | 0) + 0.5 - s.hy) >= 1.5);
@@ -259,6 +263,8 @@ test('stará pradlena: na siahnutie na pavučinu príde, uhryzne (3 hodváb) a o
   const sh = out.find(m => m.t === 'shove');
   assert.ok(sh, 'odhodila');
   assert.strictEqual(w.saves.eva.inv.silk, 2);
+  const wbd = out.find(m => m.t === 'webbed');
+  assert.ok(wbd && wbd.ms === D.SPIDERS.pradlena.webMs && wbd.ms > D.SPIDERS.vlciak.webMs, 'jej pavučina drží dlhšie');
   assert.notStrictEqual(f.owner[Math.floor(sh.y) * LW + Math.floor(sh.x)], o, 'za okraj jej územia');
   // lampáš: odtláča ju 0,5 políčka/s
   Object.assign(s, { x: s.hx, y: s.hy, st: 'chase', tgt: 'eva', cool: 0 });
@@ -429,7 +435,9 @@ test('determinizmus: rovnaký svet a vstupy dajú rovnaký beh; denník (vbehnut
   assert.ok(a.out.journal.some(e => e.inputs.some(i => i.type === 'spider')), 'pavúk v denníku');
   const room = a.start;
   E.replay(room, a.out.journal, spec());
-  assert.deepStrictEqual(strip(room), strip(a.w), 'prehranie denníka dá ten istý svet');
+  E.advanceTo(room, a.w.tick, spec()); // pôvodný beh skončil o pár prázdnych krokov neskôr
+  const diff = (x, y, path) => { if (JSON.stringify(x) === JSON.stringify(y)) return null; if (x && y && typeof x === 'object' && typeof y === 'object') { for (const k of new Set([...Object.keys(x), ...Object.keys(y)])) { const d = diff(x[k], y[k], path + '.' + k); if (d) return d; } } return path + ': ' + JSON.stringify(x) + ' vs ' + JSON.stringify(y); };
+  assert.deepStrictEqual(strip(room), strip(a.w), 'prehranie denníka dá ten istý svet: ' + diff(strip(room), strip(a.w), ''));
 });
 
 test('uloženie: pavučiny a kúty sa po načítaní zachovajú, neplatné sa zahodia; pavúky sú doma a spia', () => {
