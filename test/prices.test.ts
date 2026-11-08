@@ -1,53 +1,59 @@
 // Rozklad cien (#76): *PriceParts musia dať presne rovnaké ceny ako pôvodné vzorce.
-const test = require('node:test');
-const assert = require('node:assert');
-const D = require('../src/shared/data.ts');
-const Econ = require('../src/server/economy.ts');
+import test from 'node:test';
+import assert from 'node:assert';
+import * as D from '../src/shared/data.ts';
+import type { SpeciesId } from '../src/shared/data.ts';
+import type { ActiveFestival } from '../src/shared/save.ts';
+import * as Econ from '../src/server/economy.ts';
+import { must, partial } from './helpers.ts';
 const TPD = D.TICKS_PER_DAY, DPS = D.DAYS_PER_SEASON;
+type Room = { tick: number; market: Econ.MarketPart };
 
 // ---- pôvodné vzorce (skopírované pred refaktorom, nemeniť) ----
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const season = room => D.seasonOf(D.dayOfTick(room.tick));
-function oldPhase(sp, se) {
+const clamp = (v: number, a: number, b: number): number => Math.max(a, Math.min(b, v));
+const season = (room: Room): number => D.seasonOf(D.dayOfTick(room.tick));
+const has = (list: readonly number[], v: number): boolean => list.includes(v);
+function oldPhase(sp: SpeciesId, se: number): string {
   const s = D.SPECIES[sp].seasons;
-  if (s.includes(se)) return 'now';
-  if (s.includes((se + 1) % 4)) return 'next';
+  if (has(s, se)) return 'now';
+  if (has(s, (se + 1) % 4)) return 'next';
   return 'off';
 }
-function oldSeedPrice(room, sp) {
-  const st = room.market.seeds[sp].stock;
+function oldSeedPrice(room: Room, sp: SpeciesId): number {
+  const st = must(room.market.seeds[sp]).stock;
   const ph = oldPhase(sp, season(room));
   const demand = ph === 'now' ? 1.35 : ph === 'next' ? 1.0 : 0.8;
   const scarcity = clamp(Math.sqrt(10 / Math.max(1, st)), 0.75, 3);
   return Math.max(2, Math.round(D.SPECIES[sp].seed * demand * scarcity));
 }
-function oldCompostPrice(room) {
-  return Math.max(5, Math.round(15 * clamp(Math.sqrt(15 / Math.max(1, room.market.compost.stock)), 0.7, 3)));
+function oldCompostPrice(room: Room): number {
+  return Math.max(5, Math.round(15 * clamp(Math.sqrt(15 / Math.max(1, must(room.market.compost ?? undefined).stock)), 0.7, 3)));
 }
-function oldFlowerPrice(room, sp) {
-  const s = D.SPECIES[sp], st = room.market.flowers[sp].stock;
-  const rare = s.seasons.includes(season(room)) ? 1 : 1.6;
+function oldFlowerPrice(room: Room, sp: SpeciesId): number {
+  const s = D.SPECIES[sp], st = must(room.market.flowers[sp]).stock;
+  const rare = has(s.seasons, season(room)) ? 1 : 1.6;
   const fest = (room.market.festival && room.market.festival.mult[sp]) || 1;
   const sat = Math.max(0.35, 1.3 - 0.06 * st);
   return Math.max(1, Math.round(s.sell * rare * fest * sat));
 }
-function oldSellQuote(room, id) {
-  if (id.startsWith('fl_')) return oldFlowerPrice(room, id.slice(3));
-  if (id.startsWith('seed_')) return Math.max(1, Math.round(oldSeedPrice(room, id.slice(5)) * 0.4));
+function oldSellQuote(room: Room, id: string): number | null {
+  const sp = D.speciesOfItem(id);
+  if (id.startsWith('fl_')) return oldFlowerPrice(room, must(sp ?? undefined));
+  if (id.startsWith('seed_')) return Math.max(1, Math.round(oldSeedPrice(room, must(sp ?? undefined)) * 0.4));
   if (id === 'compost') return Math.max(1, Math.round(oldCompostPrice(room) * 0.5));
   return null;
 }
 
 test('rozklad cien: rovnaké ceny ako pôvodné vzorce (každý druh × obdobie × zásoba × sviatok)', () => {
-  const stocks = [];
+  const stocks: number[] = [];
   for (let s = 0; s <= 45; s++) stocks.push(s);
   stocks.push(60, 80, 99, 150);
-  const fests = [null, ...D.FESTIVALS.map(f => ({ id: f.id, name: f.name, icon: f.icon, mult: f.mult, until: 0 }))];
+  const fests: (ActiveFestival | null)[] = [null, ...D.FESTIVALS.map(f => ({ id: f.id, name: f.name, icon: f.icon, mult: f.mult, until: 0 }))];
   let n = 0;
   for (let se = 0; se < 4; se++) for (const dis of [1, DPS]) {
     const tick = ((se * DPS + dis - 1) * TPD) + D.DAWN_TICK;
     for (const festival of fests) for (const st of stocks) {
-      const room = { tick, market: { seeds: {}, flowers: {}, compost: { stock: st }, festival } };
+      const room: Room = { tick, market: { seeds: {}, flowers: {}, compost: { stock: st }, festival } };
       for (const sp of Econ.PLANTABLE) { room.market.seeds[sp] = { stock: st }; room.market.flowers[sp] = { stock: st }; }
       Econ.syncFestival(room.market); // násobky sviatku sú v položkách kvetov
       for (const sp of Econ.PLANTABLE) {
@@ -57,7 +63,7 @@ test('rozklad cien: rovnaké ceny ako pôvodné vzorce (každý druh × obdobie 
         assert.strictEqual(fp.price, oldFlowerPrice(room, sp), `kvet ${sp} obdobie ${se} zásoba ${st} sviatok ${festival && festival.id}`);
         assert.strictEqual(Econ.flowerPrice(room.market, room.tick, sp), fp.price);
         assert.strictEqual(sp1.phase, oldPhase(sp, se));
-        for (const id of ['seed_' + sp, 'fl_' + sp]) assert.strictEqual(Econ.sellQuote(room.market, room.tick, id), oldSellQuote(room, id), id);
+        for (const id of [`seed_${sp}`, `fl_${sp}`]) assert.strictEqual(Econ.sellQuote(room.market, room.tick, id), oldSellQuote(room, id), id);
         n++;
       }
       assert.strictEqual(Econ.compostPriceParts(room.market).price, oldCompostPrice(room));
@@ -69,7 +75,7 @@ test('rozklad cien: rovnaké ceny ako pôvodné vzorce (každý druh × obdobie 
 });
 
 test('rozklad cien: činitele dávajú dokopy cenu a nič nemenia', () => {
-  const room = { tick: D.DAWN_TICK, market: { seeds: {}, flowers: {}, compost: { stock: 2 }, festival: { id: 'matky', mult: D.FESTIVALS[0].mult } } };
+  const room: Room = { tick: D.DAWN_TICK, market: { seeds: {}, flowers: {}, compost: { stock: 2 }, festival: partial<ActiveFestival>({ id: 'matky', mult: must(D.FESTIVALS[0]).mult }) } };
   for (const sp of Econ.PLANTABLE) { room.market.seeds[sp] = { stock: 3 }; room.market.flowers[sp] = { stock: 30 }; }
   Econ.syncFestival(room.market);
   const before = JSON.stringify(room);

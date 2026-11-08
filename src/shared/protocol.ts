@@ -11,9 +11,9 @@ import type { ActiveFestival, Contract, CornerArea, Icehouse, Plant, Soil, Weath
 export type Emote = 'dance' | 'wave' | 'heart' | 'laugh' | 'flower';
 export type WishKind = 'zlato' | 'jar' | 'poklad';
 export type ClientMessage =
-  | { t: 'join'; room: string; name: string; look: Look | null }
+  | { t: 'join'; room: string; name: string; look?: Look | null }   // bez vzhľadu: z uloženia alebo predvolený
   // a = presný smer pohľadu, cr = plazí sa, lp = drží lampáš, ar = poradie plochy (pohyb z predchádzajúcej plochy sa zahodí)
-  | { t: 'move'; x: number; y: number; dir: number; a?: number; cr?: boolean; lp: boolean; ar: number }
+  | { t: 'move'; x: number; y: number; dir: number; a?: number; cr?: boolean; lp?: boolean; ar: number }
   | { t: 'act'; x: number; y: number; item: ItemId | '' }   // '' = prázdna ruka
   | { t: 'buy' | 'sell' | 'store' | 'unstore'; id: ItemId; n: number }
   | { t: 'upgrade'; kind: UpgradeId }
