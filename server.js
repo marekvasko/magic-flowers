@@ -664,8 +664,9 @@ setInterval(() => {
   const now = Date.now();
   for (const room of rooms.values()) {
     if (!room.players.size) continue;
+    // poloha z uloženia (potvrdená enginom), nie z prítomnosti: pohyb, ktorý engine ešte neoveril (alebo odmietne), ostatní neuvidia
     const list = [...room.players.values()].map(p => ({
-      id: p.id, name: p.name, x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, a: p.a, look: p.look, cr: p.cr ? 1 : 0, lp: p.lp ? 1 : 0, j: p.jn | 0, si: p.scav ? p.scav.i : -1, area: p.area,
+      id: p.id, name: p.name, x: +(p.save && p.save.x != null ? p.save.x : p.x).toFixed(3), y: +(p.save && p.save.y != null ? p.save.y : p.y).toFixed(3), dir: p.dir, a: p.a, look: p.look, cr: p.cr ? 1 : 0, lp: p.lp ? 1 : 0, j: p.jn | 0, si: p.scav ? p.scav.i : -1, area: p.area,
       e: p.sleep ? 'sleep' : p.scav ? 'search' : p.emote && now - p.emoteAt < 6000 ? p.emote : null
     }));
     for (const area of D.AREAS) broadcastArea(room, area, { t: 'pl', list: list.filter(p => p.area === area) });
