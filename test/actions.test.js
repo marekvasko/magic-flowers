@@ -8,16 +8,16 @@ const path = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
 const net = require('net');
-const D = require('../shared/data.js');
-const E = require('../engine.js');
-const Econ = require('../economy.js');
-const Events = require('../events.js');
-const Actions = require('../actions.js');
-const I = require('../items.js');
-const Ice = require('../ice.js');
-const Areas = require('../areas.js');
-const Spiders = require('../spiders.js');
-const Dielna = require('../dielna.js');
+const D = require('../src/shared/data.js');
+const E = require('../src/server/engine.js');
+const Econ = require('../src/server/economy.js');
+const Events = require('../src/server/events.js');
+const Actions = require('../src/server/actions.js');
+const I = require('../src/server/items.js');
+const Ice = require('../src/server/ice.js');
+const Areas = require('../src/server/areas.js');
+const Spiders = require('../src/server/spiders.js');
+const Dielna = require('../src/server/dielna.js');
 const TPD = D.TICKS_PER_DAY;
 const rethrow = err => { throw err; };
 const json = v => JSON.stringify(v);
@@ -386,7 +386,7 @@ test('denník s akciami a prítomnosťou sa prehrá na ten istý svet a ten ist�
 // Voľný port od systému (náhodné porty z rozsahov sa občas zrazia medzi testami)
 function freePort() { return new Promise(r => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => r(p)); }); }); }
 function startServer(dataDir, port, env) {
-  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server', 'server.js')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DAY_SECONDS: '100000' }, env || {}), stdio: ['ignore', 'pipe', 'pipe']
   });
   return new Promise((resolve, reject) => {
@@ -513,7 +513,7 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
 });
 
 test('hygiena: server už nemení svet priamo – liveCtx len pri založení sveta; sendMe a políčka len z notify, uloženia nikde', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'server', 'server.js'), 'utf8');
   assert.strictEqual((src.match(/liveCtx/g) || []).length, 1);
   assert.ok(!/actionCtx|Econ\.buy\(|Econ\.sell\(|Econ\.upgrade\(|deliverContract|takeContract|Ice\.digIce|Ice\.fillIcehouse|Ice\.buildIcehouse|Ice\.buyTool|pickWild|checkFairies|newSave|migrateSave/.test(src));
   const ws = src.slice(src.indexOf("ws.on('message'"), src.indexOf("ws.on('close'"));

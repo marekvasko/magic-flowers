@@ -7,14 +7,14 @@ const path = require('path');
 const net = require('net');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
-const D = require('../shared/data.js');
-const E = require('../engine.js');
-const Econ = require('../economy.js');
-const Events = require('../events.js');
-const Actions = require('../actions.js');
-const I = require('../items.js');
-const Ice = require('../ice.js');
-const Dielna = require('../dielna.js');
+const D = require('../src/shared/data.js');
+const E = require('../src/server/engine.js');
+const Econ = require('../src/server/economy.js');
+const Events = require('../src/server/events.js');
+const Actions = require('../src/server/actions.js');
+const I = require('../src/server/items.js');
+const Ice = require('../src/server/ice.js');
+const Dielna = require('../src/server/dielna.js');
 const TPH = D.TICKS_PER_HOUR, TPD = D.TICKS_PER_DAY, MPT = D.MIN_PER_TICK;
 const tickAt = (day, h, m) => (day - 1) * TPD + Math.round(((h * 60) + (m || 0)) / MPT);
 const rethrow = err => { throw err; };
@@ -258,7 +258,7 @@ test('mená postáv: Babka a Majster hodvábu sú vyhradené (veľké písmená,
 // Server: prihlásenie menom postavy z hry
 function freePort() { return new Promise(r => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => r(p)); }); }); }
 function startServer(dataDir, port) {
-  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server', 'server.js')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DAY_SECONDS: '100000' }), stdio: ['ignore', 'pipe', 'pipe']
   });
   return new Promise((resolve, reject) => {

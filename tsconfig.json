@@ -1,0 +1,33 @@
+{
+  // Fáza 1 prepisu do TypeScriptu (#122): JS súbory sa ešte nekontrolujú (checkJs vypnuté),
+  // prísne pravidlá platia pre každý nový .ts súbor. Node 24 spúšťa .ts priamo (odstránenie typov),
+  // preto len vymazateľná syntax (žiadne enum, namespace ani parameter properties) a prípony .ts v importoch.
+  "compilerOptions": {
+    "target": "es2024",
+    "lib": ["es2024"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": false,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "useUnknownInCatchVariables": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*", "test/**/*", "debug/api/**/*", "*.ts"],
+  "exclude": ["node_modules", "data", "public", "debug/tabs", "debug/debug.js"]
+}

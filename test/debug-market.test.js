@@ -5,10 +5,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const D = require('../shared/data.js');
-const E = require('../engine.js');
-const Econ = require('../economy.js');
-const Debug = require('../debug.js');
+const D = require('../src/shared/data.js');
+const E = require('../src/server/engine.js');
+const Econ = require('../src/server/economy.js');
+const Debug = require('../src/server/debug.js');
 const market = require('../debug/api/market.js');
 const TPD = D.TICKS_PER_DAY;
 

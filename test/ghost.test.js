@@ -12,8 +12,8 @@ const net = require('net');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
 
-const Players = require('../shared/players.js');
-const P = require('../presence.js');
+const Players = require('../src/shared/players.js');
+const P = require('../src/server/presence.js');
 
 // ---------- Klient: ostatní hráči podľa pl ----------
 const pl = (id, x, y, area) => ({ id, name: 'Hráč ' + id, x, y, area: area || 'garden', j: 0 });
@@ -64,7 +64,7 @@ test('server: hráč, ktorý sa ešte pripája, polohy nedostane; ostatní dosta
 // ---------- Server naživo ----------
 const freePort = () => new Promise(r => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
 function startServer(dataDir, port) {
-  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server', 'server.js')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DEFAULT_MODE: 'paused' }), stdio: ['ignore', 'pipe', 'pipe']
   });
   return new Promise((resolve, reject) => {

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const P = require('../presence.js');
+const P = require('../src/server/presence.js');
 
 test('awayDays: celé dni od odchodu, bez záznamu 0', () => {
   assert.strictEqual(P.awayDays(null, 1000, 100), 0);

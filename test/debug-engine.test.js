@@ -9,13 +9,13 @@ const http = require('http');
 const net = require('net');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
-const D = require('../shared/data.js');
-const E = require('../engine.js');
-const Econ = require('../economy.js');
-const Events = require('../events.js');
-const Actions = require('../actions.js');
-const Ice = require('../ice.js');
-const Debug = require('../debug.js');
+const D = require('../src/shared/data.js');
+const E = require('../src/server/engine.js');
+const Econ = require('../src/server/economy.js');
+const Events = require('../src/server/events.js');
+const Actions = require('../src/server/actions.js');
+const Ice = require('../src/server/ice.js');
+const Debug = require('../src/server/debug.js');
 const api = require('../debug/api/engine.js');
 const TPD = D.TICKS_PER_DAY;
 const json = v => JSON.stringify(v);
@@ -190,7 +190,7 @@ test('kľúče hráčov: odtlačok v celej odpovedi – actor, data.key, save:/p
 // ---- server ----
 function freePort() { return new Promise(r => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => r(p)); }); }); }
 function startServer(dataDir, port) {
-  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DAY_SECONDS: '100000', DEBUG_TRACE: '300' }), stdio: ['ignore', 'pipe', 'pipe'] });
+  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server', 'server.js')], { env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DAY_SECONDS: '100000', DEBUG_TRACE: '300' }), stdio: ['ignore', 'pipe', 'pipe'] });
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error('server sa nespustil')), 8000);
     proc.stdout.on('data', d => { if (/beží/.test(String(d))) { clearTimeout(t); resolve(proc); } });

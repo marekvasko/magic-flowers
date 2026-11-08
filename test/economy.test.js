@@ -1,8 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const D = require('../shared/data.js');
-const E = require('../engine.js');
-const Econ = require('../economy.js');
+const D = require('../src/shared/data.js');
+const E = require('../src/server/engine.js');
+const Econ = require('../src/server/economy.js');
 const TPD = D.TICKS_PER_DAY;
 
 function makeWorld(seed) {
@@ -126,7 +126,7 @@ test('krátke zákazky sú len na kvety, ktoré sa dajú vypestovať v aktuálno
 
 test('predaj starších kvetov vynesie menej než čerstvých', () => {
   const { room } = makeWorld(5);
-  const I = require('../items.js');
+  const I = require('../src/server/items.js');
   const fresh = { coins: 0, inv: {} }, old = { coins: 0, inv: {} };
   I.addItems(I.playerC(fresh), 'fl_tulipan', 3, room.tick);
   I.addItems(I.playerC(old), 'fl_tulipan', 3, room.tick - 3 * TPD);

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const W = require('../shared/world3d.js');
+const W = require('../src/shared/world3d.js');
 
 // Zoznam jemných modelov pre prehliadač v /debug (#79): každý sa postaví v každom období a otočení
 const voxels = m => m.data.reduce((n, v) => n + (v ? 1 : 0), 0);

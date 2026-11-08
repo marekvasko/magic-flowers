@@ -16,11 +16,11 @@
 // pavučiny, ťahanie hodvábu, príchod hráča do lesa), nastaví mu next a zruší jeho udalosť – reconcile ju hneď naplánuje znova.
 // Hráčov (kde stoja, lampáš, kam idú, ťahanie hodvábu) vidia návrhy len cez ctx.presence; náhoda len ctx.rng.
 // Rýchlosti sú v políčkach za sekundu reálneho času, časy v D.SPIDERS / D.WEB v ms – na kroky ich prepočíta daySeconds.
-const D = require('./shared/data.js');
+const D = require('../shared/data.js');
 const E = require('./engine.js');
 const I = require('./items.js');
 const { areaTiles, clampPos } = require('./areas.js');
-const Webs = require('./shared/webs.js');
+const Webs = require('../shared/webs.js');
 const { analyze, cornerSpots, bfs } = Webs;
 
 const SP = D.SPIDERS, WEB = D.WEB, V = SP.vlciak, PR = SP.pradlena, KZ = SP.kriziak;

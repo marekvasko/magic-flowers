@@ -3,7 +3,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
-const D = require('./shared/data.js');
+const D = require('../shared/data.js');
 const E = require('./engine.js');
 const Econ = require('./economy.js');
 const I = require('./items.js');
@@ -24,13 +24,15 @@ const MAX_PLAYERS = 4;
 const START = Econ.startCapital(process.env); // mince a reputácia nového hráča (v testovacích prostrediach viac)
 const RECONNECT_GRACE_MS = 10000; // návrat do 10 s je rýchle znovupripojenie – bez hlásení o odchode a príchode
 const HEARTBEAT_MS = 30000; // ping klientom; kto neodpovie do ďalšieho kola, toho odpojíme
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-const PUBLIC_DIR = path.join(__dirname, 'public');
-const SHARED_DIR = path.join(__dirname, 'shared');
+// Koreň repozitára (server je v src/server/); data/, public/ a debug/ sú v koreni – zväzok s uloženiami je /app/data
+const ROOT = path.join(__dirname, '..', '..');
+const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
+const PUBLIC_DIR = path.join(ROOT, 'public');
+const SHARED_DIR = path.join(__dirname, '..', 'shared');
 
 // ---------- Statické súbory ----------
 const zlib = require('zlib');
-const THREE_DIR = path.join(__dirname, 'node_modules', 'three', 'build');
+const THREE_DIR = path.join(ROOT, 'node_modules', 'three', 'build');
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json'
@@ -262,7 +264,7 @@ function appendJournal(room, entry) {
 }
 
 // Ladiaca stránka /debug: svety len číta (z pamäte alebo zo súboru), nič nenačíta ani neuloží
-const debugHandle = Debug.create({ dataDir: DATA_DIR, debugDir: path.join(__dirname, 'debug'), rooms, serialize, migrate, sim: () => SIM });
+const debugHandle = Debug.create({ dataDir: DATA_DIR, debugDir: path.join(ROOT, 'debug'), rooms, serialize, migrate, sim: () => SIM });
 let saveSeq = 0;
 // Atómový zápis: najprv dočasný súbor, potom premenovanie – pri páde nezostane rozbitý JSON.
 function saveRoom(room, sync) {

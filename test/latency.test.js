@@ -9,7 +9,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
 const net = require('net');
-const D = require('../shared/data.js');
+const D = require('../src/shared/data.js');
 
 const json = v => JSON.stringify(v);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -17,7 +17,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // Voľný port od systému (náhodné porty z rozsahov sa občas zrazia medzi testami)
 function freePort() { return new Promise(r => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => r(p)); }); }); }
 function startServer(dataDir, port) {
-  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server', 'server.js')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, JOURNAL: '0' }), stdio: ['ignore', 'pipe', 'pipe']
   });
   return new Promise((resolve, reject) => {
