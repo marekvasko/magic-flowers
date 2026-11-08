@@ -7,7 +7,7 @@ const { spawn } = require('child_process');
 const WebSocket = require('ws');
 const D = require('../src/shared/data.ts');
 const E = require('../src/server/engine.ts');
-const Actions = require('../src/server/actions.js');
+const Actions = require('../src/server/actions.ts');
 const Sp = require('../src/server/spiders.ts');
 const Webs = require('../src/shared/webs.js');
 
