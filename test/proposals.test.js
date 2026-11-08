@@ -10,7 +10,7 @@ const WebSocket = require('ws');
 const D = require('../src/shared/data.ts');
 const E = require('../src/server/engine.ts');
 const Econ = require('../src/server/economy.ts');
-const Events = require('../src/server/events.js');
+const Events = require('../src/server/events.ts');
 const I = require('../src/server/items.ts');
 const Ice = require('../src/server/ice.ts');
 const TPD = D.TICKS_PER_DAY;
@@ -635,7 +635,7 @@ test('v hre už nie je zapisovač cez Proxy, návrh (draft) ani náhoda zo sveta
     const src = fs.readFileSync(path.join(root, f), 'utf8');
     assert.ok(!/new Proxy|createDraft|applyPatches|rand\(room|rand\(w\)|randInt\(|E\.pick\(|\.handlers\b/.test(src), f);
   }
-  for (const f of ['engine.ts', 'events.js', 'actions.js', 'economy.ts', 'items.ts', 'ice.ts', 'scavenge.ts', 'spiders.js']) {
+  for (const f of ['engine.ts', 'events.ts', 'actions.js', 'economy.ts', 'items.ts', 'ice.ts', 'scavenge.ts', 'spiders.js']) {
     assert.ok(!/Math\.random|Date\.now/.test(fs.readFileSync(path.join(root, 'src', 'server', f), 'utf8')), f);
   }
 });

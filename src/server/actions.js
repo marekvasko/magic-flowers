@@ -13,7 +13,7 @@ const I = require('./items.ts');
 const Ice = require('./ice.ts');
 const Scav = require('./scavenge.ts');
 const Areas = require('./areas.ts');
-const Events = require('./events.js');
+const Events = require('./events.ts');
 const Spiders = require('./spiders.js');
 const Dielna = require('./dielna.ts');
 
