@@ -64,7 +64,8 @@ const server = http.createServer((req, res) => {
 // ---------- Svety (miestnosti) ----------
 // Čas je diskrétny: svet má celé počítadlo `tick` (D.TICKS_PER_DAY krokov na deň), deň a minúta sa z neho
 // len odvodzujú. Všetko, čo sa má stať v budúcnosti, je udalosť v plánovači (room.events) a ukladá sa so svetom.
-const SAVE_VERSION = 8; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov; 8: semienko sveta a počítadlo kôl namiesto rng
+const SAVE_VERSION = 9; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov; 8: semienko sveta a počítadlo kôl namiesto rng; 9: 11 520 krokov za deň (×40)
+const OLD_TPD = 288, OLD_MPT = 5, TICK_SCALE = D.TICKS_PER_DAY / OLD_TPD; // mriežka času do verzie 8
 const TPD = D.TICKS_PER_DAY, MPT = D.MIN_PER_TICK;
 const DEFAULT_MODE = process.env.DEFAULT_MODE === 'paused' ? 'paused' : 'running';
 const MAX_CATCHUP_DAYS = +process.env.MAX_CATCHUP_DAYS || 30; // koľko herných dní najviac dobehneme po výpadku servera
@@ -90,12 +91,12 @@ function migrate(saved) {
   const out = Object.assign(newWorldState(), saved);
   const from = saved.v || 1;
   if (from === SAVE_VERSION) return out;
-  if (from < 2) { // spojitý čas day/min → diskrétne kroky
+  if (from < 2) { // spojitý čas day/min → diskrétne kroky (v mriežke verzie 2–8, krok 9 ich potom preškáluje)
     const day = saved.day || 1, min = saved.min || 390;
-    out.tick = (day - 1) * TPD + Math.min(TPD - 1, Math.round(min / MPT));
+    out.tick = (day - 1) * OLD_TPD + Math.min(OLD_TPD - 1, Math.round(min / OLD_MPT));
     out.mode = 'paused'; // staré svety sa správali ako pozastavené – zachováme to, prepnúť sa dá v menu
     out.wall = Date.now();
-    for (const sv of Object.values(out.saves || {})) if (sv.vily) sv.vily = Math.max(0, Math.round((sv.vily - 1440) / MPT));
+    for (const sv of Object.values(out.saves || {})) if (sv.vily) sv.vily = Math.max(0, Math.round((sv.vily - 1440) / OLD_MPT));
     delete out.day; delete out.min;
   }
   if (from < 3) { // hory a ľadovňa: nová plocha s plným ľadovcom, ľadovňa ešte nepostavená
@@ -128,8 +129,31 @@ function migrate(saved) {
     out.seed = E.newSeed(); out.step = 0; delete out.rng;
     if (out.scavSalt == null) out.scavSalt = Areas.newSeed(); // doteraz sa odvodzoval lenivo zo spoločného rng
   }
+  if (from < 9) scaleTicks(out, TICK_SCALE); // jemnejší čas: každý uložený krok ×40 (deň a hodina ostávajú tie isté)
   out.v = SAVE_VERSION; out.migratedFrom = saved.migratedFrom || from;
   return out;
+}
+// Preškálovanie všetkých uložených krokov (čas sveta, udalosti, uloženia hráčov, várky, rastliny, zákazky, sviatok, správy).
+// Prehľadané políčka trávy (scav) sa zahodia – okná hodín sa číslujú inak.
+function scaleTicks(out, k) {
+  const sc = v => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v * k) : v);
+  out.tick = sc(out.tick);
+  for (const e of out.events || []) e.at = sc(e.at);
+  const batches = fb => { for (const id in fb || {}) for (const b of fb[id]) { b.a = sc(b.a); b.at = sc(b.at); } };
+  for (const sv of Object.values(out.saves || {})) {
+    if (sv.vily) sv.vily = sc(sv.vily);
+    if (sv.lastTick != null) sv.lastTick = sc(sv.lastTick);
+    batches(sv.fb);
+  }
+  batches(out.storageFb);
+  for (const t of out.tiles || []) { const p = t && t.s && t.s.p; if (p && p.bt != null) p.bt = sc(p.bt); }
+  for (const c of (out.contracts && out.contracts.list) || []) { c.posted = sc(c.posted); c.openUntil = sc(c.openUntil); c.due = sc(c.due); }
+  const m = out.market;
+  if (m) {
+    if (m.festival && m.festival.until != null) m.festival.until = sc(m.festival.until);
+    for (const n of m.news || []) n.tick = sc(n.tick);
+  }
+  out.scav = {};
 }
 
 function getRoom(id) {
@@ -361,7 +385,7 @@ function flushEconomy(room) {
 
 // ---------- Spánok ----------
 // Keď spia všetci pripojení hráči, svet pretočí noc zrýchlene (FF_STEPS krokov za 100 ms) až do 6:00.
-const FF_STEPS = 5;
+const FF_STEPS = 5 * TICK_SCALE; // noc (12 h) prebehne za ~3 s
 const nearHouse = Actions.nearHouse;
 function sleepMsg(room) {
   const ps = [...room.players.values()];

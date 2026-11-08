@@ -216,12 +216,12 @@ const DAWN = {
 // ---------- Udalosti: veľkoobchodník, NPC, sviatky ----------
 // Periodické udalosti ekonomiky. Plánuje ich engine (E.reconcile), návrhy sa samy znova neplánujú.
 // NPC prídu raz za deň medzi 8:00 a 18:00, najskôr pol dňa po predchádzajúcej návšteve.
-const npcVisit = (from, g) => E.nextDailyTick(from + TPD / 2, 96 + g.int(120));
+const npcVisit = (from, g) => E.nextDailyTick(from + TPD / 2, 8 * D.TICKS_PER_HOUR + g.int(10 * D.TICKS_PER_HOUR));
 // Sviatok začína o 6:00 svojho dňa v roku; ohlásenie je 2 dni vopred, koniec po f.len dňoch.
 const festStartTick = f => (f.season * DPS + f.day - 1) * TPD + D.DAWN_TICK;
 const yearly = at => E.every(YEAR_DAYS * TPD, at);
 const PERIODIC = [
-  { key: 'delivery', type: 'delivery', next: E.every(2 * TPD, 84) }, // každé 2 dni o 7:00
+  { key: 'delivery', type: 'delivery', next: E.every(2 * TPD, 7 * D.TICKS_PER_HOUR) }, // každé 2 dni o 7:00
   ...['jano', 'fero', 'zuzka'].map(n => ({ key: 'npc_' + n, type: 'npc_' + n, next: npcVisit })),
   ...D.FESTIVALS.flatMap(f => [
     { key: 'festAnnounce:' + f.id, type: 'festAnnounce', data: { id: f.id }, next: yearly(festStartTick(f) - 2 * TPD) },

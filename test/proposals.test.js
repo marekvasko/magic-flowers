@@ -595,7 +595,7 @@ test('server: denník sa píše do data/journal-<svet>.jsonl – značka načít
   const port = 43000 + Math.floor(Math.random() * 2000);
   // bežiaci svet, ktorý bol 2 dni vypnutý: pri načítaní dobehne ~60 dávok
   const w = makeWorld(23, D.DAWN_TICK + 6);
-  const save = Object.assign(JSON.parse(json(w)), { v: 8, mode: 'running', wall: Date.now() - 2 * TPD * (1200 * 1000 / TPD), seed: E.newSeed(), scavSalt: 7, pomedzieSeed: 1, lesSeed: 1, les: null, hory: null, tiles: w.tiles.map(t => ({ s: t.s })) });
+  const save = Object.assign(JSON.parse(json(w)), { v: 9, mode: 'running', wall: Date.now() - 2 * TPD * (1200 * 1000 / TPD), seed: E.newSeed(), scavSalt: 7, pomedzieSeed: 1, lesSeed: 1, les: null, hory: null, tiles: w.tiles.map(t => ({ s: t.s })) });
   fs.writeFileSync(path.join(dir, 'room-dennik.json'), JSON.stringify(save));
   const proc = await startServer(dir, port, { JOURNAL_MAX_MB: '0.02' });
   try {

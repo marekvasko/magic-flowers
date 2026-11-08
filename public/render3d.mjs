@@ -1057,9 +1057,10 @@ void main() {
   // Pokus (Les divov): slnko ako skutočný tieň stromov, len na zemi (1), alebo pôvodné škvrny zo šumu (0, MF_LES_SUN = 'dapple')
   const lesSunMode = () => window.MF_LES_SUN === 'dapple' ? 0 : 1;
   let shadowDirty = true, lastShadowKey = '';
+  const SUN_STEP_MIN = 5;
   function updateShadowMap(min, se) {
     const u = material.uniforms;
-    const stepMin = Math.floor(min / D.MIN_PER_TICK) * D.MIN_PER_TICK; // slnko z aktuálneho herného kroku
+    const stepMin = Math.floor(min / SUN_STEP_MIN) * SUN_STEP_MIN; // slnko po 5 herných minútach (nie každý krok – mapa tieňov je drahá)
     const key = se + ':' + stepMin + (layerOn('shadows') ? '' : ':off') + ':' + lesSunMode();
     if (!shadowDirty && key === lastShadowKey) return;
     shadowDirty = false; lastShadowKey = key;

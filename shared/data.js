@@ -12,8 +12,11 @@
   }
   const DAYS_PER_SEASON = 4;
   // Diskrétny čas: deň má vždy presne TICKS_PER_DAY krokov, jeden krok = MIN_PER_TICK herných minút.
-  const TICKS_PER_DAY = 288, MIN_PER_TICK = 5;
-  const DAWN_TICK = 72; // 6:00
+  // 11 520 krokov za deň = 9,6 kroku za sekundu pri 20-minútovom dni (1 krok = 7,5 hernej sekundy): dosť jemné na pohyb
+  // ako stav sveta. Do verzie uloženia 8 bolo 288 krokov za deň (5 minút); migrácia násobí uložené kroky 40×.
+  const TICKS_PER_DAY = 11520, MIN_PER_TICK = 1440 / TICKS_PER_DAY;
+  const TICKS_PER_HOUR = TICKS_PER_DAY / 24;
+  const DAWN_TICK = 6 * TICKS_PER_HOUR; // 6:00
   // Základná dĺžka herného dňa v reálnych sekundách (napevno; DAY_SECONDS v prostredí len na testovanie)
   const BASE_DAY_SECONDS = 1200;
   const SEASONS = ['Jar', 'Leto', 'Jeseň', 'Zima'];
@@ -233,8 +236,8 @@
   // Hľadá sa priestorom: server si každú hernú hodinu tajne vylosuje, v ktorých políčkach trávy semienka sú
   // (hustota = density × okolie × denná hodina × obdobie). Hráč chodí z políčka na políčko; klient nevie nič.
   const SCAVENGE = {
-    ticks: 1,           // výsledok príde v najbližšom kroku (do 5 herných minút), len ak hráč v tom kroku stále hľadá
-    window: 12,         // po koľkých krokoch sa semienka v tráve premiestnia (herná hodina)
+    ticks: TICKS_PER_DAY / 288, // výsledok príde o 5 herných minút (≈ 4 s), len ak hráč v tom kroku stále hľadá
+    window: TICKS_PER_HOUR,     // po koľkých krokoch sa semienka v tráve premiestnia (herná hodina)
     density: 0.07,      // podiel políčok so semienkom cez deň na jar, ďaleko od lesa a ciest
     find: 0.75,         // šanca, že ho na správnom políčku aj nájdeš
     edge: 0.15,         // + za každého lesného suseda (najviac 4) – na okraji lesa sa semienka sypú viac
@@ -754,7 +757,7 @@
 
   const api = {
     CHAT_MAX, chatText,
-    W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
+    W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, TICKS_PER_HOUR, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
     RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, canLevel, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, BODY, arrivalTiles, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_HEART, sunZone, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt, viewDiagAt,
     sellPrice, itemName, buildMap, buildMountains, buildPomedzie, buildLes, buildArea, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32

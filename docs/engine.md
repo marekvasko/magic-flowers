@@ -1,6 +1,6 @@
 # Simulation engine (`engine.js`)
 
-The game world is a **discrete-event simulation**. Time is a whole-number counter (`tick`, 288 per game day, 1 tick = 5 game minutes). Anything that should happen in the future is an **event** in one queue, and the engine moves the clock **from event to event**. Ticks with no events in them are never simulated.
+The game world is a **discrete-event simulation**. Time is a whole-number counter (`tick`, 11 520 per game day, 1 tick = 7.5 game seconds; before save version 9 it was 288 per day and `migrate()` scales every stored tick ×40). Anything that should happen in the future is an **event** in one queue, and the engine moves the clock **from event to event**. Ticks with no events in them are never simulated.
 
 Since engine v2 (#105; phase 1 in #107, phase 2 in #109, phase 3 in #111) nothing changes the world directly. Everything that happens in a tick, a due event or a player's action, is a **proposal**: it declares which **slices** of the world it reads and writes, runs on plain copies of exactly those slices, and the engine then **commits** the accepted proposals, whole or not at all, and writes one entry per batch to a **journal**. The engine is still a set of stateless functions: no module-level state, no classes, no timers:
 

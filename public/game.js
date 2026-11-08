@@ -765,7 +765,7 @@
     const d = Math.floor(hTotal / 24), hh = hTotal % 24;
     return (d ? d + ' d ' : '') + (hh || !d ? hh + ' h' : '');
   }
-  function fmtTick(t) { const m = D.minOfTick(t); return `deň ${D.dayOfTick(t)}, ${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; }
+  function fmtTick(t) { const m = Math.floor(D.minOfTick(t)); return `deň ${D.dayOfTick(t)}, ${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; }
   // Trend ceny za posledný deň ako ikonka: vždy 3 šípky natesno nad sebou, farebné sú
   // 1 (malá zmena), 2 (veľká) alebo 3 (veľmi veľká), zvyšok je sivý. Bez zmeny = všetky sivé.
   // upIsGood: pri predaji je rast ceny dobrý (zelený), pri nákupe zlý (červený).

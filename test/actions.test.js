@@ -414,7 +414,7 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
   w.icehouse = { built: false, ice: 0 }; Ice.applyIcehouse(w.icehouse, w.tiles);
   w.saves.bob.rep = D.REP_LEVELS[D.ICEHOUSE.rep]; w.saves.bob.coins = D.ICEHOUSE.price + 10;
   w.market.seeds[SP].stock = 1;
-  const save = Object.assign(JSON.parse(json(w)), { v: 8, mode: 'paused', wall: Date.now(), tiles: w.tiles.map(t => ({ s: t.s })), hory: Ice.saveHory(w.hory), les: null, pomedzieSeed: 1, lesSeed: 1 });
+  const save = Object.assign(JSON.parse(json(w)), { v: 9, mode: 'paused', wall: Date.now(), tiles: w.tiles.map(t => ({ s: t.s })), hory: Ice.saveHory(w.hory), les: null, pomedzieSeed: 1, lesSeed: 1 });
   fs.writeFileSync(path.join(dir, 'room-akcie.json'), json(save));
   const proc = await startServer(dir, port);
   let ana, bob;
@@ -507,4 +507,42 @@ test('hygiena: server už nemení svet priamo – liveCtx len pri založení sve
   const ws = src.slice(src.indexOf("ws.on('message'"), src.indexOf("ws.on('close'"));
   assert.ok(!/case '/.test(ws), 'handler správ len overí a vloží do schránky');
   assert.ok(Object.keys(Actions.PROPOSERS).length >= 28);
+});
+
+test('uloženie v8 (288 krokov za deň) sa prevedie na v9: každý krok ×40 – ten istý deň a hodina, udalosti, várky, rastliny, zákazky, sviatok', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-v9-'));
+  const port = 46000 + Math.floor(Math.random() * 2000);
+  const K = D.TICKS_PER_DAY / 288;
+  const f = D.FESTIVALS[1];
+  const old = { // svet vo verzii 8: deň 3, 7:30 (tick 2*288 + 90)
+    v: 8, tick: 2 * 288 + 90, wall: Date.now(), mode: 'paused', daySeconds: 1200, seed: E.newSeed(), step: 5, seq: 20, weather: 'sun',
+    saves: { eva: { coins: 77, water: 3, inv: { hoe: 1, can: 1, ['fl_' + SP]: 2 }, fb: { ['fl_' + SP]: [{ n: 2, a: 30, at: 600 }] }, recipes: [], seen: [], vily: 700, lastTick: 650, rep: 0, up: { can: 0, composter: 0 }, x: 5, y: 5, area: 'garden', talked: true } },
+    storage: { ['fl_' + SP]: 1 }, storageFb: { ['fl_' + SP]: [{ n: 1, a: 10, at: 500 }] }, icehouse: { built: false, ice: 0 }, hory: null, pomedzieSeed: 1, lesSeed: 1, les: null, scav: { 5: 55 }, scavSalt: 3, up: { plots: 0 }, glacierFed: 2, eternal: false, fairyNight: -1, plotsUsed: 1, maxRep: 0,
+    market: { seeds: {}, flowers: {}, compost: { stock: 5 }, hist: {}, news: [{ tick: 640, text: 'x' }], festival: { id: f.id, name: f.name, icon: f.icon, mult: f.mult, until: 900 }, npcs: { jano: { coins: 1 }, fero: { coins: 1, hold: {} } } },
+    contracts: { list: [{ id: 1, kind: 'short', giver: 'babka', sp: SP, n: 2, got: 0, reward: 10, item: null, rep: 4, posted: 600, openUntil: 800, due: 1000, takenBy: null }], nextId: 2 },
+    events: [{ at: 666, seq: 1, type: 'hourly', data: null, key: 'hourly', periodic: true }, { at: 1000, seq: 2, type: 'cDue', data: { id: 1 }, key: 'cDue:1' }, { at: 700, seq: 3, type: 'vilyEnd', data: { key: 'eva' }, key: 'vilyEnd:eva' }],
+    tiles: D.buildMap().map((g, i) => ({ s: i === 5 && D.TILLABLE[g] ? { k: 'normal', w: 1, r: 0, o: 'eva', p: { sp: SP, prog: D.SPECIES[SP].days, q: 3, dry: 0, bt: 650 } } : null }))
+  };
+  for (const sp of Econ.PLANTABLE) { old.market.seeds[sp] = { stock: 3 }; old.market.flowers[sp] = { stock: 1 }; }
+  const tilled = old.tiles.findIndex(t => t.s);
+  if (tilled < 0) { old.tiles[D.buildMap().findIndex(g => g === 'grass')].s = { k: 'normal', w: 1, r: 0, o: 'eva', p: { sp: SP, prog: 1, q: 3, dry: 0, bt: 650 } }; }
+  fs.writeFileSync(path.join(dir, 'room-stary.json'), json(old));
+  const proc = await startServer(dir, port);
+  try { const c = await client(port, 'stary', 'Eva'); c.ws.close(); await sleep(100); } finally { await stopServer(proc); }
+  const s = JSON.parse(fs.readFileSync(path.join(dir, 'room-stary.json'), 'utf8'));
+  assert.strictEqual(s.v, 9);
+  assert.strictEqual(s.tick, old.tick * K);
+  assert.deepStrictEqual([D.dayOfTick(s.tick), D.minOfTick(s.tick)], [3, 450], 'deň 3, 7:30 ako predtým');
+  assert.deepStrictEqual(s.events.filter(e => e.key !== 'dawn' && !/^(delivery|npc_|fest)/.test(e.key)).map(e => [e.key, e.at]).sort(), [['cDue:1', 1000 * K], ['hourly', 666 * K], ['vilyEnd:eva', 700 * K]]);
+  const eva = s.saves.eva;
+  assert.deepStrictEqual([eva.vily, eva.fb['fl_' + SP][0].a, eva.fb['fl_' + SP][0].at], [700 * K, 30 * K, 600 * K]);
+  assert.ok(eva.lastTick >= 650 * K, 'lastTick preškálovaný (a pri odchode obnovený)');
+  assert.deepStrictEqual(s.storageFb['fl_' + SP][0], { n: 1, a: 10 * K, at: 500 * K });
+  assert.strictEqual(s.tiles.find(t => t.s && t.s.p).s.p.bt, 650 * K);
+  assert.deepStrictEqual([s.contracts.list[0].posted, s.contracts.list[0].openUntil, s.contracts.list[0].due], [600 * K, 800 * K, 1000 * K]);
+  assert.strictEqual(s.market.festival.until, 900 * K);
+  assert.strictEqual(s.market.news[0].tick, 640 * K);
+  assert.deepStrictEqual(s.scav, {});
+  assert.strictEqual(s.glacierFed, 2, 'deň sa neškáluje');
+  for (const sp in f.mult) assert.strictEqual(s.market.flowers[sp].fest, f.mult[sp], 'sviatok v položkách kvetov');
 });
