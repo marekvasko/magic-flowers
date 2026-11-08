@@ -73,8 +73,11 @@ export function renderer(ctx) {
       h('div', { class: 'tbar' }, PHASES.filter(([k]) => t[k]).map(([k, c]) => h('span', { style: `width:${(t[k] / total * 100).toFixed(2)}%;background:${c}`, title: `${k} ${ms(t[k])}` }))),
       h('div', { class: 'legend' }, PHASES.filter(([k]) => t[k] != null).map(([k, c]) => h('span', null, h('i', { style: 'background:' + c }), `${k} ${ms(t[k])}`))));
   }
+  // onKey(kľúč): kliknutie na kľúč (záložka Journal ním filtruje); bez neho je kľúč len text
+  let onKey = null;
+  const keyEl = (k, attrs, text) => h('span', Object.assign({}, attrs, onKey ? { class: ((attrs && attrs.class) || '') + ' linkish', title: ((attrs && attrs.title) || '') + ' · click to filter by this key', onclick: () => onKey(k) } : {}), text);
   function keys(p) {
-    return h('td', { class: 'keys' }, (p.writes || []).map(k => h('div', { class: 'w', title: 'writes' }, '✎ ' + k)), (p.reads || []).map(k => h('div', { title: 'reads' }, '👁 ' + k)));
+    return h('td', { class: 'keys' }, (p.writes || []).map(k => h('div', { class: 'w' }, keyEl(k, { title: 'writes' }, '✎ ' + k))), (p.reads || []).map(k => h('div', null, keyEl(k, { title: 'reads' }, '👁 ' + k))));
   }
   function reason(p) {
     if (p.outcome === 'held') return h('td', { class: 'wrap' }, p.blockedBy && p.blockedBy.length
@@ -94,7 +97,8 @@ export function renderer(ctx) {
     return wrap(h('tr', null, h('th', null, '#'), h('th', null, 'Input'), ...d.rounds.map(r => h('th', { class: 'cell' }, `Round ${r.round}`, h('br'), h('small', { class: 'muted' }, 'step ' + r.step)))),
       ids.map((id, i) => h('tr', null, h('td', { class: 'num muted' }, i + 1), h('td', { class: 'mono' }, id, ' ', h('span', { class: 'muted' }, d.inputs[i].kind)), ...Array.from({ length: R }, (_, r) => cell(id, r)))));
   }
-  function detail(d) {
+  function detail(d, opts) {
+    onKey = (opts && opts.onKey) || null;
     const r = d.row, out = [];
     out.push(h('h3', { style: 'margin-top:0' }, `Tick ${r.tick} · ${fmt.when(r.tick)} `, h('span', { class: 'src ' + r.source }, SRC[r.source] || r.source), ' ', h('span', { class: 'muted' }, `${r.source === 'journal' ? 'line' : 'batch'} #${r.n}${r.step != null ? ' · step ' + r.step : ''}${r.wall ? ' · ' + new Date(r.wall).toLocaleString() : ''}`)));
     out.push(timingBar(r.timing));
@@ -125,7 +129,7 @@ export function renderer(ctx) {
     const LIM = 60, LEAF = 40;
     for (const c of d.changes.slice(0, LIM)) {
       out.push(h('div', { class: 'chg' + (c.contenders.length ? ' hot' : '') },
-        h('h4', null, c.key, h('span', { class: 'muted', style: 'font-weight:400' }, `${c.leaves} leaf change${c.leaves === 1 ? '' : 's'}`)),
+        h('h4', null, keyEl(c.key, null, c.key), h('span', { class: 'muted', style: 'font-weight:400' }, `${c.leaves} leaf change${c.leaves === 1 ? '' : 's'}`)),
         c.writes.map(w => h('div', null, h('div', { class: 'muted' }, 'written by ', h('b', { class: 'mono' }, w.id), ` (${w.type}, round ${w.round}${w.via !== c.key ? ', via ' + w.via : ''})`),
           h('table', null, w.leaves.slice(0, LEAF).map(l => h('tr', null, h('td', { class: 'mono' }, l.p.length ? l.p.join('.') : '(whole)'),
             h('td', { class: 'mono from wrap' }, val(l.from)), h('td', null, '→'), h('td', { class: 'mono to wrap' }, l.deleted ? 'deleted' : val(l.to)))),

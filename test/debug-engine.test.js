@@ -304,6 +304,22 @@ test('denník: riadky od najnovšieho, filtre (druh, typ, hráč odtlačkom, osu
   assert.strictEqual(q({ moves: '0', kind: 'actions' }).matched, 1, 'samotný pohyb bez sporu sa dá skryť');
   const dawnTick = q({ type: 'dawn' }).rows[0].tick;
   assert.ok(q({ from: dawnTick, to: dawnTick }).rows.every(r => r.tick === dawnTick));
+  // vylúčenie typu, viac osudov naraz, voľný text bez diakritiky, počty pre čipy
+  assert.ok(q({ type: '-pos,-dawn' }).rows.every(r => !r.types.includes('pos') && !r.types.includes('dawn')));
+  assert.ok(q({ type: '-pos' }).rows.some(r => r.kind === 'load'), 'vylúčenie nechá aj značky načítania');
+  assert.strictEqual(q({ type: 'buy,pos' }).matched, 2);
+  assert.strictEqual(q({ outcome: 'rejected,error' }).rows.filter(r => r.types.includes('buy')).length, 1);
+  assert.strictEqual(q({ q: 'vypredane' }).matched, 1, 'hlásenie odmietnutia, bez diakritiky');
+  assert.strictEqual(q({ q: 'VYPREDANÉ seed_' + SP }).matched, 1, 'všetky slová');
+  assert.strictEqual(q({ q: 'vypredane dawn' }).matched, 0);
+  assert.strictEqual(q({ q: 'save:' + Debug.keyId('bob') }).matched, 1, 'odtlačok hráča aj v texte');
+  const f = q({ type: 'buy' }).facets;
+  assert.strictEqual(f.type.buy, 1);
+  assert.ok(f.type.dawn >= 1, 'počet typu ráta s ostatnými filtrami, nie so samotným filtrom typu');
+  assert.deepStrictEqual([f.actor.ana, f.actor.bob], [1, 1]);
+  assert.strictEqual(f.outcome.held, 1);
+  assert.deepStrictEqual(q({ outcome: 'held' }).facets.kind.actions, 1);
+  assert.strictEqual(q({ moves: '0' }).rows.filter(r => r.types.length === 1 && r.types[0] === 'pos').length, 0);
   // strany: limit + kurzor
   const p1 = q({ limit: 5 }), p2 = q({ limit: 5, before: p1.next });
   assert.strictEqual(p1.rows.length, 5);

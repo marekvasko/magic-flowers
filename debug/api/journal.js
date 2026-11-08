@@ -1,9 +1,13 @@
 'use strict';
 // Ladiaca stránka (#106): záložka Journal – prehliadanie a filtrovanie denníka dávok na disku (data/journal-<svet>.jsonl
 // a starší .1), aj pre svet, ktorý nie je načítaný.
-//   GET /api/debug/journal?room=<id>[&kind=events|actions|load][&type=buy,pick][&actor=<p-…|meno>][&outcome=held|rejected|error|applied]
-//                          [&key=<podreťazec kľúča>][&from=<krok>][&to=<krok>][&moves=0][&before=<g>][&limit=<n>]
-//        → riadky od najnovšieho (g = poradie riadku v oboch súboroch, najprv .1), počty a kurzor na ďalšiu stranu
+//   GET /api/debug/journal?room=<id>[&kind=events|actions|load][&type=buy,pick,-pos][&actor=<p-…|meno>,…]
+//                          [&outcome=held,rejected,error,applied][&key=<podreťazec kľúča>][&q=<voľný text>]
+//                          [&from=<krok>][&to=<krok>][&moves=0][&before=<g>][&limit=<n>]
+//        → riadky od najnovšieho (g = poradie riadku v oboch súboroch, najprv .1), počty a kurzor na ďalšiu stranu.
+//        type: zoznam = aspoň jeden z nich, '-typ' = žiadny taký; actor a outcome: aspoň jeden; q: všetky slová (bez
+//        diakritiky) v texte záznamu (vstupy, hlásenia odmietnutí a chýb, kľúče, správy); moves=0 skryje rutinu (samotný
+//        pohyb bez sporu, „naposledy videný“). facets: počty typov / hráčov / osudov / druhov pri ostatných filtroch.
 //   GET /api/debug/journal?room=<id>&g=<n>  → jeden záznam rozobraný ako v záložke Engine (kolá, vinníci, zmeny pred / po)
 // Súbory sa len čítajú. Prehľad riadkov (krok, typy, aktéri, osudy, kľúče, poloha v súbore) sa drží v pamäti a pri
 // ďalšej požiadavke sa dočíta len to, čo do súboru pribudlo (denník sa iba pripisuje; pri otočení sa začne odznova).
@@ -11,17 +15,21 @@ const fs = require('fs');
 const { keyId } = require('../../debug.js');
 const Engine = require('./engine.js');
 
-const CHUNK = 4 << 20;
+const CHUNK = 4 << 20, TEXT_MAX = 600;
+const OUT = ['applied', 'held', 'rejected', 'error'];
+// text na hľadanie: malé písmená bez diakritiky
+const norm = s => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 const cache = new Map(); // cesta → { ino, bytes, rest, items, names: kľúč hráča → meno (z prítomnosti v záznamoch) }
 
 // Prehľad jedného riadku denníka
 function summarize(e, off, len) {
-  if (e.load) return { off, len, tick: e.tick, wall: e.wall, kind: 'load', step: e.step, seq: e.seq, migratedFrom: e.migratedFrom || null, types: [], actors: [], o: [0, 0, 0, 0], rounds: 0, n: 0, keys: '' };
+  if (e.load) return { off, len, tick: e.tick, wall: e.wall, kind: 'load', step: e.step, seq: e.seq, migratedFrom: e.migratedFrom || null, types: [], actors: [], o: [0, 0, 0, 0], rounds: 0, n: 0, keys: '', text: 'world loaded' };
   const inputs = e.inputs || [], props = e.proposals || [];
-  const o = [0, 0, 0, 0], keys = new Set();
+  const o = [0, 0, 0, 0], keys = new Set(), msgs = [];
   let rounds = 0;
   for (const p of props) {
-    o[['applied', 'held', 'rejected', 'error'].indexOf(p.outcome)]++;
+    o[OUT.indexOf(p.outcome)]++;
+    if (p.msg) msgs.push(p.msg);
     rounds = Math.max(rounds, p.round);
     for (const k of p.reads || []) keys.add(k);
     for (const k of p.writes || []) keys.add(k);
@@ -29,7 +37,9 @@ function summarize(e, off, len) {
   return {
     off, len, tick: e.tick, wall: e.wall, step: e.step, kind: inputs.some(i => i.ev) ? 'events' : 'actions', n: inputs.length,
     types: [...new Set(inputs.map(i => i.type))], actors: [...new Set(inputs.filter(i => i.actor != null).map(i => i.actor))],
-    o, rounds, keys: [...keys].join(' ')
+    o, rounds, keys: [...keys].join(' '),
+    text: norm([msgs.join(' '), inputs.map(i => i.type + ' ' + JSON.stringify(i.data)).join(' ').slice(0, TEXT_MAX), [...keys].join(' '),
+      (e.outbox || []).map(m => m.t + (m.text ? ' ' + m.text : '')).join(' ').slice(0, TEXT_MAX)].join(' '))
   };
 }
 
@@ -103,42 +113,55 @@ module.exports = (query, tools) => {
     return Object.assign({ room: id, files: fileInfo, g }, d);
   }
 
-  // filtre
-  const list = s => (s || '').split(',').map(x => x.trim()).filter(Boolean);
-  const kind = query.get('kind') || '', types = new Set(list(query.get('type'))), outcome = query.get('outcome') || '';
-  const actorQ = (query.get('actor') || '').trim(), actor = actorQ ? (byId.get(actorQ) || actorQ.toLowerCase()) : null;
-  let keyQ = (query.get('key') || '').trim();
-  keyQ = keyQ.replace(/p-[0-9a-f]{8}/g, m => byId.get(m) || m); // kľúč zadaný s odtlačkom hráča
-  const from = query.has('from') && query.get('from') !== '' ? +query.get('from') : -Infinity, to = query.has('to') && query.get('to') !== '' ? +query.get('to') : Infinity;
-  const hideMoves = query.get('moves') === '0';
-  const oi = ['applied', 'held', 'rejected', 'error'].indexOf(outcome);
-  const match = it => {
-    if (kind && it.kind !== kind) return false;
-    if (it.tick < from || it.tick > to) return false;
-    if (it.kind === 'load') return !types.size && !actor && oi < 0 && !keyQ;
-    if (types.size && !it.types.some(t => types.has(t))) return false;
-    if (actor && !it.actors.includes(actor)) return false;
-    if (oi >= 0 && !it.o[oi]) return false;
-    if (keyQ && !it.keys.includes(keyQ)) return false;
-    if (hideMoves && it.kind === 'actions' && it.types.length === 1 && it.types[0] === 'pos' && !it.o[1] && !it.o[2] && !it.o[3]) return false;
-    return true;
+  // filtre: každý je predikát; počty (facets) pre jeden filter sa rátajú so všetkými ostatnými
+  const list = v => (v || '').split(',').map(x => x.trim()).filter(Boolean);
+  const kind = query.get('kind') || '';
+  const tl = list(query.get('type')), inc = new Set(tl.filter(t => t[0] !== '-')), exc = new Set(tl.filter(t => t[0] === '-').map(t => t.slice(1)));
+  const actors = new Set(list(query.get('actor')).map(a => byId.get(a) || a.toLowerCase()));
+  const outs = list(query.get('outcome')).map(o => OUT.indexOf(o)).filter(i => i >= 0);
+  const keyQ = (query.get('key') || '').trim().replace(/p-[0-9a-f]{8}/g, m => byId.get(m) || m); // kľúč zadaný s odtlačkom hráča
+  const words = norm(query.get('q') || '').replace(/p-[0-9a-f]{8}/g, m => byId.get(m) || m).split(/\s+/).filter(Boolean);
+  const num = k => (query.has(k) && query.get(k) !== '' && isFinite(+query.get(k)) ? +query.get(k) : null);
+  const from = num('from') == null ? -Infinity : num('from'), to = num('to') == null ? Infinity : num('to');
+  const hideRoutine = query.get('moves') === '0';
+  const routine = it => it.kind === 'actions' && !it.o[1] && !it.o[2] && !it.o[3] && it.types.every(t => t === 'pos' || t === 'seen');
+  const load = it => it.kind === 'load';
+  const P = {
+    kind: it => !kind || it.kind === kind,
+    tick: it => it.tick >= from && it.tick <= to,
+    type: it => (!inc.size || (!load(it) && it.types.some(t => inc.has(t)))) && !it.types.some(t => exc.has(t)),
+    actor: it => !actors.size || it.actors.some(a => actors.has(a)),
+    outcome: it => !outs.length || outs.some(i => it.o[i] > 0),
+    key: it => !keyQ || it.keys.includes(keyQ),
+    q: it => words.every(w => it.text.includes(w)),
+    routine: it => !hideRoutine || !routine(it)
   };
+  const names_ = Object.keys(P);
+  const facets = { type: {}, actor: {}, outcome: { applied: 0, held: 0, rejected: 0, error: 0 }, kind: { events: 0, actions: 0, load: 0 } };
   const before = query.has('before') ? query.get('before') | 0 : all.length;
   const limit = Math.max(1, Math.min(500, query.get('limit') | 0 || 100));
   const rows = [];
   let matched = 0, next = null;
   for (let g = all.length - 1; g >= 0; g--) {
     const it = all[g].it;
-    if (!match(it)) continue;
+    let fails = 0, failed = null;
+    for (const n of names_) if (!P[n](it)) { fails++; failed = n; if (fails > 1) break; }
+    if (fails > 1) continue;
+    // počty: riadok, ktorý prešiel všetkým okrem jedného filtra, sa počíta len do počtov toho filtra
+    if (!fails || failed === 'type') for (const t of it.types) facets.type[t] = (facets.type[t] || 0) + 1;
+    if (!fails || failed === 'actor') for (const a of it.actors) facets.actor[a] = (facets.actor[a] || 0) + 1;
+    if (!fails || failed === 'outcome') it.o.forEach((c, i) => { if (c) facets.outcome[OUT[i]]++; });
+    if (!fails || failed === 'kind') facets.kind[it.kind]++;
+    if (fails) continue;
     matched++;
     if (g >= before) continue;
-    if (rows.length < limit) rows.push({ g, tick: it.tick, wall: it.wall, kind: it.kind, step: it.step, n: it.n, types: it.types, actors: it.actors, applied: it.o[0], held: it.o[1], rejected: it.o[2], errors: it.o[3], rounds: it.rounds, migratedFrom: it.migratedFrom });
+    if (rows.length < limit) rows.push({ g, tick: it.tick, wall: it.wall, kind: it.kind, step: it.step, n: it.n, types: it.types, actors: it.actors, applied: it.o[0], held: it.o[1], rejected: it.o[2], errors: it.o[3], rounds: it.rounds, migratedFrom: it.migratedFrom, routine: routine(it) });
     else if (next === null) next = rows[rows.length - 1].g;
   }
   const typesAll = new Set();
   for (const { it } of all) for (const t of it.types) typesAll.add(t);
   return {
-    room: id, files: fileInfo, total: all.length, matched, rows, next,
+    room: id, files: fileInfo, total: all.length, matched, rows, next, facets,
     first: all.length ? all[0].it.tick : null, last: all.length ? all[all.length - 1].it.tick : null,
     types: [...typesAll].sort(), players: [...players].map(k => ({ id: k, name: names.get(k) || null }))
   };
