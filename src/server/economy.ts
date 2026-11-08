@@ -105,12 +105,12 @@ export function flowerPriceParts(m: Pick<MarketPart, 'flowers' | 'festival'>, ti
   return { base, stock, season: se, inSeason, rare, fest, festival: fest !== 1 && m.festival ? m.festival.id : null, satRaw, sat, raw, min: P.flowerMin, price: Math.max(P.flowerMin, Math.round(raw)) };
 }
 // Sviatok v položkách kvetov: zmaže staré násobky a zapíše násobky sviatku f (null = žiadny sviatok).
-export function setFestival(m: Pick<MarketPart, 'flowers'>, f: Pick<Festival, 'mult'> | null): void {
+export function setFestival(m: Pick<MarketPart, 'flowers'>, f: Pick<Festival, 'mult'> | null | undefined): void {
   for (const sp of keys(m.flowers)) delete flowerOf(m, sp).fest;
   if (f) for (const [sp, x] of entries(f.mult)) { const it = m.flowers[sp]; if (it) it.fest = x; }
 }
 // Pri načítaní: násobky v položkách kvetov sa odvodia zo súhrnu (staršie uloženia ich nemajú; bez zmeny verzie uloženia).
-export function syncFestival(m: Market | null | undefined): void { if (m) setFestival(m, m.festival); }
+export function syncFestival(m: Pick<MarketPart, 'flowers' | 'festival'> | null | undefined): void { if (m) setFestival(m, m.festival); }
 export function flowerPrice(m: Pick<MarketPart, 'flowers' | 'festival'>, tick: number, sp: SpeciesId): number { return flowerPriceParts(m, tick, sp).price; }
 // Cena, za ktorú trh od hráča vykúpi 1 kus (null = nevykupuje)
 export function sellQuote(m: MarketPart, tick: number, id: string): number | null {
