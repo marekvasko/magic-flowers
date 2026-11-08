@@ -3,7 +3,7 @@
 // tiles = políčka záhrady, sv = uloženie hráča. Prikrývka je zo 6 hodvábu: u majstra hneď za mince, na krosnách
 // zadarmo, ale krosná tká 2–4 herné hodiny a naraz len jednu prikrývku. Hotová počká v Dielni, kým si ju tkáč vezme.
 const D = require('../shared/data.ts');
-const I = require('./items.js');
+const I = require('./items.ts');
 
 const newDielna = () => ({ built: false, loom: false, job: null, ready: {} });
 // Uloženie zo staršej verzie alebo poškodené → doplní chýbajúce časti

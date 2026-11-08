@@ -2,6 +2,7 @@
 // ES modul v TypeScripte (#122): server a testy ho načítajú priamo (Node 24), prehliadaču ho zbalí `npm run build`
 // do build/shared/data.js ako globálnu premennú GameData (scripts/build.mjs).
 import type { Plant } from './save.ts';
+import { lookup, mapValues, must } from './util.ts';
 
 // ---- Pomocné typy a funkcie ----
 // Ročné obdobie: 0 jar, 1 leto, 2 jeseň, 3 zima
@@ -19,21 +20,6 @@ export interface Point { readonly x: number; readonly y: number }
 export interface Size { readonly w: number; readonly h: number }
 export interface Rect { readonly x0: number; readonly y0: number; readonly x1: number; readonly y1: number }
 
-// Hodnota tabuľky pre kľúč z uloženia alebo zo správy (ľubovoľný reťazec): len vlastné kľúče tabuľky, inak undefined
-function lookup<V>(table: { readonly [key: string]: V | undefined }, key: string): V | undefined {
-  return Object.hasOwn(table, key) ? table[key] : undefined;
-}
-// Prvok, ktorý podľa algoritmu určite existuje (index v rozsahu poľa) – inak je to chyba v kóde
-function must<T>(v: T | undefined): T {
-  if (v === undefined) throw new Error('GameData: chýba prvok, ktorý musí existovať');
-  return v;
-}
-// Nová tabuľka s tými istými kľúčmi (v tom istom poradí) a hodnotami f(hodnota, kľúč)
-function mapValues<K extends string, A, B>(o: Readonly<Record<K, A>>, f: (a: A, k: K) => B): Record<K, B> {
-  const out: Partial<Record<K, B>> = {};
-  for (const k of Object.keys(o) as K[]) out[k] = f(o[k], k);
-  return out as Record<K, B>;
-}
 
 export const W = 20, H = 34;
 // Koľko sveta vidí hráč: hra zaberá celú obrazovku a mierka je taká, že uhlopriečka obrazovky
@@ -288,6 +274,21 @@ export const POTIONS: Readonly<Record<PotionId, Potion>> = POTION_DEF;
 // Predmety v batohu a v sklade: náradie, ľad, kompost, zvädnuté kvety, hodváb, prikrývka, semienka, kvety, elixíry a divé semienka
 export type ItemId = ToolId | 'ice' | 'compost' | 'wilted' | 'silk' | 'blanket'
   | `seed_${SpeciesId}` | `fl_${SpeciesId}` | `po_${PotionId}` | `wild_${Season}`;
+// Je reťazec (zo správy, z uloženia) id druhu kvetu / predmetu?
+export const isSpeciesId = (s: string): s is SpeciesId => Object.hasOwn(SPECIES_DEF, s);
+export const isPotionId = (s: string): s is PotionId => Object.hasOwn(POTION_DEF, s);
+export function isItemId(s: string): s is ItemId {
+  if (s === 'hoe' || s === 'can' || s === 'pick' || s === 'lamp' || s === 'ice' || s === 'compost' || s === 'wilted' || s === 'silk' || s === 'blanket') return true;
+  if (s.startsWith('seed_')) return isSpeciesId(s.slice(5));
+  if (s.startsWith('fl_')) return isSpeciesId(s.slice(3));
+  if (s.startsWith('po_')) return isPotionId(s.slice(3));
+  return /^wild_[0-3]$/.test(s);
+}
+// Druh kvetu v id semienka alebo kvetu ('seed_mak', 'fl_mak' → 'mak'), inak null
+export function speciesOfItem(id: string): SpeciesId | null {
+  const sp = id.startsWith('seed_') ? id.slice(5) : id.startsWith('fl_') ? id.slice(3) : null;
+  return sp !== null && isSpeciesId(sp) ? sp : null;
+}
 
 // Recepty kotlíka – kľúč sú zoradené id troch kvetov.
 export const RECIPES: Readonly<Record<string, PotionId>> = {

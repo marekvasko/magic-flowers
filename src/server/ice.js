@@ -4,7 +4,7 @@
 //   st = sklad { inv, fb } (výrez 'storage'), occupied = množina políčok hôr, na ktorých stojí hráč (z prítomnosti).
 // Na políčku ľadovca je ice = koľko vrstiev ľadu (po 1/4 bloku) na ňom ešte stojí; cut = 1 → do vody sa dnes už vysekal otvor.
 const D = require('../shared/data.ts');
-const I = require('./items.js');
+const I = require('./items.ts');
 
 // pôvodná (najvyššia) výška ľadu na každom políčku hôr
 const LEVELS = D.glacierLevels(D.buildMountains());
