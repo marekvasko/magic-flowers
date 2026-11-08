@@ -1702,11 +1702,14 @@ void main() {
     if (S.area !== 'garden') babka = null; // babka býva v záhrade (bez alive ju upratovanie nižšie odstráni)
     else if (!babka) babka = drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, 0, { babka: true }, 1);
     else { babka.alive = true; if (Math.floor(t) !== babka.lastT) { babka.lastT = Math.floor(t); drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, Math.sin(t) * 0.3, { babka: true }, 1); } }
-    // majster hodvábu stojí v dedinke medzi trhom a Dielňou, tvárou na chodník (ako babka, len v záhrade)
-    const MX = D.MASTER.x + 0.5, MY = D.MASTER.y + 0.6;
-    if (S.area !== 'garden') master = null;
-    else if (!master) master = drawChar('master', MX, MY, D.MASTER_LOOK, Math.PI / 2, 0, {}, 1);
-    else { master.alive = true; if (Math.floor(t * 0.7) !== master.lastT) { master.lastT = Math.floor(t * 0.7); drawChar('master', MX, MY, D.MASTER_LOOK, Math.PI / 2, Math.sin(t * 0.7) * 0.25, {}, 1); } }
+    // majster hodvábu (len na jar a na jeseň): cez deň stojí pri trhu, na noc ide k babke do chalúpky (D.masterAt – ako na serveri);
+    // keď kráča, kreslí sa každý snímok, keď stojí, len občas (prekreslenie postavičky nie je zadarmo)
+    const ma = S.area === 'garden' ? D.masterAt(S.day, min) : null;
+    if (!ma) master = null;
+    else if (!master || !ma.still || master.wasWalking || Math.floor(t * 0.7) !== master.lastT) {
+      master = drawChar('master', ma.x, ma.y + (ma.still ? 0.1 : 0), D.MASTER_LOOK, ma.a, ma.still ? Math.sin(t * 0.7) * 0.25 : t * 9, {}, dt || 1);
+      master.lastT = Math.floor(t * 0.7); master.wasWalking = !ma.still;
+    } else master.alive = true;
     for (const [id, o] of chars) {
       // po vlastnom prechode do inej plochy hráči zo starej plochy hneď zmiznú (je to za čiernou clonou)
       if (!o.alive && (o.vis <= 0 || o.seenArea !== S.area || id === 'babka' || id === 'master' || id === 'me')) { removeChar(id, o); continue; }

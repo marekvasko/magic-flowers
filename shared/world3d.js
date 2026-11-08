@@ -61,7 +61,7 @@
   function tileHeight(g, tx, ty) { return g === 'cliff' ? 7 + Math.floor(hash(tx, ty, 5) * 4) : groundHeight(g); }
   function topMaterial(g) {
     if (g === 'water') return M.WATER;
-    if (g === 'path' || g === 'gate' || g === 'lot') return M.PATH;
+    if (g === 'path' || g === 'gate' || g === 'lot' || g === 'majster') return M.PATH; // majster: udupané miesto majstra hodvábu pri trhu
     if (g === 'sand') return M.SAND;
     if (g === 'rock' || g === 'boulder') return M.STONE;
     if (g === 'snow') return M.SNOWFIELD;

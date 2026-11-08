@@ -632,11 +632,13 @@ const PROPOSERS = {
     keys: d => ({ writes: ['save:' + d.key] }),
     run(s, d, ctx) {
       const me = who(ctx), sv = saveOf(s, d.key, ctx);
-      if (!Dielna.nearMaster(me)) return ctx.reject('Podíď bližšie k majstrovi hodvábu.');
+      const why = Dielna.masterCheck(me, ctx.tick);
+      if (why) return ctx.reject(why);
       const err = Dielna.masterWeave(sv);
       if (err) return ctx.reject(err);
       ctx.emit(toast$(d.key, '🧶 Majster ti utkal hodvábnu prikrývku. Vlož ju do ľadovne – ťukni na ňu s prikrývkou v ruke.', 'gift'));
-      ctx.emit(fx$('garden', 'sparkle', D.MASTER.x + 0.5, D.MASTER.y + 0.5, { c: '#f3efe6' }));
+      const m = D.masterAt(D.dayOfTick(ctx.tick), D.minOfTick(ctx.tick));
+      ctx.emit(fx$('garden', 'sparkle', m.x, m.y, { c: '#f3efe6' }));
     }
   },
   loomStart: {

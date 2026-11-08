@@ -141,16 +141,51 @@
     rate: 0.25,                        // s ľadom v ľadovni kvety v sklade starnú 4× pomalšie
     melt: [1 / 12, 1 / 6, 1 / 12, 0],  // koľko blokov ľadu sa roztopí za hernú hodinu v jari, lete, jeseni, zime
     lot: { x0: 0, y0: 30, x1: 1, y1: 31 }, // stavebný pozemok vedľa domčeka (2×2)
-    // izolácia z hodvábnych prikrývok (#23): úroveň 0–3; blankets = koľko prikrývok spolu treba na úroveň,
+    // izolácia z hodvábnych prikrývok (#23): úroveň 0–3, každá ďalšia je oveľa drahšia; blankets = koľko prikrývok spolu treba na úroveň,
     // insul = koľko ľadu sa topí oproti neizolovanej ľadovni
-    blankets: [0, 1, 3, 6], insul: [1, 0.75, 0.5, 0.35]
+    blankets: [0, 1, 9, 20], insul: [1, 0.75, 0.5, 0.35]
   };
   // úroveň izolácie podľa počtu vložených prikrývok
   function insulLevel(bl) { let l = 0; for (let i = 0; i < ICEHOUSE.blankets.length; i++) if ((bl | 0) >= ICEHOUSE.blankets[i]) l = i; return l; }
   // ---- Pavúčí hodváb (#23): majster hodvábu a Dielňa s krosnami ----
   // Prikrývka sa robí zo 6 hodvábu – u majstra hneď (a za mince), na krosnách v Dielni zadarmo, ale 2–4 herné hodiny.
   const BLANKET_SILK = 6;
-  const MASTER = { name: 'Majster hodvábu', x: 14, y: 28, price: 100 }; // stojí v dedinke medzi trhom a Dielňou
+  // Majster hodvábu chodí len na jar a na jeseň. Cez deň (6:00–21:00) stojí na svojom mieste pri trhu (x, y), na noc odchádza
+  // k babke do chalúpky (hut) a ráno sa vracia; cesta trvá walk herných minút po chodníkoch (route, stredy políčok).
+  const MASTER = {
+    name: 'Majster hodvábu', x: 14, y: 28, price: 100, seasons: [0, 2], hut: { x: 15, y: 4 },
+    leave: 21 * 60, arrive: 6 * 60, walk: 30,
+    route: [[14.5, 28.5], [14.5, 26.5], [10.5, 26.5], [10.5, 6.5], [14.5, 6.5], [14.5, 4.5], [15.5, 4.5]]
+  };
+  // Kde je majster v deň day o minúte min: null = nie je tu (leto, zima); inak { x, y, still, where: 'market' | 'hut' | 'road', a }
+  // (a = smer chôdze ako uhol v rovine x/y). Server aj klient ho počítajú rovnako, len z času.
+  function masterAt(day, min) {
+    const M = MASTER;
+    if (!M.seasons.includes(seasonOf(day))) return null;
+    const r = M.route, at = (p, where) => ({ x: p[0], y: p[1], still: true, where, a: Math.PI / 2 });
+    let t = null, back = false; // t = podiel cesty z trhu k chalúpke
+    if (min >= M.leave && min < M.leave + M.walk) t = (min - M.leave) / M.walk;
+    else if (min >= M.arrive - M.walk && min < M.arrive) { t = (M.arrive - min) / M.walk; back = true; }
+    if (t == null) return min >= M.arrive && min < M.leave ? at(r[0], 'market') : at(r[r.length - 1], 'hut');
+    const seg = r.slice(1).map((p, i) => Math.hypot(p[0] - r[i][0], p[1] - r[i][1])), total = seg.reduce((a, b) => a + b, 0);
+    let d = t * total;
+    for (let i = 0; i < seg.length; i++) {
+      if (d <= seg[i] || i === seg.length - 1) {
+        const k = Math.min(1, d / seg[i]), a = r[i], b = r[i + 1];
+        const dx = (b[0] - a[0]) * (back ? -1 : 1), dy = (b[1] - a[1]) * (back ? -1 : 1);
+        return { x: a[0] + (b[0] - a[0]) * k, y: a[1] + (b[1] - a[1]) * k, still: false, where: 'road', a: Math.atan2(dy, dx) };
+      }
+      d -= seg[i];
+    }
+  }
+  // Mená postáv z hry (babka, majster hodvábu) si nový hráč dať nesmie – bez ohľadu na veľké písmená a diakritiku.
+  // Meno je najviac 14 znakov, preto aj skrátená podoba („Majster hodváb“).
+  const RESERVED_NAMES = ['babka', 'babka bylinkarka', 'majster', 'majster hodvabu'];
+  const plainName = n => String(n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  function reservedName(name) {
+    const n = plainName(name);
+    return !!n && RESERVED_NAMES.some(r => r === n || (n.length >= 14 && r.startsWith(n)));
+  }
   const MASTER_LOOK = { shirt: '#e8e2d0', hair: '#8a8a8a', hat: true }; // svetlá ľanová košeľa, šedivé vlasy, klobúk
   const DIELNA = {
     name: 'Dielňa', icon: '🪚', price: 600, rep: 2,
@@ -715,7 +750,7 @@
     return r ? Math.max(0, Math.min(1, (r.from - y) / (r.from - r.to))) : 0;
   }
 
-  const BLOCK = { tree: 1, water: 1, hut: 1, babka: 1, cauldron: 1, stall: 1, well: 1, boulder: 1, house: 1, cliff: 1, glacier: 1, spruce: 1, icehouse: 1, dielna: 1, majster: 1, bush: 1, giant: 1, trunk: 1, log: 1 };
+  const BLOCK = { tree: 1, water: 1, hut: 1, babka: 1, cauldron: 1, stall: 1, well: 1, boulder: 1, house: 1, cliff: 1, glacier: 1, spruce: 1, icehouse: 1, dielna: 1, bush: 1, giant: 1, trunk: 1, log: 1 };
   // Výška terénu v podkockách (pol bloku) podľa typu zeme – zdieľa ju 3D svet (world3d.js) aj chôdza
   // (hory: sutina a sneh vyššie, ľadovec ešte vyššie, skalné steny najvyššie; v záhrade skalka nad trávou).
   const TERRAIN_H = { water: 1, rock: 3, boulder: 3, scree: 3, snow: 3, glacier: 3, cliff: 8 };
@@ -812,7 +847,7 @@
     CHAT_MAX, chatText,
     W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, TICKS_PER_HOUR, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
-    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, canLevel, SCAVENGE, isWild, TOOLS, ICEHOUSE, insulLevel, BLANKET_SILK, MASTER, MASTER_LOOK, DIELNA, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, BODY, arrivalTiles, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_HEART, sunZone, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt, viewDiagAt,
+    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, canLevel, SCAVENGE, isWild, TOOLS, ICEHOUSE, insulLevel, BLANKET_SILK, MASTER, MASTER_LOOK, masterAt, reservedName, DIELNA, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, BODY, arrivalTiles, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_HEART, sunZone, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt, viewDiagAt,
     SPIDERS, WEB, WEB_ANCHOR, CORNER_WALL, CORNER_AREAS,
     sellPrice, itemName, buildMap, buildMountains, buildPomedzie, buildLes, buildArea, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
   };

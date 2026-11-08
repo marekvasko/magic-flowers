@@ -359,6 +359,8 @@
     }
     if (S.area === 'les' && S.webTile.has(ty * S.W + tx)) return sel === 'lamp' ? { i: '🕸️', l: 'Pavučina', info: true } : { i: '🕸️', l: 'Ťahať hodváb' };
     if (cornerAt(tx, ty)) return { i: '🧹', l: 'Odstrániť pavučinu' };
+    const ma = masterNow();
+    if (ma && S.area === 'garden' && Math.floor(ma.x) === tx && Math.floor(ma.y) === ty) return ma.still ? { i: '🧵', l: 'Majster', ui: 'majster' } : { i: '🧵', l: 'Majster na ceste', info: true };
     switch (t.g) {
       case 'stall': return { i: '🛒', l: 'Trh', ui: 'shop' };
       case 'cauldron': return { i: '⚗️', l: 'Kotlík', ui: 'cauldron' };
@@ -375,7 +377,7 @@
         if (sel === 'blanket') return { i: '🧶', l: 'Izolovať' };
         return sel && sel !== 'ice' && !D.isTool(sel) ? { i: '🧊', l: 'Ľadovňa', ui: 'icehouse', only: true } : { i: '🧊', l: 'Ľadovňa', ui: 'icehouse' };
       case 'dielna': return { i: '🪚', l: 'Dielňa', ui: 'dielna' };
-      case 'majster': return { i: '🧵', l: 'Majster', ui: 'majster' };
+      case 'majster': return { i: '🧵', l: 'Miesto majstra', info: true }; // majster tu práve nie je (inak ho chytí riadok vyššie)
       case 'lot': return { i: '🪧', l: 'Pozemok', info: true };
       case 'shroom': case 'ring': return { i: '🍄', l: 'Huby', info: true };
     }
@@ -440,6 +442,8 @@
     S.path = path; S.pendingAct = { x: tx, y: ty, onTile: true }; S.stuckT = 0;
   }
 
+  // kde je majster hodvábu teraz (podľa herného času, ako na serveri); null = je preč (leto, zima)
+  const masterNow = () => D.masterAt(S.day, curMin());
   const onDielnaLot = (tx, ty) => { const L = D.DIELNA.lot; return tx >= L.x0 && tx <= L.x1 && ty >= L.y0 && ty <= L.y1; };
   function doAction(tx, ty) {
     const a = ctxAction(tx, ty);
@@ -457,6 +461,8 @@
           : t.ice ? `Tu ešte vysekáš ${t.ice}× ľad. Vyber v lište krompáč. ⛏️` : 'Tu je ľad vysekaný až po dno. 🧊') + state);
       } else if (a.l === 'Otvor v ľade') toast('Tu už je otvor v ľade. Cez noc zamrzne – skús iné miesto. 🧊');
       else if (a.l === 'Pavučina') toast('S lampášom v ruke hodváb neutrhneš – potrebuješ voľnú ruku. Vyber si v lište niečo iné alebo prázdnu ruku. 🕸️');
+      else if (a.l === 'Majster na ceste') toast('Majster hodvábu je práve na ceste. Počkaj, kým príde. 🧵');
+      else if (a.l === 'Miesto majstra') toast(masterNow() ? 'Majster hodvábu je na noc u babky v chalúpke. Ráno o 6:00 sa vráti na trh. 🧵' : 'Tu predáva majster hodvábu – do dedinky chodí len na jar a na jeseň. 🧵');
       else if (a.l === 'Pozemok') toast(onDielnaLot(tx, ty)
         ? `Pozemok pre Dielňu. Postaviť ju môže ktokoľvek zo záhrady na trhu (záložka Vylepšiť) za ${D.DIELNA.price} 🪙 (treba ⭐${D.DIELNA.rep}). 🪚`
         : `Pozemok pre ľadovňu. Postaviť ju môže ktokoľvek zo záhrady na trhu (záložka Vylepšiť) za ${D.ICEHOUSE.price} 🪙. 🧊`);
@@ -1165,7 +1171,7 @@
       h('b', null, `🧶 Izolácia: úroveň ${lvl}/${B.blankets.length - 1}`),
       h('small', null, (lvl ? `Ľad sa topí len na ${Math.round(B.insul[lvl] * 100)} %. ` : 'Bez izolácie sa ľad topí naplno. ')
         + (next ? `Prikrývky: ${bl}/${next} – pri ${next} sa bude ľad topiť len na ${Math.round(B.insul[lvl + 1] * 100)} %. Ťukni na ľadovňu s prikrývkou v ruke.` : `Všetkých ${max} prikrývok je vnútri – lepšie sa izolovať nedá.`)),
-      h('small', null, `Prikrývku zo ${D.BLANKET_SILK} hodvábu utká majster hodvábu pri trhu (+${D.MASTER.price} 🪙) alebo krosná v Dielni.`))));
+      h('small', null, `Prikrývku zo ${D.BLANKET_SILK} hodvábu utká majster hodvábu pri trhu – chodí na jar a na jeseň (+${D.MASTER.price} 🪙) – alebo krosná v Dielni.`))));
   }
 
   // Dielňa: krosná (kúpa, tkanie prikrývky, vyzdvihnutie hotovej)
@@ -1202,7 +1208,7 @@
     const pc = h('canvas', { width: 80, height: 90 }), silk = S.inv.silk || 0;
     Art.char(pc.getContext('2d'), 40, 86, 80, MASTER_LOOK, 0, 0, {});
     body.appendChild(h('div', { class: 'dlg' }, pc, h('div', { class: 'bubble' },
-      `Dobrý deň, ${S.name}! Prines mi ${D.BLANKET_SILK}× pavúčí hodváb z Lesa divov a za ${D.MASTER.price} 🪙 ti z neho hneď utkám hodvábnu prikrývku. S ňou bude ľadovňa držať ľad oveľa dlhšie. 🧵`
+      `${masterNow() && masterNow().where === 'hut' ? 'Dobrý večer' : 'Dobrý deň'}, ${S.name}! Prines mi ${D.BLANKET_SILK}× pavúčí hodváb z Lesa divov a za ${D.MASTER.price} 🪙 ti z neho hneď utkám hodvábnu prikrývku. S ňou bude ľadovňa držať ľad oveľa dlhšie. 🧵`
       + (S.dielna.loom ? ' Lacnejšie ti ju utkajú krosná v Dielni – len si počkáš.' : ''))));
     const btn = h('button', { class: 'btn', onclick: () => send({ t: 'masterWeave' }) }, `${D.MASTER.price}🪙`);
     if (silk < D.BLANKET_SILK || S.coins < D.MASTER.price) btn.disabled = true;
@@ -1266,7 +1272,7 @@
       <p>🏔️ <b>Hory:</b> chodník na severovýchodnom okraji záhrady (za babkinou chalúpkou) vedie do hôr. Na ľadovci pod skalami vysekáš <b>krompáčom</b> ⛏️ ľad – každé ťuknutie zoberie vrchnú vrstvu. Po ľadovci sa dá chodiť: vyjdeš o pol bloku, so skokom o celý blok, a kde stojíš, tam ľad nedorastie. Plazením cez žiadny schod (ľad, skalka…) nezídeš ani nevyjdeš – nespadneš z hrany. Ľadu je málo: ľadovec sám nedorastá, len keď prší alebo sneží, a v teple sa topí od okrajov. Kto ho vykope priveľa, nechá ostatných bez ľadu. V zime vysekáš ľad aj na zamrznutom jazierku (z každého políčka raz za deň).</p>
       <p>🧊 Uneseš najviac ${D.ICE_CARRY} kusov ľadu, ťahá ťa dolu (chodíš pomalšie) a do pol dňa sa ti v batohu roztopí – ponáhľaj sa s ním do ľadovne. V lete ho trh dobre vykúpi, v zime takmer vôbec.</p>
       <p>🧊 <b>Ľadovňa</b> pri domčeku (kúpi ju ktokoľvek na trhu v záložke Vylepšiť) drží ${D.ICEHOUSE.cap} blokov ľadu – nič iné sa do nej nedáva, kvety patria do skladu v domčeku. Kým je v nej ľad, kvety v sklade vädnú 4× pomalšie. Ľad sa topí – v lete rýchlo, v zime vôbec – tak ho dopĺňaj.</p>
-      <p>🧶 <b>Izolácia ľadovne:</b> zo ${D.BLANKET_SILK} pavúčieho hodvábu sa dá utkať hodvábna prikrývka – u 🧵 majstra hodvábu pri trhu hneď za ${D.MASTER.price} 🪙, alebo zadarmo na krosnách v 🪚 Dielni (stavba vedľa trhu, kúpi ju ktokoľvek na trhu v záložke Vylepšiť), kde sa tká 2–4 herné hodiny. Ťukni s prikrývkou na ľadovňu: po 1, 3 a 6 prikrývkach sa ľad topí už len na ${D.ICEHOUSE.insul.slice(1).map(v => Math.round(v * 100) + ' %').join(', ')}.</p>
+      <p>🧶 <b>Izolácia ľadovne:</b> zo ${D.BLANKET_SILK} pavúčieho hodvábu sa dá utkať hodvábna prikrývka – u 🧵 majstra hodvábu hneď za ${D.MASTER.price} 🪙 (chodí len na jar a na jeseň: cez deň stojí pri trhu, na noc ide k babke do chalúpky), alebo zadarmo na krosnách v 🪚 Dielni (stavba vedľa trhu, kúpi ju ktokoľvek na trhu v záložke Vylepšiť), kde sa tká 2–4 herné hodiny. Ťukni s prikrývkou na ľadovňu: po ${D.ICEHOUSE.blankets.slice(1).join(', ').replace(/, (\d+)$/, ' a $1')} prikrývkach sa ľad topí už len na ${D.ICEHOUSE.insul.slice(1).map(v => Math.round(v * 100) + ' %').join(', ')}.</p>
       <p>🕸️ <b>Les divov a pavúky:</b> medzi kmeňmi visia pavučiny. Postav sa k nej a ťahaj hodváb (nie s lampášom v ruke – potrebuješ voľnú ruku). Každé potiahnutie dá 1 hodváb, ale pavučina sa zachveje a jej majiteľ to môže zacítiť; tretie potiahnutie ju roztrhne. Do pavučiny nevbehni – prilepíš sa. 🕷️ <b>Vlčiak</b> žije v nore pri chodníku a naháňa ťa len po svojom území. Keď ťa chytí, berie ti hodváb – zdvihni lampáš a pustí ťa aj s hodvábom. V tme sa mu lesknú oči. 🕷️ <b>Stará pradlena</b> stráži najvzdialenejšiu čistinu – lampáš ju len pomaly odtláča, tak sa k nej vyber s kamarátom.</p>
       <p>⚙️ V menu sa dá nastaviť, či svet <b>beží ďalej aj bez hráčov</b>, a ako dlho trvá herný deň.</p>
       <p>🎁 Darovať môžeš čokoľvek – vyber vec a ťukni na kamaráta. 💃 Tancovať a mávať môžeš tlačidlami.</p>
