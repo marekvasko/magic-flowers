@@ -9,7 +9,7 @@ import type { ActiveFestival, Contract, ContractKind, Contracts, Market, PlayerK
 import { entries, isRecord, keys, must } from '../shared/util.ts';
 import * as E from './engine.ts';
 import type { EngineEvent, Slices } from './engine.ts';
-import { sl } from './game.ts';
+import { maybe, sl } from './game.ts';
 import type { GameCtx, GamePeriodic, GameProposer, GameSlices, GameWorld } from './game.ts';
 import * as I from './items.ts';
 import type { Rng, Tile } from './world.ts';
@@ -441,7 +441,7 @@ export const PROPOSERS: { [T in keyof EconInputs]: GameProposer<EconInputs[T]> }
 };
 // Uloženia v návrhu cDue: deklaruje ich, len keď zákazku niekto mal (inak výrez v slices nie je)
 function takenSaves(s: GameSlices, c: Contract): Partial<Record<PlayerKey, PlayerSave>> | undefined {
-  return c.takenBy && 'save:*' in s ? sl(s, 'save:*') : undefined;
+  return c.takenBy ? maybe(s, 'save:*') : undefined;
 }
 
 // ---------- Zákazky ----------

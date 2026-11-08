@@ -16,7 +16,7 @@ const Actions = require('../src/server/actions.js');
 const I = require('../src/server/items.ts');
 const Ice = require('../src/server/ice.ts');
 const Areas = require('../src/server/areas.ts');
-const Spiders = require('../src/server/spiders.js');
+const Spiders = require('../src/server/spiders.ts');
 const Dielna = require('../src/server/dielna.ts');
 const TPD = D.TICKS_PER_DAY;
 const rethrow = err => { throw err; };

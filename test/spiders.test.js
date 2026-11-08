@@ -8,7 +8,7 @@ const WebSocket = require('ws');
 const D = require('../src/shared/data.ts');
 const E = require('../src/server/engine.ts');
 const Actions = require('../src/server/actions.js');
-const Sp = require('../src/server/spiders.js');
+const Sp = require('../src/server/spiders.ts');
 const Webs = require('../src/shared/webs.js');
 
 const TPD = D.TICKS_PER_DAY, LW = D.LES_W, LH = D.LES_H;
