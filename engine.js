@@ -390,7 +390,7 @@ function applyResult(world, r, spec, changes) {
   }
   for (const o of r.ops) {
     if (o.op === 'cancel') cancel(world, o.key);
-    else insert(world, o.ev.at, o.ev.type, o.ev.data, o.ev.key, o.ev.periodic);
+    else o.seq = insert(world, o.ev.at, o.ev.type, o.ev.data, o.ev.key, o.ev.periodic).seq; // seq pre ladiacu stránku (kto udalosť naplánoval)
   }
 }
 
@@ -398,7 +398,10 @@ function applyResult(world, r, spec, changes) {
 // (ev = udalosť z fronty; actor = kľúč konajúceho hráča pri akcii).
 // Vráti { tick, rounds, applied: [výsledky], rejected: [výsledky], outbox: [správy], entry } a zavolá spec.onBatch.
 // entry je záznam dávky do denníka: vstupy, snímka prítomnosti, poradie, kľúče a osud každého návrhu v každom kole, zmeny, správy.
-function commitBatch(world, inputs, spec) {
+// Ak spec.clock (() → ms) existuje, out.timing nesie čas častí dávky v ms: schedule (zostavenie dávky z fronty, ak ho
+// dodá volajúci v `scheduleMs`), evaluate (kľúče a beh návrhov), resolve (kolízie), commit (zápis do sveta).
+// Čas nie je v entry – denník musí byť pri prehratí rovnaký.
+function commitBatch(world, inputs, spec, scheduleMs) {
   const journal = !!spec.onBatch;
   const presence = spec.presence ? spec.presence(world) : undefined;
   const entry = {
@@ -407,6 +410,9 @@ function commitBatch(world, inputs, spec) {
     presence: presence === undefined ? undefined : clone(presence), proposals: [], outbox: []
   };
   const out = { tick: world.tick, rounds: 0, applied: [], rejected: [], outbox: entry.outbox, entry };
+  const clock = spec.clock, timing = clock ? { schedule: scheduleMs || 0, evaluate: 0, resolve: 0, commit: 0 } : null;
+  let t0 = clock ? clock() : 0;
+  const lap = part => { const t = clock(); timing[part] += t - t0; t0 = t; };
   let todo = inputs;
   while (todo.length) {
     out.rounds++;
@@ -416,14 +422,20 @@ function commitBatch(world, inputs, spec) {
       // kolízia už z deklarácie: netreba ani vyhodnocovať, návrh počká na ďalšie kolo
       if (written.length) {
         const k = keysOf(world, input, spec, presence);
-        if (!k.error && conflicts([...k.reads, ...k.writes], written)) { held.push(input); record({ id: inputId(input), input, reads: k.reads, writes: k.writes }, 'held'); continue; }
+        const clash = !k.error && conflicts([...k.reads, ...k.writes], written);
+        if (clock) lap('resolve');
+        if (clash) { held.push(input); record({ id: inputId(input), input, reads: k.reads, writes: k.writes }, 'held'); continue; }
       }
       const r = evaluate(world, input, spec, presence);
+      if (clock) lap('evaluate');
       if (r.error) { (spec.onError || logError)(r.error, input.ev || input, world); record(r, 'error', { msg: String(r.error && r.error.message || r.error) }); continue; }
-      if (written.length && conflicts([...r.reads, ...r.writes], written)) { held.push(input); record(r, 'held'); continue; }
+      const clash = written.length && conflicts([...r.reads, ...r.writes], written);
+      if (clock) lap('resolve');
+      if (clash) { held.push(input); record(r, 'held'); continue; }
       if (r.reject !== undefined) { out.rejected.push(r); record(r, 'rejected', { msg: r.reject }); continue; }
       const changes = journal ? {} : null;
       applyResult(world, r, spec, changes);
+      if (clock) lap('commit');
       written.push(...r.writes);
       out.applied.push(r);
       out.outbox.push(...r.outbox);
@@ -433,6 +445,7 @@ function commitBatch(world, inputs, spec) {
     todo = held;
   }
   out.step = world.step;
+  if (timing) out.timing = timing;
   if (journal) spec.onBatch(world, out);
   return out;
 }
@@ -442,13 +455,14 @@ function commitBatch(world, inputs, spec) {
 // Vykoná všetky udalosti, ktoré pripadajú na world.tick, ako jednu dávku.
 // Čo dávka naplánuje, padne najskôr na world.tick + 1, takže dávka je vopred uzavretá.
 // Chyba v návrhu sa zachytí a zapíše; udalosť sa tým spotrebuje a simulácia beží ďalej.
-function runBatch(world, spec) {
+function runBatch(world, spec, scheduleMs) {
+  const t0 = spec.clock ? spec.clock() : 0;
   const inputs = [];
   while (world.events.length && world.events[0].at <= world.tick) {
     const ev = world.events.shift();
     inputs.push({ type: ev.type, data: ev.data, ev });
   }
-  if (inputs.length) commitBatch(world, inputs, spec);
+  if (inputs.length) commitBatch(world, inputs, spec, spec.clock ? (scheduleMs || 0) + spec.clock() - t0 : 0);
   return inputs.length;
 }
 function logError(err, ev, world) {
@@ -462,11 +476,12 @@ function logError(err, ev, world) {
 function advanceTo(world, target, spec) {
   let n = 0;
   for (;;) {
+    const t0 = spec.clock ? spec.clock() : 0;
     reconcile(world, spec);
     const at = nextAt(world);
     if (at === null || at > target) break;
     world.tick = Math.max(world.tick, at);
-    n += runBatch(world, spec);
+    n += runBatch(world, spec, spec.clock ? spec.clock() - t0 : 0);
   }
   if (target > world.tick) world.tick = target;
   return n;

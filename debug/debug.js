@@ -20,7 +20,9 @@
     { id: 'world', label: 'World', todo: 'A free camera over the whole rendered world of the selected room and area, with time, season and layer controls and visual debug helpers (bounding boxes, tile grid, tap areas, lights).' },
     { id: 'assets', label: 'Assets', todo: 'A 3D viewer with a list of every model (buildings, market stall, well, cauldron, icehouse, trees, bushes, rocks, flowers…), switchable season and rotation.' },
     { id: 'generators', label: 'Generators', todo: 'Seeds and parameter sliders for the procedural generators (trees first, their parameters already exist in World3D.TREE_PARAMS), area layouts side by side, and “copy parameters”.' },
-    { id: 'market', label: 'Market', todo: 'Prices, stock and price history of the selected room, NPC state, festivals, contracts, and why each price is what it is.' }
+    { id: 'market', label: 'Market', todo: 'Prices, stock and price history of the selected room, NPC state, festivals, contracts, and why each price is what it is.' },
+    { id: 'engine', label: 'Engine', todo: 'The last batches of the engine: proposals, keys, decisions with their reasons, world changes, the actor filter and the queue with who scheduled what.' },
+    { id: 'journal', label: 'Journal', todo: 'Browse and filter the journal file of a room: every committed batch, by kind, type, player, outcome, key and ticks.' }
   ];
   const SEASON_EN = ['Spring', 'Summer', 'Autumn', 'Winter'];
 

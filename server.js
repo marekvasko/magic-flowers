@@ -70,6 +70,9 @@ const TPD = D.TICKS_PER_DAY, MPT = D.MIN_PER_TICK;
 const DEFAULT_MODE = process.env.DEFAULT_MODE === 'paused' ? 'paused' : 'running';
 const MAX_CATCHUP_DAYS = +process.env.MAX_CATCHUP_DAYS || 30; // koľko herných dní najviac dobehneme po výpadku servera
 const JOURNAL_MAX = (+process.env.JOURNAL_MAX_MB || 20) * 1024 * 1024; // denník dávok: po prekročení sa otočí (jeden starší súbor sa drží)
+// ladiaca stránka, záložka Engine (#106): koľko posledných dávok (a rámcov filtra) drží každý svet v pamäti; 0 = nič
+const TRACE_MAX = process.env.DEBUG_TRACE == null || process.env.DEBUG_TRACE === '' ? 600 : Math.max(0, process.env.DEBUG_TRACE | 0);
+const clock = () => performance.now(); // čas častí dávky pre ladiacu stránku (nie herný čas)
 const rooms = new Map();
 
 function roomFile(id) { return path.join(DATA_DIR, 'room-' + id + '.json'); }
@@ -190,6 +193,7 @@ function getRoom(id) {
   Econ.initEconomy(room, E.liveCtx(room, 'ekonomika')); // jediná akcia nad živým svetom: založenie trhu a nástenky
   Econ.syncFestival(room.market); // sviatočné násobky v položkách kvetov (staršie uloženia ich nemajú)
   room.inbox = []; room.inSeq = 0; // schránka správ hráčov; rámec (frame) ich spracuje raz za 100 ms
+  room.trace = TRACE_MAX ? Debug.traceRing(TRACE_MAX) : null; // posledné dávky pre ladiacu stránku (neukladá sa), aj z dobiehania
   E.reconcile(room, SIM); // doplní chýbajúce periodické udalosti, zahodí udalosti obsahu, ktorý už v hre nie je
   // značka načítania v denníku: odkiaľ (krok, kolo) beh pokračuje – po páde servera sa dobehnuté kroky zapíšu znova
   appendJournal(room, { load: true, tick: room.tick, step: room.step, seq: room.seq, migratedFrom: room.migratedFrom || null });
@@ -197,7 +201,7 @@ function getRoom(id) {
     // Svet beží aj bez hráčov – dobehneme čas, kým bol server vypnutý (najviac MAX_CATCHUP_DAYS dní).
     const cap = MAX_CATCHUP_DAYS * TPD * E.tickMs(room);
     room.wall = Math.max(room.wall, Date.now() - cap);
-    const n = E.advance(room, Date.now(), SIM);
+    const n = traced(room, 'catchup', () => E.advance(room, Date.now(), SIM));
     if (n) console.log(`[${id}] dobehnutých ${n} krokov (${(n / TPD).toFixed(1)} dňa)`);
   } else room.wall = Date.now();
   rooms.set(id, room);
@@ -296,10 +300,27 @@ function presenceOf(room) {
 function playerByKey(room, key) { for (const p of room.players.values()) if (p.key === key) return p; return null; }
 
 const SIM = {
-  proposers: Object.assign({}, Events.PROPOSERS, Actions.PROPOSERS), periodic: Events.PERIODIC, presence: presenceOf,
-  // denník najprv (nech záznam nechýba), potom správy hráčom; chyba pri posielaní nesmie zhodiť simuláciu ani server
-  onBatch(room, out) { appendJournal(room, out.entry); try { notify(room, out); } catch (err) { console.error(`[${room.id}] notify`, err); } }
+  proposers: Object.assign({}, Events.PROPOSERS, Actions.PROPOSERS), periodic: Events.PERIODIC, presence: presenceOf, clock,
+  // denník najprv (nech záznam nechýba), potom správy hráčom; chyba pri posielaní nesmie zhodiť simuláciu ani server;
+  // nakoniec záznam pre ladiacu stránku (kto dávku spustil, rozhodnutia filtra, časy častí)
+  onBatch(room, out) {
+    const t0 = clock();
+    appendJournal(room, out.entry);
+    const t1 = clock();
+    try { notify(room, out); } catch (err) { console.error(`[${room.id}] notify`, err); }
+    if (!room.trace) return;
+    const f = room.traceFrame;
+    room.traceFrame = null;
+    const timing = Object.assign(f ? { filter: f.ms } : {}, out.timing, { journal: t1 - t0, notify: clock() - t1 });
+    Debug.traceBatch(room.trace, out, { source: f ? 'frame' : room.traceSource || 'live', filter: f && f.filter, timing });
+  }
 };
+// Kto posúva čas (pre ladiacu stránku): live (bežiaci čas), catchup (dobiehanie po načítaní), ff (pretočenie noci)
+function traced(room, source, fn) {
+  const prev = room.traceSource;
+  room.traceSource = source;
+  try { return fn(); } finally { room.traceSource = prev; }
+}
 
 // Po vykonaní dávky: odmietnutia akcií ako správa ich hráčovi, správy z návrhov (adresát to: E.ALL všetkým,
 // E.area(plocha) hráčom na ploche, inak kľúč hráča) a obnova toho, čo sa podľa zapísaných kľúčov zmenilo –
@@ -388,7 +409,7 @@ function checkSleep(room) {
   broadcast(room, sleepMsg(room));
 }
 function fastForward(room, now) {
-  E.advanceTo(room, Math.min(room.ff.until, room.tick + FF_STEPS), SIM);
+  traced(room, 'ff', () => E.advanceTo(room, Math.min(room.ff.until, room.tick + FF_STEPS), SIM));
   room.wall = now; // pretočený čas sa nedobieha – po prebudení beží svet zase normálnym tempom
   room.dirty = true;
   if (room.tick >= room.ff.until) {
@@ -468,10 +489,10 @@ function joined(pl) {
 // Pohyb: smer, plazenie a lampáš sú len prítomnosť (ozdoba); poloha sa premietne do prítomnosti hneď (vysielanie polôh
 // 10× za sekundu) a zároveň ide ako vstup pos do enginu, ktorý ju overí a zapíše do uloženia (poloha je stav sveta).
 function moveInput(room, pl, e) {
-  const m = e.m, sv = pl.save;
-  if (pl.sleep || pl.joining) return null; // spiaci hráč leží v posteli
-  if ((m.ar | 0) !== pl.areaSeq) return null; // pohyb ešte z predchádzajúcej plochy
-  if (!(typeof m.x === 'number' && typeof m.y === 'number' && isFinite(m.x) && isFinite(m.y))) return null;
+  const m = e.m, sv = pl.save, no = why => { e.why = why; return null; }; // why: dôvod pre ladiacu stránku
+  if (pl.sleep || pl.joining) return no(pl.sleep ? 'player is asleep' : 'player is still joining'); // spiaci hráč leží v posteli
+  if ((m.ar | 0) !== pl.areaSeq) return no('sent from the previous area'); // pohyb ešte z predchádzajúcej plochy
+  if (!(typeof m.x === 'number' && typeof m.y === 'number' && isFinite(m.x) && isFinite(m.y))) return no('invalid position');
   const pos = Areas.clampPos(pl.area, m.x, m.y); // z plochy sa vyjsť nedá – len cez prechod
   pl.x = pos.x; pl.y = pos.y;
   pl.dir = m.dir | 0;
@@ -485,18 +506,19 @@ function moveInput(room, pl, e) {
 function toInput(room, pl, e, presence, inputs) {
   const m = e.m, sv = pl.save, key = pl.key;
   const mk = (type, data) => actionInput(room, pl, e.seq, type, data);
+  const no = why => { e.why = why; return null; }; // dôvod pre ladiacu stránku
   switch (m.t) {
-    case 'seen': case 'leave': return e.internal ? mk(m.t, {}) : null;
-    case 'join': return e.internal ? mk('join', { name: m.name, look: m.look, start: START, quick: !!m.quick }) : null;
+    case 'seen': case 'leave': return e.internal ? mk(m.t, {}) : no('only the server sends this');
+    case 'join': return e.internal ? mk('join', { name: m.name, look: m.look, start: START, quick: !!m.quick }) : no('only the server sends this');
     case 'act': {
-      if (pl.sleep) return null;
+      if (pl.sleep) return no('player is asleep');
       const me = presence.find(p => p.key === key);
-      if (!me) return null;
+      if (!me) return no('player not in presence');
       const r = Actions.resolveAct(room, presence, me, m);
-      if (!r) return null;
-      if (r.toast) return toast(pl, r.toast);
+      if (!r) return no('nothing to do on that tile');
+      if (r.toast) { toast(pl, r.toast); return no('refused before the engine: ' + r.toast); }
       if (pl.scav) { // kým hľadá: to isté políčko znova = stále hľadá; čokoľvek iné (čo by sa naozaj stalo) hľadanie preruší
-        if (r.type === 'scavStart' && pl.scav.i === r.data.i) return toast(pl, 'Ešte stále hľadáš… 🔍');
+        if (r.type === 'scavStart' && pl.scav.i === r.data.i) { toast(pl, 'Ešte stále hľadáš… 🔍'); return no('refused before the engine: still searching this tile'); }
         stopScavenge(pl, 'Prestal(a) si hľadať.', inputs);
         me.scav = null;
       }
@@ -511,14 +533,14 @@ function toInput(room, pl, e, presence, inputs) {
       const items = Array.isArray(m.items) ? m.items.map(String).slice(0, 3) : [];
       return items.length === 3 && items.every(id => id.startsWith('fl_')) ? mk('brew', { items }) : null;
     }
-    case 'wish': return sv.inv.fl_papradie ? mk('wish', { kind: ['zlato', 'jar', 'poklad'].includes(m.kind) ? m.kind : 'poklad' }) : null;
+    case 'wish': return sv.inv.fl_papradie ? mk('wish', { kind: ['zlato', 'jar', 'poklad'].includes(m.kind) ? m.kind : 'poklad' }) : no('no fern flower to wish with');
     case 'store': case 'unstore': return mk(m.t, { id: String(m.id), n: Math.max(1, Math.min(999, m.n | 0)) });
     case 'compostWilted': return mk('compostWilted', {});
     case 'buyTool': return mk('buyTool', { id: String(m.id) });
     case 'build': return m.id === 'icehouse' ? mk('build', {}) : null;
     case 'icehouse': return mk('fillIce', { n: m.n | 0 });
   }
-  return null;
+  return no('invalid message');
 }
 
 // Správy o prítomnosti (nemenia herný stav; fáza 4): spánok, emócie, skok, nastavenia sveta, chat
@@ -568,27 +590,54 @@ function presenceMessage(room, pl, m, inputs) {
 // Správy hráčov, ktorí sa medzitým odpojili, sa zahodia. Druhá a ďalšia akcia na políčku od toho istého hráča počká
 // na ďalší rámec (ostane v schránke na začiatku, s pôvodným poradím; najviac DEFER_MAX, ďalšie sa zahodia –
 // jeden klient tak nezaplní schránku celého sveta).
+// Každé rozhodnutie (zlúčené, odložené, zahodené, len prítomnosť, odmietnuté pred enginom, vstup) a jeho pravidlo
+// ide s dávkou do kruhovej pamäte ladiacej stránky (#106); rámec bez dávky sa zapíše samostatne.
 function frame(room) {
-  const list = room.inbox;
-  if (!list.length) return;
-  room.inbox = [];
+  const list = room.inbox, overflow = room.inboxDropped | 0;
+  if (!list.length && !overflow) return;
+  const t0 = clock();
+  room.inbox = []; room.inboxDropped = 0;
   const alive = e => room.players.get(e.pl.id) === e.pl;
-  const inputs = [], moves = new Map(), acted = new Map(), later = [];
-  for (const e of list) { e.pl.inboxN = 0; if (alive(e) && e.m.t === 'move') moves.set(e.pl, e); } // platí posledný pohyb
-  for (const [pl, e] of moves) { const inp = moveInput(room, pl, e); if (inp) inputs.push(inp); }
+  const inputs = [], moves = new Map(), acted = new Map(), later = [], dec = [];
+  const note = (e, what, rule, extra) => { if (room.trace) dec.push(Object.assign({ seq: e.seq, actor: e.pl.key, t: e.m.t, what, rule }, extra)); };
+  if (overflow && room.trace) dec.push({ seq: null, actor: null, t: '*', what: 'dropped', rule: `inbox full: ${overflow} message(s) over the limit (${INBOX_MAX} per room, ${PLAYER_INBOX_MAX} per player)` });
+  for (const e of list) { // platí posledný pohyb
+    e.pl.inboxN = 0;
+    if (!alive(e) || e.m.t !== 'move') continue;
+    const prev = moves.get(e.pl);
+    if (prev) note(prev, 'coalesced', 'latest move of the player wins', { into: e.seq });
+    moves.set(e.pl, e);
+  }
+  for (const [pl, e] of moves) { const inp = moveInput(room, pl, e); if (inp) { inputs.push(inp); note(e, 'input', 'move → pos', { id: inp.id }); } else note(e, 'dropped', e.why || 'invalid move'); }
   const presence = presenceOf(room);
   for (const e of list) {
-    if (e.m.t === 'move' || (!alive(e) && e.m.t !== 'leave')) continue;
+    if (!alive(e) && e.m.t !== 'leave') { note(e, 'dropped', 'player disconnected'); continue; }
+    if (e.m.t === 'move') continue;
     const pl = e.pl, m = e.m;
-    if (pl.joining && !e.internal) { later.push(e); pl.inboxN++; continue; } // kým nie je pripojený, správy počkajú
-    if (m.t === 'act') { const n = acted.get(pl) || 0; acted.set(pl, n + 1); if (n) { if (n <= DEFER_MAX) { later.push(e); pl.inboxN++; } continue; } }
-    if (['jump', 'sleep', 'emote', 'settings', 'chat'].includes(m.t)) { presenceMessage(room, pl, m, inputs); continue; }
+    if (pl.joining && !e.internal) { later.push(e); pl.inboxN++; note(e, 'deferred', 'player is still joining: waits for the next frame'); continue; } // kým nie je pripojený, správy počkajú
+    if (m.t === 'act') {
+      const n = acted.get(pl) || 0;
+      acted.set(pl, n + 1);
+      if (n) {
+        if (n <= DEFER_MAX) { later.push(e); pl.inboxN++; note(e, 'deferred', `one tile action per player per frame: waits for the next frame (${n}/${DEFER_MAX})`); }
+        else note(e, 'dropped', `more than ${DEFER_MAX} tile actions waiting`);
+        continue;
+      }
+    }
+    if (['jump', 'sleep', 'emote', 'settings', 'chat'].includes(m.t)) { presenceMessage(room, pl, m, inputs); note(e, 'presence', 'presence only, handled outside the engine'); continue; }
     let inp = null;
-    try { inp = toInput(room, pl, e, presence, inputs); } catch (err) { console.error(`[${room.id}] správa ${m.t} od ${pl.key}:`, err); }
-    if (inp) inputs.push(inp);
+    e.why = null;
+    try { inp = toInput(room, pl, e, presence, inputs); } catch (err) { console.error(`[${room.id}] správa ${m.t} od ${pl.key}:`, err); e.why = 'error: ' + err.message; }
+    if (inp) { inputs.push(inp); note(e, 'input', m.t === 'act' ? `tap resolved to ${inp.type}` : `${m.t} → ${inp.type}`, { id: inp.id }); }
+    else note(e, /^refused/.test(e.why || '') ? 'refused' : 'ignored', e.why || 'not a game action');
   }
   room.inbox = later.concat(room.inbox);
-  if (inputs.length) E.commitBatch(room, inputs, SIM);
+  const ms = clock() - t0;
+  if (inputs.length) {
+    room.traceFrame = room.trace ? { filter: dec, ms } : null; // onBatch ho pripojí k dávke
+    try { E.commitBatch(room, inputs, SIM); } finally { room.traceFrame = null; }
+  }
+  else if (room.trace && dec.length) Debug.traceFilter(room.trace, room.tick, dec, { filter: ms });
 }
 
 // ---------- WebSocket ----------
@@ -627,7 +676,7 @@ wss.on('connection', ws => {
     }
     if (!pl || !MESSAGES.has(m.t)) return;
     const room = pl.room;
-    if (room.inbox.length >= INBOX_MAX || (pl.inboxN | 0) >= PLAYER_INBOX_MAX) return;
+    if (room.inbox.length >= INBOX_MAX || (pl.inboxN | 0) >= PLAYER_INBOX_MAX) { room.inboxDropped = (room.inboxDropped | 0) + 1; return; } // ladiaca stránka to ukáže pri ďalšom rámci
     pl.inboxN = (pl.inboxN | 0) + 1;
     room.inbox.push({ pl, m, seq: ++room.inSeq, tick: room.tick }); // rámec (frame) to spracuje do 100 ms
   });
@@ -654,7 +703,7 @@ setInterval(() => {
     frame(room);
     if (room.ff) { fastForward(room, now); flushEconomy(room); continue; }
     if (room.mode === 'paused' && !room.players.size) { room.wall = now; continue; }
-    const n = E.advance(room, now, SIM, 50000);
+    const n = traced(room, 'live', () => E.advance(room, now, SIM, 50000));
     if (n) { room.dirty = true; if (room.players.size && now - (room.timeAt || 0) >= TIME_MS) { room.timeAt = now; broadcast(room, timeMsg(room)); } }
     flushEconomy(room);
   }
