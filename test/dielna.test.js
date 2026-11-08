@@ -240,6 +240,15 @@ test('majster hodvábu: v noci tká u babky, na trhu vtedy nie je; v lete ani v 
   assert.strictEqual(sv.inv.blanket, 1);
 });
 
+test('majster hodvábu: keď sú v Dielni krosná, už nepríde (ani cez deň na jar)', () => {
+  const w = makeWorld();
+  at(w, 'ana', MASTER_AT);
+  assert.ok(D.masterAt(1, 12 * 60, false) && D.masterAt(1, 12 * 60, true) === null);
+  w.dielna.built = true; w.dielna.loom = true; Dielna.applyDielna(w.dielna, w.tiles);
+  assert.match(rejected(run(w, act('masterWeave', 'ana')))[0], /majster hodvábu do dedinky nechodí/);
+  assert.ok(!w.saves.ana.inv.blanket);
+});
+
 test('mená postáv: Babka a Majster hodvábu sú vyhradené (veľké písmená, diakritika, skrátené na 14 znakov)', () => {
   for (const n of ['Babka', 'babka', 'BÁBKA', ' Babka ', 'Babka bylinkárka', 'Majster', 'Majster hodvábu', 'majster hodvabu', 'Majster hodváb'])
     assert.ok(D.reservedName(n), n);

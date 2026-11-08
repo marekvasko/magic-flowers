@@ -625,14 +625,14 @@ const PROPOSERS = {
       if (!Dielna.nearDielna(me)) return ctx.reject('Podíď bližšie k Dielni.');
       const err = Dielna.buyLoom(s.dielna, sv);
       if (err) return ctx.reject(err);
-      ctx.emit(toast$(E.ALL, `🧶 ${nameOf(ctx, d.key)} kúpil(a) do Dielne krosná! Utkajú prikrývku zo ${D.BLANKET_SILK} hodvábu – bez platenia, len to chvíľu trvá.`, 'gift'));
+      ctx.emit(toast$(E.ALL, `🧶 ${nameOf(ctx, d.key)} kúpil(a) do Dielne krosná! Utkajú prikrývku zo ${D.BLANKET_SILK} hodvábu – bez platenia, len to chvíľu trvá. Majster hodvábu sa s dedinkou rozlúčil – už ho tu netreba.`, 'gift'));
     }
   },
   masterWeave: {
-    keys: d => ({ writes: ['save:' + d.key] }),
+    keys: d => ({ writes: ['save:' + d.key], reads: ['dielna'] }), // keď sú v Dielni krosná, majster nechodí
     run(s, d, ctx) {
       const me = who(ctx), sv = saveOf(s, d.key, ctx);
-      const why = Dielna.masterCheck(me, ctx.tick);
+      const why = Dielna.masterCheck(me, ctx.tick, s.dielna);
       if (why) return ctx.reject(why);
       const err = Dielna.masterWeave(sv);
       if (err) return ctx.reject(err);
