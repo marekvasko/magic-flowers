@@ -111,7 +111,7 @@ test('mapa: svet – jeho semienko, pôda a rastliny, ľadovňa, ľad a otvory a
   const gm = M.buildTiles(D, 'garden', { state });
   assert.strictEqual(gm.source, 'room');
   assert.deepStrictEqual(gm.tiles.map(t => t.g), room.tiles.map(t => t.g));
-  assert.ok(gm.tiles.some(t => t.g === 'icehouse') && !gm.tiles.some(t => t.g === 'lot'));
+  assert.ok(gm.tiles.some(t => t.g === 'icehouse') && gm.tiles.filter(t => t.g === 'lot').length === 4, 'ľadovňa stojí, pozemok Dielne je voľný');
   assert.deepStrictEqual(gm.tiles[bed].s, tiles[bed].s);
   assert.strictEqual(gm.tiles[pond].cut, 1);
   const st = M.areaStats(D, gm);

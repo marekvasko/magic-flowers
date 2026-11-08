@@ -13,7 +13,7 @@ export const KINDS = {
   water: 'water', glacier: 'glacier',
   tree: 'tree', spruce: 'tree', giant: 'giant', trunk: 'trunk', bush: 'bush', shroom: 'shroom',
   boulder: 'rock', log: 'log',
-  hut: 'building', house: 'building', stall: 'building', well: 'building', cauldron: 'building', babka: 'building', icehouse: 'building',
+  hut: 'building', house: 'building', stall: 'building', well: 'building', cauldron: 'building', babka: 'building', icehouse: 'building', dielna: 'building', majster: 'building',
   lot: 'lot', gate: 'gate'
 };
 export function kindOf(D, g) { return KINDS[g] || (D.BLOCK[g] ? 'building' : 'ground'); }
@@ -69,10 +69,17 @@ export function buildTiles(D, area, opt) {
     const L = D.ICEHOUSE.lot;
     for (let y = L.y0; y <= L.y1; y++) for (let x = L.x0; x <= L.x1; x++) lot.add(y * w + x);
   }
-  const built = !!(st && st.icehouse && st.icehouse.built);
+  // pozemok Dielne vedľa trhu (dielna.js applyDielna)
+  const dlot = new Set();
+  if (area === 'garden' && D.DIELNA && D.DIELNA.lot) {
+    const L = D.DIELNA.lot;
+    for (let y = L.y0; y <= L.y1; y++) for (let x = L.x0; x <= L.x1; x++) dlot.add(y * w + x);
+  }
+  const built = !!(st && st.icehouse && st.icehouse.built), dbuilt = !!(st && st.dielna && st.dielna.built);
   let maxIce = 0;
   const tiles = base.map((g, i) => {
     if (lot.has(i)) g = built ? 'icehouse' : 'lot';
+    else if (dlot.has(i)) g = dbuilt ? 'dielna' : 'lot';
     const t = { g }, s = (sv && sv[i]) || {};
     if (g === 'glacier') {
       const top = levels ? levels[i] : 0;

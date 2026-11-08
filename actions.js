@@ -15,6 +15,7 @@ const Scav = require('./scavenge.js');
 const Areas = require('./areas.js');
 const Events = require('./events.js');
 const Spiders = require('./spiders.js');
+const Dielna = require('./dielna.js');
 
 const TPD = D.TICKS_PER_DAY;
 const HOUSE = { x: 3.5, y: 28.5 };
@@ -131,7 +132,12 @@ function resolveAct(world, presence, me, m) {
   const none = () => (web ? input(web.type, web.data) : null);
   // Ľad: krompáčom na ľadovci alebo (v zime) na zamrznutej vode
   if (item === 'pick' && (t.g === 'glacier' || t.g === 'water')) return input('digIce', { key, area, i });
-  if (t.g === 'icehouse') return item === 'ice' ? input('fillIce', { key, n: sv.inv.ice }) : null;
+  // Ľadovňa: ľad sa vkladá, prikrývka ju izoluje; s čímkoľvek iným hráč dostane vysvetlenie, na čo ľadovňa je (#63)
+  if (t.g === 'icehouse') {
+    if (item === 'ice') return input('fillIce', { key, n: sv.inv.ice });
+    if (item === 'blanket') return input('insulate', { key });
+    return { toast: ICEHOUSE_ONLY };
+  }
   if (area !== 'garden') {
     if (t.g === 'water' && item === 'can') return input('drawWater', { key, area, i });
     if (t.g === 'glacier') return { toast: 'Na ľad potrebuješ krompáč – kúpiš ho na trhu (záložka Vylepšiť). ⛏️' };
@@ -172,6 +178,7 @@ function resolveAct(world, presence, me, m) {
   if (item.startsWith('po_')) return input('potion', { key, kind: item.slice(3), area, x, y });
   return none();
 }
+const ICEHOUSE_ONLY = 'Do ľadovne patrí len ľad 🧊 (a hodvábne prikrývky na izoláciu). Kvety ulož do skladu v domčeku – ľad v ľadovni ho chladí, takže v ňom vädnú 4× pomalšie.';
 // Predmet, ktorý na políčku niečo robí (kope, polieva, sadí, seká ľad, elixír)
 function onTile(item) { return item === 'hoe' || item === 'can' || item === 'pick' || item === 'compost' || item === 'ice' || item.startsWith('seed_') || D.isWild(item) || item.startsWith('po_'); }
 
@@ -226,7 +233,7 @@ const PROPOSERS = {
   // pripojenie (d: { key, name, look, start: { coins, rep }, quick }): nové alebo prevedené uloženie, vzhľad, uvítanie;
   // server po vykonaní pošle hráčovi svet (pokyn joined). quick = rýchle znovupripojenie (bez hlásení)
   join: {
-    keys: (d, w) => E.mergeKeys({ writes: ['save:' + d.key, 'maxRep'], reads: w.saves && w.saves[d.key] ? ['pos:' + d.key] : [] }, Spiders.joinKeys(d, w)),
+    keys: (d, w) => E.mergeKeys({ writes: ['save:' + d.key, 'maxRep'].concat(w.redeem && Object.keys(w.redeem).length ? ['redeem'] : []), reads: w.saves && w.saves[d.key] ? ['pos:' + d.key] : [] }, Spiders.joinKeys(d, w)),
     run(s, d, ctx) {
       let sv = s['save:' + d.key];
       const fresh = !sv;
@@ -239,6 +246,10 @@ const PROPOSERS = {
       const days = d.quick || !pos || pos.lastTick == null ? 0 : Math.max(0, Math.floor((ctx.tick - pos.lastTick) / TPD));
       if (days) ctx.emit(toast$(d.key, `Kým si bol(a) preč, ubehlo ${days} ${days === 1 ? 'deň' : days < 5 ? 'dni' : 'dní'}. Pozri sa, čo sa v záhrade zmenilo. 🌱`, 'day'));
       Spiders.onJoin(s, d, ctx, area); // pripojil sa priamo v Lese divov – pavúky sa zobudia
+      if (s.redeem) { // to, čo v záhrade stálo na pozemku Dielne pred jej príchodom (#23), dostane prvý hráč, ktorý príde
+        const got = Dielna.handRedeem(s.redeem, sv, ctx.tick);
+        if (got.length) ctx.emit(toast$(d.key, `🪚 Na mieste pri trhu je teraz pozemok pre Dielňu a stojí tam majster hodvábu. Čo tam rástlo, dostávaš ty: ${got.map(([id, n]) => n + '× ' + D.itemName(id)).join(', ')}. 🎁`, 'gift'));
+      }
       if (!sv.talked) { sv.talked = true; ctx.emit(toast$(d.key, 'Vitaj! Začínaš s pár semienkami a prázdnym vreckom. Pri babke na severe je nástenka so zákazkami. 👵', 'gift')); }
     }
   },
@@ -412,6 +423,22 @@ const PROPOSERS = {
       ctx.emit(fx$('garden', 'ice', D.ICEHOUSE.lot.x0 + 1, D.ICEHOUSE.lot.y0 + 1));
     }
   },
+  // Izolácia ľadovne (#23): hráč vloží 1 hodvábnu prikrývku. d: { key }
+  insulate: {
+    keys: d => ({ writes: ['icehouse', 'save:' + d.key] }),
+    run(s, d, ctx) {
+      const me = who(ctx), sv = saveOf(s, d.key, ctx);
+      if (!nearIcehouse(me)) return ctx.reject('Podíď bližšie k ľadovni.');
+      const before = D.insulLevel(s.icehouse.bl);
+      const err = Ice.insulate(s.icehouse, sv);
+      if (err) return ctx.reject(err);
+      const B = D.ICEHOUSE, bl = s.icehouse.bl, lvl = D.insulLevel(bl), next = B.blankets[lvl + 1];
+      const pct = Math.round(B.insul[lvl] * 100);
+      if (lvl > before) ctx.emit(toast$(E.ALL, `🧶 ${nameOf(ctx, d.key)} izoloval(a) ľadovňu hodvábnymi prikrývkami – izolácia úrovne ${lvl}! Ľad sa v nej topí už len na ${pct} %.`, 'gift'));
+      else ctx.emit(toast$(d.key, `🧶 Vložil(a) si prikrývku do ľadovne (${bl}/${next}). Pri ${next} prikrývkach bude izolácia úrovne ${lvl + 1}.`));
+      ctx.emit(fx$('garden', 'ice', B.lot.x0 + 1, B.lot.y0 + 1));
+    }
+  },
   // krhla do vody (jazierko, studňa)
   drawWater: {
     keys: d => ({ writes: ['save:' + d.key], reads: ['tile:' + d.area + ':' + d.i] }),
@@ -577,15 +604,60 @@ const PROPOSERS = {
       ctx.emit(toast$(d.key, `${T.icon} Kúpil(a) si: ${T.name}. ${T.desc}`, 'gift'));
     }
   },
-  // stavba ľadovne (d: { key }): spoločná stavba, platí ju hráč; pozemok v záhrade dostane budovu
+  // stavba (d: { key, id: 'icehouse' | 'dielna' }): spoločná stavba, platí ju hráč; pozemok v záhrade dostane budovu
   build: {
-    keys: d => ({ writes: ['icehouse', 'tile:garden:*', 'save:' + d.key, 'corners'] }),
+    keys: d => ({ writes: [d.id === 'dielna' ? 'dielna' : 'icehouse', 'tile:garden:*', 'save:' + d.key, 'corners'] }),
     run(s, d, ctx) {
-      const sv = saveOf(s, d.key, ctx);
-      const err = Ice.buildIcehouse(s.icehouse, s['tile:garden:*'], sv);
+      const sv = saveOf(s, d.key, ctx), dielna = d.id === 'dielna';
+      const err = dielna ? Dielna.buildDielna(s.dielna, s['tile:garden:*'], sv) : Ice.buildIcehouse(s.icehouse, s['tile:garden:*'], sv);
       if (err) return ctx.reject(err);
-      if (s.corners) Spiders.pruneCorners(s.corners, s['tile:garden:*'], 'garden'); // kúty, ktoré ľadovňa zakryla
-      ctx.emit(toast$(E.ALL, `🧊 ${nameOf(ctx, d.key)} postavil(a) pri domčeku ľadovňu! Naplň ju ľadom – kým v nej je, kvety v sklade vädnú 4× pomalšie.`, 'gift'));
+      if (s.corners) Spiders.pruneCorners(s.corners, s['tile:garden:*'], 'garden'); // kúty, ktoré budova zakryla
+      ctx.emit(toast$(E.ALL, dielna
+        ? `🪚 ${nameOf(ctx, d.key)} postavil(a) pri trhu Dielňu! Kúp do nej krosná – utkajú prikrývky z hodvábu lacnejšie než majster.`
+        : `🧊 ${nameOf(ctx, d.key)} postavil(a) pri domčeku ľadovňu! Naplň ju ľadom – kým v nej je, kvety v sklade vädnú 4× pomalšie.`, 'gift'));
+    }
+  },
+  // --- pavúčí hodváb (#23): majster hodvábu a krosná v Dielni (d: { key }) ---
+  buyLoom: {
+    keys: d => ({ writes: ['dielna', 'save:' + d.key] }),
+    run(s, d, ctx) {
+      const me = who(ctx), sv = saveOf(s, d.key, ctx);
+      if (!Dielna.nearDielna(me)) return ctx.reject('Podíď bližšie k Dielni.');
+      const err = Dielna.buyLoom(s.dielna, sv);
+      if (err) return ctx.reject(err);
+      ctx.emit(toast$(E.ALL, `🧶 ${nameOf(ctx, d.key)} kúpil(a) do Dielne krosná! Utkajú prikrývku zo ${D.BLANKET_SILK} hodvábu – bez platenia, len to chvíľu trvá.`, 'gift'));
+    }
+  },
+  masterWeave: {
+    keys: d => ({ writes: ['save:' + d.key] }),
+    run(s, d, ctx) {
+      const me = who(ctx), sv = saveOf(s, d.key, ctx);
+      if (!Dielna.nearMaster(me)) return ctx.reject('Podíď bližšie k majstrovi hodvábu.');
+      const err = Dielna.masterWeave(sv);
+      if (err) return ctx.reject(err);
+      ctx.emit(toast$(d.key, '🧶 Majster ti utkal hodvábnu prikrývku. Vlož ju do ľadovne – ťukni na ňu s prikrývkou v ruke.', 'gift'));
+      ctx.emit(fx$('garden', 'sparkle', D.MASTER.x + 0.5, D.MASTER.y + 0.5, { c: '#f3efe6' }));
+    }
+  },
+  loomStart: {
+    keys: d => ({ writes: ['dielna', 'save:' + d.key] }),
+    run(s, d, ctx) {
+      const me = who(ctx), sv = saveOf(s, d.key, ctx);
+      if (!Dielna.nearDielna(me)) return ctx.reject('Podíď bližšie k Dielni.');
+      const r = Dielna.loomStart(s.dielna, sv, d.key, ctx.tick, ctx.rng.rand());
+      if (r.err) return ctx.reject(r.err);
+      ctx.scheduleUnique('loomDone:' + d.key, r.at, 'loomDone', { key: d.key });
+      ctx.emit(toast$(d.key, `🧶 Krosná tkajú tvoju prikrývku. Hotová bude asi o ${Math.round((r.at - ctx.tick) / D.TICKS_PER_HOUR)} h herného času.`));
+    }
+  },
+  loomTake: {
+    keys: d => ({ writes: ['dielna', 'save:' + d.key] }),
+    run(s, d, ctx) {
+      const me = who(ctx), sv = saveOf(s, d.key, ctx);
+      if (!Dielna.nearDielna(me)) return ctx.reject('Podíď bližšie k Dielni.');
+      const n = Dielna.loomTake(s.dielna, sv, d.key);
+      if (!n) return ctx.reject('V Dielni na teba nečaká žiadna prikrývka.');
+      ctx.emit(toast$(d.key, `🧶 Vzal(a) si si ${n}× hodvábnu prikrývku. Vlož ju do ľadovne – ťukni na ňu s prikrývkou v ruke.`, 'gift'));
     }
   },
 

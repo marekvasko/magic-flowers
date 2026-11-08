@@ -9,6 +9,7 @@ const Econ = require('./economy.js');
 const I = require('./items.js');
 const Ice = require('./ice.js');
 const Scav = require('./scavenge.js');
+const Dielna = require('./dielna.js');
 
 const TPD = D.TICKS_PER_DAY;
 
@@ -122,6 +123,14 @@ const PROPOSERS = {
     }
   },
   // Elixír víl vyprchal: nič sa nemení (sv.vily je čas), hráč sa to len dozvie a klient si obnoví stav
+  // krosná v Dielni dotkali prikrývku (#23): čaká v Dielni, kým si ju tkáč (d.key) vezme
+  loomDone: {
+    keys: () => ({ writes: ['dielna'] }),
+    run(s, d, ctx) {
+      if (!Dielna.loomDone(s.dielna, d.key)) return ctx.reject(null);
+      ctx.emit(toast$(d.key, '🧶 Krosná v Dielni dotkali tvoju hodvábnu prikrývku. Vyzdvihni si ju v Dielni pri trhu.', 'gift'));
+    }
+  },
   vilyEnd: {
     keys: () => ({}),
     run(s, d, ctx) { ctx.emit(toast$(d.key, 'Trblietky okolo teba vyprchali. Víly ťa už nevidia. 🧚')); ctx.emit({ to: d.key, t: 'me' }); }
