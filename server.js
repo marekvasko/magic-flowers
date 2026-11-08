@@ -300,9 +300,14 @@ function roomInfo(room) {
 // lampáš v ruke, rýchlosť pohybu a ťahanie hodvábu (pavúky, spiders.js)
 function presenceOf(room) {
   return [...room.players.values()].map(p => ({ key: p.key, name: p.name, area: p.area, x: p.x, y: p.y, scav: p.scav ? { i: p.scav.i, n: p.scav.n, px: p.scav.px, py: p.scav.py } : null, emote: p.emote, emoteAt: p.emoteAt,
-    lp: !!p.lp, vx: p.vx || 0, vy: p.vy || 0, pull: p.pull ? { id: p.pull.id, n: p.pull.n, px: p.pull.px, py: p.pull.py } : null })); // lampáš, rýchlosť (kam pavúk beží) a ťahanie hodvábu – pre pavúky
+    lp: !!p.lp, ...velocity(p), pull: p.pull ? { id: p.pull.id, n: p.pull.n, px: p.pull.px, py: p.pull.py } : null })); // lampáš, rýchlosť (kam pavúk beží) a ťahanie hodvábu – pre pavúky
 }
 
+// Rýchlosť hráča z posledných pohybov (políčka/s); kto 250 ms neposlal pohyb, stojí. Zaokrúhlená (ide do každého záznamu denníka).
+function velocity(p) {
+  if (!p.movedAt || Date.now() - p.movedAt > 250) return { vx: 0, vy: 0 };
+  return { vx: Math.round((p.vx || 0) * 100) / 100, vy: Math.round((p.vy || 0) * 100) / 100 };
+}
 function playerByKey(room, key) { for (const p of room.players.values()) if (p.key === key) return p; return null; }
 
 const SIM = {

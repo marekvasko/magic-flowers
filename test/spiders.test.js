@@ -214,19 +214,36 @@ test('vlčiak: za hranicou územia to po 2 s vzdá, a ide domov', () => {
   assert.ok(p);
 });
 
-test('naháňanie: pavúk beží k miestu, kde hráč o krok bude (z jeho rýchlosti)', () => {
+test('naháňanie: z diaľky beží k políčku, kde hráč o krok bude; na blízko rovno na hráča – stojaceho chytí, aj keď má v prítomnosti starú rýchlosť', () => {
   const w = mkWorld(SEEDS[3]);
-  const s = w.sps.s0, f = Sp.forestOf(w);
-  const near = f.owner.findIndex((o, i) => o === 0 && Math.hypot(i % LW + 0.5 - s.hx, ((i / LW) | 0) + 0.5 - s.hy) > 0.7 && Math.hypot(i % LW + 0.5 - s.hx, ((i / LW) | 0) + 0.5 - s.hy) < 1.1);
-  const p = join(w, 'eva', near % LW + 0.5, ((near / LW) | 0) + 0.5, 0);
+  const s = w.sps.s0, f = Sp.forestOf(w), dt = SEC * Sp.ticksOf(Sp.STEP_MS, 1200);
+  const tile = (x, y) => Math.floor(y) * LW + Math.floor(x);
+  // hráč 3–4 políčka od pavúka beží tak, že o krok bude na susednom políčku územia
+  let p = null;
+  for (let i = 0; i < f.owner.length && !p; i++) {
+    const x = i % LW + 0.5, y = ((i / LW) | 0) + 0.5, d = Math.hypot(x - s.hx, y - s.hy);
+    if (f.owner[i] !== 0 || d < 3 || d > 4) continue;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      if (f.owner[tile(x + dx, y + dy)] !== 0) continue;
+      p = join(w, 'eva', x + dx * 0.45, y + dy * 0.45, 0); p.vx = dx * 3.8; p.vy = dy * 3.8;
+      break;
+    }
+  }
+  assert.ok(p, 'miesto pre beh');
   Object.assign(s, { st: 'chase', tgt: 'eva', seen: w.tick, cool: 0, scared: 0 });
-  // hráč beží kolmo – pavúk mieri pred neho
-  p.vx = 3.8 * Math.sign(s.y - p.y || 1); p.vy = 0;
   wake(w, ['s0']);
-  const before = { x: s.x, y: s.y };
   run(w, 1);
-  const aim = { x: p.x + p.vx * SEC * Sp.STEP, y: p.y }, a = Math.atan2(aim.y - before.y, aim.x - before.x); // naháňajúci pavúk koná každých STEP krokov
-  assert.ok(Math.abs(Math.atan2(s.y - before.y, s.x - before.x) - a) < 0.01, 'smer na predpokladané miesto');
+  assert.strictEqual(s.goal, tile(p.x + p.vx * dt, p.y + p.vy * dt), 'cieľ cesty = políčko, kam hráč dobehne');
+  // stojaci hráč tesne pri pavúkovi, v prítomnosti ešte rýchlosť z behu: pavúk ho aj tak chytí
+  w.presence = []; delete w.saves.eva;
+  const w2 = mkWorld(SEEDS[3]), s2 = w2.sps.s0;
+  const near = f.owner.findIndex((o, i) => o === 0 && Math.hypot(i % LW + 0.5 - s2.hx, ((i / LW) | 0) + 0.5 - s2.hy) > 0.7 && Math.hypot(i % LW + 0.5 - s2.hx, ((i / LW) | 0) + 0.5 - s2.hy) < 1.1);
+  const q = join(w2, 'eva', near % LW + 0.5, ((near / LW) | 0) + 0.5, 2);
+  q.vx = 3.8; q.vy = 0; // už stojí, ale prítomnosť má starú rýchlosť
+  Object.assign(s2, { st: 'chase', tgt: 'eva', seen: w2.tick, cool: 0, scared: 0 });
+  wake(w2, ['s0']);
+  run(w2, T(2000));
+  assert.strictEqual(s2.st, 'cling', 'chytil ho: ' + s2.st);
 });
 
 test('stará pradlena: na siahnutie na pavučinu príde, uhryzne (3 hodváb) a odhodí za okraj; lampáš ju len pomaly odtláča', () => {

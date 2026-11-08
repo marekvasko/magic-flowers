@@ -29,7 +29,8 @@ const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const NEAR8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
 const IDS = Array.from({ length: SP.vlciak.n + 1 }, (_, i) => 's' + i); // 6 vlčiakov a pradlena
 const IDLE_MS = 3000; // nečinný pavúk bez vlastného termínu sa rozhliadne najneskôr takto (hráča inak ohlási pohyb, posKeys)
-const STEP = 2; // hýbuci sa pavúk koná každý druhý krok (~5× za sekundu; klient polohu plynulo dopočíta)
+const STEP_MS = 200; // hýbuci sa pavúk koná ~5× za sekundu reálneho času (klient polohu plynulo dopočíta)
+const KZ_STEP_MS = 100; // krížiak je rýchly – koná ~10× za sekundu
 const WAKE_R = Math.max(D.SPIDERS.vlciak.sense, D.SPIDERS.lamp + 0.5) + 0.5; // hráč takto blízko zobudí nečinného pavúka
 const ACTIVE_R = 16; // pavúk ďalej od všetkých hráčov (v tme ho nikto nevidí) je doma a spí – žije len les okolo hráčov
 const PULL_MOVE = 0.35; // o koľko sa ťahajúci hráč smie pohnúť
@@ -352,8 +353,8 @@ function vlciak(f, s, ps, sv, ctx, dt, T) {
       }
       const d = dist(s, p);
       if (d < 0.55) { s.st = 'cling'; s.taken = 0; setPath(s, null); s.clingNext = now; break; } // chytil ho
-      const t = ahead(p, dt); // kam hráč o krok dobehne
-      if (d < 1.2) stepTo(s, t.x, t.y, V.run, dt);
+      const t = ahead(p, dt); // kam hráč o krok dobehne (cieľ cesty z diaľky)
+      if (d < 1.2) stepTo(s, p.x, p.y, V.run, dt); // na blízko rovno na hráča (stojaci hráč nemá kam „dobehnúť“)
       else {
         const pi = inTerr(f, s, t.x, t.y) ? tileOf(t.x, t.y) : tileOf(p.x, p.y);
         if (!pathLeft(s) || now >= s.repath || s.goal !== pi) { setPath(s, pathTo(f, s, i => i === pi)); s.goal = pi; s.repath = now + T(400); }
@@ -420,7 +421,7 @@ function pradlena(f, s, ps, sv, ctx, dt, T) {
   const d = dist(s, p);
   if (d < 0.9) { if (sv) bite(f, s, p, sv, ctx, T); return; }
   const t = ahead(p, dt);
-  if (d < 1.5) stepTo(s, t.x, t.y, PR.walk, dt);
+  if (d < 1.5) stepTo(s, p.x, p.y, PR.walk, dt);
   else {
     const pi = inTerr(f, s, t.x, t.y) ? tileOf(t.x, t.y) : tileOf(p.x, p.y);
     if (!pathLeft(s) || now >= s.repath || s.goal !== pi) { setPath(s, pathTo(f, s, i => i === pi)); s.goal = pi; s.repath = now + T(400); }
@@ -444,7 +445,7 @@ function bite(f, s, p, sv, ctx, T) {
 // Hráča, ktorý sa k nečinnému pavúkovi priblíži (alebo pri ňom zdvihne lampáš), ohlási pohyb – posKeys / onPos ho zobudia.
 const busy = s => s.moving || ['chase', 'cling', 'alert', 'walk', 'return', 'totree'].includes(s.st);
 function plan(s, now, T) {
-  if (busy(s)) return now + STEP;
+  if (busy(s)) return now + T(STEP_MS);
   const due = [s.until, s.scared, s.cool].filter(t => t > now);
   return Math.min(now + T(IDLE_MS), ...due);
 }
@@ -474,7 +475,7 @@ const PROPOSERS = {
         return;
       }
       const f = forestBy(s.lesSeed), ds = s.daySeconds, T = ms => ticksOf(ms, ds);
-      const dt = (wasBusy ? STEP : 1) * tickSec(ds); // hýbuci sa pavúk koná každých STEP krokov
+      const dt = (wasBusy ? T(STEP_MS) : 1) * tickSec(ds); // hýbuci sa pavúk koná každých STEP_MS
       ctx.webs = s.webs;
       const sv = sp.tgt ? s['save:' + sp.tgt] : null;
       if (sp.k === 'v') vlciak(f, sp, ps, sv, ctx, dt, T); else pradlena(f, sp, ps, sv, ctx, dt, T);
@@ -488,11 +489,11 @@ const PROPOSERS = {
     run(s, d, ctx) {
       const z = s['kz:' + d.area];
       if (!z) return;
-      const now = ctx.tick, dt = tickSec(s.daySeconds), T = ms => ticksOf(ms, s.daySeconds);
+      const now = ctx.tick, T = ms => ticksOf(ms, s.daySeconds), dt = T(KZ_STEP_MS) * tickSec(s.daySeconds);
       const ps = (ctx.presence || []).filter(p => p.area === d.area);
       if (!ps.length) { addCorner(s.corners, d.area, z.spot); s['kz:' + d.area] = null; return; } // nikto sa nepozerá – rovno dobehne
       z.moving = false;
-      z.next = now + 1;
+      z.next = now + T(KZ_STEP_MS);
       const scare = ps.find(p => dist(z, p) < KZ.near || (p.lp && dist(z, p) < SP.lamp));
       if (scare && z.st !== 'flee' && z.st !== 'climb') {
         z.st = 'flee'; z.until = now + T(700);
@@ -760,7 +761,7 @@ function load(world, ctx) {
 const save = world => ({ webs: world.webs, corners: world.corners });
 
 module.exports = {
-  PROPOSERS, PERIODIC, IDS, STEP, slice, posKeys, onPos, joinKeys, onJoin, resolveAct,
+  PROPOSERS, PERIODIC, IDS, STEP_MS, slice, posKeys, onPos, joinKeys, onJoin, resolveAct,
   analyze, cornerSpots, forestOf, webTiles, webAt, trunkSpot, spotsOf, cornerList, pruneCorners, alert, crossed, tickSec, ticksOf,
   websView, cornerView, areaViews, entities, load, save
 };
