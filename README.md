@@ -290,7 +290,8 @@ Bugs, ideas and questions go to [GitHub issues](https://github.com/marekvasko/ma
 - `shared/webs.js` – the cobweb generator's parameters, the anchor geometry and the forest analysis (burrows, territories, where webs can hang), used by the server, the game and /debug.
 - `spiders.js` – spiders and cobwebs as engine proposals: territories in Les divov, webs and silk, the spiders' behaviour (one periodic event per spider), the krížiak's corner webs (drawn by `public/spiders3d.mjs`).
 - `shared/spidermodel.js` – the spiders' 3D model and its projection into 2D sprites (16 views × 4 frames).
-- `presence.js` – players' presence: days away (`sv.lastTick`, also refreshed on every 15 s autosave), the 10 s reconnect grace for left/arrived messages, and a 30 s WebSocket ping/pong that closes half-open connections.
+- `presence.js` – players' presence: days away (`sv.lastTick`, also refreshed on every 15 s autosave), the 10 s reconnect grace for left/arrived messages, and a 30 s WebSocket ping/pong that closes half-open connections, and sending player positions (`pl`, 10× a second, only to players who already got `welcome`).
+- `shared/players.js` – the client's list of other players from `pl`; your own character is never in it, even if `pl` came before `welcome` (#125).
 - `public/` – client: `index.html`, `style.css`, `art.js` (ground textures, sprites and icons drawn procedurally on a canvas, with no images), `game.js` (controls, UI, the overlay canvas) and `render3d.mjs` / `particles3d.mjs` (3D view).
 - `shared/world3d.js` – voxel world, generated models, sun position and soft shadows (shared by client and server).
 - `shared/mesher.js` – mesh optimizer (greedy meshing, baked texture atlases for models).
