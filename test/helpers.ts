@@ -32,3 +32,7 @@ export function parseMsg(raw: WebSocket.RawData): ServerMessage {
   const text = Buffer.isBuffer(raw) ? raw.toString('utf8') : Array.isArray(raw) ? Buffer.concat(raw).toString('utf8') : Buffer.from(raw).toString('utf8');
   return JSON.parse(text) as ServerMessage;
 }
+// Správa servera daného typu (wait('toast', m => …) dostane zúžený typ)
+export type MsgType = ServerMessage['t'];
+export type MsgOf<T extends MsgType> = Extract<ServerMessage, { t: T }>;
+export const isMsg = <T extends MsgType>(m: ServerMessage, t: T): m is MsgOf<T> => m.t === t;
