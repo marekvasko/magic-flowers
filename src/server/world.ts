@@ -53,3 +53,9 @@ export interface Rng {
   int(n: number): number;
   pick<T>(list: readonly T[]): T | undefined;   // prázdny zoznam → undefined
 }
+
+// Sklad ako výrez 'storage': world.storage + world.storageFb
+export interface StorageSlice {
+  inv: Inventory;
+  fb: Batches;
+}

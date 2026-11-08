@@ -7,9 +7,9 @@ const D = require('../shared/data.ts');
 const E = require('./engine.ts');
 const Econ = require('./economy.js');
 const I = require('./items.ts');
-const Ice = require('./ice.js');
+const Ice = require('./ice.ts');
 const Scav = require('./scavenge.ts');
-const Dielna = require('./dielna.js');
+const Dielna = require('./dielna.ts');
 
 const TPD = D.TICKS_PER_DAY;
 
