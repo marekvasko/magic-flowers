@@ -10,11 +10,10 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import net from 'node:net';
-import type { AddressInfo } from 'node:net';
 import WebSocket from 'ws';
 import * as D from '../src/shared/data.ts';
 import type { ClientMessage, ServerMessage } from '../src/shared/protocol.ts';
-import { must, parseMsg } from './helpers.ts';
+import { must, parseMsg, portOf } from './helpers.ts';
 
 const json = (v: unknown): string => JSON.stringify(v);
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms));
@@ -22,7 +21,7 @@ type Server = ChildProcessByStdio<null, Readable, Readable>;
 type Welcome = Extract<ServerMessage, { t: 'welcome' }>;
 
 // Voľný port od systému (náhodné porty z rozsahov sa občas zrazia medzi testami)
-function freePort(): Promise<number> { return new Promise(r => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = (srv.address() as AddressInfo).port; srv.close(() => { r(p); }); }); }); }
+function freePort(): Promise<number> { return new Promise(r => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = portOf(srv); srv.close(() => { r(p); }); }); }); }
 function startServer(dataDir: string, port: number): Promise<Server> {
   const proc = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'src', 'server', 'server.js')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, JOURNAL: '0' }), stdio: ['ignore', 'pipe', 'pipe']
