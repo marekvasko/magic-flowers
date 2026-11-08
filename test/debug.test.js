@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const Debug = require('../src/server/debug.js');
+const Debug = require('../src/server/debug.ts');
 
 const KEY = 'abc123hracov-kluc';
 

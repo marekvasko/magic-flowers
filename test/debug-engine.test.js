@@ -15,7 +15,7 @@ const Econ = require('../src/server/economy.ts');
 const Events = require('../src/server/events.ts');
 const Actions = require('../src/server/actions.ts');
 const Ice = require('../src/server/ice.ts');
-const Debug = require('../src/server/debug.js');
+const Debug = require('../src/server/debug.ts');
 const api = require('../debug/api/engine.js');
 const TPD = D.TICKS_PER_DAY;
 const json = v => JSON.stringify(v);

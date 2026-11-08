@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const D = require('../src/shared/data.ts');
 const Ice = require('../src/server/ice.ts');
-const { keyId } = require('../src/server/debug.js');
+const { keyId } = require('../src/server/debug.ts');
 const world = require('../debug/api/world.js');
 
 const q = o => new URLSearchParams(o);

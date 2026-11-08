@@ -8,7 +8,7 @@ const http = require('http');
 const D = require('../src/shared/data.ts');
 const E = require('../src/server/engine.ts');
 const Econ = require('../src/server/economy.ts');
-const Debug = require('../src/server/debug.js');
+const Debug = require('../src/server/debug.ts');
 const market = require('../debug/api/market.js');
 const TPD = D.TICKS_PER_DAY;
 
