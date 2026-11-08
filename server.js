@@ -14,6 +14,7 @@ const P = require('./presence.js');
 const Debug = require('./debug.js');
 const Events = require('./events.js');
 const Actions = require('./actions.js');
+const Spiders = require('./spiders.js');
 
 const PORT = +process.env.PORT || 3000;
 // Dĺžka herného dňa je napevno D.BASE_DAY_SECONDS (20 min); DAY_SECONDS v prostredí slúži len na testovanie.
@@ -64,7 +65,7 @@ const server = http.createServer((req, res) => {
 // ---------- Svety (miestnosti) ----------
 // Čas je diskrétny: svet má celé počítadlo `tick` (D.TICKS_PER_DAY krokov na deň), deň a minúta sa z neho
 // len odvodzujú. Všetko, čo sa má stať v budúcnosti, je udalosť v plánovači (room.events) a ukladá sa so svetom.
-const SAVE_VERSION = 9; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov; 8: semienko sveta a počítadlo kôl namiesto rng; 9: 11 520 krokov za deň (×40)
+const SAVE_VERSION = 10; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov; 8: semienko sveta a počítadlo kôl namiesto rng; 9: 11 520 krokov za deň (×40); 10: pavúky a pavučiny
 const OLD_TPD = 288, OLD_MPT = 5, TICK_SCALE = D.TICKS_PER_DAY / OLD_TPD; // mriežka času do verzie 8
 const TPD = D.TICKS_PER_DAY, MPT = D.MIN_PER_TICK;
 const DEFAULT_MODE = process.env.DEFAULT_MODE === 'paused' ? 'paused' : 'running';
@@ -133,6 +134,7 @@ function migrate(saved) {
     if (out.scavSalt == null) out.scavSalt = Areas.newSeed(); // doteraz sa odvodzoval lenivo zo spoločného rng
   }
   if (from < 9) scaleTicks(out, TICK_SCALE); // jemnejší čas: každý uložený krok ×40 (deň a hodina ostávajú tie isté)
+  if (from < 10) { out.webs = null; out.corners = null; } // pavúky (#57): pavučiny sa utkajú pri prvom načítaní, v každej ploche jeden kút
   out.v = SAVE_VERSION; out.migratedFrom = saved.migratedFrom || from;
   return out;
 }
@@ -190,8 +192,10 @@ function getRoom(id) {
   // odvodené počítadlá sa pri načítaní vždy prepočítajú (staré uloženia ich nemajú; chyba by sa sama opravila)
   room.plotsUsed = Econ.plotsUsedOf(room.tiles);
   room.maxRep = Econ.maxRepOf(room.saves);
-  Econ.initEconomy(room, E.liveCtx(room, 'ekonomika')); // jediná akcia nad živým svetom: založenie trhu a nástenky
+  const live = E.liveCtx(room, 'ekonomika'); // jediná akcia nad živým svetom: založenie trhu, nástenky a pavučín
+  Econ.initEconomy(room, live);
   Econ.syncFestival(room.market); // sviatočné násobky v položkách kvetov (staršie uloženia ich nemajú)
+  Spiders.load(room, live); // pavučiny a kúty (nový svet ich utká); pavúky sú doma a spia
   room.inbox = []; room.inSeq = 0; // schránka správ hráčov; rámec (frame) ich spracuje raz za 100 ms
   room.trace = TRACE_MAX ? Debug.traceRing(TRACE_MAX) : null; // posledné dávky pre ladiacu stránku (neukladá sa), aj z dobiehania
   E.reconcile(room, SIM); // doplní chýbajúce periodické udalosti, zahodí udalosti obsahu, ktorý už v hre nie je
@@ -214,7 +218,7 @@ function serialize(room) {
     seed: room.seed, step: room.step, seq: room.seq, events: room.events,
     weather: room.weather, saves: room.saves, storage: room.storage, storageFb: room.storageFb, market: room.market, contracts: room.contracts,
     fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom, scav: room.scav, scavSalt: room.scavSalt, icehouse: room.icehouse, pomedzieSeed: room.pomedzieSeed, up: room.up, lesSeed: room.lesSeed,
-    glacierFed: room.glacierFed, plotsUsed: room.plotsUsed, maxRep: room.maxRep,
+    glacierFed: room.glacierFed, plotsUsed: room.plotsUsed, maxRep: room.maxRep, ...Spiders.save(room),
     tiles: room.tiles.map(t => t.cut ? { s: t.s, cut: 1 } : { s: t.s }), hory: Ice.saveHory(room.hory), les: Areas.saveLes(room)
   });
 }
@@ -292,15 +296,30 @@ function roomInfo(room) {
     storageRate: I.storageRate(room.icehouse), icehouse: room.icehouse, tick: room.tick, names: [...room.players.values()].map(p => p.name)
   };
 }
-// Snímka toho, čo nie je stav sveta, ale návrhy to potrebujú: kto je pripojený, kde stojí, či hľadá v tráve (a odkiaľ), emócia (tanec)
+// Snímka toho, čo nie je stav sveta, ale návrhy to potrebujú: kto je pripojený, kde stojí, či hľadá v tráve (a odkiaľ), emócia (tanec),
+// lampáš v ruke, rýchlosť pohybu a ťahanie hodvábu (pavúky, spiders.js)
 function presenceOf(room) {
-  return [...room.players.values()].map(p => ({ key: p.key, name: p.name, area: p.area, x: p.x, y: p.y, scav: p.scav ? { i: p.scav.i, n: p.scav.n, px: p.scav.px, py: p.scav.py } : null, emote: p.emote, emoteAt: p.emoteAt }));
+  return [...room.players.values()].map(p => ({ key: p.key, name: p.name, area: p.area, x: p.x, y: p.y, scav: p.scav ? { i: p.scav.i, n: p.scav.n, px: p.scav.px, py: p.scav.py } : null, emote: p.emote, emoteAt: p.emoteAt,
+    lp: !!p.lp, ...velocity(p), pull: p.pull ? { id: p.pull.id, n: p.pull.n, px: p.pull.px, py: p.pull.py } : null })); // lampáš, rýchlosť (kam pavúk beží) a ťahanie hodvábu – pre pavúky
 }
 
+// Pavučina na hráčovi (pavúk ho zabalil): 1 hneď po zabalení, postupne do 0 (zoderie sa)
+function webLeft(p, now) {
+  if (!p.web) return 0;
+  const k = 1 - (now - p.web.at) / p.web.ms;
+  if (k <= 0) { p.web = null; return 0; }
+  return Math.round(k * 100) / 100;
+}
+// Rýchlosť hráča z posledných pohybov (políčka/s); kto 250 ms neposlal pohyb, stojí. Zaokrúhlená (ide do každého záznamu denníka).
+function velocity(p) {
+  if (!p.movedAt || Date.now() - p.movedAt > 250) return { vx: 0, vy: 0 };
+  return { vx: Math.round((p.vx || 0) * 100) / 100, vy: Math.round((p.vy || 0) * 100) / 100 };
+}
 function playerByKey(room, key) { for (const p of room.players.values()) if (p.key === key) return p; return null; }
 
 const SIM = {
-  proposers: Object.assign({}, Events.PROPOSERS, Actions.PROPOSERS), periodic: Events.PERIODIC, presence: presenceOf, clock,
+  proposers: Object.assign({}, Events.PROPOSERS, Actions.PROPOSERS, Spiders.PROPOSERS), periodic: Events.PERIODIC.concat(Spiders.PERIODIC), presence: presenceOf, clock,
+  slice: (world, key) => { const s = Spiders.slice(world, key); return s === undefined ? E.sliceOf(world, key) : s; }, // pavúky: spider:<id>, kz:<plocha>
   // denník najprv (nech záznam nechýba), potom správy hráčom; chyba pri posielaní nesmie zhodiť simuláciu ani server;
   // nakoniec záznam pre ladiacu stránku (kto dávku spustil, rozhodnutia filtra, časy častí)
   onBatch(room, out) {
@@ -345,7 +364,7 @@ function notify(room, out) {
   room.dirty = true;
   const tiles = {}, me = new Set(), whole = new Set();
   for (const a of D.AREAS) tiles[a] = new Set();
-  let info = false, time = false, plots = false, everyone = false;
+  let info = false, time = false, plots = false, everyone = false, webs = false, corners = false;
   for (const p of out.entry.proposals) {
     if (p.outcome !== 'applied') continue;
     for (const key in p.changes) {
@@ -360,6 +379,8 @@ function notify(room, out) {
       else if (key === 'storage' || key === 'icehouse' || key === 'eternal') info = true;
       else if (key === 'weather') { time = true; info = true; } // nový deň: aj sklad (vek várok) a čas v room
       else if (key === 'plotsUsed') plots = true;
+      else if (key === 'webs') webs = true;
+      else if (key === 'corners') corners = true;
       else if (key === 'up') { plots = true; everyone = true; } // spoločné vylepšenie: každému nové limity v me
     }
   }
@@ -376,6 +397,9 @@ function notify(room, out) {
     if (body.t === 'me') me.add(to);
     else if (body.t === 'scavDone') pl.scav = null;
     else if (body.t === 'scavStart') pl.scav = { i: body.i, n: body.n, px: pl.x, py: pl.y, seeds: body.seeds };
+    else if (body.t === 'pullStart') pl.pull = { id: body.id, n: body.n, px: pl.x, py: pl.y };
+    else if (body.t === 'pullDone') pl.pull = null;
+    else if (body.t === 'webbed') { pl.web = { at: Date.now(), ms: body.ms }; pl.pull = null; send(pl.ws, body); } // zabalený do pavučiny – vidia to aj ostatní (pl)
     else if (body.t === 'travel') arrived(pl, body.from, body.area);
     else if (body.t === 'joined') { joined(pl); me.add(to); }
     else send(pl.ws, body);
@@ -383,6 +407,8 @@ function notify(room, out) {
   if (everyone) for (const p of room.players.values()) sendMe(p);
   else for (const key of me) { const pl = playerByKey(room, key); if (pl) sendMe(pl); }
   if (plots) broadcast(room, plotsMsg(room));
+  if (webs) broadcastArea(room, 'les', Spiders.websView(room));
+  if (corners) for (const a of D.CORNER_AREAS) broadcastArea(room, a, Spiders.cornerView(room, a));
   if (info) broadcast(room, roomInfo(room));
   if (time) broadcast(room, timeMsg(room));
 }
@@ -462,6 +488,7 @@ function arrived(pl, from, to) {
   pl.areaSeq++;
   pl.emote = null; pl.scav = null;
   send(pl.ws, areaMsg(pl));
+  for (const v of Spiders.areaViews(pl.room, to)) send(pl.ws, v);
   toast(pl, to === 'hory'
     ? '🏔️ Vystúpil(a) si do hôr. Na ľadovci pod skalami vysekáš krompáčom ľad. Chodníkom dole sa vrátiš do záhrady.'
     : to === 'les'
@@ -479,6 +506,7 @@ function joined(pl) {
   pl.joining = false;
   pl.look = pl.save.look; // vzhľad ako v uložení (návrh join ho doplnil o predvolené farby)
   send(pl.ws, { t: 'welcome', id: pl.id, room: room.id, w: D.areaSize(pl.area).w, h: D.areaSize(pl.area).h, tiles: tilesView(room, pl.area), area: pl.area, seq: pl.areaSeq, x: pl.x, y: pl.y });
+  for (const v of Spiders.areaViews(room, pl.area)) send(pl.ws, v);
   send(pl.ws, timeMsg(room));
   send(pl.ws, Econ.marketView(room.market, room.tick, room.events));
   send(pl.ws, Econ.boardView(room.contracts));
@@ -488,17 +516,22 @@ function joined(pl) {
 
 // Pohyb: smer, plazenie a lampáš sú len prítomnosť (ozdoba); poloha sa premietne do prítomnosti hneď (vysielanie polôh
 // 10× za sekundu) a zároveň ide ako vstup pos do enginu, ktorý ju overí a zapíše do uloženia (poloha je stav sveta).
-function moveInput(room, pl, e) {
+function moveInput(room, pl, e, inputs) {
   const m = e.m, sv = pl.save, no = why => { e.why = why; return null; }; // why: dôvod pre ladiacu stránku
   if (pl.sleep || pl.joining) return no(pl.sleep ? 'player is asleep' : 'player is still joining'); // spiaci hráč leží v posteli
   if ((m.ar | 0) !== pl.areaSeq) return no('sent from the previous area'); // pohyb ešte z predchádzajúcej plochy
   if (!(typeof m.x === 'number' && typeof m.y === 'number' && isFinite(m.x) && isFinite(m.y))) return no('invalid position');
   const pos = Areas.clampPos(pl.area, m.x, m.y); // z plochy sa vyjsť nedá – len cez prechod
+  // rýchlosť (políčka/s) – kam hráč beží (pavúk mieri, kde hráč o krok bude); po prechode či skoku sa zahodí
+  const now = Date.now(), dts = (now - (pl.movedAt || 0)) / 1000;
+  if (dts > 0 && dts < 1 && Math.hypot(pos.x - pl.x, pos.y - pl.y) < 2) { pl.vx = (pos.x - pl.x) / dts; pl.vy = (pos.y - pl.y) / dts; } else { pl.vx = 0; pl.vy = 0; }
+  pl.movedAt = now;
   pl.x = pos.x; pl.y = pos.y;
   pl.dir = m.dir | 0;
   if (typeof m.a === 'number' && isFinite(m.a)) pl.a = +m.a.toFixed(3); // presný smer pohľadu (3D: 8 smerov)
   pl.cr = !!m.cr; // plazí sa
   pl.lp = !!m.lp && !!sv.inv.lamp; // drží lampáš (svieti)
+  if (pl.lp && pl.pull) { pl.pull = null; inputs.push(actionInput(room, pl, ++room.inSeq, 'pullStop', {})); toast(pl, 'Prestal(a) si ťahať hodváb.'); } // s lampášom sa hodváb neťahá
   return actionInput(room, pl, e.seq, 'pos', { x: pos.x, y: pos.y });
 }
 
@@ -608,7 +641,7 @@ function frame(room) {
     if (prev) note(prev, 'coalesced', 'latest move of the player wins', { into: e.seq });
     moves.set(e.pl, e);
   }
-  for (const [pl, e] of moves) { const inp = moveInput(room, pl, e); if (inp) { inputs.push(inp); note(e, 'input', 'move → pos', { id: inp.id }); } else note(e, 'dropped', e.why || 'invalid move'); }
+  for (const [pl, e] of moves) { const inp = moveInput(room, pl, e, inputs); if (inp) { inputs.push(inp); note(e, 'input', 'move → pos', { id: inp.id }); } else note(e, 'dropped', e.why || 'invalid move'); }
   const presence = presenceOf(room);
   for (const e of list) {
     if (!alive(e) && e.m.t !== 'leave') { note(e, 'dropped', 'player disconnected'); continue; }
@@ -636,6 +669,7 @@ function frame(room) {
   if (inputs.length) {
     room.traceFrame = room.trace ? { filter: dec, ms } : null; // onBatch ho pripojí k dávke
     try { E.commitBatch(room, inputs, SIM); } finally { room.traceFrame = null; }
+    E.reconcile(room, SIM); // udalosti, ktoré akcia zrušila (krok pavúka), sa naplánujú hneď – ako pri prehrávaní denníka (E.replay)
   }
   else if (room.trace && dec.length) Debug.traceFilter(room.trace, room.tick, dec, { filter: ms });
 }
@@ -716,9 +750,16 @@ setInterval(() => {
     // poloha z uloženia (potvrdená enginom), nie z prítomnosti: pohyb, ktorý engine ešte neoveril (alebo odmietne), ostatní neuvidia
     const list = [...room.players.values()].map(p => ({
       id: p.id, name: p.name, x: +(p.save && p.save.x != null ? p.save.x : p.x).toFixed(3), y: +(p.save && p.save.y != null ? p.save.y : p.y).toFixed(3), dir: p.dir, a: p.a, look: p.look, cr: p.cr ? 1 : 0, lp: p.lp ? 1 : 0, j: p.jn | 0, si: p.scav ? p.scav.i : -1, area: p.area,
-      e: p.sleep ? 'sleep' : p.scav ? 'search' : p.emote && now - p.emoteAt < 6000 ? p.emote : null
+      e: p.sleep ? 'sleep' : p.scav ? 'search' : p.pull ? 'pull' : p.emote && now - p.emoteAt < 6000 ? p.emote : null,
+      wb: webLeft(p, now) // koľko pavučiny ešte na hráčovi zostáva (1 → 0)
     }));
     for (const area of D.AREAS) broadcastArea(room, area, { t: 'pl', list: list.filter(p => p.area === area) });
+    // pavúky a krížiak (stav sveta, mení ho len engine): kým nejaké sú, a raz prázdny zoznam, keď zmiznú
+    for (const area of D.AREAS) {
+      const sp = Spiders.entities(room, area), key = area + 'Sp';
+      if (sp.length || room[key]) broadcastArea(room, area, { t: 'sp', list: sp });
+      room[key] = sp.length > 0;
+    }
   }
 }, 100);
 // Priebežne ukladáme aj „naposledy videný“ (vstup seen) – po páde servera tak dni neprítomnosti sedia (±15 s).

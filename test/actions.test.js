@@ -15,6 +15,8 @@ const Events = require('../events.js');
 const Actions = require('../actions.js');
 const I = require('../items.js');
 const Ice = require('../ice.js');
+const Areas = require('../areas.js');
+const Spiders = require('../spiders.js');
 const TPD = D.TICKS_PER_DAY;
 const rethrow = err => { throw err; };
 const json = v => JSON.stringify(v);
@@ -497,9 +499,13 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
   const room = Object.assign(start, { tiles: D.buildMap().map((g, i) => ({ g, s: start.tiles[i].s })), hory: Ice.loadHory(start.hory) });
   Ice.applyIcehouse(room.icehouse, room.tiles);
   room.plotsUsed = Econ.plotsUsedOf(room.tiles); room.maxRep = Econ.maxRepOf(room.saves); // ako getRoom: odvodené počítadlá sa pri načítaní prepočítajú
-  E.replay(room, entries, { proposers: SPEC.proposers, periodic: SPEC.periodic, onError: rethrow });
+  room.les = Areas.loadLes(start.les, start.lesSeed); // ako getRoom: Les divov, trh a nástenka, pavučiny (jeden živý kontext)
+  const live = E.liveCtx(room, 'ekonomika');
+  Econ.initEconomy(room, live); Spiders.load(room, live);
+  E.replay(room, entries, { proposers: Object.assign({}, SPEC.proposers, Spiders.PROPOSERS), periodic: SPEC.periodic.concat(Spiders.PERIODIC), onError: rethrow,
+    slice: (w, k) => { const sl = Spiders.slice(w, k); return sl === undefined ? E.sliceOf(w, k) : sl; } });
   // mimo denníka sú len prítomnosť a polohy (join/move): porovnáme svet bez nich
-  const strip = st => { const o = JSON.parse(json(st)); delete o.wall; delete o.v; delete o.migratedFrom; delete o.daySeconds; delete o.hory; delete o.les; delete o.tiles; for (const k in o.saves) for (const f of ['lastTick', 'x', 'y', 'area', 'look', 'talked']) delete o.saves[k][f]; return o; };
+  const strip = st => { const o = JSON.parse(json(st)); delete o.wall; delete o.v; delete o.migratedFrom; delete o.daySeconds; delete o.hory; delete o.les; delete o.tiles; delete o.sps; delete o.kz; for (const k in o.saves) for (const f of ['lastTick', 'x', 'y', 'area', 'look', 'talked']) delete o.saves[k][f]; return o; };
   assert.deepStrictEqual(strip(room), strip(final));
   assert.deepStrictEqual(room.tiles.map(t => t.s), final.tiles.map(t => t.s));
 });
@@ -540,10 +546,10 @@ test('uloženie v8 (288 krokov za deň) sa prevedie na v9: každý krok ×40 –
   const proc = await startServer(dir, port);
   try { const c = await client(port, 'stary', 'Eva'); c.ws.close(); await sleep(100); } finally { await stopServer(proc); }
   const s = JSON.parse(fs.readFileSync(path.join(dir, 'room-stary.json'), 'utf8'));
-  assert.strictEqual(s.v, 9);
+  assert.strictEqual(s.v, 10);
   assert.strictEqual(s.tick, old.tick * K);
   assert.deepStrictEqual([D.dayOfTick(s.tick), D.minOfTick(s.tick)], [3, 450], 'deň 3, 7:30 ako predtým');
-  assert.deepStrictEqual(s.events.filter(e => e.key !== 'dawn' && !/^(delivery|npc_|fest)/.test(e.key)).map(e => [e.key, e.at]).sort(), [['cDue:1', 1000 * K], ['hourly', 666 * K], ['vilyEnd:eva', 700 * K]]);
+  assert.deepStrictEqual(s.events.filter(e => e.key !== 'dawn' && !/^(delivery|npc_|fest|spider:|kz:|kriziakTrip|webDawn|weave:)/.test(e.key)).map(e => [e.key, e.at]).sort(), [['cDue:1', 1000 * K], ['hourly', 666 * K], ['vilyEnd:eva', 700 * K]]);
   const eva = s.saves.eva;
   assert.deepStrictEqual([eva.vily, eva.fb['fl_' + SP][0].a, eva.fb['fl_' + SP][0].at], [700 * K, 30 * K, 600 * K]);
   assert.ok(eva.lastTick >= 650 * K, 'lastTick preškálovaný (a pri odchode obnovený)');

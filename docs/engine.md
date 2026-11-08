@@ -84,6 +84,7 @@ E.pending(world, key)                         // the pending event or null
 | `vilyEnd:<player>` | the fairy potion wears off (drinking another one moves it) |
 | `scavDone:<player>` | searching the grass finishes (moving or acting cancels it) |
 | `cExpire:<contract>` / `cDue:<contract>` | a contract leaves the board / its deadline (delivering it cancels both) |
+| `pull:<player>` | pulling silk from a web finishes (`pullDone`; moving or raising the lantern cancels it) |
 
 ### 3. Periodic (declared)
 
@@ -150,7 +151,8 @@ A **key** names a slice of the world. `E.sliceOf(world, key)` is the default map
 | `contracts` | the board (`list`, `nextId`) |
 | `storage` | the shared storage as `{ inv, fb }` (`world.storage` + `world.storageFb`) |
 | `event:<key>` | a keyed event: added by the engine when `ctx.scheduleUnique / cancel / pending` is called with that key |
-| anything else | the world property with that name: `weather`, `eternal`, `fairyNight`, `icehouse`, `scav`, `scavSalt`, `up`, `plotsUsed`, `maxRep`, `glacierFed`. Collections (`saves`, `tiles`, `market`, …) and the queue are not slices under their property names |
+| `spider:<id>`, `spider:*`, `kz:<area>` | one spider in Les divov / all of them (`world.sps`), a krížiak on its way to a corner (`world.kz`): mapped by `spec.slice` (`Spiders.slice`, falling back to `sliceOf`) |
+| anything else | the world property with that name: `weather`, `eternal`, `fairyNight`, `icehouse`, `scav`, `scavSalt`, `up`, `plotsUsed`, `maxRep`, `glacierFed`, `webs`, `corners` (spiders), `daySeconds`, `lesSeed`. Collections (`saves`, `tiles`, `market`, …) and the queue are not slices under their property names |
 
 Rules:
 
@@ -223,7 +225,7 @@ advanceTo(world, target, spec):
 
 | Who | Call | What it does |
 |---|---|---|
-| server, every 100 ms | `frame(room)`, then `E.advance(room, Date.now(), SIM, 50000)` | first the frame's moves, player actions and presence inputs as one `commitBatch` at the current tick, then the world moves by as many whole ticks as have passed since `room.wall` (about one per frame at 9.6 ticks/s; at most 50,000 per call); after every batch `SIM.onBatch` sends the outbox and writes the journal. The `time` message goes to clients at most once a second |
+| server, every 100 ms | `frame(room)` (its action batch, then `E.reconcile`, so periodic events an action cancelled are re-planned before anything else, exactly as `E.replay` does before each entry), then `E.advance(room, Date.now(), SIM, 50000)` | first the frame's moves, player actions and presence inputs as one `commitBatch` at the current tick, then the world moves by as many whole ticks as have passed since `room.wall` (about one per frame at 9.6 ticks/s; at most 50,000 per call); after every batch `SIM.onBatch` sends the outbox and writes the journal. The `time` message goes to clients at most once a second |
 | loading a running world | `E.advance(room, Date.now(), SIM)` | catches up downtime (capped at `MAX_CATCHUP_DAYS` by moving `wall`) |
 | everyone asleep | `E.advanceTo(room, min(ff.until, tick + 200), SIM)` | fast-forwards the night, 200 ticks per 100 ms (about 3 s for the night) so clients can animate it |
 | tests, headless simulation | `E.advanceTo(world, world.tick + days * TPD, spec)` | runs any amount of game time as fast as the events allow |
@@ -285,3 +287,8 @@ A new message type needs: the type in the server's `MESSAGES` set, a case in `to
 | `delivery` | every 2nd day at 7:00: wholesaler | `economy.js` |
 | `npc_jano`, `npc_fero`, `npc_zuzka` | once a day at a random time between 8:00 and 18:00, at least ½ day after the previous visit | `economy.js` |
 | `festAnnounce:<id>`, `festStart:<id>`, `festEnd:<id>` | yearly: 2 days before the festival, at its start, at its end | `economy.js` |
+| `spider:s0` … `spider:s6` | one per spider in Les divov: planned from the spider's own state (`world.sps[id].next`: every 200 ms of real time while it moves, its own deadline while idle, a week ahead while it sleeps). Whoever wakes a spider (a move, a pull, walking into a web) sets `next` and cancels the event, and the next reconcile plans it again | `spiders.js` |
+| `kz:garden`, `kz:hory` | the krížiak on its way to a corner (`world.kz[area].next`), likewise | `spiders.js` |
+| `weave:0` … `weave:6` | a spider weaves again the webs torn a day ago: planned from the earliest due time in `webs.pend[o]` (a week ahead when there is none); tearing a web cancels it so reconcile re-plans it | `spiders.js` |
+| `webDawn` | every day at 6:00: the number of webs per spider by season | `spiders.js` |
+| `kriziakTrip` | at a random time, on average twice a day (twice as often in autumn): a krížiak sets out to a free corner | `spiders.js` |

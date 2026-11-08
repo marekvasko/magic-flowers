@@ -14,6 +14,7 @@ const Ice = require('./ice.js');
 const Scav = require('./scavenge.js');
 const Areas = require('./areas.js');
 const Events = require('./events.js');
+const Spiders = require('./spiders.js');
 
 const TPD = D.TICKS_PER_DAY;
 const HOUSE = { x: 3.5, y: 28.5 };
@@ -123,6 +124,11 @@ function resolveAct(world, presence, me, m) {
     if (D.isTool(item) || !item) return input('wave', { key, to: other.key });
     return input('gift', { key, to: other.key, item });
   }
+  // Pavučina: v Lese divov ťahať hodváb; kútovú (záhrada, hory) odstráni prázdna ruka či predmet, ktorý na políčku nič nerobí –
+  // nástroj (motyka, krhla, semienka…) najprv urobí svoje a pavučinu odstráni, len keď tu nemá čo robiť
+  const web = Spiders.resolveAct(world, me, area, i);
+  if (web && (web.toast || area === 'les' || !onTile(item))) return web.toast ? web : input(web.type, web.data);
+  const none = () => (web ? input(web.type, web.data) : null);
   // Ľad: krompáčom na ľadovci alebo (v zime) na zamrznutej vode
   if (item === 'pick' && (t.g === 'glacier' || t.g === 'water')) return input('digIce', { key, area, i });
   if (t.g === 'icehouse') return item === 'ice' ? input('fillIce', { key, n: sv.inv.ice }) : null;
@@ -139,7 +145,7 @@ function resolveAct(world, presence, me, m) {
       if (['rast', 'jar', 'hojnost'].includes(item.slice(3))) return { toast: 'Tento elixír pôsobí na záhony – použi ho v záhrade. 🌱' };
       return input('potion', { key, kind: item.slice(3), area, x, y });
     }
-    return null;
+    return none();
   }
   // Studňa prianí a voda do krhly
   if (t.g === 'well' && item !== 'can') return input('well', { key });
@@ -157,15 +163,17 @@ function resolveAct(world, presence, me, m) {
     if (!t.s && D.TILLABLE[t.g]) return input('till', { key, i });
     if (D.canLevel(t)) return input('level', { key, i });
     if (t.g === 'ring' || t.g === 'shroom') return { toast: 'Kruh z húb radšej nechaj tak… niekto tu v noci tancuje. 🍄' };
-    return null;
+    return none();
   }
-  if (item === 'can') return t.s ? input('water', { key, i }) : null;
-  if (item === 'compost') return t.s && !t.s.r ? input('compost', { key, i }) : null;
+  if (item === 'can') return t.s ? input('water', { key, i }) : none();
+  if (item === 'compost') return t.s && !t.s.r ? input('compost', { key, i }) : none();
   if (item.startsWith('seed_')) return input('plant', { key, i, item });
   if (D.isWild(item)) return input('plantWild', { key, i, item });
   if (item.startsWith('po_')) return input('potion', { key, kind: item.slice(3), area, x, y });
-  return null;
+  return none();
 }
+// Predmet, ktorý na políčku niečo robí (kope, polieva, sadí, seká ľad, elixír)
+function onTile(item) { return item === 'hoe' || item === 'can' || item === 'pick' || item === 'compost' || item === 'ice' || item.startsWith('seed_') || D.isWild(item) || item.startsWith('po_'); }
 
 // ---------- Návrhy ----------
 const PROPOSERS = {
@@ -182,12 +190,13 @@ const PROPOSERS = {
         for (const i of bodyTiles(area, p.x, p.y)) reads.add('tile:' + area + ':' + i);
         reads.add('tile:' + area + ':' + (Math.floor(p.y) * aw + Math.floor(p.x)));
       }
-      return { writes: ['pos:' + d.key], reads: [...reads] };
+      return E.mergeKeys({ writes: ['pos:' + d.key], reads: [...reads] }, Spiders.posKeys(d, w)); // pavučiny v lese, pavúky
     },
     run(s, d, ctx) {
       const pos = s['pos:' + d.key];
       if (!pos) return ctx.reject(null);
       const area = D.AREAS.includes(pos.area) ? pos.area : 'garden';
+      const from = { area, x: pos.x, y: pos.y };
       if (!(Number.isFinite(+d.x) && Number.isFinite(+d.y))) return ctx.reject(null);
       const p = Areas.clampPos(area, +d.x, +d.y);
       const body = bodyTiles(area, p.x, p.y);
@@ -208,6 +217,7 @@ const PROPOSERS = {
           ctx.emit({ to: d.key, t: 'travel', from: area, area: g.to });
         }
       }
+      Spiders.onPos(s, d, ctx, from, pos); // vbehnutie do pavučiny, koniec ťahania hodvábu, príchod do Lesa divov
     }
   },
   // hráč je pripojený (každých 15 s) / odišiel: „naposledy videný“ (d: { key })
@@ -216,7 +226,7 @@ const PROPOSERS = {
   // pripojenie (d: { key, name, look, start: { coins, rep }, quick }): nové alebo prevedené uloženie, vzhľad, uvítanie;
   // server po vykonaní pošle hráčovi svet (pokyn joined). quick = rýchle znovupripojenie (bez hlásení)
   join: {
-    keys: (d, w) => ({ writes: ['save:' + d.key, 'maxRep'], reads: w.saves && w.saves[d.key] ? ['pos:' + d.key] : [] }),
+    keys: (d, w) => E.mergeKeys({ writes: ['save:' + d.key, 'maxRep'], reads: w.saves && w.saves[d.key] ? ['pos:' + d.key] : [] }, Spiders.joinKeys(d, w)),
     run(s, d, ctx) {
       let sv = s['save:' + d.key];
       const fresh = !sv;
@@ -228,6 +238,7 @@ const PROPOSERS = {
       if (!d.quick) ctx.emit(toast$(E.ALL, area === 'garden' ? `${d.name} prišiel(a) do záhrady 🌼` : `${d.name} prišiel(a) – je ${D.AREA_IN[area]} ${D.AREA_FX[area].icon}`));
       const days = d.quick || !pos || pos.lastTick == null ? 0 : Math.max(0, Math.floor((ctx.tick - pos.lastTick) / TPD));
       if (days) ctx.emit(toast$(d.key, `Kým si bol(a) preč, ubehlo ${days} ${days === 1 ? 'deň' : days < 5 ? 'dni' : 'dní'}. Pozri sa, čo sa v záhrade zmenilo. 🌱`, 'day'));
+      Spiders.onJoin(s, d, ctx, area); // pripojil sa priamo v Lese divov – pavúky sa zobudia
       if (!sv.talked) { sv.talked = true; ctx.emit(toast$(d.key, 'Vitaj! Začínaš s pár semienkami a prázdnym vreckom. Pri babke na severe je nástenka so zákazkami. 👵', 'gift')); }
     }
   },
@@ -568,11 +579,12 @@ const PROPOSERS = {
   },
   // stavba ľadovne (d: { key }): spoločná stavba, platí ju hráč; pozemok v záhrade dostane budovu
   build: {
-    keys: d => ({ writes: ['icehouse', 'tile:garden:*', 'save:' + d.key] }),
+    keys: d => ({ writes: ['icehouse', 'tile:garden:*', 'save:' + d.key, 'corners'] }),
     run(s, d, ctx) {
       const sv = saveOf(s, d.key, ctx);
       const err = Ice.buildIcehouse(s.icehouse, s['tile:garden:*'], sv);
       if (err) return ctx.reject(err);
+      if (s.corners) Spiders.pruneCorners(s.corners, s['tile:garden:*'], 'garden'); // kúty, ktoré ľadovňa zakryla
       ctx.emit(toast$(E.ALL, `🧊 ${nameOf(ctx, d.key)} postavil(a) pri domčeku ľadovňu! Naplň ju ľadom – kým v nej je, kvety v sklade vädnú 4× pomalšie.`, 'gift'));
     }
   },
