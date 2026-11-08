@@ -6,7 +6,7 @@ const D = require('../../src/shared/data.ts');
 const Ice = require('../../src/server/ice.ts');
 const Areas = require('../../src/server/areas.ts');
 const Scav = require('../../src/server/scavenge.ts');
-const { keyId } = require('../../src/server/debug.js');
+const { keyId } = require('../../src/server/debug.ts');
 
 // Políčka plochy zo (skopírovaného) stavu sveta – rovnako ako getRoom + tilesView v server.js
 function areaTiles(state, area) {

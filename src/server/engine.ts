@@ -139,7 +139,7 @@ export interface JournalEntry<P, M> {
   proposals: ProposalRecord[];
   outbox: M[];
 }
-export interface Timing { schedule: number; evaluate: number; resolve: number; commit: number }
+export type Timing = { schedule: number; evaluate: number; resolve: number; commit: number };
 export type Op = { op: 'insert'; ev: DraftEvent; seq?: number } | { op: 'cancel'; key: string };
 // Výsledok vyhodnotenia návrhu (evaluate)
 export interface Result<M> {
