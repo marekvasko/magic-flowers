@@ -613,6 +613,13 @@
     if (now < w.start + w.stuck) return 0;
     return w.k + (1 - w.k) * (now - w.start - w.stuck) / Math.max(1, w.end - w.start - w.stuck);
   }
+  // V pavučine (zaboril som sa do nej – server, alebo práve stojím na jej políčku) idem pomalšie, kým ju neprerazím
+  function webDrag() {
+    if (S.area !== 'les') return 1;
+    const key = (S.name || '').toLowerCase(), me = S.me;
+    const inIt = S.webs.some(w => w.in && w.in[key] != null) || S.webTile.has(Math.floor(me.y) * S.W + Math.floor(me.x));
+    return inIt ? D.WEB.drag : 1;
+  }
   // koľko pavučiny je ešte na mne (1 → 0) – pre kreslenie postavičky
   S.webLeft = () => { const w = S.web, now = performance.now(); if (!w || now >= w.end) return 0; return (w.end - now) / (w.end - w.start); };
 
@@ -1300,7 +1307,7 @@
     if (me.moving) {
       // ťažký ľad v náručí spomaľuje
       // lepkavá pavučina a pavúk na chrbte spomaľujú (server pošle 'slow')
-      const slowK = (performance.now() < S.slowUntil ? S.slowK : 1) * webSpeed(performance.now());
+      const slowK = (performance.now() < S.slowUntil ? S.slowK : 1) * webSpeed(performance.now()) * webDrag();
       const sp = 3.8 * dt * (me.crawl ? CRAWL_SPEED : 1) * Math.max(0.4, 1 - D.ICE_SLOW * (S.inv.ice || 0)) * slowK;
       const ox = me.x, oy = me.y;
       const { rx, ry } = D.BODY;

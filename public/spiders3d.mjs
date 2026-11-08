@@ -15,9 +15,21 @@
 // V tme za dohľadom zmizne ako svet, lampášom osvetlené vlákna sa lesknú o kúsok ďalej.
 export const WEB_VERT = `
 varying vec2 vP; varying vec3 vPos; varying vec3 vAx; varying vec3 vAy;
-uniform vec2 uSize;
+uniform vec2 uSize; uniform vec4 uPush;
+// naťahovanie: hráč sa do pavučiny zaboril (uPush = poloha pozdĺž, výška, hĺbka za rovinou, polomer; w = 0 → nič);
+// vydutie okolo hráča a celá pavučina sa trochu prehne, kotvy na kmeňoch (s = 0 a 1) stoja
+float pushAt(vec3 p, vec2 size) {
+  if (uPush.w <= 0.0) return 0.0;
+  float s = clamp(p.x / size.x + 0.5, 0.0, 1.0), t = clamp(p.y / size.y + 0.5, 0.0, 1.0);
+  vec2 q = vec2(p.x - uPush.x, (p.y - uPush.y) * 0.8);
+  float g = exp(-dot(q, q) / (uPush.w * uPush.w));
+  float env = sin(3.14159 * s) * (0.4 + 0.6 * sin(3.14159 * t));
+  return uPush.z * mix(env, 1.0, g) * env;
+}
 void main() {
-  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vec3 p = position;
+  p.z += pushAt(p, uSize);
+  vec4 wp = modelMatrix * vec4(p, 1.0);
   vPos = wp.xyz; vP = uv * uSize;
   vAx = normalize(mat3(modelMatrix) * vec3(1.0, 0.0, 0.0)); vAy = normalize(mat3(modelMatrix) * vec3(0.0, 1.0, 0.0));
   gl_Position = projectionMatrix * viewMatrix * wp;
@@ -187,7 +199,8 @@ function silkUniforms(THREE, world, view, P, seed) {
   return {
     ambient: world.ambient, sunColor: world.sunColor, sunDir: world.sunDir, lampColor: world.lampColor, lights: world.lights, lightCount: world.lightCount,
     darkOn: world.darkOn, eye: world.eye, eyeLit: world.eyeLit, uView: view, uSeed: { value: seed % 97 },
-    uC: { value: new THREE.Vector4(P.width, P.glint, P.iri, P.alpha) }
+    uC: { value: new THREE.Vector4(P.width, P.glint, P.iri, P.alpha) },
+    uPush: { value: new THREE.Vector4(0, 0, 0, 0) } // naťahovanie hráčom (pushAt)
   };
 }
 
@@ -198,10 +211,21 @@ function silkUniforms(THREE, world, view, P, seed) {
 // Vietor: stred pavučiny sa kýve ako celok (jedno pole posunutia, kotvy na kmeňoch stoja). Svetlo: ten istý silkShade ako shader na rovine.
 const LINE_VERT = `
 attribute vec3 aT; attribute vec3 aOff;
-uniform vec2 uSize; uniform vec2 uRes; uniform float uTime; uniform float uSway; uniform float uPhase;
+uniform vec2 uSize; uniform vec2 uRes; uniform float uTime; uniform float uSway; uniform float uPhase; uniform vec4 uPush;
 varying vec3 vPos; varying vec3 vT; varying float vEdge;
+// naťahovanie: hráč sa do pavučiny zaboril (uPush = poloha pozdĺž, výška, hĺbka za rovinou, polomer; w = 0 → nič);
+// vydutie okolo hráča a celá pavučina sa trochu prehne, kotvy na kmeňoch (s = 0 a 1) stoja
+float pushAt(vec3 p, vec2 size) {
+  if (uPush.w <= 0.0) return 0.0;
+  float s = clamp(p.x / size.x + 0.5, 0.0, 1.0), t = clamp(p.y / size.y + 0.5, 0.0, 1.0);
+  vec2 q = vec2(p.x - uPush.x, (p.y - uPush.y) * 0.8);
+  float g = exp(-dot(q, q) / (uPush.w * uPush.w));
+  float env = sin(3.14159 * s) * (0.4 + 0.6 * sin(3.14159 * t));
+  return uPush.z * mix(env, 1.0, g) * env;
+}
 void main() {
   vec3 p = position;
+  p.z += pushAt(p, uSize);
   float s = clamp(p.x / uSize.x + 0.5, 0.0, 1.0), t = clamp(p.y / uSize.y + 0.5, 0.0, 1.0);
   // vietor: jedno hladké pole posunutia pre celú pavučinu (len z polohy a fázy pavučiny) – vlákna, ktoré sa stretávajú,
   // sa hýbu spolu a kotvy na kmeňoch (s = 0 a 1) stoja; mierne sa mení aj smer kývania (dve vlny)
@@ -268,7 +292,7 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
   function webPlane(w, h, seed, keep) {
     const P = params(), opts = { w, h, seed, keep };
     const m = P.render === 1 ? webLines(THREE, world, view, P, opts, maxLights, frame)
-      : new THREE.Mesh(new THREE.PlaneGeometry(w, h), webMaterial(THREE, world, view, P, opts, maxLights));
+      : new THREE.Mesh(new THREE.PlaneGeometry(w, h, 32, 16), webMaterial(THREE, world, view, P, opts, maxLights)); // delená, aby sa dala natiahnuť
     m.renderOrder = 2;
     return add(m);
   }
@@ -287,6 +311,7 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
       const mid = (g.u0 + g.u1) / 2, cx = wb.ax ? g.line : mid, cz = wb.ax ? mid : g.line;
       m.position.set(cx, groundY(Math.floor(cx), Math.floor(cz)) + g.hgt / 2 + 0.02, cz);
       if (wb.ax) m.rotation.y = Math.PI / 2;
+      m.userData.web = { wb, cx, cz, hgt: g.hgt };
       webMeshes.set(wb.id, m);
     }
     for (const h of S.homes) {
@@ -401,6 +426,17 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
       const c = lightAt(w.at.x, w.at.y, w.at.z, lights, lights.length, lo);
       m.material.color.setRGB(...c);
       lastSeen.set(m.uuid, { k: 'k', eye: m.userData.eye, b: Math.max(...c), seen: lo.seen, d: Math.hypot(w.at.x - me.x, w.at.z - me.y) });
+    }
+    // pavučiny, do ktorých sa niekto zaboril: vydujú sa k nemu (miestne súradnice: x pozdĺž, z naprieč – pri ax 1 otočená)
+    for (const m of webMeshes.values()) {
+      const u = m.material.uniforms && m.material.uniforms.uPush, w = m.userData.web;
+      if (!u || !w) continue;
+      const keys = w.wb.in ? Object.keys(w.wb.in) : [];
+      let who = null;
+      for (const k of keys) { who = k === (S.name || '').toLowerCase() ? me : [...S.others.values()].find(o => (o.name || '').toLowerCase() === k); if (who) break; }
+      if (!who) { u.value.set(0, 0, 0, 0); continue; }
+      const dx = who.x - w.cx, dz = who.y - w.cz, lx = w.wb.ax ? -dz : dx, lz = w.wb.ax ? dx : dz;
+      u.value.set(lx, 0.6 - w.hgt / 2 - 0.02, Math.max(-1.1, Math.min(1.1, lz)), 0.45);
     }
     for (const m of burrowMeshes) { const p = m.position; lightAt(p.x, p.y, p.z, lights, lights.length, lo); m.material.opacity = 0.85 * lo.seen; m.visible = lo.seen > 0.02; }
     const alive = new Set();

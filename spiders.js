@@ -87,12 +87,9 @@ function weave(webs, f, o, ctx) {
   webs.list.push(wb);
   return wb;
 }
-// Naplánuje opätovné tkanie majiteľa o na najbližší termín z webs.pend[o] (alebo udalosť zruší)
-function planWeave(webs, o, ctx) {
-  const p = webs.pend[o] || [];
-  if (p.length) ctx.scheduleUnique('weave:' + o, Math.min(...p), 'weave', { o });
-  else ctx.cancel('weave:' + o);
-}
+// Termíny tkania sa zmenili: zruší periodickú udalosť weave:<o>, engine (reconcile) ju naplánuje znova na najbližší
+// termín z webs.pend[o] (PERIODIC) – návrh nikdy nič neplánuje sám
+function planWeave(webs, o, ctx) { ctx.cancel('weave:' + o); }
 // Pavučina zmizla (roztrhnutá, vyťahaná) – majiteľ ju o deň utká inde.
 function tear(webs, wb, ctx) {
   webs.list = webs.list.filter(x => x.id !== wb.id);
@@ -503,7 +500,7 @@ const PROPOSERS = {
       if (z.left <= 0) { z.st = 'pause'; z.until = now + T(400 + ctx.rng.rand() * 600); }
     }
   },
-  // Opätovné tkanie (d: { o }): všetky termíny z webs.pend[o], ktoré už nastali, a naplánuje ďalší
+  // Opätovné tkanie (d: { o }): všetky termíny z webs.pend[o], ktoré už nastali (ďalší naplánuje engine podľa pend)
   weave: {
     keys: (d, w) => { if (w.les) forestOf(w); return { writes: ['webs'], reads: ['lesSeed'] }; },
     run(s, d, ctx) {
@@ -512,7 +509,6 @@ const PROPOSERS = {
       webs.pend[d.o] = pend.filter(t => t > ctx.tick);
       if (!webs.pend[d.o].length) delete webs.pend[d.o];
       for (let k = 0; k < due; k++) if (webs.list.filter(wb => wb.o === d.o).length < target(f, d.o, ctx.tick)) weave(webs, f, d.o, ctx);
-      planWeave(webs, d.o, ctx);
     }
   },
   // Ráno: počet pavučín podľa obdobia
@@ -600,6 +596,7 @@ const tripAt = (from, rng) => { const mean = TPD / KZ.perDay / (season(from) ===
 const PERIODIC = [
   ...IDS.map(id => ({ key: 'spider:' + id, type: 'spider', data: { id }, next: (from, rng, w) => { const s = w && w.sps && w.sps[id]; return s && s.next != null ? Math.max(from, s.next) : far(from); } })),
   ...D.CORNER_AREAS.map(area => ({ key: 'kz:' + area, type: 'kriziak', data: { area }, next: (from, rng, w) => { const z = w && w.kz && w.kz[area]; return z && z.next != null ? Math.max(from, z.next) : far(from); } })),
+  ...IDS.map((id, o) => ({ key: 'weave:' + o, type: 'weave', data: { o }, next: (from, rng, w) => { const p = w && w.webs && w.webs.pend && w.webs.pend[o]; return p && p.length ? Math.max(from, Math.min(...p)) : far(from); } })),
   { key: 'webDawn', type: 'webDawn', next: E.daily(D.DAWN_TICK) },
   { key: 'kriziakTrip', type: 'kriziakTrip', next: tripAt }
 ];
@@ -617,6 +614,18 @@ function crossed(webs, x0, y0, x1, y1) {
   }
   return [...out.values()];
 }
+// Prechod cez pavučinu: rovina pavučiny je stred jej radu políčok (ax 0: y = wb.y + 0,5, hráč ide naprieč po y; ax 1 po x).
+// d = vzdialenosť od roviny (znamienko podľa strany), u = poloha pozdĺž pavučiny (v rozpätí lo … hi?)
+function across(wb, x, y) {
+  return wb.ax ? { d: x - (wb.x + 0.5), u: y, lo: wb.y, hi: wb.y + wb.n } : { d: y - (wb.y + 0.5), u: x, lo: wb.x, hi: wb.x + wb.n };
+}
+// Pavučiny, do ktorých hráč key vošiel alebo v nich je (wb.in[key] = strana, z ktorej prišiel: ±1)
+function pushing(webs, key, x0, y0, x1, y1) {
+  const out = new Map();
+  for (const wb of crossed(webs, x0, y0, x1, y1)) out.set(wb.id, wb);
+  for (const wb of (webs && webs.list) || []) if (wb.in && wb.in[key] != null) out.set(wb.id, wb);
+  return [...out.values()];
+}
 const wakeKeys = w => (w.sps ? ['spider:*'] : []);
 // Kľúče navyše pre pohyb (d: { key, x, y }): vbehnutie do pavučiny (pavučiny a ich majitelia) alebo príchod do lesa (budí pavúky)
 function posKeys(d, w) {
@@ -629,7 +638,8 @@ function posKeys(d, w) {
   }
   const writes = new Set(nearIdle(w, p).map(id => 'spider:' + id));
   if (!w.webs || !Number.isFinite(sv.x) || !Number.isFinite(sv.y)) return { writes: [...writes] };
-  const hit = crossed(w.webs, sv.x, sv.y, p.x, p.y);
+  // pavučina, v ktorej hráč je alebo do ktorej vchádza: zápis do pavučín (+ majiteľ, keby sa roztrhla)
+  const hit = pushing(w.webs, d.key, sv.x, sv.y, p.x, p.y);
   if (!hit.length) return { writes: [...writes] };
   if (w.les) forestOf(w);
   for (const wb of hit) if (w.sps && w.sps['s' + wb.o]) writes.add('spider:s' + wb.o);
@@ -656,16 +666,28 @@ function onPos(s, d, ctx, from, pos) {
     ctx.emit(toast$(d.key, 'Prestal(a) si ťahať hodváb.'));
   }
   if (from.area === 'les' && pos.area === 'les' && s.webs) {
-    const hit = crossed(s.webs, from.x, from.y, pos.x, pos.y);
-    if (hit.length) {
-      const f = forestBy(s.lesSeed);
-      for (const wb of hit) {
-        tear(s.webs, wb, ctx); // lepí sa, pavučina sa roztrhne (hodváb nedostane) a majiteľ vie, kde je
+    // Hráč sa do pavučiny zaborí (klient ho v nej spomalí na WEB.drag a pavučina sa za ním naťahuje); roztrhne sa, až keď
+    // je políčko (WEB.through) za ňou – hodváb z nej nedostane a majiteľ vie, kde je. Kto cúvne späť, pavučina sa pustí celá.
+    for (const wb of pushing(s.webs, d.key, from.x, from.y, pos.x, pos.y)) {
+      const a = across(wb, pos.x, pos.y), b = across(wb, from.x, from.y);
+      if (!wb.in || wb.in[d.key] == null) { // vošiel
+        wb.in = Object.assign({}, wb.in, { [d.key]: (b.d || a.d) < 0 ? -1 : 1 });
+        ctx.emit(toast$(d.key, '🕸️ Zaboril(a) si sa do pavučiny… lepí sa a naťahuje.'));
+        continue;
+      }
+      const side = wb.in[d.key], past = -side * a.d; // ako ďaleko je za rovinou (na druhej strane)
+      const away = a.u < a.lo - 0.4 || a.u > a.hi + 0.4 || Math.abs(a.d) > WEB.through + 1.5; // vyšiel bokom, skok, starý záznam
+      if (past >= WEB.through && !away) {
+        const f = forestBy(s.lesSeed);
+        tear(s.webs, wb, ctx);
         const sp = s['spider:s' + wb.o];
         if (sp && alert(f, sp, wb, d.key, ctx.tick)) ctx.cancel('spider:s' + wb.o);
+        ctx.emit({ to: E.area('les'), t: 'fx', k: 'cobweb', x: pos.x, y: pos.y });
+        ctx.emit(toast$(d.key, `🕸️ Prerazil(a) si pavučinu – roztrhla sa a ${nameOf(f, wb.o).toLowerCase()} vie, kde si! 🕷️`));
+      } else if (side * a.d >= WEB.through || away) { // cúvol späť alebo vyšiel bokom
+        const rest = Object.assign({}, wb.in); delete rest[d.key];
+        wb.in = Object.keys(rest).length ? rest : undefined;
       }
-      ctx.emit({ to: d.key, t: 'slow', k: WEB.stick, ms: WEB.stickMs });
-      ctx.emit(toast$(d.key, `🕸️ Vbehol(a) si do pavučiny! Lepí sa… a ${nameOf(f, hit[0].o).toLowerCase()} vie, kde si. 🕷️`));
     }
   }
   if (pos.area === 'les' && from.area !== 'les') wake(s, ctx);
@@ -699,7 +721,7 @@ function resolveAct(world, me, area, i) {
 // ---------- Správy pre klientov (server nad živým svetom, mimo enginu) ----------
 function websView(world) {
   const f = forestOf(world);
-  return { t: 'webs', webs: ((world.webs && world.webs.list) || []).map(wb => ({ id: wb.id, x: wb.x, y: wb.y, ax: wb.ax, n: wb.n, silk: wb.silk })), homes: f.homes.map(h => ({ k: h.k, x: h.x, y: h.y })) };
+  return { t: 'webs', webs: ((world.webs && world.webs.list) || []).map(wb => Object.assign({ id: wb.id, x: wb.x, y: wb.y, ax: wb.ax, n: wb.n, silk: wb.silk }, wb.in ? { in: wb.in } : {})), homes: f.homes.map(h => ({ k: h.k, x: h.x, y: h.y })) };
 }
 function cornerView(world, area) { return { t: 'corner', area, list: cornerList(world, area).map(s => ({ x: s.x, y: s.y, dx: s.dx, dy: s.dy, ex: s.ex, ey: s.ey, f: s.faces })) }; }
 function areaViews(world, area) {
@@ -724,6 +746,7 @@ function load(world, ctx) {
   const f = forestOf(world);
   const fresh = !(world.webs && Array.isArray(world.webs.list));
   const w = fresh ? { list: [], nid: 0, pend: {} } : world.webs;
+  for (const wb of w.list) if (wb) delete wb.in; // kto bol v pavučine, už tam po načítaní nie je
   w.list = w.list.filter(wb => wb && f.cands[wb.o] && f.cands[wb.o].some(c => c.x === wb.x && c.y === wb.y && c.ax === wb.ax && c.n === wb.n) && wb.silk >= 1);
   w.nid = Math.max(w.nid | 0, ...w.list.map(wb => wb.id));
   w.pend = isObj(w.pend) ? w.pend : {};
@@ -750,6 +773,6 @@ const save = world => ({ webs: world.webs, corners: world.corners });
 
 module.exports = {
   PROPOSERS, PERIODIC, IDS, STEP_MS, slice, posKeys, onPos, joinKeys, onJoin, resolveAct,
-  analyze, cornerSpots, forestOf, webTiles, webAt, trunkSpot, spotsOf, cornerList, pruneCorners, alert, crossed, tickSec, ticksOf,
+  analyze, cornerSpots, forestOf, webTiles, webAt, across, trunkSpot, spotsOf, cornerList, pruneCorners, alert, crossed, tickSec, ticksOf,
   websView, cornerView, areaViews, entities, load, save
 };

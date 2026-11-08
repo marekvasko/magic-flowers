@@ -84,7 +84,6 @@ E.pending(world, key)                         // the pending event or null
 | `vilyEnd:<player>` | the fairy potion wears off (drinking another one moves it) |
 | `scavDone:<player>` | searching the grass finishes (moving or acting cancels it) |
 | `cExpire:<contract>` / `cDue:<contract>` | a contract leaves the board / its deadline (delivering it cancels both) |
-| `weave:<spider>` | a spider weaves again the webs torn a day ago (due times in `webs.pend`) |
 | `pull:<player>` | pulling silk from a web finishes (`pullDone`; moving or raising the lantern cancels it) |
 
 ### 3. Periodic (declared)
@@ -226,7 +225,7 @@ advanceTo(world, target, spec):
 
 | Who | Call | What it does |
 |---|---|---|
-| server, every 100 ms | `frame(room)`, then `E.advance(room, Date.now(), SIM, 50000)` | first the frame's moves, player actions and presence inputs as one `commitBatch` at the current tick, then the world moves by as many whole ticks as have passed since `room.wall` (about one per frame at 9.6 ticks/s; at most 50,000 per call); after every batch `SIM.onBatch` sends the outbox and writes the journal. The `time` message goes to clients at most once a second |
+| server, every 100 ms | `frame(room)` (its action batch, then `E.reconcile`, so periodic events an action cancelled are re-planned before anything else, exactly as `E.replay` does before each entry), then `E.advance(room, Date.now(), SIM, 50000)` | first the frame's moves, player actions and presence inputs as one `commitBatch` at the current tick, then the world moves by as many whole ticks as have passed since `room.wall` (about one per frame at 9.6 ticks/s; at most 50,000 per call); after every batch `SIM.onBatch` sends the outbox and writes the journal. The `time` message goes to clients at most once a second |
 | loading a running world | `E.advance(room, Date.now(), SIM)` | catches up downtime (capped at `MAX_CATCHUP_DAYS` by moving `wall`) |
 | everyone asleep | `E.advanceTo(room, min(ff.until, tick + 200), SIM)` | fast-forwards the night, 200 ticks per 100 ms (about 3 s for the night) so clients can animate it |
 | tests, headless simulation | `E.advanceTo(world, world.tick + days * TPD, spec)` | runs any amount of game time as fast as the events allow |
@@ -290,5 +289,6 @@ A new message type needs: the type in the server's `MESSAGES` set, a case in `to
 | `festAnnounce:<id>`, `festStart:<id>`, `festEnd:<id>` | yearly: 2 days before the festival, at its start, at its end | `economy.js` |
 | `spider:s0` … `spider:s6` | one per spider in Les divov: planned from the spider's own state (`world.sps[id].next`: every 200 ms of real time while it moves, its own deadline while idle, a week ahead while it sleeps). Whoever wakes a spider (a move, a pull, walking into a web) sets `next` and cancels the event, and the next reconcile plans it again | `spiders.js` |
 | `kz:garden`, `kz:hory` | the krížiak on its way to a corner (`world.kz[area].next`), likewise | `spiders.js` |
+| `weave:0` … `weave:6` | a spider weaves again the webs torn a day ago: planned from the earliest due time in `webs.pend[o]` (a week ahead when there is none); tearing a web cancels it so reconcile re-plans it | `spiders.js` |
 | `webDawn` | every day at 6:00: the number of webs per spider by season | `spiders.js` |
 | `kriziakTrip` | at a random time, on average twice a day (twice as often in autumn): a krížiak sets out to a free corner | `spiders.js` |

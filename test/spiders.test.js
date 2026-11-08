@@ -113,6 +113,23 @@ function wake(w, ids) { for (const id of ids || Object.keys(w.sps)) { w.sps[id].
 const T = ms => Sp.ticksOf(ms, 1200), SEC = 1200 / TPD; // krok v sekundách
 const run = (w, ticks, out) => E.advanceTo(w, w.tick + ticks, spec(out));
 let aid = 0;
+// dávka akcií ako na serveri: potom hneď reconcile (zrušené udalosti pavúkov sa naplánujú znova – ako pri E.replay)
+function commit(w, inputs, s) { const r = E.commitBatch(w, inputs, s || spec()); E.reconcile(w, s || spec()); return r; }
+// Cesta naprieč pavučinou wb: políčko pred ňou, jej stred a políčko za ňou (obe priechodné); dir = smer (dx, dy)
+function acrossWeb(w, wb) {
+  const [dx, dy] = wb.ax ? [1, 0] : [0, 1], cx = wb.x + 0.5, cy = wb.y + 0.5;
+  const ok = (x, y) => !D.BLOCK[w.les[Math.floor(y) * LW + Math.floor(x)].g];
+  for (const s of [1, -1]) if (ok(cx - s * dx, cy - s * dy) && ok(cx + s * dx * 1.1, cy + s * dy * 1.1)) {
+    return { before: [cx - s * dx, cy - s * dy], mid: [cx, cy], half: [cx + s * dx * 0.55, cy + s * dy * 0.55], after: [cx + s * dx * 1.1, cy + s * dy * 1.1] };
+  }
+  return null;
+}
+// hráč key prejde pavučinou krokmi cez engine (pos); out zbiera správy
+function walkThrough(w, key, wb, out, upTo) {
+  const r = acrossWeb(w, wb);
+  for (const k of ['mid', 'half', 'after']) { commit(w, [act('pos', key, { x: r[k][0], y: r[k][1] })], spec(out)); if (k === upTo) break; }
+  return r;
+}
 const act = (type, key, data) => ({ type, data: Object.assign({ key }, data), id: 'a#' + (++aid), actor: key });
 
 test('pavučiny: počet podľa obdobia, roztrhnutú majiteľ utká znova o deň (udalosť weave:<o>), v zime ich ubudne', () => {
@@ -121,29 +138,50 @@ test('pavučiny: počet podľa obdobia, roztrhnutú majiteľ utká znova o deň 
   f.homes.forEach((h, o) => assert.strictEqual(count(o), Math.min(D.WEB.count[h.k === 'p' ? 'pradlena' : 'vlciak'][2], f.cands[o].length)));
   const used = new Set();
   for (const x of w.webs.list) for (const i of Sp.webTiles(x)) { assert.ok(!used.has(i), 'pavučiny sa neprekrývajú'); used.add(i); }
-  // vbehnutie do pavučiny ju roztrhne (pohyb cez engine) → o deň udalosť weave:0
-  const wb = w.webs.list.find(x => x.o === 0), [t] = Sp.webTiles(wb), side = wb.ax ? [1, 0] : [0, 1];
-  const p = join(w, 'eva', wb.x + 0.5 - side[0], wb.y + 0.5 - side[1], 0);
+  // prejdenie pavučinou ju roztrhne (pohyb cez engine) → o deň udalosť weave:0
+  const wb = w.webs.list.find(x => x.o === 0 && acrossWeb(w, x)), t = Sp.webTiles(wb)[0];
+  const p = join(w, 'eva', ...acrossWeb(w, wb).before, 0);
   const out = [];
-  E.commitBatch(w, [act('pos', 'eva', { x: wb.x + 0.5, y: wb.y + 0.5 })], spec(out));
+  walkThrough(w, 'eva', wb, out);
   assert.ok(!w.webs.list.some(x => x.id === wb.id), 'roztrhnutá');
-  assert.ok(out.some(m => m.t === 'slow' && m.k === D.WEB.stick && m.to === 'eva'), 'lepí sa');
-  const ev = E.pending(w, 'weave:0');
-  assert.strictEqual(ev.at, w.tick + D.WEB.reweave);
+  assert.deepStrictEqual(w.webs.pend[0], [w.tick + D.WEB.reweave], 'utká ju o deň');
+  assert.strictEqual(E.pending(w, 'weave:0').at, w.tick + D.WEB.reweave, 'engine naplánoval weave:0 na ten termín');
   w.presence = []; // hráč odišiel
   run(w, D.WEB.reweave + 1);
   assert.strictEqual(count(0), 3, 'znova utkaná');
   // príchod zimy: nadbytočné zmiznú, čakajúce tkanie sa zruší
-  const wb1 = w.webs.list.find(x => x.o === 1);
-  const p1 = join(w, 'ida', wb1.x + 0.5 - (wb1.ax ? 1 : 0), wb1.y + 0.5 - (wb1.ax ? 0 : 1), 0);
-  E.commitBatch(w, [act('pos', 'ida', { x: wb1.x + 0.5, y: wb1.y + 0.5 })], spec());
-  assert.ok(E.pending(w, 'weave:1'));
+  const wb1 = w.webs.list.find(x => x.o === 1 && acrossWeb(w, x));
+  const p1 = join(w, 'ida', ...acrossWeb(w, wb1).before, 0);
+  walkThrough(w, 'ida', wb1, []);
+  assert.ok(w.webs.pend[1] && w.webs.pend[1].length);
   w.presence = [];
   E.advanceTo(w, SEASON_TICK(3), spec());
   assert.strictEqual(count(0), 1);
   assert.strictEqual(count(1), 1);
-  assert.strictEqual(E.pending(w, 'weave:1'), null, 'zbytočné tkanie zrušené');
+  assert.ok(!w.webs.pend[1], 'zbytočné tkanie zrušené');
+  assert.ok(E.pending(w, 'weave:1').at - w.tick >= TPD, 'udalosť weave:1 spí');
   assert.ok(p && p1 && t >= 0);
+});
+
+test('pavučina sa naťahuje: vojdeš – nič sa netrhá; cúvneš – pustí sa celá; až políčko za ňou sa roztrhne a majiteľ to vie', () => {
+  const w = mkWorld(SEEDS[1]);
+  const wb = w.webs.list.find(x => acrossWeb(w, x)), r = acrossWeb(w, wb);
+  const p = join(w, 'eva', ...r.before, 0), out = [];
+  walkThrough(w, 'eva', wb, out, 'mid');
+  assert.ok(w.webs.list.some(x => x.id === wb.id), 'v pavučine – ešte celá');
+  assert.ok(wb.in && wb.in.eva != null, 'zaboril sa');
+  assert.ok(Sp.websView(w).webs.find(x => x.id === wb.id).in.eva != null, 'klient vie, kto je v nej (naťahovanie, spomalenie)');
+  // cúvne späť – pustí sa
+  commit(w, [act('pos', 'eva', { x: r.before[0], y: r.before[1] })], spec(out));
+  assert.ok(w.webs.list.some(x => x.id === wb.id) && !wb.in, 'pustila sa celá');
+  // znova a cez: v polovici ešte drží, políčko za ňou sa roztrhne
+  walkThrough(w, 'eva', wb, out, 'half');
+  assert.ok(w.webs.list.some(x => x.id === wb.id), 'na pol ceste ešte drží');
+  commit(w, [act('pos', 'eva', { x: r.after[0], y: r.after[1] })], spec(out));
+  assert.ok(!w.webs.list.some(x => x.id === wb.id), 'prerazená');
+  assert.ok(['alert', 'chase'].includes(w.sps['s' + wb.o].st), 'majiteľ vie: ' + w.sps['s' + wb.o].st);
+  assert.ok(out.some(m => m.t === 'toast' && /Prerazil/.test(m.text)));
+  assert.ok(p);
 });
 
 test('ťahanie hodvábu: akcia pullStart, o WEB.pullMs udalosť pullDone; +1 hodváb, tretie potiahnutie pavučinu roztrhne a majiteľ to vždy zacíti', () => {
@@ -152,12 +190,12 @@ test('ťahanie hodvábu: akcia pullStart, o WEB.pullMs udalosť pullDone; +1 hod
   const p = join(w, 'eva', wb.x + 0.5 + side[0], wb.y + 0.5 + side[1], 0);
   // s lampášom nie
   p.lp = true;
-  let r = E.commitBatch(w, [act('pullStart', 'eva', { id: wb.id })], spec());
+  let r = commit(w, [act('pullStart', 'eva', { id: wb.id })], spec());
   assert.match(r.rejected[0].reject, /lampášom/);
   p.lp = false;
   for (let k = 0; k < 3; k++) {
     const out = [];
-    E.commitBatch(w, [act('pullStart', 'eva', { id: wb.id })], spec(out));
+    commit(w, [act('pullStart', 'eva', { id: wb.id })], spec(out));
     const st = out.find(m => m.t === 'pullStart');
     assert.ok(st, 'začal ťahať');
     p.pull = { id: wb.id, n: st.n, px: p.x, py: p.y }; // server: prítomnosť podľa pokynu pullStart
@@ -174,9 +212,9 @@ test('ťahanie hodvábu: akcia pullStart, o WEB.pullMs udalosť pullDone; +1 hod
   const wb2 = w.webs.list.find(x => x.o === 0);
   moveTo(w, p, wb2.x + 0.5 + (wb2.ax ? 1 : 0), wb2.y + 0.5 + (wb2.ax ? 0 : 1));
   const out = [];
-  E.commitBatch(w, [act('pullStart', 'eva', { id: wb2.id })], spec(out));
+  commit(w, [act('pullStart', 'eva', { id: wb2.id })], spec(out));
   p.pull = { id: wb2.id, n: out.find(m => m.t === 'pullStart').n, px: p.x, py: p.y };
-  E.commitBatch(w, [act('pos', 'eva', { x: p.x + (wb2.ax ? 0.5 : 0), y: p.y + (wb2.ax ? 0 : 0.5) })], spec(out));
+  commit(w, [act('pos', 'eva', { x: p.x + (wb2.ax ? 0.5 : 0), y: p.y + (wb2.ax ? 0 : 0.5) })], spec(out));
   assert.strictEqual(E.pending(w, 'pull:eva'), null, 'pohol sa – ťahanie zrušené');
 });
 
@@ -315,7 +353,7 @@ test('plánovanie: jedna udalosť na pavúka; bez hráčov v lese spia (nič nek
   const g = D.GATES.pomedzie.find(x => x.to === 'les');
   const p = join(w, 'eva', g.x + 0.5, g.y + 1.5, 0, 'pomedzie');
   w.tiles = w.tiles; w.pomedzie = D.buildArea('pomedzie', 1).map(x => ({ g: x }));
-  E.commitBatch(w, [act('pos', 'eva', { x: g.x + 0.5, y: g.y + 0.5 })], spec());
+  commit(w, [act('pos', 'eva', { x: g.x + 0.5, y: g.y + 0.5 })], spec());
   assert.strictEqual(w.saves.eva.area, 'les');
   p.area = 'les'; Object.assign(p, { x: w.saves.eva.x, y: w.saves.eva.y });
   E.reconcile(w, spec()); // zrušené udalosti pavúkov engine hneď naplánuje znova podľa ich stavu
@@ -342,7 +380,7 @@ test('les žije len okolo hráčov: pavúk ďaleko od všetkých hráčov je dom
   const i = f.owner.findIndex((o, i) => o === 0 && !D.BLOCK[w.les[i].g] && Math.hypot(i % LW + 0.5 - s0.hx, ((i / LW) | 0) + 0.5 - s0.hy) > 8 && Math.hypot(i % LW + 0.5 - s0.hx, ((i / LW) | 0) + 0.5 - s0.hy) < 12);
   moveTo(w, p, i % LW + 0.5, ((i / LW) | 0) + 0.5);
   w.saves.eva.x = p.x - 3; // skok – kontroluje sa len cieľové políčko
-  E.commitBatch(w, [act('pos', 'eva', { x: p.x, y: p.y })], spec());
+  commit(w, [act('pos', 'eva', { x: p.x, y: p.y })], spec());
   assert.strictEqual(s0.next, w.tick + 1, 'zobudený');
 });
 
@@ -364,7 +402,7 @@ test('krížiak: kúty pri koncoch stien, najviac 3 pavučiny na plochu; výprav
   const k = w.corners.garden[0], i = parseInt(k, 10);
   join(w, 'eva', i % D.W + 0.5, Math.floor(i / D.W) + 0.5, 0, 'garden');
   const out = [];
-  E.commitBatch(w, [act('clearWeb', 'eva', { area: 'garden', i })], spec(out));
+  commit(w, [act('clearWeb', 'eva', { area: 'garden', i })], spec(out));
   assert.strictEqual(w.corners.garden.length, 2);
   assert.ok(out.some(m => m.t === 'fx' && m.k === 'cobweb'));
   assert.deepStrictEqual(w.saves.eva.inv, {});
@@ -422,10 +460,10 @@ test('determinizmus: rovnaký svet a vstupy dajú rovnaký beh; denník (vbehnut
     aid = 0;
     const w = mkWorld(SEEDS[3]), out = [];
     out.journal = [];
-    const wb = w.webs.list.find(x => x.o === 0), side = wb.ax ? [1, 0] : [0, 1];
-    join(w, 'eva', wb.x + 0.5 - side[0], wb.y + 0.5 - side[1], 4);
+    const wb = w.webs.list.find(x => x.o === 0 && acrossWeb(w, x));
+    join(w, 'eva', ...acrossWeb(w, wb).before, 4);
     const start = JSON.parse(JSON.stringify(w));
-    E.commitBatch(w, [act('pos', 'eva', { x: wb.x + 0.5, y: wb.y + 0.5 })], spec(out)); // vbehne do pavučiny
+    walkThrough(w, 'eva', wb, out); // prerazí pavučinu
     E.advanceTo(w, w.tick + T(8000), spec(out));
     return { w, out, start };
   };
@@ -452,6 +490,8 @@ test('uloženie: pavučiny a kúty sa po načítaní zachovajú, neplatné sa za
   for (const s of Object.values(w2.sps)) { assert.strictEqual(s.st, 'home'); assert.strictEqual(s.next, null); }
 });
 
+// voľný port od systému (náhodný port sa občas zrazil s iným testom)
+function freePort() { return new Promise(r => { const srv = require('net').createServer(); srv.listen(0, () => { const { port } = srv.address(); srv.close(() => r(port)); }); }); }
 function startServer(dataDir, port) {
   const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DEFAULT_MODE: 'paused' }), stdio: ['ignore', 'pipe', 'pipe']
@@ -468,7 +508,7 @@ function stopServer(proc) { return new Promise(r => { proc.removeAllListeners('e
 
 test('server: svet z verzie 9 dostane pavučiny; v lese sa ťahá hodváb, s lampášom nie', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-spiders-'));
-  const port = 46000 + Math.floor(Math.random() * 2000); // iný rozsah než ostatné testy so serverom
+  const port = await freePort();
   const lesSeed = 777, f = Sp.analyze(D.buildLes(lesSeed).map(g => ({ g })), lesSeed);
   const save = {
     v: 9, tick: SEASON_TICK(2), wall: Date.now(), mode: 'paused', daySeconds: 1200, seed: E.newSeed(), step: 0, seq: 0, events: [], weather: 'sun', pomedzieSeed: 1, lesSeed, les: null, scav: {}, scavSalt: 1,

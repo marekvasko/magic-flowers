@@ -669,6 +669,7 @@ function frame(room) {
   if (inputs.length) {
     room.traceFrame = room.trace ? { filter: dec, ms } : null; // onBatch ho pripojí k dávke
     try { E.commitBatch(room, inputs, SIM); } finally { room.traceFrame = null; }
+    E.reconcile(room, SIM); // udalosti, ktoré akcia zrušila (krok pavúka), sa naplánujú hneď – ako pri prehrávaní denníka (E.replay)
   }
   else if (room.trace && dec.length) Debug.traceFilter(room.trace, room.tick, dec, { filter: ms });
 }
