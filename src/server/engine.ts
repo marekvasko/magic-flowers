@@ -98,6 +98,8 @@ export interface Ctx<P, M> {
   cancel(key: string): number;
   pending(key: string): DraftEvent | null;
 }
+// Časť kontextu bez hráčov a správ: náhoda a plánovanie udalostí (pre pomocné funkcie, ktoré nič neposielajú)
+export type Scheduler = Pick<Ctx<unknown, unknown>, 'tick' | 'id' | 'rng' | 'schedule' | 'scheduleIn' | 'scheduleUnique' | 'cancel' | 'pending'>;
 // Návrh pre jeden typ vstupu. Metódy (nie vlastnosti s funkciou) zámerne: parametre metód TypeScript porovnáva
 // bivariantne, takže návrh s presnými dátami (napr. { key, i }) sa zmestí do zoznamu návrhov enginu s dátami unknown.
 export interface Proposer<D, W, P, M, S = Slices> {
@@ -513,7 +515,7 @@ export function keysOf<W extends EngineWorld, P extends { key: string }, M>(worl
 //   { …, reject: msg }                                   – odmietnutie (nič sa nevykoná, hráč dostane správu; null = bez správy)
 //   { …, error }                                         – chyba (nič sa nevykoná, vstup sa spotrebuje)
 // presence je snímka dávky; návrh dostane vlastnú kópiu a v nej (ak je to zoznam záznamov s key) záznam input.actor ako ctx.actor.
-export function evaluate<W extends EngineWorld, P extends { key: string }, M>(world: W, input: Input, spec: Spec<W, P, M>, presence: P[] | undefined): Result<M> {
+export function evaluate<W extends EngineWorld, P extends { key: string }, M>(world: W, input: Input, spec: Spec<W, P, M>, presence?: P[]): Result<M> {
   const id = inputId(input);
   const k = keysOf(world, input, spec, presence);
   const res: Result<M> = { id, input, reads: k.reads || new Set(), writes: k.writes || new Set(), slices: {}, ops: [], outbox: [] };
