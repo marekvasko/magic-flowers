@@ -633,7 +633,10 @@ function frame(room) {
   }
   room.inbox = later.concat(room.inbox);
   const ms = clock() - t0;
-  if (inputs.length) { room.traceFrame = room.trace ? { filter: dec, ms } : null; E.commitBatch(room, inputs, SIM); room.traceFrame = null; }
+  if (inputs.length) {
+    room.traceFrame = room.trace ? { filter: dec, ms } : null; // onBatch ho pripojí k dávke
+    try { E.commitBatch(room, inputs, SIM); } finally { room.traceFrame = null; }
+  }
   else if (room.trace && dec.length) Debug.traceFilter(room.trace, room.tick, dec, { filter: ms });
 }
 

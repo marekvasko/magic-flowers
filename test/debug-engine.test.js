@@ -227,8 +227,9 @@ test('server: dobiehanie po načítaní je v pamäti, filter správ (odložená 
     ana.send({ t: 'act', x, y, item: 'hoe' }); bob.send({ t: 'act', x, y, item: 'hoe' });
     await (await ana.wait(m => m.t === 'tile' && m.i === ti[0] && m.v.s) && Promise.race([ana.wait(m => m.t === 'toast' && m.text === 'Tu už je záhon.'), bob.wait(m => m.t === 'toast' && m.text === 'Tu už je záhon.')]));
     // dve akcie na políčku od jednej hráčky v jednom rámci + dva pohyby: druhá akcia počká, starší pohyb sa zlúči
-    ana.send({ t: 'move', x: px, y: py, dir: 0, ar: 0 }); ana.send({ t: 'move', x: px, y: py + 0.01, dir: 0, ar: 0 });
-    ana.send({ t: 'act', x, y, item: 'seed_' + SP }); ana.send({ t: 'act', x, y, item: 'can' });
+    // (dávka správ naraz, aby aspoň dve padli do jedného rámca aj na vyťaženom stroji)
+    for (let i = 0; i < 6; i++) ana.send({ t: 'move', x: px, y: py + i * 0.01, dir: 0, ar: 0 });
+    ana.send({ t: 'act', x, y, item: 'seed_' + SP }); ana.send({ t: 'act', x, y, item: 'can' }); ana.send({ t: 'act', x, y, item: 'can' });
     await ana.wait(m => m.t === 'tile' && m.i === ti[0] && m.v.s.p && m.v.s.w === 1);
     const list = await httpJ(port, '/api/debug/engine?room=ladenie');
     assert.ok(list.loaded && list.kept <= 300);
@@ -246,6 +247,8 @@ test('server: dobiehanie po načítaní je v pamäti, filter správ (odložená 
       deferred = deferred || dd.filter.find(f => f.what === 'deferred' && f.t === 'act');
       coalesced = coalesced || dd.filter.find(f => f.what === 'coalesced' && f.t === 'move');
     }
+    assert.ok(deferred, 'odložená akcia na políčku');
+    assert.ok(coalesced, 'zlúčený pohyb');
     assert.match(deferred.rule, /one tile action per player per frame/);
     assert.strictEqual(deferred.actor.key, Debug.keyId('ana'));
     assert.match(coalesced.rule, /latest move/);

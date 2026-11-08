@@ -100,7 +100,7 @@ export function mount(el, ctx0) {
     const out = [];
     for (const r of rows) {
       const last = out[out.length - 1];
-      if (r.gap && last && last.gap) { last.gap += r.gap; last.from = Math.min(last.from, r.from); last.to = Math.max(last.to, r.to); last.merged = true; }
+      if (r.gap && last && last.gap) { last.from = Math.min(last.from, r.from); last.to = Math.max(last.to, r.to); last.gap = last.to - last.from + 1; last.merged = true; }
       else out.push(Object.assign({}, r));
     }
     return out;
