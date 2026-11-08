@@ -504,13 +504,19 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
   assert.deepStrictEqual(room.tiles.map(t => t.s), final.tiles.map(t => t.s));
 });
 
-test('hygiena: server už nemení svet priamo – liveCtx len pri založení sveta, žiadne sendMe/tileMsg v akciách', () => {
+test('hygiena: server už nemení svet priamo – liveCtx len pri založení sveta; sendMe a políčka len z notify, uloženia nikde', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   assert.strictEqual((src.match(/liveCtx/g) || []).length, 1);
-  assert.ok(!/actionCtx|Econ\.buy\(|Econ\.sell\(|Econ\.upgrade\(|deliverContract|takeContract|Ice\.digIce|Ice\.fillIcehouse|Ice\.buildIcehouse|Ice\.buyTool|pickWild/.test(src));
+  assert.ok(!/actionCtx|Econ\.buy\(|Econ\.sell\(|Econ\.upgrade\(|deliverContract|takeContract|Ice\.digIce|Ice\.fillIcehouse|Ice\.buildIcehouse|Ice\.buyTool|pickWild|checkFairies|newSave|migrateSave/.test(src));
   const ws = src.slice(src.indexOf("ws.on('message'"), src.indexOf("ws.on('close'"));
   assert.ok(!/case '/.test(ws), 'handler správ len overí a vloží do schránky');
-  assert.ok(Object.keys(Actions.PROPOSERS).length >= 28);
+  assert.ok(!/\.save\.\w+ =|\.save\.lastTick|room\.saves\[\w+\] =/.test(src), 'uloženia hráčov nemení server, len návrhy');
+  // obnova klientov sa odvodzuje: sendMe a políčka sa posielajú len z notify (a políčka plochy pri príchode / pripojení)
+  const fnBody = name => { const i = src.indexOf('function ' + name + '('); return src.slice(i, src.indexOf('\n}\n', i)); };
+  const calls = re => (src.match(re) || []).length, inNotify = re => (fnBody('notify').match(re) || []).length;
+  assert.strictEqual(calls(/sendMe\(/g) - 1, inNotify(/sendMe\(/g), 'sendMe len v notify');
+  assert.strictEqual(calls(/tileMsg\(/g) - 1, inNotify(/tileMsg\(/g), 'tileMsg len v notify');
+  assert.ok(Object.keys(Actions.PROPOSERS).length >= 33);
 });
 
 test('uloženie v8 (288 krokov za deň) sa prevedie na v9: každý krok ×40 – ten istý deň a hodina, udalosti, várky, rastliny, zákazky, sviatok', async () => {
@@ -549,4 +555,104 @@ test('uloženie v8 (288 krokov za deň) sa prevedie na v9: každý krok ×40 –
   assert.deepStrictEqual(s.scav, {});
   assert.strictEqual(s.glacierFed, 2, 'deň sa neškáluje');
   for (const sp in f.mult) assert.strictEqual(s.market.flowers[sp].fest, f.mult[sp], 'sviatok v položkách kvetov');
+});
+
+// ---- Fáza 4: pohyb ako stav, prítomnosť ako vstupy ----
+
+test('pohyb: poloha je stav (pos:<kľúč>), dvaja na jednom políčku prejdú, mimo plochy sa oreže, do vody sa nedá (oprava), brána prenesie, pohyb preruší hľadanie', () => {
+  const w = makeWorld(17);
+  const grass = w.tiles.findIndex(t => t.g === 'grass'), gx = grass % D.W + 0.5, gy = Math.floor(grass / D.W) + 0.5;
+  let r = E.commitBatch(w, [act('pos', 'ana', { x: gx, y: gy }), act('pos', 'bob', { x: gx, y: gy })], SPEC);
+  assert.strictEqual(r.rounds, 1, 'rôzni hráči: nezávislé návrhy');
+  assert.deepStrictEqual([w.saves.ana.x, w.saves.ana.y, w.saves.bob.x, w.saves.bob.y, w.saves.ana.lastTick], [gx, gy, gx, gy, w.tick]);
+  assert.ok(r.applied[0].writes.has('pos:ana') && !r.applied[0].writes.has('save:ana'));
+  // mimo plochy: orezané na okraj (ak je tam priechodná zem)
+  r = E.commitBatch(w, [act('pos', 'ana', { x: -5, y: gy })], SPEC);
+  if (r.applied.length) assert.strictEqual(w.saves.ana.x, 0.2); else assert.strictEqual(r.rejected[0].reject, null);
+  // do vody sa nedá: odmietnuté potichu, poloha ostáva (server pošle opravu)
+  const water = w.tiles.findIndex(t => t.g === 'water');
+  const before = [w.saves.bob.x, w.saves.bob.y];
+  r = E.commitBatch(w, [act('pos', 'bob', { x: water % D.W + 0.5, y: Math.floor(water / D.W) + 0.5 })], SPEC);
+  assert.deepStrictEqual([r.rejected.length, r.rejected[0].input.type, w.saves.bob.x, w.saves.bob.y], [1, 'pos', before[0], before[1]]);
+  assert.ok(!Number.isFinite(E.commitBatch(w, [act('pos', 'bob', { x: 'x', y: 1 })], SPEC).applied.length - 0) || w.saves.bob.x === before[0], 'nečíselná poloha sa odmietne');
+  // brána: príchodové miesto v cieľovej ploche a pokyn travel
+  const g = D.GATES.garden.find(x => x.to === 'pomedzie'), arr = D.arrival('garden', 'pomedzie');
+  r = E.commitBatch(w, [act('pos', 'ana', { x: g.x + 0.5, y: g.y + 0.5 })], SPEC);
+  assert.deepStrictEqual([w.saves.ana.area, w.saves.ana.x, w.saves.ana.y], ['pomedzie', arr.x, arr.y]);
+  assert.deepStrictEqual(r.outbox, [{ to: 'ana', t: 'travel', from: 'garden', area: 'pomedzie' }]);
+  // hľadanie v tráve: pohyb o viac než 0,35 ho preruší (prítomnosť nesie, odkiaľ sa hľadá)
+  w.presence[1] = { key: 'bob', name: 'Bob', area: 'garden', x: before[0], y: before[1], scav: { i: grass, n: 'a#1', px: before[0], py: before[1] } };
+  E.scheduleUnique(w, 'scavDone:bob', w.tick + D.SCAVENGE.ticks, 'scavDone', { key: 'bob', n: 'a#1', i: grass, seeds: false });
+  r = E.commitBatch(w, [act('pos', 'bob', { x: before[0] + 0.2, y: before[1] })], SPEC);
+  assert.ok(E.pending(w, 'scavDone:bob'), 'malý pohyb hľadanie nepreruší');
+  r = E.commitBatch(w, [act('pos', 'bob', { x: before[0] + 1, y: before[1] })], SPEC);
+  assert.strictEqual(E.pending(w, 'scavDone:bob'), null);
+  assert.ok(r.outbox.some(m => m.t === 'scavDone') && r.outbox.some(m => /Pohol/.test(m.text)));
+});
+
+test('pohyb a nákup v jednom rámci: uloženie (save:) polohu neprepíše, poloha (pos:) mince neprepíše; ráno (save:*) tiež nie', () => {
+  const w = makeWorld(18);
+  const price = Econ.seedPrice(w.market, w.tick, SP);
+  const r = E.commitBatch(w, [act('buy', 'ana', { id: 'seed_' + SP, n: 1 }), act('pos', 'ana', { x: 7.5, y: 7.5 }), act('pos', 'bob', { x: 8.5, y: 7.5 }), act('sell', 'bob', { id: 'hoe', n: 1 })], SPEC);
+  assert.strictEqual(r.rounds, 1, 'pos a save sú nezávislé výrezy');
+  assert.deepStrictEqual([w.saves.ana.coins, w.saves.ana.x, w.saves.ana.y, w.saves.ana.inv['seed_' + SP]], [500 - price, 7.5, 7.5, 1]);
+  assert.deepStrictEqual([w.saves.bob.x, w.saves.bob.coins], [8.5, 500]);
+  // ráno píše všetky uloženia (save:*) – poloha sa nemení ani nezmizne
+  const sv = JSON.parse(json(w.saves.ana));
+  E.advanceTo(w, E.nextDailyTick(w.tick + 1, D.DAWN_TICK) + 1, SPEC);
+  assert.deepStrictEqual([w.saves.ana.x, w.saves.ana.y, w.saves.ana.area, w.saves.ana.lastTick], [sv.x, sv.y, sv.area, sv.lastTick]);
+  assert.ok(w.saves.ana.inv.compost >= 1, 'kompostér pridal');
+  // pos pre neexistujúce uloženie sa odmietne potichu
+  assert.deepStrictEqual(E.commitBatch(w, [act('pos', 'nikto', { x: 1, y: 1 })], SPEC).rejected.map(x => x.reject), [null]);
+});
+
+test('tanec v kruhu z húb: v noci dvaja tancujúci (podľa prítomnosti a času správy) dostanú semienka, raz za noc; cez deň huby spia', () => {
+  const w = makeWorld(19, 22 * D.TICKS_PER_HOUR); // 22:00
+  const cx = D.RING.x0 + 0.5, cy = D.RING.y0 + 0.5, now = 1000000;
+  const inRing = (key, name, at) => ({ key, name, area: 'garden', x: cx, y: cy, scav: null, emote: 'dance', emoteAt: at });
+  w.presence = [inRing('ana', 'Ana', now - 100), { key: 'bob', name: 'Bob', area: 'garden', x: cx, y: cy, scav: null, emote: 'wave', emoteAt: now }];
+  let r = E.commitBatch(w, [act('dance', 'ana', { now })], SPEC);
+  assert.ok(r.outbox.some(m => /čakali/.test(m.text)) && r.outbox.some(m => m.t === 'fx' && m.k === 'glimmer'), 'sama netancuje víly');
+  w.presence[1] = inRing('bob', 'Bob', now - 3000);
+  r = E.commitBatch(w, [act('dance', 'ana', { now })], SPEC);
+  assert.ok(r.applied[0].writes.has('save:bob') && r.applied[0].writes.has('fairyNight'));
+  assert.deepStrictEqual([w.saves.ana.inv.seed_papradie, w.saves.bob.inv.seed_duhova, w.fairyNight], [1, 1, D.dayOfTick(w.tick)]);
+  assert.ok(r.outbox.some(m => m.to === E.ALL && /víly/.test(m.text)));
+  r = E.commitBatch(w, [act('dance', 'bob', { now: now + 500 })], SPEC);
+  assert.deepStrictEqual(r.rejected.map(x => x.reject), ['Víly už dnes v noci odleteli. Príď zajtra. 🧚']);
+  // starý tanec (viac než 6,5 s) sa neráta; cez deň huby spia; mimo kruhu nič
+  w.fairyNight = -1; w.presence[1].emoteAt = now - 10000;
+  assert.ok(E.commitBatch(w, [act('dance', 'ana', { now })], SPEC).outbox.some(m => /čakali/.test(m.text)));
+  const day = makeWorld(19, 12 * D.TICKS_PER_HOUR); day.presence = [inRing('ana', 'Ana', now)];
+  assert.deepStrictEqual(E.commitBatch(day, [act('dance', 'ana', { now })], SPEC).rejected.map(x => x.reject), ['Huby pokojne spia. Možno v noci… 🌙']);
+  w.presence[0].x = 10;
+  assert.deepStrictEqual(E.commitBatch(w, [act('dance', 'ana', { now })], SPEC).rejected.map(x => x.reject), [null]);
+});
+
+test('pripojenie, odchod a „naposledy videný“ ako vstupy: nové uloženie so štartom zo záznamu, prevod starého, lastTick; denník sa prehrá', () => {
+  const w = makeWorld(20);
+  delete w.saves.bob; w.maxRep = 0;
+  w.presence = [{ key: 'ana', name: 'Ana', area: 'garden', x: 5, y: 5, scav: null }, { key: 'cyril', name: 'Cyril', area: 'garden', x: 5, y: 5, scav: null }];
+  w.saves.ana = { coins: 1, water: 9, inv: { hoe: 1 }, recipes: [], seen: [], vily: 0, rep: 0, x: 5, y: 5, area: 'garden', lastTick: w.tick - 3 * TPD }; // staré uloženie bez up/fb
+  const entries = [], spec = withJournal(SPEC, entries);
+  let r = E.commitBatch(w, [act('join', 'cyril', { name: 'Cyril', look: { shirt: '#123', hair: '#456', hat: true }, start: { coins: 70, rep: 40 }, quick: false }), act('join', 'ana', { name: 'Ana', look: null, start: { coins: 70, rep: 40 }, quick: false })], spec);
+  const c = w.saves.cyril;
+  assert.deepStrictEqual([c.coins, c.rep, c.look, c.talked, c.x, c.y, c.area, w.maxRep], [70, 40, { shirt: '#123', hair: '#456', hat: true }, true, D.SPAWN.x, D.SPAWN.y, 'garden', 40]);
+  assert.ok(Object.keys(c.inv).some(id => id.startsWith('seed_')) && c.inv.hoe === 1);
+  assert.deepStrictEqual([w.saves.ana.up, w.saves.ana.water, w.saves.ana.talked], [{ can: 2, composter: 0 }, Math.min(9, Econ.canCap(w.saves.ana)), true], 'prevod starého uloženia: krhla, vylepšenia, uvítanie');
+  const toasts = r.outbox.filter(m => m.t === 'toast').map(m => m.text);
+  assert.ok(toasts.some(t => /Cyril prišiel/.test(t)) && toasts.some(t => /Vitaj/.test(t)) && toasts.some(t => /ubehlo 3 dni/.test(t)), json(toasts));
+  assert.deepStrictEqual(r.outbox.filter(m => m.t === 'joined').map(m => m.to), ['cyril', 'ana']);
+  // rýchle znovupripojenie: bez hlásení
+  r = E.commitBatch(w, [act('join', 'ana', { name: 'Ana', look: null, start: { coins: 70, rep: 40 }, quick: true })], spec);
+  assert.deepStrictEqual(r.outbox.map(m => m.t), ['joined']);
+  E.advanceTo(w, w.tick + 10, spec);
+  r = E.commitBatch(w, [act('seen', 'ana', {}), act('leave', 'cyril', {})], spec);
+  assert.deepStrictEqual([w.saves.ana.lastTick, w.saves.cyril.lastTick, r.applied.every(x => [...x.writes].join() === 'pos:' + x.input.actor)], [w.tick, w.tick, true]);
+  // prehranie denníka (s prítomnosťou zo záznamov) dá ten istý svet
+  const b = makeWorld(20); delete b.saves.bob; b.maxRep = 0; delete b.presence;
+  b.saves.ana = { coins: 1, water: 9, inv: { hoe: 1 }, recipes: [], seen: [], vily: 0, rep: 0, x: 5, y: 5, area: 'garden', lastTick: b.tick - 3 * TPD };
+  E.replay(b, JSON.parse(json(entries)), { proposers: SPEC.proposers, periodic: SPEC.periodic, onError: rethrow });
+  b.presence = w.presence;
+  assert.strictEqual(json(b), json(w));
 });
