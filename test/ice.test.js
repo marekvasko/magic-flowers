@@ -33,7 +33,7 @@ test('hory majú rovnakú veľkosť ako záhrada, prechody a príchody sedia', (
     for (const { x, y } of D.GATES[area]) assert.strictEqual(tiles[y * D.areaSize(area).w + x], 'gate', `${area} ${x},${y}`);
   }
   assert.ok(h.includes('glacier') && h.includes('water'));
-  assert.strictEqual(g.filter(t => t === 'lot').length, 4);
+  assert.strictEqual(g.filter(t => t === 'lot').length, 8); // ľadovňa a Dielňa
 });
 
 test('z príchodu v horách sa dá dôjsť k ľadovcu aj späť k prechodu', () => {

@@ -122,11 +122,11 @@ function setIce(icehouse, st, tick, ice) {
   icehouse.ice = next;
 }
 
-// Každú hernú hodinu sa časť ľadu roztopí (v zime nič). Vráti true, ak sa ľadovňa práve vyprázdnila.
+// Každú hernú hodinu sa časť ľadu roztopí (v zime nič); izolácia z prikrývok topenie spomalí. Vráti true, ak sa ľadovňa práve vyprázdnila.
 function meltHourly(icehouse, st, tick, season) {
   const h = icehouse;
   if (!h || !h.built || h.ice <= 0) return false;
-  const left = h.ice - D.ICEHOUSE.melt[season];
+  const left = h.ice - D.ICEHOUSE.melt[season] * D.ICEHOUSE.insul[D.insulLevel(h.bl)];
   setIce(h, st, tick, left < 1e-6 ? 0 : +left.toFixed(4));
   return h.ice === 0;
 }
@@ -140,6 +140,18 @@ function fillIcehouse(icehouse, st, tick, n) {
   return k;
 }
 
+// Izolácia (#23): hráč vloží do ľadovne 1 hodvábnu prikrývku (sv = jeho uloženie). Vráti chybu alebo null.
+// icehouse.bl = koľko prikrývok v nej už je; úroveň izolácie je D.insulLevel(bl).
+function insulate(icehouse, sv) {
+  const h = icehouse, B = D.ICEHOUSE, max = B.blankets[B.blankets.length - 1];
+  if (!h || !h.built) return 'Ľadovňa ešte nie je postavená. Kúpiš ju na trhu (záložka Vylepšiť). 🧊';
+  if ((h.bl | 0) >= max) return 'Ľadovňa je už izolovaná najlepšie, ako sa dá. 🧶';
+  if (!(sv.inv.blanket > 0)) return 'Nemáš hodvábnu prikrývku. Utká ti ju majster hodvábu v dedinke alebo krosná v Dielni. 🧶';
+  I.removeItems(I.playerC(sv), 'blanket', 1, 0);
+  h.bl = (h.bl | 0) + 1;
+  return null;
+}
+
 // Kúpa ľadovne (spoločná stavba, platí ju hráč): icehouse sa mení na mieste, pozemok v tiles dostane budovu. Vráti chybu alebo null.
 function buildIcehouse(icehouse, tiles, sv) {
   const B = D.ICEHOUSE;
@@ -148,7 +160,7 @@ function buildIcehouse(icehouse, tiles, sv) {
   if (sv.coins < B.price) return 'Nemáš dosť mincí. 🪙';
   if (lotIdx().some(i => tiles[i].s)) return 'Na pozemku vedľa domčeka je prekopaná zem. Najprv ju zarovnaj motykou.';
   sv.coins -= B.price;
-  icehouse.built = true; icehouse.ice = 0;
+  icehouse.built = true; icehouse.ice = 0; icehouse.bl = 0;
   applyIcehouse(icehouse, tiles);
   return null;
 }
@@ -165,4 +177,4 @@ function buyTool(sv, id) {
   return null;
 }
 
-module.exports = { LEVELS, loadHory, saveHory, lotIdx, applyIcehouse, digIce, dawnIce, meltGlacier, growGlacier, feedGlacier, occupied, glacierTotal, glacierMax, setIce, meltHourly, fillIcehouse, buildIcehouse, buyTool };
+module.exports = { LEVELS, loadHory, saveHory, lotIdx, applyIcehouse, digIce, dawnIce, meltGlacier, growGlacier, feedGlacier, occupied, glacierTotal, glacierMax, setIce, meltHourly, fillIcehouse, insulate, buildIcehouse, buyTool };

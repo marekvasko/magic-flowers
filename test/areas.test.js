@@ -270,7 +270,7 @@ test('server: svet z verzie 3 sa prevedie (záhrada aj poloha ostanú) a hráč 
     c.ws.close();
   } finally { await stopServer(proc); }
   const saved = JSON.parse(fs.readFileSync(path.join(dir, 'room-stary.json'), 'utf8'));
-  assert.strictEqual(saved.v, 10);
+  assert.strictEqual(saved.v, 11);
   assert.strictEqual(saved.migratedFrom, 3);
   assert.ok(Number.isInteger(saved.pomedzieSeed));
   assert.strictEqual(saved.tiles[plot].s.p.sp, 'mak');

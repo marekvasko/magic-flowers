@@ -140,7 +140,21 @@
     name: 'Ľadovňa', icon: '🧊', price: 400, rep: 1, cap: 12,
     rate: 0.25,                        // s ľadom v ľadovni kvety v sklade starnú 4× pomalšie
     melt: [1 / 12, 1 / 6, 1 / 12, 0],  // koľko blokov ľadu sa roztopí za hernú hodinu v jari, lete, jeseni, zime
-    lot: { x0: 0, y0: 30, x1: 1, y1: 31 } // stavebný pozemok vedľa domčeka (2×2)
+    lot: { x0: 0, y0: 30, x1: 1, y1: 31 }, // stavebný pozemok vedľa domčeka (2×2)
+    // izolácia z hodvábnych prikrývok (#23): úroveň 0–3; blankets = koľko prikrývok spolu treba na úroveň,
+    // insul = koľko ľadu sa topí oproti neizolovanej ľadovni
+    blankets: [0, 1, 3, 6], insul: [1, 0.75, 0.5, 0.35]
+  };
+  // úroveň izolácie podľa počtu vložených prikrývok
+  function insulLevel(bl) { let l = 0; for (let i = 0; i < ICEHOUSE.blankets.length; i++) if ((bl | 0) >= ICEHOUSE.blankets[i]) l = i; return l; }
+  // ---- Pavúčí hodváb (#23): majster hodvábu a Dielňa s krosnami ----
+  // Prikrývka sa robí zo 6 hodvábu – u majstra hneď (a za mince), na krosnách v Dielni zadarmo, ale 2–4 herné hodiny.
+  const BLANKET_SILK = 6;
+  const MASTER = { name: 'Majster hodvábu', x: 14, y: 28, price: 100 }; // stojí v dedinke medzi trhom a Dielňou
+  const DIELNA = {
+    name: 'Dielňa', icon: '🪚', price: 600, rep: 2,
+    lot: { x0: 15, y0: 27, x1: 16, y1: 28 }, // stavebný pozemok vedľa trhu (2×2)
+    loom: { name: 'Krosná', icon: '🧶', price: 300, rep: 2, min: 2 * TICKS_PER_HOUR, max: 4 * TICKS_PER_HOUR }
   };
   // Ľadovec je z minikociek po 1/4 bloku. Stúpa v úrovniach: okraj má pol bloku (2 vrstvy), každé políčko
   // ďalej od okraja o pol bloku viac, stred najviac 2 bloky (8 vrstiev). Krompáč zoberie vrchnú vrstvu = 1 ľad,
@@ -259,6 +273,7 @@
     if (id === 'compost') return 'Kompost';
     if (id === 'wilted') return 'Zvädnuté kvety';
     if (id === 'silk') return 'Pavúčí hodváb';
+    if (id === 'blanket') return 'Hodvábna prikrývka';
     if (id.startsWith('seed_')) return 'Semienka: ' + ((SPECIES[id.slice(5)] || {}).name || '?');
     if (id.startsWith('fl_')) return (SPECIES[id.slice(3)] || {}).name || '?';
     if (id.startsWith('po_')) return (POTIONS[id.slice(3)] || {}).name || '?';
@@ -411,6 +426,10 @@
     // Pozemok pre ľadovňu (kým sa nepostaví)
     const L = ICEHOUSE.lot;
     for (let y = L.y0; y <= L.y1; y++) for (let x = L.x0; x <= L.x1; x++) set(x, y, 'lot');
+    // Pozemok pre Dielňu vedľa trhu a majster hodvábu medzi nimi
+    const DL = DIELNA.lot;
+    for (let y = DL.y0; y <= DL.y1; y++) for (let x = DL.x0; x <= DL.x1; x++) set(x, y, 'lot');
+    set(MASTER.x, MASTER.y, 'majster');
     return g;
   }
 
@@ -695,7 +714,7 @@
     return r ? Math.max(0, Math.min(1, (r.from - y) / (r.from - r.to))) : 0;
   }
 
-  const BLOCK = { tree: 1, water: 1, hut: 1, babka: 1, cauldron: 1, stall: 1, well: 1, boulder: 1, house: 1, cliff: 1, glacier: 1, spruce: 1, icehouse: 1, bush: 1, giant: 1, trunk: 1, log: 1 };
+  const BLOCK = { tree: 1, water: 1, hut: 1, babka: 1, cauldron: 1, stall: 1, well: 1, boulder: 1, house: 1, cliff: 1, glacier: 1, spruce: 1, icehouse: 1, dielna: 1, majster: 1, bush: 1, giant: 1, trunk: 1, log: 1 };
   // Výška terénu v podkockách (pol bloku) podľa typu zeme – zdieľa ju 3D svet (world3d.js) aj chôdza
   // (hory: sutina a sneh vyššie, ľadovec ešte vyššie, skalné steny najvyššie; v záhrade skalka nad trávou).
   const TERRAIN_H = { water: 1, rock: 3, boulder: 3, scree: 3, snow: 3, glacier: 3, cliff: 8 };
@@ -781,7 +800,7 @@
   };
   // opory pavučín (kmene, stromy, kry, spadnuté kmene) a steny, v ktorých kútoch tká krížiak
   const WEB_ANCHOR = { tree: 1, giant: 1, trunk: 1, bush: 1, log: 1 };
-  const CORNER_WALL = { house: 1, hut: 1, stall: 1, icehouse: 1, boulder: 1, cliff: 1 };
+  const CORNER_WALL = { house: 1, hut: 1, stall: 1, icehouse: 1, dielna: 1, boulder: 1, cliff: 1 };
   const CORNER_AREAS = ['garden', 'hory'];
 
   // Chat: najdlhšia správa (pole na písanie aj server); server navyše vyhodí < > a medzery na krajoch
@@ -792,7 +811,7 @@
     CHAT_MAX, chatText,
     W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, TICKS_PER_HOUR, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
-    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, canLevel, SCAVENGE, isWild, TOOLS, ICEHOUSE, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, BODY, arrivalTiles, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_HEART, sunZone, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt, viewDiagAt,
+    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, canLevel, SCAVENGE, isWild, TOOLS, ICEHOUSE, insulLevel, BLANKET_SILK, MASTER, DIELNA, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, BODY, arrivalTiles, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_HEART, sunZone, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt, viewDiagAt,
     SPIDERS, WEB, WEB_ANCHOR, CORNER_WALL, CORNER_AREAS,
     sellPrice, itemName, buildMap, buildMountains, buildPomedzie, buildLes, buildArea, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
   };

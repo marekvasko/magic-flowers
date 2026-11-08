@@ -17,6 +17,7 @@ const I = require('../items.js');
 const Ice = require('../ice.js');
 const Areas = require('../areas.js');
 const Spiders = require('../spiders.js');
+const Dielna = require('../dielna.js');
 const TPD = D.TICKS_PER_DAY;
 const rethrow = err => { throw err; };
 const json = v => JSON.stringify(v);
@@ -498,6 +499,7 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
   const start = JSON.parse(json(save));
   const room = Object.assign(start, { tiles: D.buildMap().map((g, i) => ({ g, s: start.tiles[i].s })), hory: Ice.loadHory(start.hory) });
   Ice.applyIcehouse(room.icehouse, room.tiles);
+  room.icehouse.bl = 0; room.dielna = Dielna.newDielna(); room.redeem = {}; // ako migrácia z verzie 10 (#23)
   room.plotsUsed = Econ.plotsUsedOf(room.tiles); room.maxRep = Econ.maxRepOf(room.saves); // ako getRoom: odvodené počítadlá sa pri načítaní prepočítajú
   room.les = Areas.loadLes(start.les, start.lesSeed); // ako getRoom: Les divov, trh a nástenka, pavučiny (jeden živý kontext)
   const live = E.liveCtx(room, 'ekonomika');
@@ -546,7 +548,7 @@ test('uloženie v8 (288 krokov za deň) sa prevedie na v9: každý krok ×40 –
   const proc = await startServer(dir, port);
   try { const c = await client(port, 'stary', 'Eva'); c.ws.close(); await sleep(100); } finally { await stopServer(proc); }
   const s = JSON.parse(fs.readFileSync(path.join(dir, 'room-stary.json'), 'utf8'));
-  assert.strictEqual(s.v, 10);
+  assert.strictEqual(s.v, 11);
   assert.strictEqual(s.tick, old.tick * K);
   assert.deepStrictEqual([D.dayOfTick(s.tick), D.minOfTick(s.tick)], [3, 450], 'deň 3, 7:30 ako predtým');
   assert.deepStrictEqual(s.events.filter(e => e.key !== 'dawn' && !/^(delivery|npc_|fest|spider:|kz:|kriziakTrip|webDawn|weave:)/.test(e.key)).map(e => [e.key, e.at]).sort(), [['cDue:1', 1000 * K], ['hourly', 666 * K], ['vilyEnd:eva', 700 * K]]);

@@ -9,6 +9,7 @@ const Econ = require('./economy.js');
 const I = require('./items.js');
 const Scav = require('./scavenge.js');
 const Ice = require('./ice.js');
+const Dielna = require('./dielna.js');
 const Areas = require('./areas.js');
 const P = require('./presence.js');
 const Debug = require('./debug.js');
@@ -65,7 +66,7 @@ const server = http.createServer((req, res) => {
 // ---------- Svety (miestnosti) ----------
 // Čas je diskrétny: svet má celé počítadlo `tick` (D.TICKS_PER_DAY krokov na deň), deň a minúta sa z neho
 // len odvodzujú. Všetko, čo sa má stať v budúcnosti, je udalosť v plánovači (room.events) a ukladá sa so svetom.
-const SAVE_VERSION = 10; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov; 8: semienko sveta a počítadlo kôl namiesto rng; 9: 11 520 krokov za deň (×40); 10: pavúky a pavučiny
+const SAVE_VERSION = 11; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov; 8: semienko sveta a počítadlo kôl namiesto rng; 9: 11 520 krokov za deň (×40); 10: pavúky a pavučiny; 11: Dielňa, majster hodvábu a izolácia ľadovne
 const OLD_TPD = 288, OLD_MPT = 5, TICK_SCALE = D.TICKS_PER_DAY / OLD_TPD; // mriežka času do verzie 8
 const TPD = D.TICKS_PER_DAY, MPT = D.MIN_PER_TICK;
 const DEFAULT_MODE = process.env.DEFAULT_MODE === 'paused' ? 'paused' : 'running';
@@ -84,7 +85,7 @@ function newWorldState() {
     v: SAVE_VERSION, tick: D.DAWN_TICK + 6, wall: Date.now(), mode: DEFAULT_MODE, daySeconds: DAY_SECONDS,
     seed: E.newSeed(), step: 0, seq: 0, events: [],
     weather: 'sun', saves: {}, storage: {}, storageFb: {}, market: null, contracts: null, fairyNight: -1, eternal: false, scav: {}, scavSalt: Areas.newSeed(),
-    icehouse: { built: false, ice: 0 }, hory: null, pomedzieSeed: Areas.newSeed(), up: { plots: 0 }, lesSeed: Areas.newSeed(), les: null,
+    icehouse: { built: false, ice: 0, bl: 0 }, dielna: Dielna.newDielna(), redeem: {}, hory: null, pomedzieSeed: Areas.newSeed(), up: { plots: 0 }, lesSeed: Areas.newSeed(), les: null,
     glacierFed: -1, // deň, v ktorom ľadovec naposledy dorástol zo zrážok (najviac raz za deň)
     plotsUsed: 0, maxRep: 0 // odvodené počítadlá (pozri economy.js); pri načítaní sa prepočítajú
   };
@@ -135,6 +136,11 @@ function migrate(saved) {
   }
   if (from < 9) scaleTicks(out, TICK_SCALE); // jemnejší čas: každý uložený krok ×40 (deň a hodina ostávajú tie isté)
   if (from < 10) { out.webs = null; out.corners = null; } // pavúky (#57): pavučiny sa utkajú pri prvom načítaní, v každej ploche jeden kút
+  if (from < 11) { // Dielňa a majster hodvábu (#23): ich políčka sa uvoľnia, čo tam rástlo, dostane prvý hráč, ktorý príde
+    out.dielna = Dielna.newDielna();
+    out.redeem = Dielna.clearForDielna(out.tiles);
+    if (out.icehouse) out.icehouse.bl = 0;
+  }
   out.v = SAVE_VERSION; out.migratedFrom = saved.migratedFrom || from;
   return out;
 }
@@ -181,7 +187,11 @@ function getRoom(id) {
   if (!Number.isInteger(room.lesSeed)) room.lesSeed = Areas.newSeed();
   room.les = Areas.loadLes(st.les, room.lesSeed);
   room.icehouse = room.icehouse || { built: false, ice: 0 };
+  room.icehouse.bl = Math.max(0, Math.min(D.ICEHOUSE.blankets[D.ICEHOUSE.blankets.length - 1], room.icehouse.bl | 0));
   Ice.applyIcehouse(room.icehouse, room.tiles);
+  room.dielna = Dielna.loadDielna(room.dielna);
+  Dielna.applyDielna(room.dielna, room.tiles);
+  if (!room.redeem || typeof room.redeem !== 'object') room.redeem = {};
   room.up = room.up || { plots: 0 };
   Object.defineProperty(room, 'day', { get() { return D.dayOfTick(this.tick); } });
   Object.defineProperty(room, 'min', { get() { return D.minOfTick(this.tick); } });
@@ -217,7 +227,7 @@ function serialize(room) {
     v: SAVE_VERSION, tick: room.tick, wall: room.wall, mode: room.mode, daySeconds: room.daySeconds,
     seed: room.seed, step: room.step, seq: room.seq, events: room.events,
     weather: room.weather, saves: room.saves, storage: room.storage, storageFb: room.storageFb, market: room.market, contracts: room.contracts,
-    fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom, scav: room.scav, scavSalt: room.scavSalt, icehouse: room.icehouse, pomedzieSeed: room.pomedzieSeed, up: room.up, lesSeed: room.lesSeed,
+    fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom, scav: room.scav, scavSalt: room.scavSalt, icehouse: room.icehouse, dielna: room.dielna, redeem: room.redeem, pomedzieSeed: room.pomedzieSeed, up: room.up, lesSeed: room.lesSeed,
     glacierFed: room.glacierFed, plotsUsed: room.plotsUsed, maxRep: room.maxRep, ...Spiders.save(room),
     tiles: room.tiles.map(t => t.cut ? { s: t.s, cut: 1 } : { s: t.s }), hory: Ice.saveHory(room.hory), les: Areas.saveLes(room)
   });
@@ -286,14 +296,19 @@ function sendMe(pl) {
   send(pl.ws, {
     t: 'me', coins: sv.coins, water: sv.water, inv: sv.inv, recipes: sv.recipes, seen: sv.seen, vily: sv.vily > room.tick,
     rep: sv.rep, up: upView(room, sv), canCap: Econ.canCap(sv), plotLimit: Econ.plotLimit(room.up), plotsUsed: room.plotsUsed, maxActive: Econ.maxActive(sv),
-    fb: I.batchesView(I.playerC(sv), room.tick), tick: room.tick
+    fb: I.batchesView(I.playerC(sv), room.tick), tick: room.tick, loom: loomView(room, pl.key)
   });
   room.dirty = true;
+}
+// Krosná v Dielni z pohľadu hráča: tká sa (busy), či jemu (mine = krok, kedy bude hotová), koľko prikrývok naňho čaká
+function loomView(room, key) {
+  const d = room.dielna, job = d && d.job;
+  return { busy: !!job, mine: job && job.key === key ? job.at : null, ready: (d && d.ready[key]) | 0 };
 }
 function roomInfo(room) {
   return {
     t: 'room', eternal: room.eternal, mode: room.mode, daySeconds: room.daySeconds, storage: room.storage, storageFb: I.batchesView(I.storageC(storageOf(room), room.icehouse), room.tick),
-    storageRate: I.storageRate(room.icehouse), icehouse: room.icehouse, tick: room.tick, names: [...room.players.values()].map(p => p.name)
+    storageRate: I.storageRate(room.icehouse), icehouse: room.icehouse, dielna: { built: room.dielna.built, loom: room.dielna.loom }, tick: room.tick, names: [...room.players.values()].map(p => p.name)
   };
 }
 // Snímka toho, čo nie je stav sveta, ale návrhy to potrebujú: kto je pripojený, kde stojí, či hľadá v tráve (a odkiaľ), emócia (tanec),
@@ -377,6 +392,7 @@ function notify(room, out) {
       else if (a === 'market') room.marketDirty = true;
       else if (key === 'contracts') room.boardDirty = true;
       else if (key === 'storage' || key === 'icehouse' || key === 'eternal') info = true;
+      else if (key === 'dielna') { info = true; everyone = true; } // krosná: každý hráč vidí, či tkajú a čo naňho čaká (me.loom)
       else if (key === 'weather') { time = true; info = true; } // nový deň: aj sklad (vek várok) a čas v room
       else if (key === 'plotsUsed') plots = true;
       else if (key === 'webs') webs = true;
@@ -460,7 +476,7 @@ function timeMsg(room) {
 // Udalosti a akcie nie sú nikdy v jednej dávke: dávka akcií sa vykoná v kroku, v ktorom správy prišli (svet sa medzi
 // rámcami nehýbe, takže to je práve aktuálny krok), až potom rámec posunie čas.
 const INBOX_MAX = 2000, PLAYER_INBOX_MAX = 100, DEFER_MAX = 3; // ochrana pred zaplavením: čo sa nezmestí (na svet, na hráča, odložené akcie), sa zahodí
-const MESSAGES = new Set(['move', 'act', 'jump', 'sleep', 'emote', 'buy', 'sell', 'upgrade', 'ctake', 'cdeliver', 'brew', 'wish', 'settings', 'store', 'unstore', 'compostWilted', 'buyTool', 'build', 'icehouse', 'chat']);
+const MESSAGES = new Set(['move', 'act', 'jump', 'sleep', 'emote', 'buy', 'sell', 'upgrade', 'ctake', 'cdeliver', 'brew', 'wish', 'settings', 'store', 'unstore', 'compostWilted', 'buyTool', 'build', 'icehouse', 'buyLoom', 'masterWeave', 'loomStart', 'loomTake', 'chat']);
 // Správa servera samému sebe do schránky (odchod, „naposledy videný“) – nie od klienta
 function enqueue(room, pl, m) { room.inbox.push({ pl, m, seq: ++room.inSeq, tick: room.tick, internal: true }); }
 
@@ -570,8 +586,9 @@ function toInput(room, pl, e, presence, inputs) {
     case 'store': case 'unstore': return mk(m.t, { id: String(m.id), n: Math.max(1, Math.min(999, m.n | 0)) });
     case 'compostWilted': return mk('compostWilted', {});
     case 'buyTool': return mk('buyTool', { id: String(m.id) });
-    case 'build': return m.id === 'icehouse' ? mk('build', {}) : null;
+    case 'build': return m.id === 'icehouse' || m.id === 'dielna' ? mk('build', { id: m.id }) : null;
     case 'icehouse': return mk('fillIce', { n: m.n | 0 });
+    case 'buyLoom': case 'masterWeave': case 'loomStart': case 'loomTake': return mk(m.t, {});
   }
   return no('invalid message');
 }
