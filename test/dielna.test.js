@@ -206,7 +206,9 @@ test('majster hodvábu: len na jar a na jeseň; cez deň pri trhu, na noc ide k 
     assert.deepStrictEqual(pick(D.masterAt(day, 6 * 60)), { x: M.x + 0.5, y: M.y + 0.5, still: true, where: 'market' });
     assert.strictEqual(D.masterAt(day, 20 * 60 + 59).where, 'market');
     const walk = D.masterAt(day, 21 * 60 + 15);
-    assert.ok(!walk.still && walk.where === 'road');
+    assert.ok(!walk.still && walk.where === 'road' && walk.to === 'hut');
+    assert.strictEqual(D.masterAt(day, 5 * 60 + 40).to, 'market');
+    assert.notStrictEqual(D.masterRoadText(walk), D.masterRoadText(D.masterAt(day, 5 * 60 + 40)), 'odchod a príchod majú iný text');
     assert.deepStrictEqual(pick(D.masterAt(day, 23 * 60)), { x: M.hut.x + 0.5, y: M.hut.y + 0.5, still: true, where: 'hut' });
     assert.strictEqual(D.masterAt(day, 3 * 60).where, 'hut');
     assert.strictEqual(D.masterAt(day, 5 * 60 + 45).where, 'road');
@@ -228,8 +230,10 @@ test('majster hodvábu: v noci tká u babky, na trhu vtedy nie je; v lete ani v 
   at(w, 'ana', { x: M.hut.x + 0.5, y: M.hut.y + 1.5 });
   run(w, act('masterWeave', 'ana'));
   assert.strictEqual(sv.inv.blanket, 1);
-  w.tick = tickAt(1, 21, 10); // na ceste
-  assert.match(rejected(run(w, act('masterWeave', 'ana')))[0], /na ceste/);
+  w.tick = tickAt(1, 21, 10); // večer odchádza k babke
+  assert.match(rejected(run(w, act('masterWeave', 'ana')))[0], /pobral na noc k babke/);
+  w.tick = tickAt(2, 5, 45); // ráno prichádza na trh
+  assert.match(rejected(run(w, act('masterWeave', 'ana')))[0], /vracia na trh/);
   w.tick = tickAt(1 + D.DAYS_PER_SEASON, 12); // leto
   at(w, 'ana', MASTER_AT);
   assert.match(rejected(run(w, act('masterWeave', 'ana')))[0], /len na jar a na jeseň/);

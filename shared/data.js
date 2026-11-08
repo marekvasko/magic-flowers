@@ -157,7 +157,8 @@
     leave: 21 * 60, arrive: 6 * 60, walk: 30,
     route: [[14.5, 28.5], [14.5, 26.5], [10.5, 26.5], [10.5, 6.5], [14.5, 6.5], [14.5, 4.5], [15.5, 4.5]]
   };
-  // Kde je majster v deň day o minúte min: null = nie je tu (leto, zima); inak { x, y, still, where: 'market' | 'hut' | 'road', a }
+  // Kde je majster v deň day o minúte min: null = nie je tu (leto, zima); inak { x, y, still, where: 'market' | 'hut' | 'road', to, a }
+  // (to = kam kráča: 'hut' večer k babke, 'market' ráno na trh; len keď where = 'road')
   // (a = smer chôdze ako uhol v rovine x/y). Server aj klient ho počítajú rovnako, len z času.
   function masterAt(day, min) {
     const M = MASTER;
@@ -173,7 +174,7 @@
       if (d <= seg[i] || i === seg.length - 1) {
         const k = Math.min(1, d / seg[i]), a = r[i], b = r[i + 1];
         const dx = (b[0] - a[0]) * (back ? -1 : 1), dy = (b[1] - a[1]) * (back ? -1 : 1);
-        return { x: a[0] + (b[0] - a[0]) * k, y: a[1] + (b[1] - a[1]) * k, still: false, where: 'road', a: Math.atan2(dy, dx) };
+        return { x: a[0] + (b[0] - a[0]) * k, y: a[1] + (b[1] - a[1]) * k, still: false, where: 'road', to: back ? 'market' : 'hut', a: Math.atan2(dy, dx) };
       }
       d -= seg[i];
     }
@@ -182,6 +183,11 @@
   // Meno je najviac 14 znakov, preto aj skrátená podoba („Majster hodváb“).
   const RESERVED_NAMES = ['babka', 'babka bylinkarka', 'majster', 'majster hodvabu'];
   const plainName = n => String(n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  // Čo povedať o majstrovi, ktorý kráča (m = masterAt): večer odchádza k babke, ráno prichádza na trh
+  function masterRoadText(m) {
+    return m.to === 'hut' ? 'Majster hodvábu sa už pobral na noc k babke do chalúpky. Dobehni ho tam, alebo príď ráno na trh. 🧵'
+      : 'Majster hodvábu sa ráno vracia na trh – o chvíľu tu bude. 🧵';
+  }
   function reservedName(name) {
     const n = plainName(name);
     return !!n && RESERVED_NAMES.some(r => r === n || (n.length >= 14 && r.startsWith(n)));
@@ -847,7 +853,7 @@
     CHAT_MAX, chatText,
     W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, TICKS_PER_HOUR, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
-    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, canLevel, SCAVENGE, isWild, TOOLS, ICEHOUSE, insulLevel, BLANKET_SILK, MASTER, MASTER_LOOK, masterAt, reservedName, DIELNA, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, BODY, arrivalTiles, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_HEART, sunZone, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt, viewDiagAt,
+    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, canLevel, SCAVENGE, isWild, TOOLS, ICEHOUSE, insulLevel, BLANKET_SILK, MASTER, MASTER_LOOK, masterAt, masterRoadText, reservedName, DIELNA, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, BODY, arrivalTiles, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_HEART, sunZone, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt, viewDiagAt,
     SPIDERS, WEB, WEB_ANCHOR, CORNER_WALL, CORNER_AREAS,
     sellPrice, itemName, buildMap, buildMountains, buildPomedzie, buildLes, buildArea, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
   };

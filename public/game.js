@@ -360,7 +360,7 @@
     if (S.area === 'les' && S.webTile.has(ty * S.W + tx)) return sel === 'lamp' ? { i: '🕸️', l: 'Pavučina', info: true } : { i: '🕸️', l: 'Ťahať hodváb' };
     if (cornerAt(tx, ty)) return { i: '🧹', l: 'Odstrániť pavučinu' };
     const ma = masterNow();
-    if (ma && S.area === 'garden' && Math.floor(ma.x) === tx && Math.floor(ma.y) === ty) return ma.still ? { i: '🧵', l: 'Majster', ui: 'majster' } : { i: '🧵', l: 'Majster na ceste', info: true };
+    if (ma && S.area === 'garden' && Math.floor(ma.x) === tx && Math.floor(ma.y) === ty) return ma.still ? { i: '🧵', l: 'Majster', ui: 'majster' } : { i: '🧵', l: 'Majster na ceste', info: true, ma };
     switch (t.g) {
       case 'stall': return { i: '🛒', l: 'Trh', ui: 'shop' };
       case 'cauldron': return { i: '⚗️', l: 'Kotlík', ui: 'cauldron' };
@@ -461,7 +461,7 @@
           : t.ice ? `Tu ešte vysekáš ${t.ice}× ľad. Vyber v lište krompáč. ⛏️` : 'Tu je ľad vysekaný až po dno. 🧊') + state);
       } else if (a.l === 'Otvor v ľade') toast('Tu už je otvor v ľade. Cez noc zamrzne – skús iné miesto. 🧊');
       else if (a.l === 'Pavučina') toast('S lampášom v ruke hodváb neutrhneš – potrebuješ voľnú ruku. Vyber si v lište niečo iné alebo prázdnu ruku. 🕸️');
-      else if (a.l === 'Majster na ceste') toast('Majster hodvábu je práve na ceste. Počkaj, kým príde. 🧵');
+      else if (a.l === 'Majster na ceste') toast(D.masterRoadText(a.ma));
       else if (a.l === 'Miesto majstra') toast(masterNow() ? 'Majster hodvábu je na noc u babky v chalúpke. Ráno o 6:00 sa vráti na trh. 🧵' : 'Tu predáva majster hodvábu – do dedinky chodí len na jar a na jeseň. 🧵');
       else if (a.l === 'Pozemok') toast(onDielnaLot(tx, ty)
         ? `Pozemok pre Dielňu. Postaviť ju môže ktokoľvek zo záhrady na trhu (záložka Vylepšiť) za ${D.DIELNA.price} 🪙 (treba ⭐${D.DIELNA.rep}). 🪚`
