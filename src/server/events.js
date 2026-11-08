@@ -4,7 +4,7 @@
 // inak kľúč hráča); obnovu políčok, batohov, trhu, nástenky a skladu si server odvodí zo zapísaných kľúčov.
 // Prítomnosť pripojených hráčov (kde stoja, či hľadajú v tráve) dostane návrh ako ctx.presence – nie je to stav sveta.
 const D = require('../shared/data.ts');
-const E = require('./engine.js');
+const E = require('./engine.ts');
 const Econ = require('./economy.js');
 const I = require('./items.ts');
 const Ice = require('./ice.js');

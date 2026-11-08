@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const E = require('../src/server/engine.js');
+const E = require('../src/server/engine.ts');
 const D = require('../src/shared/data.ts');
 const TPD = E.TICKS_PER_DAY;
 

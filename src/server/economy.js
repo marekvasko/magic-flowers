@@ -3,7 +3,7 @@
 // Funkcie nedostávajú svet, ale výrezy (slices), s ktorými pracujú: m = trh (world.market alebo jeho kópia z návrhu),
 // c = nástenka zákaziek (world.contracts), sv = uloženie hráča, tick = herný čas; náhoda a plánovanie cez ctx (engine.js).
 const D = require('../shared/data.ts');
-const E = require('./engine.js');
+const E = require('./engine.ts');
 const I = require('./items.ts');
 
 const TPD = D.TICKS_PER_DAY, DPS = D.DAYS_PER_SEASON, YEAR_DAYS = 4 * DPS;

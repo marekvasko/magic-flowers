@@ -17,7 +17,7 @@
 // Hráčov (kde stoja, lampáš, kam idú, ťahanie hodvábu) vidia návrhy len cez ctx.presence; náhoda len ctx.rng.
 // Rýchlosti sú v políčkach za sekundu reálneho času, časy v D.SPIDERS / D.WEB v ms – na kroky ich prepočíta daySeconds.
 const D = require('../shared/data.ts');
-const E = require('./engine.js');
+const E = require('./engine.ts');
 const I = require('./items.ts');
 const { areaTiles, clampPos } = require('./areas.ts');
 const Webs = require('../shared/webs.js');

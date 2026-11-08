@@ -7,7 +7,7 @@
 // Správa 'act' (klik na políčko s predmetom v ruke) sa najprv rozloží (resolveAct) na konkrétnu akciu podľa políčka,
 // predmetu a prítomnosti; server to urobí pri skladaní dávky, aby v denníku bolo, čo hráč naozaj urobil (pick, till…).
 const D = require('../shared/data.ts');
-const E = require('./engine.js');
+const E = require('./engine.ts');
 const Econ = require('./economy.js');
 const I = require('./items.ts');
 const Ice = require('./ice.js');
