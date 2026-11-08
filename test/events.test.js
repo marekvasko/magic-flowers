@@ -6,7 +6,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
 const D = require('../src/shared/data.ts');
-const Econ = require('../src/server/economy.js');
+const Econ = require('../src/server/economy.ts');
 
 function startServer(dataDir, port) {
   const proc = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server', 'server.js')], {

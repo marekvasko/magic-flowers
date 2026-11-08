@@ -6,7 +6,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
 const D = require('../src/shared/data.ts');
-const Econ = require('../src/server/economy.js');
+const Econ = require('../src/server/economy.ts');
 
 // ---------- Spoločné povolenie na pole ----------
 test('povolenie na pole: najvyššia úroveň je 96 políčok', () => {

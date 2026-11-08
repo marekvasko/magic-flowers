@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const D = require('../src/shared/data.ts');
 const E = require('../src/server/engine.ts');
-const Econ = require('../src/server/economy.js');
+const Econ = require('../src/server/economy.ts');
 const TPD = D.TICKS_PER_DAY;
 
 function makeWorld(seed) {

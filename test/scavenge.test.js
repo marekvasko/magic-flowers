@@ -123,7 +123,7 @@ test('klient nevidí druh divej rastliny, kým nevyklíči', () => {
 });
 
 test('divé semienka sa nedajú predať a majú slovenský názov', () => {
-  const Econ = require('../src/server/economy.js');
+  const Econ = require('../src/server/economy.ts');
   for (let se = 0; se < 4; se++) {
     assert.strictEqual(Econ.sellQuote({}, 0, 'wild_' + se), null);
     assert.match(D.itemName('wild_' + se), /^Divé semienko \((jar|leto|jeseň|zima)\)$/);

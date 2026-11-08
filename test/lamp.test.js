@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const D = require('../src/shared/data.ts');
 const Ice = require('../src/server/ice.ts');
-const Econ = require('../src/server/economy.js');
+const Econ = require('../src/server/economy.ts');
 
 test('lampáš je náradie z trhu s menom a cenou', () => {
   const T = D.TOOLS.lamp;

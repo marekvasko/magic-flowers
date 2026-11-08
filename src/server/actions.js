@@ -8,7 +8,7 @@
 // predmetu a prítomnosti; server to urobí pri skladaní dávky, aby v denníku bolo, čo hráč naozaj urobil (pick, till…).
 const D = require('../shared/data.ts');
 const E = require('./engine.ts');
-const Econ = require('./economy.js');
+const Econ = require('./economy.ts');
 const I = require('./items.ts');
 const Ice = require('./ice.ts');
 const Scav = require('./scavenge.ts');

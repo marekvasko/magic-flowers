@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const D = require('../src/shared/data.ts');
-const Econ = require('../src/server/economy.js');
+const Econ = require('../src/server/economy.ts');
 const TPD = D.TICKS_PER_DAY, DPS = D.DAYS_PER_SEASON;
 
 // ---- pôvodné vzorce (skopírované pred refaktorom, nemeniť) ----
