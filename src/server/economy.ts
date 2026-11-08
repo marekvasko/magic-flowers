@@ -452,7 +452,7 @@ export function maxRepOf(saves: Partial<Record<PlayerKey, PlayerSave>>): number 
 export function plotsUsedOf(tiles: readonly Tile[]): number { let n = 0; for (const t of tiles) if (t.s) n++; return n; }
 
 // Nová zákazka na nástenke c. Náhoda a plánovanie termínov cez ctx.
-function genContract(c: Contracts, tick: number, kind: ContractKind, ctx: GameCtx): Contract {
+function genContract(c: Contracts, tick: number, kind: ContractKind, ctx: E.Scheduler): Contract {
   const se = season(tick), g = ctx.rng;
   const ok = (sp: SpeciesId): boolean => !D.SPECIES[sp].strict;
   // krátka zákazka len na kvet, ktorý sa stihne zasadiť teraz a vypestovať ešte v tomto období
@@ -488,7 +488,7 @@ function genContract(c: Contracts, tick: number, kind: ContractKind, ctx: GameCt
 }
 
 // Doplní nástenku na 4 voľné zákazky; veľké zákazky od chvíle, keď má niekto v záhrade reputáciu úrovne 2.
-export function fillBoard(c: Contracts, tick: number, maxRep: number, ctx: GameCtx): void {
+export function fillBoard(c: Contracts, tick: number, maxRep: number, ctx: E.Scheduler): void {
   const open = (): Contract[] => c.list.filter(x => !x.takenBy);
   const hasKind = (k: ContractKind): boolean => open().some(x => x.kind === k);
   let guard = 0;
@@ -513,7 +513,7 @@ export function takeContract(c: Contracts, tick: number, sv: PlayerSave, key: Pl
 
 // Odovzdanie aj po častiach; po splnení vyplatí odmenu a reputáciu a doplní nástenku.
 // maxRep: doterajšia najvyššia reputácia záhrady; vráti { n: odovzdané kusy (0 = nič sa nestalo), msg, done, maxRep }.
-export function deliverContract(c: Contracts, tick: number, sv: PlayerSave, key: PlayerKey, id: number, maxRep: number, ctx: GameCtx): { n: number; msg: string; done?: boolean; maxRep: number } {
+export function deliverContract(c: Contracts, tick: number, sv: PlayerSave, key: PlayerKey, id: number, maxRep: number, ctx: E.Scheduler): { n: number; msg: string; done?: boolean; maxRep: number } {
   const k = c.list.find(x => x.id === id);
   if (!k || k.takenBy !== key) return { n: 0, msg: 'Táto zákazka nie je tvoja.', maxRep };
   const fl = `fl_${k.sp}` as const;
