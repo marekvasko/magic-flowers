@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const D = require('../src/shared/data.ts');
 const Scav = require('../src/server/scavenge.ts');
-const E = require('../src/server/engine.js');
+const E = require('../src/server/engine.ts');
 const TPD = D.TICKS_PER_DAY, C = D.SCAVENGE;
 
 const tiles = D.buildMap().map(g => ({ g, s: null }));

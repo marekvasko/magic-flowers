@@ -51,5 +51,5 @@ export interface AreaTilesWorld {
 export interface Rng {
   rand(): number;
   int(n: number): number;
-  pick<T>(list: readonly T[]): T;
+  pick<T>(list: readonly T[]): T | undefined;   // prázdny zoznam → undefined
 }

@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const D = require('../src/shared/data.ts');
-const E = require('../src/server/engine.js');
+const E = require('../src/server/engine.ts');
 const Econ = require('../src/server/economy.js');
 const TPD = D.TICKS_PER_DAY;
 
