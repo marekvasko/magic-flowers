@@ -24,6 +24,8 @@ export default tseslint.config(
       '@typescript-eslint/consistent-type-imports': 'error',
       // stav sveta je obyčajný JSON (ukladá sa); prázdna položka sa z tabuľky maže (inv[id], fb[id], ready[kľúč]…) – tak vyzerá formát
       '@typescript-eslint/no-dynamic-delete': 'off',
+      // čísla v šablóne sú bezpečné (kľúče výrezov ako `tile:${plocha}:${i}` musia mať typ s číslom, game.ts sl)
+      '@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true }],
       // test() z node:test vracia Promise, ktorý spúšťač testov sleduje sám – testy sa prenášajú 1:1 bez await/void
       '@typescript-eslint/no-floating-promises': ['error', { allowForKnownSafeCalls: [{ from: 'package', package: 'node:test', name: ['test', 'describe', 'it', 'suite'] }] }],
       '@typescript-eslint/explicit-module-boundary-types': 'error',

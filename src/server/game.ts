@@ -2,7 +2,7 @@
 // Engine (engine.ts) je všeobecný; tu sa dosadí, čo je herný svet, prítomnosť a správa.
 import type { AreaId } from '../shared/data.ts';
 import type { ServerMessage } from '../shared/protocol.ts';
-import type { Contracts, CornerArea, Dielna, Icehouse, Inventory, Market, PlayerKey, PlayerSave, SaveFile, Weather, Webs, WorldMode } from '../shared/save.ts';
+import type { Contracts, Dielna, Icehouse, Inventory, Market, PlayerKey, PlayerSave, SaveFile, Weather, Webs, WorldMode } from '../shared/save.ts';
 import type { Ctx, EngineWorld, Keys, PeriodicDef, Proposer, Slices, Spec } from './engine.ts';
 import type { Scav } from './scavenge.ts';
 import type { AreaTilesWorld, Presence, StorageSlice, Tile } from './world.ts';
@@ -31,8 +31,65 @@ export interface GameWorld extends EngineWorld, AreaTilesWorld {
   plotsUsed: number;
   maxRep: number;
   webs?: Webs | null;
-  corners?: Partial<Record<CornerArea, string[]>> | null;
+  corners?: Partial<Record<AreaId, string[]>> | null;   // kúty krížiaka sú len v CornerArea, kód ich hľadá podľa plochy
   migratedFrom?: number;
+  // pavúky v lese a krížiaky na ceste do kúta – neukladajú sa (Spiders.load ich po načítaní postaví)
+  sps?: Partial<Record<string, SpiderState>>;
+  kz?: Partial<Record<AreaId, Kriziak | null>>;
+}
+
+// ---- Pavúky (spiders.ts) ----
+// Miesto na kmeni (pavúk naň vylezie): bod pri kmeni a smer od kmeňa (nx, ny)
+export interface TreeSpot { x: number; y: number; nx: number; ny: number }
+// Čo sa hýbe po lese či záhrade: poloha, smer pohľadu, či sa práve hýbe
+export interface Mover { x: number; y: number; a: number; moving: boolean }
+export type SpiderStage = 'home' | 'walk' | 'pause' | 'return' | 'search' | 'totree' | 'guard' | 'alert' | 'chase';
+// Pavúk v Lese divov (vlčiak 'v' alebo stará pradlena 'p'): nora (hx, hy), stav, cesta po políčkach (pi = koľko prešiel),
+// koho naháňa (tgt), na kmeni výška z a miesto tr, pri ktorej pavučine čaká (web), kedy chce znova konať (next, null = spí)
+export interface SpiderState extends Mover {
+  id: string;
+  k: 'v' | 'p';
+  o: number;
+  hx: number;
+  hy: number;
+  st: SpiderStage;
+  until: number;
+  cool: number;
+  scared: number;
+  path: number[] | null;
+  pi?: number;
+  tgt: PlayerKey | null;
+  z: number;
+  tr: TreeSpot | null;
+  web: number | null;
+  up: boolean;
+  next: number | null;
+  gz?: number;
+  repath?: number;
+  seen?: number;
+  border?: number;
+  fast?: boolean;
+  goal?: number;
+}
+// Krížiak na ceste do kúta: cesta po políčkach plochy širokej w, kút (spot), stromy okolo cesty [cx, cz, r]; pri úteku
+// smer (fx, fy) a strom (tree), na strome výška z
+export interface Kriziak extends Mover {
+  id: string;
+  k: 'k';
+  path: number[];
+  w: number;
+  spot: string;
+  trees: [number, number, number][];
+  st: 'go' | 'pause' | 'flee' | 'climb';
+  until: number;
+  left: number;
+  next: number;
+  fx?: number;
+  fy?: number;
+  tree?: TreeSpot | null;
+  tr?: TreeSpot | null;
+  z?: number;
+  up?: boolean;
 }
 
 // ---- Správy z návrhov ----
@@ -68,8 +125,9 @@ export interface GameSlices extends Slices {
   fairyNight: number;
   glacierFed: number;
   lesSeed: number;
+  daySeconds: number;
   webs: Webs;
-  corners: Partial<Record<CornerArea, string[]>>;
+  corners: Partial<Record<AreaId, string[]>>;
   storage: StorageSlice;
 }
 // Poloha hráča v uložení (výrez pos:<kľúč>)
@@ -87,10 +145,15 @@ export type KeyedSlice<K extends string> =
   : K extends 'market:compost' ? Market['compost']
   : K extends `market:seed_${string}` ? NonNullable<Market['seeds'][keyof Market['seeds']]> | undefined
   : K extends `market:fl_${string}` ? NonNullable<Market['flowers'][keyof Market['flowers']]> | undefined
+  : K extends 'spider:*' ? Partial<Record<string, SpiderState>>
+  : K extends `spider:${string}` ? SpiderState | undefined
+  : K extends `kz:${string}` ? Kriziak | null | undefined
   : never;
 // Výrez s dvojbodkou v kľúči (save:ana, tile:garden:12, market:fl_mak…) s typom podľa kľúča.
 // Jediné miesto, kde sa hodnota výrezu (JSON) prevedie na herný typ – tvar zaručuje kľúč (engine.ts sliceOf).
 export function sl<K extends string>(s: Slices, key: K): KeyedSlice<K> { return s[key] as KeyedSlice<K>; }
+// Výrez, ktorý návrh deklaruje len niekedy (napr. 'spider:*' pri príchode do lesa): undefined, keď ho nedeklaroval
+export function maybe<K extends string>(s: Slices, key: K): KeyedSlice<K> | undefined { return s[key] as KeyedSlice<K> | undefined; }
 // Zápis výrezu s dvojbodkou (keď ho návrh nahradí celý, nemení ho na mieste)
 export function put<K extends string>(s: Slices, key: K, v: KeyedSlice<K>): void { s[key] = v; }
 

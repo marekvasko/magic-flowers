@@ -15,7 +15,7 @@ const P = require('./presence.ts');
 const Debug = require('./debug.js');
 const Events = require('./events.ts');
 const Actions = require('./actions.js');
-const Spiders = require('./spiders.js');
+const Spiders = require('./spiders.ts');
 
 const PORT = +process.env.PORT || 3000;
 // Dĺžka herného dňa je napevno D.BASE_DAY_SECONDS (20 min); DAY_SECONDS v prostredí slúži len na testovanie.

@@ -144,7 +144,7 @@ export interface Web {
   n: number;
   silk: number;
   o: number;
-  in?: Partial<Record<PlayerKey, 1 | -1>>;
+  in?: Partial<Record<PlayerKey, 1 | -1>> | undefined;   // návrh ho po vyjdení z pavučiny nastaví na undefined (v JSON chýba)
 }
 export interface Webs {
   list: Web[];
