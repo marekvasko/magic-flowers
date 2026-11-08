@@ -99,7 +99,7 @@
     switch (m.t) {
       case 'welcome':
         if (S.areaFx) endAreaFx(true); // nové pripojenie – rozbehnutý prechod už neplatí
-        S.id = m.id; S.tiles = m.tiles; S.me.x = m.x; S.me.y = m.y; S.joined = true;
+        S.id = m.id; S.tiles = m.tiles; S.me.x = m.x; S.me.y = m.y; S.joined = true; S.others.clear(); // hráči sa načítajú znova (aj po znovupripojení)
         S.area = m.area || 'garden'; S.areaSeq = m.seq | 0; S.tilesGen++;
         S.W = m.w || D.W; S.H = m.h || D.H;
         findAnchors();
@@ -136,7 +136,7 @@
         const seen = new Set();
         for (const p of m.list) {
           seen.add(p.id);
-          if (p.id === S.id) { S.myEmote = p.e; S.mySi = p.si; continue; }
+          if (p.id === S.id) { S.myEmote = p.e; S.mySi = p.si; S.others.delete(p.id); continue; } // vlastná postavička nikdy medzi ostatnými (#125)
           let o = S.others.get(p.id);
           if (!o) { o = { x: p.x, y: p.y, phase: 0, jz: 0, jv: 0, j: p.j }; S.others.set(p.id, o); }
           if (p.j !== o.j && !o.jz) o.jv = JUMP_V; // iný hráč skočil
