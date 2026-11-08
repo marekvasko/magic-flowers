@@ -1,7 +1,7 @@
 // Uloženie sveta (data/room-<id>.json) vo verzii SAVE_VERSION 11 – presne tak, ako ho zapíše serialize() v src/server/server.js.
 // Typ opisuje existujúci formát, nemení ho (#122, fáza 2). Staršie verzie prevedie migrate() na tento tvar.
 // Kľúč hráča (PlayerKey) je meno malými písmenami; v uloženiach sa ním odkazuje na hráča (saves, vlastník pôdy, zákazky…).
-// test/fixtures/save-v11.ts drží uloženie zo skutočného servera a prekladač ho kontroluje voči SaveFile (npm run typecheck).
+// test/save-v11.fixture.ts drží uloženie zo skutočného servera a prekladač ho kontroluje voči SaveFile (npm run typecheck).
 import type { AreaId, Batch, FestivalId, GiverId, ItemId, Look, SpeciesId, TillKind } from './data.ts';
 
 export type PlayerKey = string;

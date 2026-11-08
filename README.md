@@ -230,7 +230,7 @@ The game is 3D only, rendered with Three.js (`public/render3d.mjs`) at `/` (`/?r
 
 GitHub Actions (`.github/workflows/ci.yml`) on every push and pull request:
 
-1. **Tests** – syntax check of all JS files, type check (`npm run typecheck`), lint (`npm run lint`) and `npm test` (engine, economy, items).
+1. **Tests** – syntax check of all JS files, type check (`npm run typecheck`), the browser bundle (`npm run build`), lint (`npm run lint`) and `npm test` (engine, economy, items).
 2. **Docker image** – builds the image and runs a smoke test (the container must start and serve the game).
 3. **Publish** – on `main` and on `v*` tags the image is pushed to GitHub Container Registry:
    - `ghcr.io/marekvasko/magic-flowers:latest` (main)
@@ -279,13 +279,14 @@ Bugs, ideas and questions go to [GitHub issues](https://github.com/marekvasko/ma
 
 ## Technical details
 
-The game is being rewritten to TypeScript (#122). Server code lives in `src/server/` and code shared with the client in `src/shared/`; the client (`public/`) and the debug UI (`debug/`) move to `src/` in a later phase. `npm run typecheck` (`tsc`, strict) and `npm run lint` (ESLint: no `any`, `object`, `{}`, `Function` or `Record<string, unknown>`) check every `.ts` file; Node 24 runs `.ts` files directly.
+The game is being rewritten to TypeScript (#122). Server code lives in `src/server/` and code shared with the client in `src/shared/`; the client (`public/`) and the debug UI (`debug/`) move to `src/` in a later phase. `npm run typecheck` (`tsc`, strict) and `npm run lint` (ESLint: no `any`, `object`, `{}`, `Function` or `Record<string, unknown>`) check every `.ts` file; Node 24 runs `.ts` files directly. The browser can't, so `npm run build` (esbuild, `scripts/build.mjs`) bundles the shared TS modules into `build/shared/` (`npm start`, `npm run dev` and the Docker image do it); the server serves `/shared/<name>.js` from there first.
 
 - `src/server/server.js` – Node.js HTTP + WebSocket server (`ws`). The game state lives on the server: time, weather, growth, inventory and magic. Messages from clients go into a per-room inbox; a frame every 100 ms applies movement, then commits the frame's game actions as one engine batch, then advances game time.
 - `src/server/engine.js` – the simulation core: discrete time, the event queue, proposals over a frozen world, rounds, the journal (see [docs/engine.md](docs/engine.md)).
 - `src/server/events.js` – world events as proposals (dawn, hourly wilting, end of a grass search, end of the fairy potion); `src/server/economy.js` adds the market, NPCs, festivals and contracts.
 - `src/server/actions.js` – player actions as proposals (one per message type: till, water, plant, pick, buy, sell, contracts, storage, icehouse, well, potions, wishes, …), movement (`pos`), joining, leaving, the fairy dance, and `resolveAct`, which turns a tap on a tile into one of them.
-- `src/shared/data.js` – data shared by the server and the client (flowers, recipes, the maps of all areas, gates between them).
+- `src/shared/data.ts` – data shared by the server and the client (flowers, recipes, the maps of all areas, gates between them), strictly typed; in the browser it is the `GameData` global from `build/shared/data.js`.
+- `src/shared/save.ts` – the type of the save file (`data/room-*.json`, `SAVE_VERSION` 11), checked by the compiler against a real save (`test/save-v11.fixture.ts`); `src/shared/protocol.ts` – every WebSocket message in both directions.
 - `src/server/areas.js` – areas: tiles of each area, sizes, gates and arrival points, saving Les divov's layout.
 - `src/server/ice.js` – mountains, ice digging and the icehouse (with its insulation).
 - `src/server/dielna.js` – the Dielňa, the loom, the silk master and blankets, and the v11 migration of their tiles.
