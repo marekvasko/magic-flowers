@@ -38,3 +38,18 @@ export interface Presence {
   vy?: number;
   pull?: { id: number; n: string; px: number; py: number } | null;
 }
+
+// Políčka všetkých plôch sveta (areas.js areaTiles): záhrada je world.tiles, ostatné plochy majú pole so svojím menom
+export interface AreaTilesWorld {
+  tiles: Tile[];
+  hory: Tile[];
+  pomedzie: Tile[];
+  les: Tile[];
+}
+
+// Generátor náhody návrhu (engine.generator): rand() ∈ [0,1), int(n) ∈ 0..n-1, pick(zoznam)
+export interface Rng {
+  rand(): number;
+  int(n: number): number;
+  pick<T>(list: readonly T[]): T;
+}

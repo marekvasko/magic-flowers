@@ -8,7 +8,7 @@ const E = require('./engine.js');
 const Econ = require('./economy.js');
 const I = require('./items.ts');
 const Ice = require('./ice.js');
-const Scav = require('./scavenge.js');
+const Scav = require('./scavenge.ts');
 const Dielna = require('./dielna.js');
 
 const TPD = D.TICKS_PER_DAY;
