@@ -151,6 +151,7 @@
   // Prikrývka sa robí zo 6 hodvábu – u majstra hneď (a za mince), na krosnách v Dielni zadarmo, ale 2–4 herné hodiny.
   const BLANKET_SILK = 6;
   const MASTER = { name: 'Majster hodvábu', x: 14, y: 28, price: 100 }; // stojí v dedinke medzi trhom a Dielňou
+  const MASTER_LOOK = { shirt: '#e8e2d0', hair: '#8a8a8a', hat: true }; // svetlá ľanová košeľa, šedivé vlasy, klobúk
   const DIELNA = {
     name: 'Dielňa', icon: '🪚', price: 600, rep: 2,
     lot: { x0: 15, y0: 27, x1: 16, y1: 28 }, // stavebný pozemok vedľa trhu (2×2)
@@ -811,7 +812,7 @@
     CHAT_MAX, chatText,
     W, H, VIEW_DIAG, viewSize, DAYS_PER_SEASON, TICKS_PER_DAY, TICKS_PER_HOUR, MIN_PER_TICK, DAWN_TICK, BASE_DAY_SECONDS, dayOfTick, minOfTick,
     REP_LEVELS, repLevel, STORAGE_AGE_RATE, WILTED_PER_COMPOST, freshness, batchAge, UPGRADES, FESTIVALS, GIVERS, MIN_SEED_REP, SEASONS, SEASON_ICONS, SPECIES, POTIONS, RECIPES, TIPS, SHOP, PRICES,
-    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, canLevel, SCAVENGE, isWild, TOOLS, ICEHOUSE, insulLevel, BLANKET_SILK, MASTER, DIELNA, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, BODY, arrivalTiles, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_HEART, sunZone, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt, viewDiagAt,
+    RING, SPAWN, BABKA, BLOCK, GLACIER_STEP, TERRAIN_H, terrainH, level, passable, canStep, TILLABLE, canLevel, SCAVENGE, isWild, TOOLS, ICEHOUSE, insulLevel, BLANKET_SILK, MASTER, MASTER_LOOK, DIELNA, GLACIER_LAYERS, GLACIER_TOP, GLACIER_MELT, GLACIER_GROW, ICE_CARRY, ICE_SLOW, ICE_LIFE, ICE_PRICE, glacierLevels, isTool, AREAS, AREA_SIZE, areaSize, AREA_NAMES, AREA_IN, AREA_FX, GATES, ARRIVE, arrival, BODY, arrivalTiles, gateAt, gateSide, GLOOM, gloomAt, POMEDZIE_NORTH, MEADOW_Y, LES_W, LES_H, LES_SOUTH, LES_CELL, LES_DECOR, LES_HEART, sunZone, LES_CODE, decodeLes, DARK, isDark, DARK_RAMP, darkAt, viewDiagAt,
     SPIDERS, WEB, WEB_ANCHOR, CORNER_WALL, CORNER_AREAS,
     sellPrice, itemName, buildMap, buildMountains, buildPomedzie, buildLes, buildArea, isShade, seasonOf, isNight, canSleep, SLEEP_FROM_MIN, stageOf, mulberry32
   };

@@ -21,6 +21,7 @@
     LEAF_BROWN: 71, LEAF_LIME: 72, BIRCH: 73, BIRCH_MARK: 74, BARK: 75, BARK_DARK: 76, PINE_BARK: 77, NEEDLE: 78, NEEDLE2: 79,
     APPLE: 80, BLOSSOM_W: 81, BLOSSOM_P: 82, MOSS: 83, LICHEN: 84, STONE_LIGHT: 85,
     LEAF_DARK: 86, LEAF_DARK2: 87, WOOD_END: 88, ROTWOOD: 89, SAP: 90, // Les divov: tmavé lístie obrov, čelo a práchnivé drevo kmeňa, svietiaca živica
+    SILK: 91, SILK_DARK: 92, // hodvábne prikrývky (izolácia ľadovne, krosná v Dielni)
     INVIS: 63 // neviditeľná náhrada jemného modelu v hrubej mriežke (tieň, zatienenie, výber)
   };
   // Farby podľa ročného obdobia [jar, leto, jeseň, zima]; emis = svieti v noci
@@ -46,7 +47,8 @@
     [M.NEEDLE]: ['#2e6b3a'], [M.NEEDLE2]: ['#24572f'], [M.APPLE]: ['#d62828'], [M.BLOSSOM_W]: ['#fbe7ef'], [M.BLOSSOM_P]: ['#f5a9c8'],
     [M.MOSS]: ['#6f9a3c', '#5f8a34', '#7d7a36', '#6f9a3c'], [M.LICHEN]: ['#c9c27a'], [M.STONE_LIGHT]: ['#b3aea6'],
     [M.LEAF_DARK]: ['#2f5a2c', '#24482a', '#7a4a22', '#24482a'], [M.LEAF_DARK2]: ['#26502a', '#1d3d23', '#5e3a1c', '#1d3d23'],
-    [M.WOOD_END]: ['#a8865a'], [M.ROTWOOD]: ['#4a3826'], [M.SAP]: ['#ffcf3a']
+    [M.WOOD_END]: ['#a8865a'], [M.ROTWOOD]: ['#4a3826'], [M.SAP]: ['#ffcf3a'],
+    [M.SILK]: ['#f3e9d2'], [M.SILK_DARK]: ['#c9b48e']
   };
   const EMISSIVE = { [M.WINDOW]: '#ffd27a', [M.BREW]: '#9dffb8', [M.LANTERN]: '#ffe9a8', [M.FIRE]: '#ff9a3a', [M.FLAME]: '#ffe07a', [M.BREW_LIGHT]: '#d8ffe4', [M.SAP]: '#ffd84a' };
   function colorOf(mat, season) { const p = PALETTE[mat] || ['#ff00ff']; return p[Math.min(season, p.length - 1)] || p[0]; }
@@ -493,7 +495,8 @@
   const TREE_KINDS = Object.keys(TREE_BUILD);
   // Ľadovňa (2×2 polia = 16×16 minikociek): kamenná pivnica zapustená do zeme, strmá šindľová strecha až po zem,
   // drevené dvere vpredu a nad nimi okienko s modrým svetlom ľadu. V zime sneh na streche.
-  function icehouseModel(season) {
+  // ins = úroveň izolácie (0–3): hodvábne prikrývky – 1 nad dverami, 2 aj prehodené cez spodok strechy, 3 prešitá cez celú strechu.
+  function icehouseModel(season, ins) {
     const C = fineCanvas(2, 2, 26), { put, fbox } = C;
     fbox(1, 0, 2, 14, 5, 14, (x, y, z) => (x === 1 || x === 14 || z === 2 || z === 14) ? stoneVar(x, y, z) : M.DARKSTONE);
     // strecha: sedlová, hrebeň v smere z, schody po 1 minikocke, presah
@@ -510,7 +513,56 @@
     fbox(6, 11, 16, 9, 12, 16, M.ICE);
     // kamenné schodíky dolu do pivnice
     fbox(5, 0, 16, 10, 0, 18, M.STONE_LIGHT);
-    if (season === 3) C.snow([M.SHINGLE, M.SHINGLE_DARK, M.RIDGE, M.PLANK_DARK], 5);
+    // izolácia: prešívané hodvábne prikrývky (svetlé pruhy s tmavším stehom)
+    const quilt = (x, y, z) => ((x + y + z) % 4 === 0 ? M.SILK_DARK : M.SILK);
+    if (ins >= 1) { fbox(3, 9, 16, 12, 10, 16, quilt); fbox(3, 8, 16, 3, 8, 16, M.SILK); fbox(12, 8, 16, 12, 8, 16, M.SILK); } // nad dverami, okraje visia
+    const roofTo = ins >= 3 ? 7 : ins >= 2 ? 2 : -1; // po ktorý schod strechy siahajú prikrývky
+    for (let k = 0; k <= roofTo; k++) {
+      const y = 5 + k * 2 + 2;
+      for (const x of [-1 + k, 16 - k]) fbox(x, y, 1, x, y, 15, (xx, yy, z) => quilt(xx, yy, z));
+    }
+    if (ins >= 3) fbox(7, 22, 1, 8, 22, 15, M.SILK); // aj cez hrebeň
+    if (season === 3) C.snow([M.SHINGLE, M.SHINGLE_DARK, M.RIDGE, M.PLANK_DARK, M.SILK, M.SILK_DARK], 5);
+    return C.done();
+  }
+
+  // Dielňa (2×2 polia): zrub na kamennom sokli, otvorený predok so širokým vchodom, sedlová šindľová strecha
+  // s presahom nad vchodom a tabuľa s pílou. Vnútri pracovný stôl; loom = krosná s napnutými niťami a rolkou hodvábu.
+  // Pri stene kopa dreva a koza na rezanie. V zime sneh na streche.
+  function dielnaModel(season, loom) {
+    const C = fineCanvas(2, 2, 28), { put, fbox } = C;
+    fbox(0, 0, 1, 15, 0, 14, stoneVar);                                                            // sokel
+    // zrubové steny: zadná, bočné a predná s otvorom (x 4–11)
+    const log = (x, y, z) => (y % 3 === 2 ? M.LOG_DARK : M.LOG);
+    fbox(1, 1, 2, 14, 12, 2, log); fbox(1, 1, 2, 1, 12, 13, log); fbox(14, 1, 2, 14, 12, 13, log);
+    fbox(1, 1, 13, 3, 12, 13, log); fbox(12, 1, 13, 14, 12, 13, log); fbox(4, 11, 13, 11, 12, 13, M.LOG_DARK); // preklad nad vchodom
+    fbox(1, 1, 3, 13, 1, 12, M.PLANK_DARK);                                                         // dlážka
+    put(1, 7, 7, M.WINDOW); put(1, 7, 8, M.WINDOW); put(14, 7, 7, M.WINDOW); put(14, 7, 8, M.WINDOW); // okienka v bokoch
+    // strecha: hrebeň v smere x, schody po 1 minikocke, vpredu presah nad vchod
+    for (let k = 0; k <= 8; k++) {
+      const y = 13 + k;
+      fbox(-1, y, -1 + k, 16, y, 17 - k, (x, yy, z) => (z === -1 + k || z === 17 - k) ? (x % 2 ? M.SHINGLE : M.SHINGLE_DARK) : M.PLANK_DARK);
+    }
+    fbox(-1, 22, 7, 16, 22, 9, M.RIDGE);
+    // tabuľa s pílou nad vchodom
+    fbox(5, 14, 17, 10, 16, 17, M.SIGN);
+    fbox(6, 15, 18, 9, 15, 18, M.STONE_LIGHT); put(10, 15, 18, M.PLANK); put(6, 14, 18, M.STONE_LIGHT); put(8, 14, 18, M.STONE_LIGHT);
+    if (loom) {
+      // krosná: dva stojany, horné a dolné brvno, napnuté nite a navinutý hodváb
+      fbox(4, 2, 7, 4, 10, 7, M.PLANK_DARK); fbox(11, 2, 7, 11, 10, 7, M.PLANK_DARK);
+      fbox(4, 10, 7, 11, 10, 7, M.LOG_DARK); fbox(4, 3, 8, 11, 3, 8, M.LOG_DARK);
+      for (let x = 5; x <= 10; x++) fbox(x, 4, 7, x, 9, 7, x % 2 ? M.SILK : M.SILK_DARK);           // osnova
+      fbox(5, 4, 7, 10, 5, 7, M.SILK);                                                                 // utkaný kúsok
+      fbox(5, 2, 9, 10, 3, 9, M.SILK); put(4, 2, 9, M.PLANK_DARK); put(11, 2, 9, M.PLANK_DARK);        // rolka hotovej látky
+      fbox(7, 2, 10, 8, 2, 11, M.PLANK);                                                               // lavička tkáča
+    } else {
+      fbox(4, 2, 5, 11, 5, 7, (x, y) => (y === 5 ? M.COUNTER : x === 4 || x === 11 ? M.PLANK_DARK : 0)); // pracovný stôl
+      put(6, 6, 6, M.LOG); put(9, 6, 6, M.STONE_LIGHT);
+    }
+    // kopa dreva pri ľavej stene a koza na rezanie vpravo vpredu
+    for (let z = 4; z <= 11; z++) for (let y = 0; y <= 3 - (z % 2); y++) put(-2, y, z, (y + z) % 3 ? M.LOG : M.WOOD_END);
+    fbox(15, 0, 15, 15, 3, 15, M.PLANK_DARK); fbox(12, 0, 15, 12, 3, 15, M.PLANK_DARK); fbox(11, 4, 15, 16, 4, 15, M.LOG);
+    if (season === 3) C.snow([M.SHINGLE, M.SHINGLE_DARK, M.RIDGE, M.PLANK_DARK, M.LOG, M.WOOD_END], 12);
     return C.done();
   }
 
@@ -705,6 +757,9 @@
     { id: 'house', name: 'Čičmanský domček', group: 'Buildings', fn: 'cicmanyHouse', tiles: [3, 2], build: turned(cicmanyHouse) },
     { id: 'hut', name: 'Babkina chalupa', group: 'Buildings', fn: 'babkaHut', tiles: [3, 2], build: turned(babkaHut) },
     { id: 'icehouse', name: 'Ľadovňa', group: 'Buildings', fn: 'icehouseModel', tiles: [2, 2], build: turned(icehouseModel) },
+    ...[1, 2, 3].map(l => ({ id: 'icehouse-' + l, name: `Ľadovňa, izolácia ${l}`, group: 'Buildings', fn: `icehouseModel(ins = ${l})`, tiles: [2, 2], build: turned(se => icehouseModel(se, l)) })),
+    { id: 'dielna', name: 'Dielňa', group: 'Buildings', fn: 'dielnaModel', tiles: [2, 2], build: turned(se => dielnaModel(se, false)) },
+    { id: 'dielna-loom', name: 'Dielňa s krosnami', group: 'Buildings', fn: 'dielnaModel(loom = true)', tiles: [2, 2], build: turned(se => dielnaModel(se, true)) },
     { id: 'stall', name: 'Trh', group: 'Objects', fn: 'marketStall', tiles: [3, 1], build: turned(marketStall) },
     { id: 'well', name: 'Studňa', group: 'Objects', fn: 'wellModel', tiles: [1, 1], build: turned(wellModel) },
     { id: 'cauldron', name: 'Čarovný kotlík', group: 'Objects', fn: 'cauldronModel', tiles: [1, 1], build: turned(cauldronModel) },
@@ -744,22 +799,24 @@
     { g: 'stall', build: marketStall, tile: [1, 0] },
     { g: 'well', build: wellModel, tile: [0, 0] },
     { g: 'cauldron', build: cauldronModel, tile: [0, 0] },
-    { g: 'icehouse', build: icehouseModel, tile: [0, 1] }
+    { g: 'icehouse', build: icehouseModel, tile: [0, 1], v: o => o.ins | 0 },  // úroveň izolácie
+    { g: 'dielna', build: dielnaModel, tile: [0, 1], v: o => (o.loom ? 1 : 0) } // s krosnami / bez
   ];
-  // budovy závisia len od obdobia – postavia sa raz (aj ich sieť v render3d sa tak počíta len raz)
+  // budovy závisia len od obdobia a stavu (v) – postavia sa raz (aj ich sieť v render3d sa tak počíta len raz)
   const buildingCache = new Map();
-  function buildingModel(ft, season) {
-    const key = ft.g + '|' + season;
-    if (!buildingCache.has(key)) buildingCache.set(key, ft.build(season));
+  function buildingModel(ft, season, v) {
+    const key = ft.g + '|' + season + '|' + (v || 0);
+    if (!buildingCache.has(key)) buildingCache.set(key, ft.build(season, v || 0));
     return buildingCache.get(key);
   }
-  function fineModels(tiles, season, w, area) {
-    const out = [];
+  // state = stav budov, ktorý nie je v políčkach: { ins: úroveň izolácie ľadovne, loom: krosná v Dielni }
+  function fineModels(tiles, season, w, area, state) {
+    const out = [], st = state || {};
     for (const ft of FINE_TYPES) {
       const i = tiles.findIndex(t => t.g === ft.g);
       if (i < 0) continue;
       const tx = i % w, ty = (i / w) | 0;
-      const m = buildingModel(ft, season);
+      const m = buildingModel(ft, season, ft.v ? ft.v(st) : 0);
       out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: ft.g, ox: tx - FM / FINE, oy: groundHeight('grass') / R, oz: ty - FM / FINE, tile: { x: tx + ft.tile[0], y: ty + ft.tile[1] } });
     }
     for (let i = 0; i < tiles.length; i++) {
@@ -818,7 +875,8 @@
 
   // Celý svet z mapy (typy zeme) – deterministický, závisí len od mapy, ročného obdobia a plochy.
   // w = šírka plochy v políčkach (výška = tiles.length / w), area = ktorá plocha (druhy stromov)
-  function buildGrid(tiles, season, w, area) {
+  // state = stav budov mimo políčok (fineModels): { ins, loom }
+  function buildGrid(tiles, season, w, area, state) {
     w = w || D.W;
     const h = tiles.length / w, g = makeGrid(w, h);
     g.area = area || 'garden';
@@ -827,7 +885,7 @@
       g.heights[ty * w + tx] = th;
       for (let y = 0; y < th; y++) for (let z = ty * R; z <= ty * R + 1; z++) for (let x = tx * R; x <= tx * R + 1; x++) set(g, x, y, z, y === th - 1 ? topMaterial(gt) : subMaterial(gt, x, y, z));
     }
-    g.fine = fineModels(tiles, season, w, g.area);
+    g.fine = fineModels(tiles, season, w, g.area, state);
     g.owner = new Int16Array(g.NX * NY * g.NZ).fill(-1);
     g.fine.forEach((fm, i) => stampInvisible(g, fm, i));
     return g;

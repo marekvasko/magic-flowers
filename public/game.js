@@ -19,7 +19,7 @@
     tiles: [], tick: 0, market: null, board: [], rep: 0, up: {}, canCap: 5, plotLimit: 8, plotsUsed: 0, maxActive: 1, day: 1, min: 390, weather: 'sun', timeAt: 0, tickMs: 1000, daySeconds: 300, mode: 'running', storage: {},
     me: { x: D.SPAWN.x, y: D.SPAWN.y, dir: 0, phase: 0, moving: false, jz: 0, jv: 0, crawl: false }, crawlKey: false, crawlTgl: false, myEmote: null,
     others: new Map(), inv: {}, coins: 0, water: 20, recipes: [], seen: [], vily: false,
-    sel: 'hoe', area: 'garden', areaSeq: 0, W: D.W, H: D.H, tilesGen: 0, storageRate: D.STORAGE_AGE_RATE, icehouse: { built: false, ice: 0 }, quest: null, eternal: false, names: [],
+    sel: 'hoe', area: 'garden', areaSeq: 0, W: D.W, H: D.H, tilesGen: 0, storageRate: D.STORAGE_AGE_RATE, icehouse: { built: false, ice: 0 }, dielna: { built: false, loom: false }, loom: { busy: false, mine: null, ready: 0 }, quest: null, eternal: false, names: [],
     keys: {}, stick: { x: 0, y: 0 }, path: null, pendingAct: null, tapMark: null, lastSent: '', sentAt: 0,
     fx: [], screenFx: [], bubbles: {}, modal: null, cauldron: [], brewed: null, anchors: {}, joined: false,
     skyTaps: [], tipIdx: Math.floor(Math.random() * D.TIPS.length), stuckT: 0,
@@ -110,14 +110,14 @@
       case 'me':
         S.coins = m.coins; S.water = m.water; S.inv = m.inv; S.recipes = m.recipes; S.seen = m.seen; S.vily = m.vily;
         S.fb = m.fb || {}; S.fbTick = m.tick;
-        Object.assign(S, { rep: m.rep || 0, up: m.up || {}, canCap: m.canCap, plotLimit: m.plotLimit, plotsUsed: m.plotsUsed, maxActive: m.maxActive });
+        Object.assign(S, { rep: m.rep || 0, up: m.up || {}, canCap: m.canCap, plotLimit: m.plotLimit, plotsUsed: m.plotsUsed, maxActive: m.maxActive, loom: m.loom || { busy: false, mine: null, ready: 0 } });
         if (S.sel && !S.inv[S.sel]) S.sel = 'hoe'; // '' = prázdna ruka (vybraté prázdne miesto v lište)
         renderHotbar(); updateHud();
         if (S.modal && S.modal.refresh) S.modal.refresh();
         break;
       case 'area': areaChange(m); break; // prechod do inej plochy (záhrada ↔ hory, záhrada ↔ Les na pomedzí)
       case 'room':
-        S.storageRate = m.storageRate || D.STORAGE_AGE_RATE; S.icehouse = m.icehouse || { built: false, ice: 0 };
+        S.storageRate = m.storageRate || D.STORAGE_AGE_RATE; S.icehouse = m.icehouse || { built: false, ice: 0 }; S.dielna = m.dielna || { built: false, loom: false };
         S.eternal = m.eternal; S.storageFb = m.storageFb || {}; S.storageTick = m.tick; S.names = m.names; S.mode = m.mode; S.daySeconds = m.daySeconds; S.storage = m.storage || {};
         if (S.modal && S.modal.refresh) S.modal.refresh();
         break;
@@ -261,7 +261,7 @@
     S.anchors = {};
     for (let i = 0; i < S.tiles.length; i++) {
       const g = S.tiles[i].g;
-      if ((g === 'hut' || g === 'house' || g === 'stall' || g === 'well' || g === 'cauldron' || g === 'icehouse') && !S.anchors[g]) S.anchors[g] = { x: i % S.W, y: (i / S.W) | 0 };
+      if ((g === 'hut' || g === 'house' || g === 'stall' || g === 'well' || g === 'cauldron' || g === 'icehouse' || g === 'dielna') && !S.anchors[g]) S.anchors[g] = { x: i % S.W, y: (i / S.W) | 0 };
     }
   }
 
@@ -371,7 +371,11 @@
       case 'glacier':
         if (sel === 'pick') return t.ice ? { i: '🧊', l: 'Vysekať ľad' } : { i: '🧊', l: 'Ľadovec', info: true };
         return S.inv.pick ? null : { i: '🧊', l: 'Ľadovec', info: true }; // bez krompáča v ruke sa po ľadovci len chodí
-      case 'icehouse': return { i: '🧊', l: 'Ľadovňa', ui: 'icehouse' };
+      case 'icehouse': // s prikrývkou v ruke ju izoluješ; s kvetom či iným predmetom (nie náradím) vysvetlí, čo do nej patrí (#63)
+        if (sel === 'blanket') return { i: '🧶', l: 'Izolovať' };
+        return sel && sel !== 'ice' && !D.isTool(sel) ? { i: '🧊', l: 'Ľadovňa', ui: 'icehouse', only: true } : { i: '🧊', l: 'Ľadovňa', ui: 'icehouse' };
+      case 'dielna': return { i: '🪚', l: 'Dielňa', ui: 'dielna' };
+      case 'majster': return { i: '🧵', l: 'Majster', ui: 'majster' };
       case 'lot': return { i: '🪧', l: 'Pozemok', info: true };
       case 'shroom': case 'ring': return { i: '🍄', l: 'Huby', info: true };
     }
@@ -436,9 +440,11 @@
     S.path = path; S.pendingAct = { x: tx, y: ty, onTile: true }; S.stuckT = 0;
   }
 
+  const onDielnaLot = (tx, ty) => { const L = D.DIELNA.lot; return tx >= L.x0 && tx <= L.x1 && ty >= L.y0 && ty <= L.y1; };
   function doAction(tx, ty) {
     const a = ctxAction(tx, ty);
     if (!a) return;
+    if (a.only) toast('Do ľadovne patrí len ľad 🧊 (a hodvábne prikrývky na izoláciu). Kvety ulož do skladu v domčeku – ľad v ľadovni ho chladí, takže v ňom vädnú 4× pomalšie.');
     if (a.ui) return openUI(a.ui);
     if (a.l === 'Hľadať' && !onTile(tx, ty)) return walkOnto(tx, ty);
     if (a.info) {
@@ -451,7 +457,9 @@
           : t.ice ? `Tu ešte vysekáš ${t.ice}× ľad. Vyber v lište krompáč. ⛏️` : 'Tu je ľad vysekaný až po dno. 🧊') + state);
       } else if (a.l === 'Otvor v ľade') toast('Tu už je otvor v ľade. Cez noc zamrzne – skús iné miesto. 🧊');
       else if (a.l === 'Pavučina') toast('S lampášom v ruke hodváb neutrhneš – potrebuješ voľnú ruku. Vyber si v lište niečo iné alebo prázdnu ruku. 🕸️');
-      else if (a.l === 'Pozemok') toast(`Pozemok pre ľadovňu. Postaviť ju môže ktokoľvek zo záhrady na trhu (záložka Vylepšiť) za ${D.ICEHOUSE.price} 🪙. 🧊`);
+      else if (a.l === 'Pozemok') toast(onDielnaLot(tx, ty)
+        ? `Pozemok pre Dielňu. Postaviť ju môže ktokoľvek zo záhrady na trhu (záložka Vylepšiť) za ${D.DIELNA.price} 🪙 (treba ⭐${D.DIELNA.rep}). 🪚`
+        : `Pozemok pre ľadovňu. Postaviť ju môže ktokoľvek zo záhrady na trhu (záložka Vylepšiť) za ${D.ICEHOUSE.price} 🪙. 🧊`);
       else plantInfo(tx, ty);
       return;
     }
@@ -690,7 +698,7 @@
 
   // ---------- Hotbar ----------
   function hotbarIds() {
-    const order = id => id === 'hoe' ? 0 : id === 'can' ? 1 : id === 'pick' ? 1.5 : id === 'lamp' ? 1.6 : id === 'compost' ? 2 : id.startsWith('seed_') || D.isWild(id) ? 3 : id.startsWith('fl_') ? 4 : id === 'wilted' ? 4.5 : id === 'silk' ? 4.6 : 5;
+    const order = id => id === 'hoe' ? 0 : id === 'can' ? 1 : id === 'pick' ? 1.5 : id === 'lamp' ? 1.6 : id === 'compost' ? 2 : id.startsWith('seed_') || D.isWild(id) ? 3 : id.startsWith('fl_') ? 4 : id === 'wilted' ? 4.5 : id === 'silk' ? 4.6 : id === 'blanket' ? 4.7 : 5;
     const spOrder = Object.keys(D.SPECIES);
     const rank = id => { const k = id.replace(/^(seed_|fl_|po_)/, ''); const i = spOrder.indexOf(k); return i < 0 ? 99 : i; };
     return Object.keys(S.inv).filter(id => S.inv[id] > 0).sort((a, b) => order(a) - order(b) || rank(a) - rank(b));
@@ -735,7 +743,8 @@
     if (S.sel === 'wilted') txt += ` · ${D.WILTED_PER_COMPOST} ks = 1 kompost (v sklade)`;
     if (S.sel === 'pick') txt += ' · ľad na ľadovci v horách, v zime aj na jazierku';
     if (S.sel === 'lamp') txt += ' · v ruke svieti, keď je tma';
-    if (S.sel === 'silk') txt += ' · z pavučín v Lese divov';
+    if (S.sel === 'silk') txt += ` · z pavučín v Lese divov · ${D.BLANKET_SILK} ks = 1 prikrývka (majster hodvábu, krosná v Dielni)`;
+    if (S.sel === 'blanket') txt += ' · ťukni s ňou na ľadovňu – izoluje ju, ľad sa topí pomalšie';
     if (S.sel === 'ice') {
       const o = oldestBatch('ice');
       txt += ` ${S.inv.ice || 0}/${D.ICE_CARRY} · ťažký` + (o ? ` · roztopí sa o ${fmtLeft(o.left)}` : '');
@@ -804,6 +813,8 @@
     if (kind === 'house') return openModal('🏠 Domček', renderHouse);
     if (kind === 'wish') return openModal('✨ Papraďový kvet', renderWish);
     if (kind === 'icehouse') return openModal('🧊 Ľadovňa', renderIcehouse);
+    if (kind === 'dielna') return openModal('🪚 Dielňa', renderDielna);
+    if (kind === 'majster') return openModal('🧵 ' + D.MASTER.name, renderMaster);
   }
 
   // ---- Pomocné pre ekonomiku ----
@@ -940,6 +951,9 @@
         const B = D.ICEHOUSE;
         buyRow(B.icon, B.name, `Spoločná stavba pri domčeku pre ${B.cap} blokov ľadu. Kým je v nej ľad, kvety v sklade vädnú 4× pomalšie (inak 2×). Ľad sa topí, v zime nie.`,
           S.icehouse.built ? 'Stojí' : null, B.price, B.rep, () => send({ t: 'build', id: 'icehouse' }));
+        const DL = D.DIELNA;
+        buyRow(DL.icon, DL.name, `Spoločná stavba vedľa trhu. Kúpiš do nej krosná (${DL.loom.price} 🪙), ktoré z ${D.BLANKET_SILK} hodvábu utkajú prikrývku na izoláciu ľadovne – bez platenia majstrovi.`,
+          S.dielna.built ? 'Stojí' : null, DL.price, DL.rep, () => send({ t: 'build', id: 'dielna' }));
       } else {
         festivalBanner(body);
         if (!M.news.length) body.appendChild(h('p', null, 'Zatiaľ žiadne správy.'));
@@ -1130,20 +1144,70 @@
     renderStorage(body);
   }
 
-  // Ľadovňa: koľko ľadu v nej je, ako rýchlo sa topí, vloženie ľadu z batohu
+  // Ľadovňa: na čo je, koľko ľadu v nej je, ako rýchlo sa topí, vloženie ľadu z batohu a izolácia prikrývkami
   function renderIcehouse(body) {
-    const B = D.ICEHOUSE, ice = S.icehouse.ice || 0, se = season();
-    const melt = B.melt[se], full = Math.ceil(ice);
+    const B = D.ICEHOUSE, ice = S.icehouse.ice || 0, se = season(), bl = S.icehouse.bl || 0, lvl = D.insulLevel(bl);
+    const melt = B.melt[se] * B.insul[lvl], full = Math.ceil(ice);
+    body.appendChild(h('p', { style: 'margin:4px 0 10px;font-size:14px' }, 'Do ľadovne sa dáva len ľad. Kvety ulož do skladu v domčeku – ľad v ľadovni ho chladí, takže v ňom vädnú 4× pomalšie.'));
     body.appendChild(h('div', { class: 'row', style: 'flex-direction:column;align-items:stretch' },
       h('b', null, `🧊 Ľad: ${full}/${B.cap}`),
       h('div', { style: 'height:10px;background:#eee;border-radius:5px;overflow:hidden' }, h('div', { style: `height:100%;width:${ice / B.cap * 100}%;background:#6ec6ff` })),
       h('small', null, ice <= 0 ? 'Ľadovňa je prázdna – sklad chladí len trochu (kvety vädnú 2× pomalšie).'
-        : `Sklad je vychladený – kvety v ňom vädnú 4× pomalšie. ` + (melt ? `Ľad sa roztopí asi o ${fmtLeft(ice / melt * 12)}.` : 'V zime sa ľad netopí. ❄️'))));
+        : `Sklad je vychladený – kvety v ňom vädnú 4× pomalšie. ` + (melt ? `Ľad sa roztopí asi o ${fmtLeft(ice / melt * D.TICKS_PER_HOUR)}.` : 'V zime sa ľad netopí. ❄️'))));
     const n = S.inv.ice || 0;
     const b = h('button', { class: 'btn', onclick: () => send({ t: 'icehouse', n }) }, n ? `Vložiť ľad (${n})` : 'Nemáš ľad');
     if (!n || full >= B.cap) b.disabled = true;
     body.appendChild(h('div', { class: 'row' }, img('ice'), h('div', { class: 'info' }, h('b', null, 'Doplniť ľad'),
       h('small', null, 'Ľad vysekáš krompáčom na ľadovci v horách (chodník na severovýchode záhrady), v zime aj na zamrznutom jazierku.')), h('div', { class: 'btns' }, b)));
+    // izolácia z hodvábnych prikrývok
+    const max = B.blankets[B.blankets.length - 1], next = B.blankets[lvl + 1];
+    body.appendChild(h('div', { class: 'row' }, img('blanket'), h('div', { class: 'info' },
+      h('b', null, `🧶 Izolácia: úroveň ${lvl}/${B.blankets.length - 1}`),
+      h('small', null, (lvl ? `Ľad sa topí len na ${Math.round(B.insul[lvl] * 100)} %. ` : 'Bez izolácie sa ľad topí naplno. ')
+        + (next ? `Prikrývky: ${bl}/${next} – pri ${next} sa bude ľad topiť len na ${Math.round(B.insul[lvl + 1] * 100)} %. Ťukni na ľadovňu s prikrývkou v ruke.` : `Všetkých ${max} prikrývok je vnútri – lepšie sa izolovať nedá.`)),
+      h('small', null, `Prikrývku zo ${D.BLANKET_SILK} hodvábu utká majster hodvábu pri trhu (+${D.MASTER.price} 🪙) alebo krosná v Dielni.`))));
+  }
+
+  // Dielňa: krosná (kúpa, tkanie prikrývky, vyzdvihnutie hotovej)
+  function renderDielna(body) {
+    const L = D.DIELNA.loom, lm = S.loom || {}, silk = S.inv.silk || 0;
+    body.appendChild(h('p', { style: 'margin:4px 0 10px;font-size:14px' }, 'Spoločná dielňa celej záhrady. Čo sa do nej kúpi, slúži všetkým.'));
+    if (!S.dielna.loom) {
+      const lvl = D.repLevel(S.rep), btn = h('button', { class: 'btn', onclick: () => send({ t: 'buyLoom' }) }, L.price + '🪙');
+      if (S.coins < L.price || lvl < L.rep) btn.disabled = true;
+      body.appendChild(h('div', { class: 'row' }, h('div', { style: 'font-size:30px;width:40px;text-align:center' }, L.icon),
+        h('div', { class: 'info' }, h('b', null, `${L.icon} ${L.name}`), h('small', null, `Utkajú prikrývku zo ${D.BLANKET_SILK} hodvábu bez platenia, len to trvá 2–4 herné hodiny. Pre celú záhradu.` + (L.rep ? ` · treba ⭐${L.rep}` : ''))),
+        h('div', { class: 'btns' }, btn)));
+      return;
+    }
+    if (lm.ready) {
+      body.appendChild(h('div', { class: 'row' }, img('blanket'), h('div', { class: 'info' }, h('b', null, `Hotové: ${lm.ready}× prikrývka`), h('small', null, 'Krosná ju pre teba dotkali.')),
+        h('div', { class: 'btns' }, h('button', { class: 'btn', onclick: () => send({ t: 'loomTake' }) }, 'Vziať'))));
+    }
+    let note, btn = null;
+    if (lm.mine != null) note = `Tká sa tvoja prikrývka – hotová bude asi o ${fmtLeft(lm.mine - S.tick)}.`;
+    else if (lm.busy) note = 'Krosná práve tkajú prikrývku pre niekoho iného. Skús to neskôr.';
+    else {
+      note = `Založ ${D.BLANKET_SILK}× hodváb (máš ${silk}). Prikrývka bude hotová o 2–4 herné hodiny a počká tu na teba.`;
+      btn = h('button', { class: 'btn', onclick: () => send({ t: 'loomStart' }) }, 'Tkať');
+      if (silk < D.BLANKET_SILK) btn.disabled = true;
+    }
+    body.appendChild(h('div', { class: 'row' }, h('div', { style: 'font-size:30px;width:40px;text-align:center' }, L.icon),
+      h('div', { class: 'info' }, h('b', null, `${L.icon} ${L.name}`), h('small', null, note)), btn ? h('div', { class: 'btns' }, btn) : null));
+  }
+
+  // Majster hodvábu: prikrývka hneď, za hodváb a mince (vzhľad zdieľa 3D postavička, render3d.mjs)
+  const MASTER_LOOK = D.MASTER_LOOK;
+  function renderMaster(body) {
+    const pc = h('canvas', { width: 80, height: 90 }), silk = S.inv.silk || 0;
+    Art.char(pc.getContext('2d'), 40, 86, 80, MASTER_LOOK, 0, 0, {});
+    body.appendChild(h('div', { class: 'dlg' }, pc, h('div', { class: 'bubble' },
+      `Dobrý deň, ${S.name}! Prines mi ${D.BLANKET_SILK}× pavúčí hodváb z Lesa divov a za ${D.MASTER.price} 🪙 ti z neho hneď utkám hodvábnu prikrývku. S ňou bude ľadovňa držať ľad oveľa dlhšie. 🧵`
+      + (S.dielna.loom ? ' Lacnejšie ti ju utkajú krosná v Dielni – len si počkáš.' : ''))));
+    const btn = h('button', { class: 'btn', onclick: () => send({ t: 'masterWeave' }) }, `${D.MASTER.price}🪙`);
+    if (silk < D.BLANKET_SILK || S.coins < D.MASTER.price) btn.disabled = true;
+    body.appendChild(h('div', { class: 'row' }, img('blanket'), h('div', { class: 'info' }, h('b', null, D.itemName('blanket')),
+      h('small', null, `${D.BLANKET_SILK}× hodváb (máš ${silk}) + ${D.MASTER.price} 🪙 · hneď`)), h('div', { class: 'btns' }, btn)));
   }
 
   // Prekrytie počas spánku: čakanie na ostatných, potom zrýchlená noc
@@ -1201,7 +1265,8 @@
       <p>📦 V <b>domčeku</b> je spoločný sklad pre celú záhradu – peniaze má každý svoje.</p>
       <p>🏔️ <b>Hory:</b> chodník na severovýchodnom okraji záhrady (za babkinou chalúpkou) vedie do hôr. Na ľadovci pod skalami vysekáš <b>krompáčom</b> ⛏️ ľad – každé ťuknutie zoberie vrchnú vrstvu. Po ľadovci sa dá chodiť: vyjdeš o pol bloku, so skokom o celý blok, a kde stojíš, tam ľad nedorastie. Plazením cez žiadny schod (ľad, skalka…) nezídeš ani nevyjdeš – nespadneš z hrany. Ľadu je málo: ľadovec sám nedorastá, len keď prší alebo sneží, a v teple sa topí od okrajov. Kto ho vykope priveľa, nechá ostatných bez ľadu. V zime vysekáš ľad aj na zamrznutom jazierku (z každého políčka raz za deň).</p>
       <p>🧊 Uneseš najviac ${D.ICE_CARRY} kusov ľadu, ťahá ťa dolu (chodíš pomalšie) a do pol dňa sa ti v batohu roztopí – ponáhľaj sa s ním do ľadovne. V lete ho trh dobre vykúpi, v zime takmer vôbec.</p>
-      <p>🧊 <b>Ľadovňa</b> pri domčeku (kúpi ju ktokoľvek na trhu v záložke Vylepšiť) drží ${D.ICEHOUSE.cap} blokov ľadu. Kým je v nej ľad, kvety v sklade vädnú 4× pomalšie. Ľad sa topí – v lete rýchlo, v zime vôbec – tak ho dopĺňaj.</p>
+      <p>🧊 <b>Ľadovňa</b> pri domčeku (kúpi ju ktokoľvek na trhu v záložke Vylepšiť) drží ${D.ICEHOUSE.cap} blokov ľadu – nič iné sa do nej nedáva, kvety patria do skladu v domčeku. Kým je v nej ľad, kvety v sklade vädnú 4× pomalšie. Ľad sa topí – v lete rýchlo, v zime vôbec – tak ho dopĺňaj.</p>
+      <p>🧶 <b>Izolácia ľadovne:</b> z ${D.BLANKET_SILK} pavúčích hodvábov sa dá utkať hodvábna prikrývka – u 🧵 majstra hodvábu pri trhu hneď za ${D.MASTER.price} 🪙, alebo zadarmo na krosnách v 🪚 Dielni (stavba vedľa trhu, kúpi ju ktokoľvek v Vylepšiť), kde sa tká 2–4 herné hodiny. Ťukni s prikrývkou na ľadovňu: po 1, 3 a 6 prikrývkach sa ľad topí už len na ${D.ICEHOUSE.insul.slice(1).map(v => Math.round(v * 100) + ' %').join(', ')}.</p>
       <p>🕸️ <b>Les divov a pavúky:</b> medzi kmeňmi visia pavučiny. Postav sa k nej a ťahaj hodváb (nie s lampášom v ruke – potrebuješ voľnú ruku). Každé potiahnutie dá 1 hodváb, ale pavučina sa zachveje a jej majiteľ to môže zacítiť; tretie potiahnutie ju roztrhne. Do pavučiny nevbehni – prilepíš sa. 🕷️ <b>Vlčiak</b> žije v nore pri chodníku a naháňa ťa len po svojom území. Keď ťa chytí, berie ti hodváb – zdvihni lampáš a pustí ťa aj s hodvábom. V tme sa mu lesknú oči. 🕷️ <b>Stará pradlena</b> stráži najvzdialenejšiu čistinu – lampáš ju len pomaly odtláča, tak sa k nej vyber s kamarátom.</p>
       <p>⚙️ V menu sa dá nastaviť, či svet <b>beží ďalej aj bez hráčov</b>, a ako dlho trvá herný deň.</p>
       <p>🎁 Darovať môžeš čokoľvek – vyber vec a ťukni na kamaráta. 💃 Tancovať a mávať môžeš tlačidlami.</p>

@@ -532,7 +532,7 @@ export function create(api) {
 
   function buildMesh(se) {
     sizeGround();
-    grid = W.buildGrid(S.tiles, se, S.W, S.area);
+    grid = W.buildGrid(S.tiles, se, S.W, S.area, buildingState());
     sizeWorld();
     const g = grid, I = W.M.INVIS;
     const quads = MS.greedy([g.NX, W.NY, g.NZ], (x, y, z) => W.get(g, x, y, z),
@@ -1027,7 +1027,7 @@ void main() {
     });
     // kroky po brehu: postavička, ktorá sa hýbe tesne pri vode, rozčerí hladinu
     for (const [id, o] of chars) {
-      if (id === 'babka') continue;
+      if (id === 'babka' || id === 'master') continue;
       const p = o.sp.position, moved = o.wx != null && Math.hypot(p.x - o.wx, p.z - o.wz) > 0.004;
       o.wx = p.x; o.wz = p.z;
       if (moved && now - (o.rippleAt || 0) > 450 && W.nearestWater(S.tiles, p.x, p.z, 0.45, S.W)) { o.rippleAt = now; ripple(p.x, p.z, 0.45); }
@@ -1292,7 +1292,7 @@ void main() {
     scene.add(ghost);
     const shadow = blobShadow(); shadow.material = shadowMat.clone(); // vlastný materiál – tieň sa prelína s postavičkou
     // vis: viditeľnosť 0–1; iní hráči sa pri príchode/odchode z plochy plynulo objavia a zmiznú
-    o = { c, ctx: c.getContext('2d'), tex, sp, ghost, shadow, h: null, vh: 0, vis: id === 'me' || id === 'babka' ? 1 : 0, seenArea: S.area };
+    o = { c, ctx: c.getContext('2d'), tex, sp, ghost, shadow, h: null, vh: 0, vis: id === 'me' || id === 'babka' || id === 'master' ? 1 : 0, seenArea: S.area };
     setCharVis(o, o.vis);
     chars.set(id, o);
     return o;
@@ -1606,7 +1606,7 @@ void main() {
     ray.setFromCamera(ndc, camera);
     // kvety a huby sa nevyberajú podľa obrázka – platí len políčko zeme pod nimi
     // vlastná postavička je pre ťuknutie priehľadná – zakrýva políčko za sebou, to hráč myslí
-    const sprites = [...[...chars.entries()].filter(([id, o]) => o.alive && id !== 'me').map(([, o]) => o.sp), babka && babka.sp].filter(Boolean);
+    const sprites = [...[...chars.entries()].filter(([id, o]) => o.alive && id !== 'me').map(([, o]) => o.sp), babka && babka.sp, master && master.sp].filter(Boolean);
     // Les divov (temná plocha): ťuknutie prechádza cez všetky objekty (stromy, kmene, kry…) na zem pod prstom –
     // ťukať sa bude len na vyslovene hracie objekty (a na hráčov), premietnutie na stromy by prekáželo
     const objects = D.isDark(S.area) ? [] : fineMeshes.filter(m => m.visible && m.userData.fade > 0.5).concat(fineMeshes.map(m => m.userData.solidPart).filter(Boolean));
@@ -1630,13 +1630,17 @@ void main() {
   }
   function pxPerBlock() { return api.ov.width / viewW; }
 
-  let babka = null, last = performance.now(), lastGround = 0;
+  // stav budov, ktorý nie je v políčkach (izolácia ľadovne, krosná v Dielni) – keď sa zmení, svet sa prestavia
+  const buildingState = () => ({ ins: D.insulLevel(S.icehouse && S.icehouse.bl), loom: !!(S.dielna && S.dielna.loom) });
+  const stateSig = () => { const b = buildingState(); return b.ins + '|' + (b.loom ? 1 : 0); };
+  let builtState = null;
+  let babka = null, master = null, last = performance.now(), lastGround = 0;
   function frame(t) {
     const now = performance.now(), dt = Math.min(0.1, (now - last) / 1000); last = now;
     if (statsOn) renderer.info.reset();
     const min = api.curMin(), se = api.season(), night = D.isNight(min);
     // prestavba sveta: nové obdobie, iná plocha (záhrada / hory) alebo nová stavba
-    if (builtSeason !== se || builtGen !== S.tilesGen) { builtGen = S.tilesGen; buildMesh(se); holesSig = null; refreshGround(se, t, true); drawnSeason = se; }
+    if (builtSeason !== se || builtGen !== S.tilesGen || builtState !== stateSig()) { builtGen = S.tilesGen; builtState = stateSig(); buildMesh(se); holesSig = null; refreshGround(se, t, true); drawnSeason = se; }
     S.worldGen = builtGen; // svet tejto verzie políčok je postavený (prechod medzi plochami čaká, kým je, a až potom ukáže meno)
     if (now - lastGround > 600) { refreshGround(se, t, false); lastGround = now; }
     // v Lese divov (a cestou k nemu) je pohľad bližšie na hráča
@@ -1698,9 +1702,14 @@ void main() {
     if (S.area !== 'garden') babka = null; // babka býva v záhrade (bez alive ju upratovanie nižšie odstráni)
     else if (!babka) babka = drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, 0, { babka: true }, 1);
     else { babka.alive = true; if (Math.floor(t) !== babka.lastT) { babka.lastT = Math.floor(t); drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, Math.sin(t) * 0.3, { babka: true }, 1); } }
+    // majster hodvábu stojí v dedinke medzi trhom a Dielňou, tvárou na chodník (ako babka, len v záhrade)
+    const MX = D.MASTER.x + 0.5, MY = D.MASTER.y + 0.6;
+    if (S.area !== 'garden') master = null;
+    else if (!master) master = drawChar('master', MX, MY, D.MASTER_LOOK, Math.PI / 2, 0, {}, 1);
+    else { master.alive = true; if (Math.floor(t * 0.7) !== master.lastT) { master.lastT = Math.floor(t * 0.7); drawChar('master', MX, MY, D.MASTER_LOOK, Math.PI / 2, Math.sin(t * 0.7) * 0.25, {}, 1); } }
     for (const [id, o] of chars) {
       // po vlastnom prechode do inej plochy hráči zo starej plochy hneď zmiznú (je to za čiernou clonou)
-      if (!o.alive && (o.vis <= 0 || o.seenArea !== S.area || id === 'babka' || id === 'me')) { removeChar(id, o); continue; }
+      if (!o.alive && (o.vis <= 0 || o.seenArea !== S.area || id === 'babka' || id === 'master' || id === 'me')) { removeChar(id, o); continue; }
       if (o.vis < 1 || !o.alive) setCharVis(o, Math.max(0, Math.min(1, o.vis + (o.alive ? dt : -dt) / CHAR_FADE)));
       const lo = {};
       o.sp.material.color.setRGB(...lightAt(o.sp.position.x, o.sp.position.y, o.sp.position.z, lights, lights.length, lo));
@@ -1779,6 +1788,7 @@ void main() {
     for (const o of S.others.values()) { const co = chars.get(o.id); if (co) label(co, o.name, o.e, S.bubbles[o.id]); }
     const mo = chars.get('me'); if (mo) label(mo, S.name, S.myEmote, S.bubbles[S.id]);
     if (babka) label(babka, 'Babka', null, null);
+    if (master) label(master, 'Majster hodvábu', null, null);
 
     // dúha a zlatý dážď
     for (const fx of S.screenFx) {
