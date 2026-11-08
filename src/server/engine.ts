@@ -141,6 +141,9 @@ export interface JournalEntry<P, M> {
   proposals: ProposalRecord[];
   outbox: M[];
 }
+// Riadok súboru denníka (server: journal-<svet>.jsonl): značka načítania sveta alebo záznam dávky s časom zápisu
+export interface JournalLoad { wall: number; load: true; tick: number; step: number; seq: number; migratedFrom: number | null }
+export type JournalLine<P, M> = JournalLoad | (JournalEntry<P, M> & { wall: number });
 export type Timing = { schedule: number; evaluate: number; resolve: number; commit: number };
 export type Op = { op: 'insert'; ev: DraftEvent; seq?: number } | { op: 'cancel'; key: string };
 // Výsledok vyhodnotenia návrhu (evaluate)
