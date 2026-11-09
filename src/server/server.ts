@@ -1,6 +1,6 @@
 // Čarovná záhrada – herný server (HTTP + WebSocket)
 import http from 'node:http';
-import type { OutgoingHttpHeaders } from 'node:http';
+import type { IncomingMessage, OutgoingHttpHeaders, ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -124,10 +124,21 @@ const MIME: Readonly<Partial<Record<string, string>>> = {
   '.json': 'application/json', '.map': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json'
 };
 const gzCache = new Map<string, { mtime: number; gz: Buffer }>(); // súbor → { mtime, gz } – kúsok balíka s Three.js má ~0,9 MB, gzip ho zmenší asi na štvrtinu
-const server = http.createServer((req, res) => {
+// Posledná poistka (#145): výnimka z obsluhy požiadavky nesmie zhodiť server (odpojila by všetkých hráčov vo všetkých
+// svetoch). Zapíšeme ju do logu a odpovieme 500, ak hlavičky ešte neodišli, inak aspoň ukončíme odpoveď.
+function safely(req: IncomingMessage, res: ServerResponse, fn: () => void): void {
+  try { fn(); } catch (e) {
+    console.error('Chyba pri obsluhe požiadavky', req.method, req.url, e);
+    try { if (!res.headersSent) { res.writeHead(500); res.end('Internal Server Error'); } else res.end(); } catch { /* poistka sama nesmie spadnúť */ }
+  }
+}
+const server = http.createServer((req, res) => { safely(req, res, () => { handleRequest(req, res); }); });
+function handleRequest(req: IncomingMessage, res: ServerResponse): void {
   if (debugHandle(req, res)) return; // /debug a /api/debug/* (len na čítanie)
   const reqUrl = req.url || '/';
-  let url = decodeURIComponent(reqUrl.split('?')[0] || '');
+  let url: string;
+  // chybné percentové kódovanie (/%, /%zz) – decodeURIComponent hodí URIError (#145)
+  try { url = decodeURIComponent(reqUrl.split('?')[0] || ''); } catch { res.writeHead(400); res.end('Bad Request'); return; }
   // hra je len v 3D na '/'; staré odkazy na /3d presmerujeme (aj s ?room=…)
   if (url === '/3d' || url === '/3d/') { const q = reqUrl.indexOf('?'); res.writeHead(301, { Location: '/' + (q >= 0 ? reqUrl.slice(q) : '') }); res.end(); return; }
   if (url === '/') url = '/index.html';
@@ -135,23 +146,23 @@ const server = http.createServer((req, res) => {
   if (url.startsWith('/client/')) { base = BUILD_CLIENT_DIR; rel = url.slice(8); }
   const file = path.normalize(path.join(base, rel));
   if (!file.startsWith(base + path.sep)) { res.writeHead(403); res.end(); return; }
-  fs.stat(file, (err, st) => {
+  fs.stat(file, (err, st) => { safely(req, res, () => { // spätné volania fs bežia mimo poistky v createServer
     if (err || !st.isFile()) { res.writeHead(404); res.end('Not found'); return; }
     const type = lookup(MIME, path.extname(file)) || 'application/octet-stream';
     // kúsky balíka hry majú v mene odtlačok obsahu (chunks/render3d-<hash>.js) – nemenia sa, prehliadač si ich nechá
     const cache = base === BUILD_CLIENT_DIR && rel.startsWith('chunks/') ? 'public, max-age=31536000, immutable' : 'no-cache';
     const headers: OutgoingHttpHeaders = { 'Content-Type': type, 'Cache-Control': cache };
     const gzip = /\bgzip\b/.test(req.headers['accept-encoding'] || '') && /text|json|svg/.test(type);
-    fs.readFile(file, (err2, buf) => {
+    fs.readFile(file, (err2, buf) => { safely(req, res, () => {
       if (err2) { res.writeHead(500); res.end(); return; }
       if (!gzip) { res.writeHead(200, headers); res.end(buf); return; }
       let c = gzCache.get(file);
       if (!c || c.mtime !== st.mtimeMs) { c = { mtime: st.mtimeMs, gz: zlib.gzipSync(buf) }; gzCache.set(file, c); }
       res.writeHead(200, Object.assign(headers, { 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' }));
       res.end(c.gz);
-    });
-  });
-});
+    }); });
+  }); });
+}
 
 // ---------- Svety (miestnosti) ----------
 // Čas je diskrétny: svet má celé počítadlo `tick` (D.TICKS_PER_DAY krokov na deň), deň a minúta sa z neho
