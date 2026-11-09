@@ -1,7 +1,13 @@
 // Záložka Mapa (#77): pôdorys plochy na plátne – výška zeme, chodníky, objekty, prechody, mriežka,
 // inšpektor políčka a štatistiky. Zdroj: semienko (hocijaké) alebo vybraný svet (jeho semienko, pôda, ľad, hráči).
-// Výpočty sú v map-core.mjs (bez DOM, testované), tu je len ovládanie a kreslenie.
-import { kindOf, isSeeded, randomSeed, parseSeed, buildTiles, heightBlocks, arrivals, playersOn, areaStats, tileInfo } from './map-core.mjs';
+// Výpočty sú v map-core.ts (bez DOM, testované), tu je len ovládanie a kreslenie.
+import { kindOf, isSeeded, randomSeed, parseSeed, buildTiles, heightBlocks, arrivals, playersOn, areaStats, tileInfo } from './map-core.ts';
+import type { AreaMap, MapError, MapPlayer, MapTile } from './map-core.ts';
+import type { Kid, TabCtx, TabInstance } from '../ui.ts';
+import { lookup, must } from '../../shared/util.ts';
+
+type C2 = CanvasRenderingContext2D;
+interface Pt { x: number; y: number }
 
 const CSS = `
 .map-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-bottom: 8px; }
@@ -37,24 +43,23 @@ const CSS = `
 
 // farby mapy (obrázok, rovnaký vo svetlej aj tmavej téme)
 const COL = {
-  low: [20, 36, 26], high: [126, 186, 128], flat: '#26412c', path: '#e3a03f', clearing: 'rgba(222, 200, 92, .62)',
+  low: [20, 36, 26] as const, high: [126, 186, 128] as const, flat: '#26412c', path: '#e3a03f', clearing: 'rgba(222, 200, 92, .62)',
   water: '#4f8fd0', hole: '#16304d', glacier: '#d6ecf7', obj: '#0a100b', gate: '#e2664b', soil: '#7a5432', soilWet: '#563820',
   player: '#ff5ca8', hover: '#ffffff', sel: '#ffd84a', grid: 'rgba(255,255,255,.10)', grid5: 'rgba(255,255,255,.24)'
 };
 const MAX_H = 4, STEPS = 9; // stupnica výšky 0–4 bloky po pol bloku
-function heightColor(b) {
+function heightColor(b: number): string {
   const k = Math.max(0, Math.min(1, Math.round(b * 2) / 2 / MAX_H));
-  const c = COL.low.map((v, i) => Math.round(v + (COL.high[i] - v) * k));
-  return `rgb(${c})`;
+  const c = COL.low.map((v, i) => Math.round(v + ((COL.high[i] ?? v) - v) * k));
+  return `rgb(${c.join(',')})`;
 }
-const LAYERS = [
+const LAYERS: readonly { id: string; label: string; room?: boolean }[] = [
   { id: 'h', label: 'Heights' }, { id: 'p', label: 'Paths' }, { id: 'o', label: 'Objects' }, { id: 'g', label: 'Grid' },
   { id: 'b', label: 'Beds', room: true }, { id: 'u', label: 'Players', room: true }
 ];
 const DEFAULT_LAYERS = 'hpobu';
-const f2 = n => n.toFixed(2).replace(/\.?0+$/, '') || '0';
 
-export function mount(el, ctx0) {
+export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
   let ctx = ctx0;
   const { h, D } = ctx;
   if (!document.getElementById('tab-map-css')) document.head.appendChild(h('style', { id: 'tab-map-css' }, CSS));
@@ -62,11 +67,10 @@ export function mount(el, ctx0) {
   // stav záložky (seed, zdroj a vrstvy sú v adrese)
   let seed = parseSeed(ctx.param('mapseed'));
   if (seed == null) { seed = randomSeed(); ctx.setParam('mapseed', seed); }
-  let layers = ctx.param('maplayers');
-  if (layers == null) layers = DEFAULT_LAYERS;
-  let map = null, players = [], hover = null, sel = null, T = 16, shownArea = null;
-  const on = id => layers.includes(id);
-  const source = () => {
+  let layers = ctx.param('maplayers') ?? DEFAULT_LAYERS;
+  let map: AreaMap | MapError | null = null, players: MapPlayer[] = [], hover: Pt | null = null, sel: Pt | null = null, T = 16, shownArea: string | null = null;
+  const on = (id: string): boolean => layers.includes(id);
+  const source = (): 'room' | 'seed' => {
     const s = ctx.param('mapsrc');
     return ctx.room && (s === 'room' || s == null) ? 'room' : 'seed';
   };
@@ -75,7 +79,7 @@ export function mount(el, ctx0) {
   const areaSeg = h('div', { class: 'map-seg', role: 'group', 'aria-label': 'Area' });
   const srcSeg = h('div', { class: 'map-seg', role: 'group', 'aria-label': 'Source' });
   const seedIn = h('input', { type: 'text', inputmode: 'numeric', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Seed' });
-  const newSeed = h('button', { onclick: () => { seed = randomSeed(); ctx.setParam('mapseed', seed); ctx.setParam('mapsrc', 'seed'); rebuild(true); } }, 'New seed');
+  const newSeed = h('button', { onclick: () => { seed = randomSeed(); ctx.setParam('mapseed', seed); ctx.setParam('mapsrc', 'seed'); rebuild(); } }, 'New seed');
   const layerBox = h('div', { class: 'map-layers' });
   const note = h('div', { class: 'map-note muted' });
   const canvas = h('canvas', { 'aria-label': 'Area map' });
@@ -91,22 +95,22 @@ export function mount(el, ctx0) {
 
   seedIn.addEventListener('change', () => {
     const v = parseSeed(seedIn.value);
-    if (v == null) { seedIn.value = map && map.seed != null ? map.seed : seed; return; }
-    seed = v; ctx.setParam('mapseed', seed); ctx.setParam('mapsrc', 'seed'); rebuild(true);
+    if (v == null) { seedIn.value = String(map && !map.error && map.seed != null ? map.seed : seed); return; }
+    seed = v; ctx.setParam('mapseed', seed); ctx.setParam('mapsrc', 'seed'); rebuild();
   });
   seedIn.addEventListener('keydown', e => { if (e.key === 'Enter') seedIn.blur(); });
 
-  function renderBar() {
-    areaSeg.replaceChildren(...D.AREAS.map(a => h('button', { class: a === ctx.area ? 'on' : null, onclick: () => ctx.setArea(a) }, D.AREA_NAMES[a] || a)));
+  function renderBar(): void {
+    areaSeg.replaceChildren(...D.AREAS.map(a => h('button', { class: a === ctx.area ? 'on' : null, onclick: () => { ctx.setArea(a); } }, D.AREA_NAMES[a] || a)));
     const src = source();
     srcSeg.replaceChildren(
       h('button', { class: src === 'room' ? 'on' : null, disabled: ctx.room ? null : 'disabled', title: ctx.room ? `The real map of room ${ctx.room}` : 'Pick a room on the left',
-        onclick: () => { ctx.setParam('mapsrc', 'room'); rebuild(true); } }, 'Room'),
-      h('button', { class: src === 'seed' ? 'on' : null, title: 'Any seed, without a room', onclick: () => { ctx.setParam('mapsrc', 'seed'); rebuild(true); } }, 'Seed'));
+        onclick: () => { ctx.setParam('mapsrc', 'room'); rebuild(); } }, 'Room'),
+      h('button', { class: src === 'seed' ? 'on' : null, title: 'Any seed, without a room', onclick: () => { ctx.setParam('mapsrc', 'seed'); rebuild(); } }, 'Seed'));
     const seeded = isSeeded(D, ctx.area);
     seedIn.disabled = !seeded;
     newSeed.disabled = !seeded;
-    if (document.activeElement !== seedIn) seedIn.value = !seeded ? '–' : map && map.seed != null ? map.seed : seed;
+    if (document.activeElement !== seedIn) seedIn.value = !seeded ? '–' : String(map && !map.error && map.seed != null ? map.seed : seed);
     layerBox.replaceChildren(...LAYERS.filter(l => !l.room || src === 'room').map(l => {
       const cb = h('input', { type: 'checkbox', checked: on(l.id) ? 'checked' : null });
       cb.addEventListener('change', () => {
@@ -119,20 +123,20 @@ export function mount(el, ctx0) {
   }
 
   // ---------- údaje ----------
-  function rebuild(force) {
+  function rebuild(): void {
     const src = source();
-    const snapOk = ctx.snap && ctx.snap.id === ctx.room;
+    const snap = ctx.snap && ctx.snap.id === ctx.room ? ctx.snap : null;
     if (ctx.area !== shownArea) { hover = null; sel = null; }
     shownArea = ctx.area;
     const name = D.AREA_NAMES[ctx.area] || ctx.area;
     const seeded = isSeeded(D, ctx.area);
-    let msg;
-    if (src === 'room' && snapOk) {
-      map = buildTiles(D, ctx.area, { state: ctx.snap.state });
-      players = playersOn(D, ctx.area, ctx.snap);
+    let msg: string;
+    if (src === 'room' && snap) {
+      map = buildTiles(D, ctx.area, { state: snap.state });
+      players = playersOn(D, ctx.area, snap);
       msg = map.error
         ? `Room ${ctx.room} has no seed for ${name} yet; it gets one the next time the world loads. Switch to Seed to look at any seed.`
-        : `Room ${ctx.room} (${ctx.snap.source === 'memory' ? 'loaded, live state' : 'read from file'})${seeded ? `, seed ${map.seed}` : ''}: its planted beds, tilled soil, ice and players.`;
+        : `Room ${ctx.room} (${snap.source === 'memory' ? 'loaded, live state' : 'read from file'})${seeded ? `, seed ${String(map.seed)}` : ''}: its planted beds, tilled soil, ice and players.`;
     } else {
       map = buildTiles(D, ctx.area, { seed });
       players = [];
@@ -147,7 +151,7 @@ export function mount(el, ctx0) {
   }
 
   // ---------- kreslenie ----------
-  function fitTile() {
+  function fitTile(map: AreaMap): number {
     const cs = getComputedStyle(wrap);
     const avW = wrap.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
     const stacked = window.matchMedia('(max-width: 900px)').matches;
@@ -160,24 +164,26 @@ export function mount(el, ctx0) {
     }
     return Math.max(4, Math.min(28, t));
   }
-  function draw() {
+  function draw(): void {
     if (!map || map.error) return;
-    T = fitTile();
+    const m = map;
+    T = fitTile(m);
     const dpr = window.devicePixelRatio || 1, cw = T * map.w, ch = T * map.h;
     canvas.style.width = cw + 'px'; canvas.style.height = ch + 'px';
     canvas.width = Math.round(cw * dpr); canvas.height = Math.round(ch * dpr);
-    const g = canvas.getContext('2d');
+    const g = must(canvas.getContext('2d') ?? undefined);
     g.setTransform(dpr * T, 0, 0, dpr * T, 0, 0); // ďalej sa kreslí v jednotkách políčok
-    const { w, h: hh, tiles } = map, at = (x, y) => x >= 0 && y >= 0 && x < w && y < hh ? tiles[y * w + x] : null;
+    const { w, h: hh, tiles } = m, at = (x: number, y: number): MapTile | null => x >= 0 && y >= 0 && x < w && y < hh ? tiles[y * w + x] ?? null : null;
+    const tl = (x: number, y: number): MapTile => must(tiles[y * w + x]);
     // zem: farba podľa výšky
     for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) {
-      const t = tiles[y * w + x];
+      const t = tl(x, y);
       g.fillStyle = on('h') ? heightColor(heightBlocks(D, t)) : COL.flat;
       g.fillRect(x, y, 1.02, 1.02);
     }
     // voda a ľadovec (terén, vždy)
     for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) {
-      const t = tiles[y * w + x];
+      const t = tl(x, y);
       if (t.g === 'water') {
         g.fillStyle = COL.water; g.fillRect(x, y, 1.02, 1.02);
         if (t.cut) { g.strokeStyle = COL.hole; g.lineWidth = 0.12; g.beginPath(); g.arc(x + 0.5, y + 0.5, 0.26, 0, 7); g.stroke(); }
@@ -188,27 +194,27 @@ export function mount(el, ctx0) {
       }
     }
     // pôda a rastliny (svet)
-    if (map.source === 'room' && on('b')) for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) {
-      const s = tiles[y * w + x].s;
+    if (m.source === 'room' && on('b')) for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) {
+      const s = tl(x, y).s;
       if (!s) continue;
       g.fillStyle = s.w ? COL.soilWet : COL.soil; g.fillRect(x + 0.09, y + 0.09, 0.82, 0.82);
       const p = s.p;
       if (!p) continue;
-      const sp = D.SPECIES[p.sp], r = 0.12 + 0.07 * D.stageOf(p);
+      const sp = D.isSpeciesId(p.sp) ? D.SPECIES[p.sp] : null, r = 0.12 + 0.07 * D.stageOf(p);
       g.beginPath(); g.arc(x + 0.5, y + 0.5, r, 0, 7);
       g.fillStyle = p.d ? '#8a8a80' : sp ? sp.color : '#b9e07a'; g.fill();
       g.lineWidth = 0.06; g.strokeStyle = sp && sp.center && !p.d ? sp.center : '#222'; g.stroke();
     }
     // chodníky (hrubé čiary medzi susednými políčkami chodníka a prechodu) a čistiny
     if (on('p')) {
-      for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) if (kindOf(D, tiles[y * w + x].g) === 'clearing') { g.fillStyle = COL.clearing; g.fillRect(x, y, 1, 1); }
-      const isP = t => t && (kindOf(D, t.g) === 'path' || t.g === 'gate');
+      for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) if (kindOf(D, tl(x, y).g) === 'clearing') { g.fillStyle = COL.clearing; g.fillRect(x, y, 1, 1); }
+      const isP = (t: MapTile | null): boolean => !!t && (kindOf(D, t.g) === 'path' || t.g === 'gate');
       g.strokeStyle = COL.path; g.fillStyle = COL.path; g.lineWidth = 0.36; g.lineCap = 'round';
       g.beginPath();
       for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) {
         if (!isP(at(x, y))) continue;
         let alone = true;
-        for (const [dx, dy] of [[1, 0], [0, 1], [-1, 0], [0, -1]]) if (isP(at(x + dx, y + dy))) {
+        for (const [dx, dy] of [[1, 0], [0, 1], [-1, 0], [0, -1]] as const) if (isP(at(x + dx, y + dy))) {
           alone = false;
           if (dx > 0 || dy > 0) { g.moveTo(x + 0.5, y + 0.5); g.lineTo(x + dx + 0.5, y + dy + 0.5); }
         }
@@ -223,8 +229,8 @@ export function mount(el, ctx0) {
     if (on('o')) {
       g.fillStyle = COL.obj; g.strokeStyle = COL.obj;
       for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) {
-        const k = kindOf(D, tiles[y * w + x].g);
-        const dot = (cx, cy, r) => { g.beginPath(); g.arc(cx, cy, r, 0, 7); g.fill(); };
+        const k = kindOf(D, tl(x, y).g);
+        const dot = (cx: number, cy: number, r: number): void => { g.beginPath(); g.arc(cx, cy, r, 0, 7); g.fill(); };
         if (k === 'tree') dot(x + 0.5, y + 0.5, 0.4);
         else if (k === 'giant') dot(x + 1, y + 1, 0.86);
         else if (k === 'bush') dot(x + 0.5, y + 0.5, 0.24);
@@ -244,11 +250,11 @@ export function mount(el, ctx0) {
     }
     // prechody (trojuholník smerom von z plochy) a príchodové miesta
     g.fillStyle = COL.gate; g.strokeStyle = COL.gate;
-    for (const gt of D.GATES[map.area] || []) tri(g, gt.x + 0.5, gt.y + 0.5, D.gateSide(map.area, gt), 0.42);
+    for (const gt of lookup(D.GATES, m.area) || []) tri(g, gt.x + 0.5, gt.y + 0.5, D.gateSide(m.area, gt), 0.42);
     g.lineWidth = 0.08;
-    for (const a of arrivals(D, map.area)) { g.beginPath(); g.arc(a.x, a.y, 0.22, 0, 7); g.stroke(); }
+    for (const a of arrivals(D, m.area)) { g.beginPath(); g.arc(a.x, a.y, 0.22, 0, 7); g.stroke(); }
     // hráči sveta (online plné s menom, offline krúžok na poslednom mieste)
-    if (map.source === 'room' && on('u')) {
+    if (m.source === 'room' && on('u')) {
       for (const p of players) {
         g.beginPath(); g.arc(p.x, p.y, p.online ? 0.36 : 0.28, 0, 7);
         if (p.online) { g.fillStyle = COL.player; g.fill(); }
@@ -264,13 +270,13 @@ export function mount(el, ctx0) {
       g.setTransform(dpr * T, 0, 0, dpr * T, 0, 0);
     }
     // vybrané a ukázané políčko
-    const box = (p, c, lw) => { if (!p) return; g.strokeStyle = c; g.lineWidth = lw / T; g.strokeRect(p.x + lw / T / 2, p.y + lw / T / 2, 1 - lw / T, 1 - lw / T); };
+    const box = (p: Pt | null, c: string, lw: number): void => { if (!p) return; g.strokeStyle = c; g.lineWidth = lw / T; g.strokeRect(p.x + lw / T / 2, p.y + lw / T / 2, 1 - lw / T, 1 - lw / T); };
     box(sel, COL.sel, 3);
     if (hover && !(sel && sel.x === hover.x && sel.y === hover.y)) box(hover, COL.hover, 2);
   }
   // trojuholník prechodu smerom k okraju plochy (side: n, s, w, e)
-  function tri(g, cx, cy, side, r) {
-    const d = { n: [0, -1], s: [0, 1], w: [-1, 0], e: [1, 0] }[side] || [0, -1], p = [-d[1], d[0]];
+  function tri(g: C2, cx: number, cy: number, side: 'n' | 's' | 'w' | 'e', r: number): void {
+    const d = ({ n: [0, -1], s: [0, 1], w: [-1, 0], e: [1, 0] } as const)[side], p = [-d[1], d[0]] as const;
     g.beginPath();
     g.moveTo(cx + d[0] * r, cy + d[1] * r);
     g.lineTo(cx - d[0] * r + p[0] * r, cy - d[1] * r + p[1] * r);
@@ -279,22 +285,22 @@ export function mount(el, ctx0) {
   }
 
   // ---------- legenda a panely ----------
-  function swatch(fn) {
+  function swatch(fn: (g: C2) => void): HTMLCanvasElement {
     const c = document.createElement('canvas'), dpr = window.devicePixelRatio || 1, s = 16;
     c.width = c.height = Math.round(s * dpr); c.style.width = c.style.height = s + 'px';
-    const g = c.getContext('2d');
+    const g = must(c.getContext('2d') ?? undefined);
     g.setTransform(dpr * s, 0, 0, dpr * s, 0, 0);
     g.fillStyle = on('h') ? heightColor(1) : COL.flat; g.fillRect(0, 0, 1, 1);
     fn(g);
     return c;
   }
-  function renderLegend() {
+  function renderLegend(): void {
     const sc = h('div', { class: 'map-scale' });
     for (let i = 0; i < STEPS; i++) sc.appendChild(h('i', { style: `background:${heightColor(i / 2)}` }));
     legendH.replaceChildren(h('h4', null, 'Ground height'), sc, h('div', { class: 'map-ticks' }, ...[0, 1, 2, 3, 4].map(n => h('span', null, n))),
       h('p', null, 'In blocks above ground zero. A player steps up at most ½ block (1 with a jump).'));
-    const fill = c => g => { g.fillStyle = c; g.fillRect(0.12, 0.12, 0.76, 0.76); };
-    const items = [
+    const fill = (c: string) => (g: C2): void => { g.fillStyle = c; g.fillRect(0.12, 0.12, 0.76, 0.76); };
+    const items: [string | null, string, (g: C2) => void][] = [
       ['p', 'Path (incl. roots)', g => { g.fillStyle = COL.path; g.fillRect(0, 0.32, 1, 0.36); }],
       ['p', 'Clearing', fill(COL.clearing)],
       [null, 'Water (ring = hole in the ice)', fill(COL.water)],
@@ -305,19 +311,19 @@ export function mount(el, ctx0) {
       [null, 'Gate to another area', g => { g.fillStyle = COL.gate; tri(g, 0.5, 0.5, 'n', 0.4); }],
       [null, 'Arrival point', g => { g.strokeStyle = COL.gate; g.lineWidth = 0.1; g.beginPath(); g.arc(0.5, 0.5, 0.28, 0, 7); g.stroke(); }]
     ];
-    if (map && map.source === 'room') items.push(
+    if (map && !map.error && map.source === 'room') items.push(
       ['b', 'Tilled soil · plant (darker = watered)', g => { g.fillStyle = COL.soil; g.fillRect(0.1, 0.1, 0.8, 0.8); g.fillStyle = '#f2c94c'; g.beginPath(); g.arc(0.5, 0.5, 0.22, 0, 7); g.fill(); }],
       ['u', 'Player online · last place offline', g => { g.fillStyle = COL.player; g.strokeStyle = '#fff'; g.lineWidth = 0.1; g.beginPath(); g.arc(0.5, 0.5, 0.32, 0, 7); g.fill(); g.stroke(); }]);
     legendL.replaceChildren(h('h4', null, 'Layers'), h('ul', { class: 'map-leg' },
       ...items.map(([l, label, fn]) => h('li', { style: l && !on(l) ? 'opacity:.45' : null, title: l && !on(l) ? 'Layer hidden' : null }, swatch(fn), label))));
   }
-  const dl = rows => h('dl', { class: 'map-dl' }, ...rows.filter(Boolean).flatMap(([k, v]) => [h('dt', null, k), h('dd', null, v)]));
-  function renderTile() {
+  const dl = (rows: ([string, Kid] | null)[]): HTMLElement => h('dl', { class: 'map-dl' }, ...rows.flatMap(r => r ? [h('dt', null, r[0]), h('dd', null, r[1])] : []));
+  function renderTile(): void {
     const p = hover || sel;
     const head = h('h4', null, 'Tile', h('span', null, hover ? '' : sel ? 'selected · tap again to clear' : ''));
-    if (!map || map.error || !p) return tileBox.replaceChildren(head, h('p', null, 'Hover or tap a tile.'));
+    if (!map || map.error || !p) { tileBox.replaceChildren(head, h('p', null, 'Hover or tap a tile.')); return; }
     const i = tileInfo(D, map, p.x, p.y);
-    if (!i) return tileBox.replaceChildren(head, h('p', null, 'Hover or tap a tile.'));
+    if (!i) { tileBox.replaceChildren(head, h('p', null, 'Hover or tap a tile.')); return; }
     const here = players.filter(q => Math.floor(q.x) === p.x && Math.floor(q.y) === p.y);
     tileBox.replaceChildren(head, dl([
       ['Tile', `${i.x}, ${i.y}`],
@@ -325,17 +331,17 @@ export function mount(el, ctx0) {
       ['Height', `${i.height.toFixed(2)} blocks`],
       ['Walkable', i.walkable ? 'yes' : 'no'],
       i.gateTo ? ['Gate to', D.AREA_NAMES[i.gateTo] || i.gateTo] : null,
-      i.ice != null ? ['Ice', `${i.ice} / ${i.iceTop} layers`] : null,
+      i.ice != null ? ['Ice', `${i.ice} / ${i.iceTop ?? 0} layers`] : null,
       i.cut ? ['Ice hole', 'cut today'] : null,
       i.soil ? ['Soil', `${i.soil}${i.wet ? ', watered' : ''}`] : null,
       i.plant ? ['Plant', `${i.plant.name}${i.plant.wild ? ' (wild)' : ''}, stage ${i.plant.stage}${i.plant.dead ? ', dead' : ''}`] : null,
       here.length ? ['Players', here.map(q => q.online ? q.name : `${q.id} (offline)`).join(', ')] : null
     ]));
   }
-  function renderArea() {
-    if (!map || map.error) return areaBox.replaceChildren(h('h4', null, 'Area'), h('p', null, 'No map.'));
+  function renderArea(): void {
+    if (!map || map.error) { areaBox.replaceChildren(h('h4', null, 'Area'), h('p', null, 'No map.')); return; }
     const s = areaStats(D, map), on_ = players.filter(p => p.online).length;
-    areaBox.replaceChildren(h('h4', null, 'Area', h('span', null, D.AREA_NAMES[map.area] || map.area)), dl([
+    areaBox.replaceChildren(h('h4', null, 'Area', h('span', null, lookup(D.AREA_NAMES, map.area) || map.area)), dl([
       ['Size', `${s.w} × ${s.h} tiles`],
       ['Seed', map.seeded ? String(map.seed) : 'fixed layout'],
       ['Walkable', `${s.walkablePct} % (${s.walkable})`],
@@ -351,12 +357,12 @@ export function mount(el, ctx0) {
   }
 
   // ---------- myš a dotyk ----------
-  const tileAt = e => {
+  const tileAt = (e: MouseEvent): Pt | null => {
     const r = canvas.getBoundingClientRect();
     const x = Math.floor((e.clientX - r.left) / T), y = Math.floor((e.clientY - r.top) / T);
     return map && !map.error && x >= 0 && y >= 0 && x < map.w && y < map.h ? { x, y } : null;
   };
-  const same = (a, b) => a === b || (a && b && a.x === b.x && a.y === b.y);
+  const same = (a: Pt | null, b: Pt | null): boolean => a === b || (!!a && !!b && a.x === b.x && a.y === b.y);
   canvas.addEventListener('pointermove', e => {
     if (e.pointerType !== 'mouse') return; // na dotyk len ťuknutie
     const t = tileAt(e);
@@ -368,12 +374,13 @@ export function mount(el, ctx0) {
     sel = same(t, sel) ? null : t;
     draw(); renderTile();
   });
-  const ro = new ResizeObserver(() => draw());
+  const ro = new ResizeObserver(() => { draw(); });
   ro.observe(wrap);
-  const onResize = () => draw();
+  const onResize = (): void => { draw(); };
+
   window.addEventListener('resize', onResize);
 
-  rebuild(true);
+  rebuild();
   return {
     update(c) { ctx = c; rebuild(); },
     unmount() { ro.disconnect(); window.removeEventListener('resize', onResize); }

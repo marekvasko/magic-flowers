@@ -80,27 +80,31 @@ function view(market: Market, w: { events?: EngineEvent[]; contracts?: Parameter
     contracts: (contracts.list || []).map(c => Object.assign({}, c, { name: spName(c.sp), giverName: D.GIVERS[c.giver] || c.giver, itemName: c.item ? D.itemName(c.item.id) : null }))
   };
 }
-export type MarketView = {
+// Konštanty ekonomiky pre vysvetlenie cien (záložka Market → How prices work)
+const constantsOf = () => Object.assign({}, Econ.PRICING, {
+  SEED_TARGET: Econ.SEED_TARGET, COMPOST_TARGET: Econ.COMPOST_TARGET, SEED_CAP: Econ.SEED_CAP, COMPOST_CAP: Econ.COMPOST_CAP,
+  HIST_LEN: Econ.HIST_LEN, MIN_SEED_REP: D.MIN_SEED_REP, REP_LEVELS: D.REP_LEVELS
+});
+export type MarketConstants = ReturnType<typeof constantsOf>;
+type MarketBase = {
   id: string; source: 'memory' | 'file'; file: { size: number; saved: number } | null; online: number;
-  tick: number; day: number; season: number; dayInSeason: number; daysPerSeason: number; constants: JsonRecord; market: boolean;
-} & Partial<ReturnType<typeof view>>;
+  tick: number; day: number; season: number; dayInSeason: number; daysPerSeason: number; constants: MarketConstants;
+};
+// Svet bez trhu (starý, trh sa založí pri načítaní) alebo trh s cenami, NPC, sviatkami, udalosťami a zákazkami
+export type MarketView = MarketBase & ({ market: false } | ({ market: true } & ReturnType<typeof view>));
 
 export default function market(query: URLSearchParams, tools: Pick<Tools, 'load'>): MarketView | null {
   const r = tools.load(query.get('id'));
   if (!r) return null;
   const w = r.state, tick = w.tick || 0, day = D.dayOfTick(tick), se = D.seasonOf(day);
   const events = (w.events || []).filter(e => MARKET_EVENTS.has(e.type)).sort((a, b) => a.at - b.at || a.seq - b.seq);
-  const out: MarketView = {
+  const base: MarketBase = {
     id: r.id, source: r.source, file: r.file, online: r.online.length,
     tick, day, season: se, dayInSeason: (day - 1) % DPS + 1, daysPerSeason: DPS,
-    constants: Object.assign({}, Econ.PRICING, {
-      SEED_TARGET: Econ.SEED_TARGET, COMPOST_TARGET: Econ.COMPOST_TARGET, SEED_CAP: Econ.SEED_CAP, COMPOST_CAP: Econ.COMPOST_CAP,
-      HIST_LEN: Econ.HIST_LEN, MIN_SEED_REP: D.MIN_SEED_REP, REP_LEVELS: D.REP_LEVELS
-    }),
-    market: !!w.market
+    constants: constantsOf()
   };
-  if (!w.market) return out; // starý svet, kde sa trh ešte nezaložil (založí sa pri načítaní)
+  if (!w.market) return { ...base, market: false }; // starý svet, kde sa trh ešte nezaložil (založí sa pri načítaní)
   // Ekonomika číta len trh a čas. Stav je kópia, no aj tak sa nič nezapisuje.
-  return Object.assign(out, view(w.market, w, tick, events));
+  return { ...base, market: true, ...view(w.market, w, tick, events) };
 }
 /* eslint-enable @typescript-eslint/no-unnecessary-condition -- koniec trhu zo súboru */
