@@ -1,20 +1,19 @@
 // Ladiaca stránka /debug (#64, #74): zoznam svetov, záložky a prehľad sveta. Všetko len číta cez /api/debug/*.
 // Texty sú po anglicky (nástroj pre správcu). Údaje hráčov (mená…) idú do stránky len cez textContent.
+// Zbalí ho esbuild (#137); záložky sú samostatné kúsky balíka, načítajú sa až pri otvorení.
+import * as D from '../shared/data.ts';
+import { must } from '../shared/util.ts';
+import type { ReconcilerView, RoomInfo, RoomSnapshot } from '../server/debug.ts';
+import { errText, h } from './ui.ts';
+import type { Kid, TabCtx, TabInstance, TabModule } from './ui.ts';
+
 (() => {
-  const D = window.GameData;
-  const $ = id => document.getElementById(id);
-  function h(tag, attrs, ...kids) {
-    const el = document.createElement(tag);
-    for (const k in attrs || {}) {
-      if (k === 'onclick') el.onclick = attrs[k];
-      else if (attrs[k] != null && attrs[k] !== false) el.setAttribute(k, attrs[k]);
-    }
-    for (const c of kids.flat()) if (c != null && c !== false) el.appendChild(typeof c === 'object' ? c : document.createTextNode(String(c)));
-    return el;
-  }
+  const $ = (id: string): HTMLElement => must(document.getElementById(id) ?? undefined);
+  const $as = <T extends HTMLElement>(id: string, type: new () => T): T => { const el = $(id); if (!(el instanceof type)) throw new Error('#' + id + ': zlý druh prvku'); return el; };
 
   const ISSUE = 'https://github.com/marekvasko/magic-flowers/issues/64';
-  const TABS = [
+  interface Tab { id: string; label: string; todo?: string }
+  const TABS: readonly Tab[] = [
     { id: 'room', label: 'Room' },
     { id: 'map', label: 'Map', todo: 'A top-down plan of every area: ground heights, paths, objects, gates and a grid as layers, a tile inspector and area stats, for any seed or for the selected room.' },
     { id: 'world', label: 'World', todo: 'A free camera over the whole rendered world of the selected room and area, with time, season and layer controls and visual debug helpers (bounding boxes, tile grid, tap areas, lights).' },
@@ -27,60 +26,63 @@
   const SEASON_EN = ['Spring', 'Summer', 'Autumn', 'Winter'];
 
   // stav v adrese: #tab=room&room=zahrada&area=garden (+ vlastné parametre záložiek, napr. seed)
-  const st = Object.assign({ tab: 'room', room: '', area: 'garden' }, Object.fromEntries(new URLSearchParams(location.hash.slice(1))));
+  const st: Partial<Record<string, string>> & { tab: string; room: string; area: D.AreaId } = { tab: 'room', room: '', area: 'garden' };
+  for (const [k, v] of new URLSearchParams(location.hash.slice(1))) st[k] = v;
   if (!TABS.some(t => t.id === st.tab)) st.tab = 'room';
-  if (!D.AREAS.includes(st.area)) st.area = 'garden';
-  let rooms = [], roomsErr = null, snap = null, snapErr = null, serverNow = Date.now();
-  const saveHash = () => history.replaceState(null, '', '#' + new URLSearchParams(st));
+  const isArea = (a: string | undefined): a is D.AreaId => D.AREAS.some(x => x === a);
+  if (!isArea(st.area)) st.area = 'garden';
+  let rooms: RoomInfo[] = [], roomsErr: string | null = null, snap: RoomSnapshot | null = null, snapErr: string | null = null, serverNow = Date.now();
+  const saveHash = (): void => { const p = new URLSearchParams(); for (const [k, v] of Object.entries(st)) if (v != null) p.set(k, v); history.replaceState(null, '', '#' + p.toString()); };
 
-  async function api(p) {
+  // Odpoveď nášho servera (/api/debug/*): JSON, ktorého tvar opisujú typy v src/server/debug*.ts – jediné pretypovanie
+  async function api<T>(p: string): Promise<T> {
     const r = await fetch(p, { cache: 'no-store' });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
-    return j;
+    const j: unknown = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error((typeof j === 'object' && j && 'error' in j && typeof j.error === 'string' ? j.error : '') || 'HTTP ' + r.status);
+    return j as T;
   }
 
   // ---------- formát ----------
-  const fmtSize = n => n == null ? '–' : n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' kB' : (n / 1048576).toFixed(1) + ' MB';
-  function ago(ms) {
+  const fmtSize = (n: number | null | undefined): string => n == null ? '–' : n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' kB' : (n / 1048576).toFixed(1) + ' MB';
+  function ago(ms: number | null | undefined): string {
     if (!ms) return 'never saved';
     const s = Math.max(0, (serverNow - ms) / 1000);
     return s < 60 ? Math.round(s) + ' s ago' : s < 3600 ? Math.round(s / 60) + ' min ago' : s < 86400 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' d ago';
   }
-  const hhmm = min => String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(Math.floor(min % 60)).padStart(2, '0');
-  const when = tick => `day ${D.dayOfTick(tick)} ${hhmm(D.minOfTick(tick))}`;
-  function inTicks(dt) {
+  const hhmm = (min: number): string => String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(Math.floor(min % 60)).padStart(2, '0');
+  const when = (tick: number): string => `day ${D.dayOfTick(tick)} ${hhmm(D.minOfTick(tick))}`;
+  function inTicks(dt: number): string {
     const m = dt * D.MIN_PER_TICK;
     return m < 60 ? `in ${m} min` : m < 1440 ? `in ${(m / 60).toFixed(1)} h` : `in ${(m / 1440).toFixed(1)} d`;
   }
-  const short = v => { const s = JSON.stringify(v); return s == null ? '' : s.length > 80 ? s.slice(0, 77) + '…' : s; };
+  const short = (v: unknown): string => { const s = JSON.stringify(v) as string | undefined; /* undefined pre undefined a funkcie */ return s == null ? '' : s.length > 80 ? s.slice(0, 77) + '…' : s; };
 
   // ---------- zoznam svetov ----------
-  function renderRooms() {
-    const q = $('search').value.trim().toLowerCase();
+  function renderRooms(): void {
+    const q = $as('search', HTMLInputElement).value.trim().toLowerCase();
     const list = rooms.filter(r => r.id.includes(q));
     $('roomsMeta').textContent = `${rooms.length} room${rooms.length === 1 ? '' : 's'} · ${rooms.reduce((n, r) => n + r.online.length, 0)} online`;
-    $('rooms').replaceChildren(...list.map(r => h('li', { class: r.id === st.room ? 'on' : null, onclick: () => selectRoom(r.id) },
+    $('rooms').replaceChildren(...list.map(r => h('li', { class: r.id === st.room ? 'on' : null, onclick: () => { void selectRoom(r.id); } },
       h('span', { class: 'id' }, r.online.length ? h('span', { class: 'dot', title: 'players online' }) : null, r.id),
       r.loaded ? h('span', { class: 'badge live' }, 'loaded') : h('span', { class: 'badge' }, 'file'),
       h('span', { class: 'sub' }, [ago(r.saved), fmtSize(r.size), r.online.length ? r.online.map(o => o.name).join(', ') : null].filter(Boolean).join(' · ')))));
     if (!list.length) $('rooms').appendChild(h('li', { class: 'muted' }, rooms.length ? 'No match' : 'No rooms yet'));
   }
-  async function loadRooms() {
-    try { const j = await api('/api/debug/rooms'); rooms = j.rooms; serverNow = j.now; roomsErr = null; }
-    catch (e) { rooms = []; roomsErr = e.message; }
-    if (!st.room && rooms.length) st.room = rooms[0].id;
+  async function loadRooms(): Promise<void> {
+    try { const j = await api<{ rooms: RoomInfo[]; now: number }>('/api/debug/rooms'); rooms = j.rooms; serverNow = j.now; roomsErr = null; }
+    catch (e) { rooms = []; roomsErr = errText(e); }
+    if (!st.room && rooms[0]) st.room = rooms[0].id;
     renderRooms();
   }
-  async function loadRoom() {
+  async function loadRoom(): Promise<void> {
     if (!st.room) { snap = null; return; }
-    try { snap = await api('/api/debug/room?id=' + encodeURIComponent(st.room)); snapErr = null; }
-    catch (e) { snap = null; snapErr = e.message; }
+    try { snap = await api<RoomSnapshot>('/api/debug/room?id=' + encodeURIComponent(st.room)); snapErr = null; }
+    catch (e) { snap = null; snapErr = errText(e); }
   }
-  async function selectRoom(id) { st.room = id; saveHash(); renderRooms(); await loadRoom(); render(); }
+  async function selectRoom(id: string): Promise<void> { st.room = id; saveHash(); renderRooms(); await loadRoom(); render(); }
 
   // ---------- záložky ----------
-  function renderTabs() {
+  function renderTabs(): void {
     $('tabs').replaceChildren(...TABS.map(t => h('button', { class: t.id === st.tab ? 'on' : null, onclick: () => { st.tab = t.id; saveHash(); renderTabs(); render(); } }, t.label)));
   }
   // Záložky okrem Room sú samostatné moduly debug/tabs/<id>.mjs (načítajú sa až pri otvorení):
@@ -88,69 +90,77 @@
   // ctx: { room, area, snap, rooms, param(k), setParam(k, v), setArea(a), api(path), h, D, fmt }
   // update(ctx) príde pri zmene sveta, plochy alebo po obnovení; unmount pri prepnutí záložky.
   // Keď modul ešte neexistuje, ukáže sa popis, čo v záložke bude.
-  const mods = {};
-  let mounted = null, renderSeq = 0;
-  const fmt = { when: t => when(t), hhmm, inTicks, ago: ms => ago(ms), size: fmtSize, short, SEASON_EN };
-  function ctx() {
+  // záložka → modul (esbuild z nich spraví samostatné kúsky balíka)
+  const LOADERS: Readonly<Partial<Record<string, () => Promise<TabModule>>>> = {
+    map: () => import('./tabs/map.ts'), world: () => import('./tabs/world.ts'), assets: () => import('./tabs/assets.ts'),
+    generators: () => import('./tabs/generators.ts'), market: () => import('./tabs/market.ts'), engine: () => import('./tabs/engine.ts'),
+    journal: () => import('./tabs/journal.ts')
+  };
+  const mods: Partial<Record<string, Promise<TabModule | null>>> = {};
+  let mounted: { id: string; inst: TabInstance } | null = null, renderSeq = 0;
+  const fmt = { when: (t: number) => when(t), hhmm, inTicks, ago: (ms: number | null | undefined) => ago(ms), size: fmtSize, short, SEASON_EN };
+  function ctx(): TabCtx {
     return {
       room: st.room, area: st.area, snap, rooms, h, D, fmt,
-      api: p => api(p),
-      param: k => st[k] == null ? null : st[k],
+      api: <T>(p: string) => api<T>(p),
+      param: k => st[k] ?? null,
       setParam: (k, v) => { if (v == null || v === '') delete st[k]; else st[k] = String(v); saveHash(); },
-      setArea: a => { if (D.AREAS.includes(a)) { st.area = a; $('area').value = a; saveHash(); render(); } }
+      setArea: a => { if (isArea(a)) { st.area = a; $as('area', HTMLSelectElement).value = a; saveHash(); render(); } }
     };
   }
-  function unmountTab() {
-    if (mounted && mounted.inst && mounted.inst.unmount) try { mounted.inst.unmount(); } catch (e) { console.error(e); }
+  function unmountTab(): void {
+    if (mounted?.inst.unmount) try { mounted.inst.unmount(); } catch (e) { console.error(e); }
     mounted = null;
   }
-  function render() {
-    const main = $('main'), tab = TABS.find(t => t.id === st.tab), seq = ++renderSeq;
+  function render(): void {
+    const main = $('main'), tab = TABS.find(t => t.id === st.tab) ?? must(TABS[0]), seq = ++renderSeq;
     if (tab.id !== 'room') {
-      if (mounted && mounted.id === tab.id) { if (mounted.inst && mounted.inst.update) mounted.inst.update(ctx()); return; }
+      if (mounted && mounted.id === tab.id) { if (mounted.inst.update) mounted.inst.update(ctx()); return; }
       unmountTab();
-      if (!(tab.id in mods)) mods[tab.id] = import(`/debug/tabs/${tab.id}.mjs`).catch(() => null);
-      mods[tab.id].then(m => {
+      const load = LOADERS[tab.id];
+      const mod = mods[tab.id] ??= load ? load().catch((e: unknown) => { console.error(e); return null; }) : Promise.resolve(null);
+      void mod.then(m => {
         if (seq !== renderSeq) return;
-        if (m && m.mount) { main.replaceChildren(); mounted = { id: tab.id, inst: m.mount(main, ctx()) || {} }; }
+        if (m) { main.replaceChildren(); mounted = { id: tab.id, inst: m.mount(main, ctx()) || {} }; }
         else placeholder(main, tab);
       });
       return;
     }
     unmountTab();
-    if (roomsErr) return main.replaceChildren(h('div', { class: 'empty err' }, roomsErr));
-    if (!st.room) return main.replaceChildren(h('div', { class: 'empty' }, 'Pick a room on the left.'));
-    if (snapErr) return main.replaceChildren(h('div', { class: 'empty err' }, `Room ${st.room}: ${snapErr}`));
-    if (!snap) return main.replaceChildren(h('div', { class: 'empty' }, 'Loading…'));
+    if (roomsErr) { main.replaceChildren(h('div', { class: 'empty err' }, roomsErr)); return; }
+    if (!st.room) { main.replaceChildren(h('div', { class: 'empty' }, 'Pick a room on the left.')); return; }
+    if (snapErr) { main.replaceChildren(h('div', { class: 'empty err' }, `Room ${st.room}: ${snapErr}`)); return; }
+    if (!snap) { main.replaceChildren(h('div', { class: 'empty' }, 'Loading…')); return; }
     main.replaceChildren(...roomView(snap));
   }
-  function placeholder(main, tab) {
+  function placeholder(main: HTMLElement, tab: Tab): void {
       main.replaceChildren(h('div', { class: 'placeholder' }, h('h2', null, tab.label), h('p', null, tab.todo),
         h('p', { class: 'muted' }, 'Not built yet. It’s a later part of ', h('a', { href: ISSUE, target: '_blank', rel: 'noopener' }, '#64'), '.'),
         h('p', { class: 'muted' }, `Selected: room ${st.room || '–'}, area ${D.AREA_NAMES[st.area] || st.area}.`)));
   }
   // ---------- záložka Room: prehľad sveta ----------
-  function roomView(s) {
+  function roomView(s: RoomSnapshot): Node[] {
     const w = s.state, tick = w.tick || 0, day = D.dayOfTick(tick), se = D.seasonOf(day), meta = rooms.find(r => r.id === s.id);
-    const saves = Object.entries(w.saves || {}), events = (w.events || []).slice().sort((a, b) => a.at - b.at || a.seq - b.seq);
+    const saves = Object.entries(w.saves || {}).flatMap(([id, sv]) => sv ? [[id, sv] as const] : []), events = (w.events || []).slice().sort((a, b) => a.at - b.at || a.seq - b.seq);
     const onlineBy = new Map(s.online.map(o => [o.player, o]));
-    const card = (label, value, sub) => h('div', { class: 'card' }, h('small', null, label), h('b', null, value), sub ? h('small', null, sub) : null);
-    const m = w.market || {}, sum = o => Object.values(o || {}).reduce((n, x) => n + (x.stock || 0), 0);
-    const out = [
+    const num = (v: unknown): number => typeof v === 'number' ? v : 0;
+    const card = (label: string, value: string, sub?: string | null): HTMLElement => h('div', { class: 'card' }, h('small', null, label), h('b', null, value), sub ? h('small', null, sub) : null);
+    const m = w.market, sum = (o: Partial<Record<string, { stock?: number }>> | undefined): number => Object.values(o || {}).reduce((n, x) => n + (x?.stock || 0), 0);
+    const out: Node[] = [
       h('h2', null, s.id,
         h('span', { class: 'badge' + (s.source === 'memory' ? ' live' : '') }, s.source === 'memory' ? 'loaded – live state' : 'read from file'),
         s.online.length ? h('span', { class: 'badge live' }, s.online.length + ' online') : null),
-      h('div', { class: 'muted' }, meta ? `saved ${ago(meta.saved)} · ${fmtSize(meta.size)}` : '', w.migratedFrom && w.migratedFrom !== w.v ? ` · migrated from save v${w.migratedFrom}` : '', ` · save v${w.v}`),
+      h('div', { class: 'muted' }, meta ? `saved ${ago(meta.saved)} · ${fmtSize(meta.size)}` : '', num(w['migratedFrom']) && w['migratedFrom'] !== w['v'] ? ` · migrated from save v${num(w['migratedFrom'])}` : '', ` · save v${num(w['v'])}`),
       h('div', { class: 'cards' },
-        card('Day', `${day}`, `${D.SEASON_ICONS ? D.SEASON_ICONS[se] + ' ' : ''}${SEASON_EN[se]}, day ${(day - 1) % D.DAYS_PER_SEASON + 1}/${D.DAYS_PER_SEASON}`),
+        card('Day', `${day}`, `${D.SEASON_ICONS[se] ?? ''} ${SEASON_EN[se] ?? ''}, day ${(day - 1) % D.DAYS_PER_SEASON + 1}/${D.DAYS_PER_SEASON}`),
         card('Time', hhmm(D.minOfTick(tick)), `tick ${tick}`),
-        card('Mode', w.mode || '–', w.mode === 'paused' ? 'time stops when empty' : 'time runs offline'),
-        card('Day length', `${Math.round((w.daySeconds || D.BASE_DAY_SECONDS) / 60)} min`, `${w.daySeconds || D.BASE_DAY_SECONDS} s`),
-        card('Weather', w.weather || '–', w.fairyNight >= 0 ? 'fairy night day ' + w.fairyNight : null),
+        card('Mode', typeof w['mode'] === 'string' && w['mode'] ? w['mode'] : '–', w['mode'] === 'paused' ? 'time stops when empty' : 'time runs offline'),
+        card('Day length', `${Math.round((num(w['daySeconds']) || D.BASE_DAY_SECONDS) / 60)} min`, `${num(w['daySeconds']) || D.BASE_DAY_SECONDS} s`),
+        card('Weather', w.weather || '–', num(w['fairyNight']) >= 0 && w['fairyNight'] != null ? 'fairy night day ' + num(w['fairyNight']) : null),
         card('Players', `${saves.length}`, `${s.online.length} online`),
         card('Events', `${events.length}`, events[0] ? `next ${events[0].type}` : null),
-        card('Market stock', `${sum(m.seeds)} seeds`, `${sum(m.flowers)} flowers${m.compost ? ', ' + (m.compost.stock || 0) + ' compost' : ''}`),
-        card('Contracts', `${((w.contracts || {}).list || []).length}`, 'on the board'),
+        card('Market stock', `${sum(m?.seeds)} seeds`, `${sum(m?.flowers)} flowers${m?.compost ? ', ' + (m.compost.stock || 0) + ' compost' : ''}`),
+        card('Contracts', `${(w.contracts?.list || []).length}`, 'on the board'),
         card('Icehouse', w.icehouse && w.icehouse.built ? `${w.icehouse.ice || 0} ice` : 'not built'))
     ];
 
@@ -160,12 +170,13 @@
     out.push(saves.length ? h('div', { class: 'tablewrap' }, h('table', null,
       h('tr', null, ['Player', 'Online as', 'Area', 'Coins', 'Rep', 'Water', 'Inventory', 'Recipes', 'Upgrades', 'Last seen'].map((c, i) => h('th', { class: [3, 4, 5, 6, 7].includes(i) ? 'num' : null }, c))),
       saves.sort((a, b) => (b[1].coins || 0) - (a[1].coins || 0)).map(([id, sv]) => {
-        const o = onlineBy.get(id), inv = Object.values(sv.inv || {}).reduce((n, v) => n + (typeof v === 'number' ? v : Array.isArray(v) ? v.length : 1), 0);
+        const vals: unknown[] = Object.values(sv.inv); // staré uloženia mali v batohu aj zoznamy
+        const o = onlineBy.get(id), inv = vals.reduce<number>((n, v) => n + (typeof v === 'number' ? v : Array.isArray(v) ? v.length : 1), 0);
         return h('tr', null, h('td', { class: 'mono' }, id), h('td', null, o ? h('span', null, h('span', { class: 'dot' }), o.name) : '–'),
-          h('td', null, D.AREA_NAMES[o ? o.area : sv.area] || sv.area || 'garden'),
+          h('td', null, D.AREA_NAMES[o ? o.area : sv.area ?? 'garden']),
           h('td', { class: 'num' }, sv.coins), h('td', { class: 'num' }, `${sv.rep || 0} (L${D.repLevel(sv.rep || 0)})`), h('td', { class: 'num' }, sv.water),
-          h('td', { class: 'num' }, inv), h('td', { class: 'num' }, (sv.recipes || []).length),
-          h('td', { class: 'mono' }, sv.up ? Object.entries(sv.up).map(([k, v]) => `${k} ${v}`).join(', ') : '–'),
+          h('td', { class: 'num' }, inv), h('td', { class: 'num' }, sv.recipes.length),
+          h('td', { class: 'mono' }, Object.entries(sv.up).map(([k, v]) => `${k} ${v}`).join(', ') || '–'),
           h('td', null, o ? 'now' : sv.lastTick != null ? when(sv.lastTick) : '–'));
       }))) : h('div', { class: 'empty' }, 'Nobody has played here yet.'));
 
@@ -183,11 +194,11 @@
 
   // Stav reconcilera: každá deklarovaná periodická udalosť má mať vo fronte práve jednu; čo chýba, doplní,
   // čo už do hry nepatrí (neznámy typ, nedeklarovaná, duplicita), zahodí. Toto je len plán, svet sa nemení.
-  function reconcilerView(r, tick) {
+  function reconcilerView(r: ReconcilerView | null, tick: number): Node[] {
     if (!r) return [];
     const missing = r.periodic.filter(p => p.status === 'missing');
     const healthy = !missing.length && !r.drop.length;
-    const out = [
+    const out: Node[] = [
       h('h3', null, 'Reconciler ', h('span', { class: 'badge' + (healthy ? ' live' : ' warn') }, healthy ? 'in sync' : `${missing.length} missing · ${r.drop.length} to drop`)),
       h('div', { class: 'muted', style: 'margin-bottom:8px' },
         `${r.declared} periodic declared, ${r.proposers} proposers · queue: ${r.counts.periodic} periodic, ${r.counts.unique} unique, ${r.counts.plain} plain. `,
@@ -208,18 +219,18 @@
   }
 
   // JSON strom: deti sa vytvoria až pri prvom rozbalení
-  function jsonNode(key, v, open) {
-    const label = key != null ? [h('span', { class: 'k' }, key), ': '] : [];
+  function jsonNode(key: string | number | null, v: unknown, open?: boolean): HTMLElement {
+    const label: Kid[] = key != null ? [h('span', { class: 'k' }, key), ': '] : [];
     if (v === null || typeof v !== 'object') {
       return h('div', { class: 'leaf' }, ...label, h('span', { class: typeof v === 'string' ? 's' : 'n' }, JSON.stringify(v)));
     }
-    const arr = Array.isArray(v), n = arr ? v.length : Object.keys(v).length;
+    const list: readonly unknown[] | null = Array.isArray(v) ? v : null, arr = !!list, n = list ? list.length : Object.keys(v).length;
     const d = h('details', null, h('summary', null, ...label, h('span', { class: 'muted' }, arr ? `[${n}]` : `{${n}}`), ' ', h('span', { class: 'muted' }, n ? short(v) : '')));
     let built = false;
     d.addEventListener('toggle', () => {
       if (!d.open || built) return;
       built = true;
-      const entries = arr ? v.map((x, i) => [i, x]) : Object.entries(v);
+      const entries: [string | number, unknown][] = list ? list.map((x, i) => [i, x]) : Object.entries(v);
       const LIMIT = 500;
       for (const [k, x] of entries.slice(0, LIMIT)) d.appendChild(jsonNode(k, x));
       if (entries.length > LIMIT) d.appendChild(h('div', { class: 'leaf muted' }, `… ${entries.length - LIMIT} more`));
@@ -229,18 +240,21 @@
   }
 
   // ---------- ovládanie ----------
-  $('area').replaceChildren(...D.AREAS.map(a => h('option', { value: a, selected: a === st.area ? 'selected' : null }, D.AREA_NAMES[a] || a)));
-  $('area').onchange = () => { st.area = $('area').value; saveHash(); render(); };
+  const areaSel = $as('area', HTMLSelectElement);
+  areaSel.replaceChildren(...D.AREAS.map(a => h('option', { value: a, selected: a === st.area ? 'selected' : null }, D.AREA_NAMES[a] || a)));
+  areaSel.onchange = () => { if (isArea(areaSel.value)) st.area = areaSel.value; saveHash(); render(); };
   $('search').oninput = renderRooms;
-  async function refresh() { await loadRooms(); await loadRoom(); render(); }
-  $('refresh').onclick = refresh;
-  let timer = null;
-  $('auto').onchange = () => { clearInterval(timer); timer = $('auto').checked ? setInterval(refresh, 5000) : null; };
+  async function refresh(): Promise<void> { await loadRooms(); await loadRoom(); render(); }
+  $('refresh').onclick = () => { void refresh(); };
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const auto = $as('auto', HTMLInputElement);
+  auto.onchange = () => { clearInterval(timer); timer = auto.checked ? setInterval(() => { void refresh(); }, 5000) : undefined; };
   window.addEventListener('hashchange', () => {
-    const p = Object.fromEntries(new URLSearchParams(location.hash.slice(1)));
-    if (p.room && p.room !== st.room) selectRoom(p.room);
+    const room = new URLSearchParams(location.hash.slice(1)).get('room');
+    if (room && room !== st.room) void selectRoom(room);
   });
 
   renderTabs();
-  refresh().then(saveHash);
+  void refresh().then(saveHash);
+
 })();

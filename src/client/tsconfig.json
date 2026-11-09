@@ -6,8 +6,7 @@
     "lib": ["es2024", "dom", "dom.iterable"],
     "types": [],
     "module": "preserve",
-    "moduleResolution": "bundler",
-    "allowJs": false
+    "moduleResolution": "bundler"
   },
   "include": ["./**/*", "../shared/**/*"],
   "exclude": []
