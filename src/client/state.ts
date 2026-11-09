@@ -1,10 +1,11 @@
 // Stav klienta (#136): jeden objekt S zdieľaný hrou (game.ts) a 3D pohľadom (render3d.ts, spiders3d.ts, particles3d.ts).
 // V konzole je to window.MF – jediný ladiaci háčik klienta (README).
-import type { AreaId, Ground, ItemId, Look, PotionId, SpeciesId } from '../shared/data.ts';
+import type { AreaId, Ground, ItemId, Look, MasterPos, PotionId, SpeciesId } from '../shared/data.ts';
+import type { WebOverrides } from '../shared/webs.ts';
 import type { Other } from '../shared/players.ts';
 import type { BatchesView, CornerView, PlayerView, ServerMessage, SpiderKind, TileView, WebView } from '../shared/protocol.ts';
 import type { Contract, Icehouse, Weather, WorldMode } from '../shared/save.ts';
-import type { Render3D } from './render3d.ts';
+import type { FadeConfig, FadeOverrides, Render3D } from './render3d.ts';
 
 export type MsgOf<T extends ServerMessage['t']> = Extract<ServerMessage, { t: T }>;
 export interface Pt { x: number; y: number }
@@ -25,6 +26,7 @@ export interface Spider {
 export interface FxParticle {
   fairy?: undefined; x: number; y: number; vx: number; vy: number; g: number; life: number; max: number; size: number;
   color?: string | undefined; text?: string; star?: boolean;
+  ox?: number; oy?: number; // kde efekt vznikol (kreslenie, render3d.ts)
 }
 export interface FxFairy { fairy: true; cx: number; cy: number; a: number; rad: number; life: number; max: number; color: string }
 export type Fx = FxParticle | FxFairy;
@@ -33,7 +35,7 @@ export interface ScreenFx { k: 'rainbow' | 'gold'; life: number; max: number; co
 export interface AreaFx { phase: 'out' | 'build' | 'named'; msg: MsgOf<'area'>; queue: ServerMessage[]; timer?: ReturnType<typeof setTimeout>; tok?: symbol }
 // Kontextová akcia na políčku: ikona, popis, okno (ui), len informácia, kde je majster…
 export type UiKind = 'shop' | 'cauldron' | 'babka' | 'book' | 'menu' | 'help' | 'storage' | 'house' | 'wish' | 'icehouse' | 'dielna' | 'majster';
-export interface CtxAction { i: string; l: string; ui?: UiKind; info?: boolean; only?: boolean; ma?: NonNullable<ReturnType<typeof import('../shared/data.ts').masterAt>> }
+export interface CtxAction { i: string; l: string; ui?: UiKind; info?: boolean; only?: boolean; ma?: MasterPos }
 export type Dir = 'u' | 'd' | 'l' | 'r';
 
 export interface ClientState {
@@ -56,7 +58,7 @@ export interface ClientState {
   // pavúky na ploche (plynulo dobiehajú polohu zo servera) a spomalenie (lepkavá pavučina, pavúk na chrbte)
   webs: WebView[]; webTile: Map<number, WebView>; homes: MsgOf<'webs'>['homes']; websGen: number; corner: CornerView[]; cornerGen: number;
   spiders: Map<string, Spider>; slowK: number; slowUntil: number; web: { start: number; stuck: number; end: number; k: number } | null;
-  webLeft: () => number;
+  webLeft?: () => number; // koľko pavučiny je ešte na mne (1 → 0); na ladiacej stránke chýba
   r3: Render3D | null; // 3D pohľad (pre ladenie v konzole: MF.r3.pick(x, y))
 }
 
@@ -65,9 +67,9 @@ declare global {
   interface Window {
     MF: ClientState;
     MF_TIME?: { season?: number; min?: number };
-    MF_WEB?: import('../shared/webs.ts').WebOverrides;
-    MF_FADE?: import('./render3d.ts').FadeOverrides;
-    MF_FADE_DEFAULTS?: import('./render3d.ts').FadeConfig;
+    MF_WEB?: WebOverrides;
+    MF_FADE?: FadeOverrides;
+    MF_FADE_DEFAULTS?: FadeConfig;
     MF_NOFADE?: boolean;
     MF_LES_SUN?: 'dapple';
     MF_RAY_K?: number;

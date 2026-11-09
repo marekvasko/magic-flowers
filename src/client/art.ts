@@ -8,7 +8,7 @@ type C2 = CanvasRenderingContext2D;
 // Voľby kreslenia rastliny (plant): zahynutá, v noci (papraď svieti), odkvitá, pripravená na zber (trblietka)
 export interface PlantOpts { dead?: boolean; night?: boolean; wilting?: boolean; ready?: boolean }
 // Voľby postavičky (char): plazí sa, tancuje, hrabe v tráve (dig = čas v s), babka, lampáš v ruke ('lit' = svieti), bez tieňa
-export interface CharOpts { crawl?: boolean; dance?: boolean; dig?: number; babka?: boolean; lamp?: 'lit' | boolean; noShadow?: boolean }
+export interface CharOpts { crawl?: boolean; dance?: boolean; dig?: number; babka?: boolean; lamp?: 'lit' | 'on' | boolean; noShadow?: boolean }
 // Prechod na okraji plochy: strana, kam vedie, a ikona cieľovej plochy
 export interface GateInfo { side: 'n' | 's' | 'w' | 'e'; icon: string }
 export const Art = (() => {
