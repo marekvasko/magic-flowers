@@ -274,7 +274,7 @@ test('server: svet z verzie 4 dostane (cez v7) Les divov (záhrada aj Les na pom
 });
 
 test('ladiaca stránka: Les divov zo semienka aj z uloženého rozloženia sveta', () => {
-  const world = require('../src/server/debug-api/world.ts');
+  const world = require('../src/server/debug-api/world.ts').default;
   const q = o => new URLSearchParams(o);
   const fresh = world(q({ seed: '42', area: 'les' }), { load: () => null });
   assert.deepStrictEqual([fresh.w, fresh.h, fresh.seed], [LW, LH, 42]);

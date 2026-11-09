@@ -1,4 +1,3 @@
-'use strict';
 // Ladiaca stránka (#106): záložka Journal – prehliadanie a filtrovanie denníka dávok na disku (data/journal-<svet>.jsonl
 // a starší .1), aj pre svet, ktorý nie je načítaný.
 //   GET /api/debug/journal?room=<id>[&kind=events|actions|load][&type=buy,pick,-pos][&actor=<p-…|meno>,…]
@@ -11,42 +10,59 @@
 //   GET /api/debug/journal?room=<id>&g=<n>  → jeden záznam rozobraný ako v záložke Engine (kolá, vinníci, zmeny pred / po)
 // Súbory sa len čítajú. Prehľad riadkov (krok, typy, aktéri, osudy, kľúče, poloha v súbore) sa drží v pamäti a pri
 // ďalšej požiadavke sa dočíta len to, čo do súboru pribudlo (denník sa iba pripisuje; pri otočení sa začne odznova).
-const fs = require('fs');
-const { keyId } = require('../debug.ts');
-const Engine = require('./engine.ts');
+import fs from 'node:fs';
+import { must } from '../../shared/util.ts';
+import type { JournalLine, JournalLoad } from '../engine.ts';
+import { keyId } from '../debug.ts';
+import type { Tools } from '../debug.ts';
+import type { Msg } from '../game.ts';
+import type { Presence } from '../world.ts';
+import * as Engine from './engine.ts';
 
 const CHUNK = 4 << 20, TEXT_MAX = 600;
-const OUT = ['applied', 'held', 'rejected', 'error'];
-// text na hľadanie: malé písmená bez diakritiky
-const norm = s => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-const cache = new Map(); // cesta → { ino, bytes, rest, items, names: kľúč hráča → meno (z prítomnosti v záznamoch) }
-
+const OUT = ['applied', 'held', 'rejected', 'error'] as const;
+type Line = JournalLine<Presence, Msg>;
+type Kind = 'events' | 'actions' | 'load';
 // Prehľad jedného riadku denníka
-function summarize(e, off, len) {
-  if (e.load) return { off, len, tick: e.tick, wall: e.wall, kind: 'load', step: e.step, seq: e.seq, migratedFrom: e.migratedFrom || null, types: [], actors: [], o: [0, 0, 0, 0], rounds: 0, n: 0, keys: '', text: 'world loaded' };
+export interface Item {
+  off: number; len: number; tick: number; wall: number; kind: Kind; step: number; seq?: number; migratedFrom?: number | null;
+  n: number; types: string[]; actors: string[]; o: number[]; rounds: number; keys: string; text: string;
+}
+interface FileCache { ino: number; bytes: number; rest: Buffer; items: Item[]; names: Map<string, string> }
+// text na hľadanie: malé písmená bez diakritiky
+const norm = (s: string): string => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const cache = new Map<string, FileCache>(); // cesta → { ino, bytes, rest, items, names: kľúč hráča → meno (z prítomnosti v záznamoch) }
+// Riadok denníka zo súboru: zapísal ho server (tvar JournalLine); poškodený riadok vyhodí chybu pri čítaní
+function parseLine(text: string): Line { return JSON.parse(text) as Line; }
+
+/* eslint-disable @typescript-eslint/no-unnecessary-condition -- riadky denníka zo súboru (aj zo starších verzií servera): polia môžu chýbať */
+// Prehľad jedného riadku denníka
+export function summarize(e: Line, off: number, len: number): Item {
+  if ('load' in e) return { off, len, tick: e.tick, wall: e.wall, kind: 'load', step: e.step, seq: e.seq, migratedFrom: e.migratedFrom || null, types: [], actors: [], o: [0, 0, 0, 0], rounds: 0, n: 0, keys: '', text: 'world loaded' };
   const inputs = e.inputs || [], props = e.proposals || [];
-  const o = [0, 0, 0, 0], keys = new Set(), msgs = [];
+  const o = [0, 0, 0, 0], keys = new Set<string>(), msgs: string[] = [];
   let rounds = 0;
   for (const p of props) {
-    o[OUT.indexOf(p.outcome)]++;
+    const k = OUT.indexOf(p.outcome);
+    o[k] = (o[k] ?? 0) + 1;
     if (p.msg) msgs.push(p.msg);
     rounds = Math.max(rounds, p.round);
-    for (const k of p.reads || []) keys.add(k);
-    for (const k of p.writes || []) keys.add(k);
+    for (const key of p.reads || []) keys.add(key);
+    for (const key of p.writes || []) keys.add(key);
   }
   return {
     off, len, tick: e.tick, wall: e.wall, step: e.step, kind: inputs.some(i => i.ev) ? 'events' : 'actions', n: inputs.length,
-    types: [...new Set(inputs.map(i => i.type))], actors: [...new Set(inputs.filter(i => i.actor != null).map(i => i.actor))],
+    types: [...new Set(inputs.map(i => i.type))], actors: [...new Set(inputs.flatMap(i => (i.actor != null ? [i.actor] : [])))],
     o, rounds, keys: [...keys].join(' '),
     text: norm([msgs.join(' '), inputs.map(i => i.type + ' ' + JSON.stringify(i.data)).join(' ').slice(0, TEXT_MAX), [...keys].join(' '),
-      (e.outbox || []).map(m => m.t + (m.text ? ' ' + m.text : '')).join(' ').slice(0, TEXT_MAX)].join(' '))
+      (e.outbox || []).map(m => m.t + ('text' in m && m.text ? ' ' + m.text : '')).join(' ').slice(0, TEXT_MAX)].join(' '))
   };
 }
 
 // Dočíta do prehľadu, čo v súbore pribudlo od minula
-function index(file) {
+function index(file: string): Item[] {
   let st;
-  try { st = fs.statSync(file); } catch (e) { cache.delete(file); return []; }
+  try { st = fs.statSync(file); } catch { cache.delete(file); return []; }
   let c = cache.get(file);
   if (!c || c.ino !== st.ino || st.size < c.bytes) c = { ino: st.ino, bytes: 0, rest: Buffer.alloc(0), items: [], names: new Map() };
   if (st.size > c.bytes) {
@@ -63,10 +79,10 @@ function index(file) {
         while ((nl = data.indexOf(10, from)) >= 0) {
           if (nl > from) {
             try {
-              const e = JSON.parse(data.toString('utf8', from, nl));
+              const e = parseLine(data.toString('utf8', from, nl));
               c.items.push(summarize(e, base + from, nl - from));
-              if (Array.isArray(e.presence)) for (const p of e.presence) if (p && p.key && p.name) c.names.set(p.key, p.name);
-            } catch (e) { /* poškodený riadok */ }
+              if (!('load' in e) && Array.isArray(e.presence)) for (const p of e.presence) if (p && p.key && p.name) c.names.set(p.key, p.name);
+            } catch { /* poškodený riadok */ }
           }
           from = nl + 1;
         }
@@ -78,20 +94,35 @@ function index(file) {
   cache.set(file, c);
   return c.items;
 }
-function readEntry(file, it) {
+function readEntry(file: string, it: Item): Line {
   const fd = fs.openSync(file, 'r');
-  try { const buf = Buffer.alloc(it.len); fs.readSync(fd, buf, 0, it.len, it.off); return JSON.parse(buf.toString('utf8')); } finally { fs.closeSync(fd); }
+  try { const buf = Buffer.alloc(it.len); fs.readSync(fd, buf, 0, it.len, it.off); return parseLine(buf.toString('utf8')); } finally { fs.closeSync(fd); }
 }
 
-module.exports = (query, tools) => {
+// Odpovede: zoznam riadkov s filtrami, jeden záznam rozobraný ako v záložke Engine, značka načítania (alebo riadok, ktorý už nie je)
+export interface JournalRow {
+  g: number; tick: number; wall: number; kind: Kind; step: number; n: number; types: string[]; actors: string[];
+  applied: number | undefined; held: number | undefined; rejected: number | undefined; errors: number | undefined; rounds: number; migratedFrom: number | null | undefined; routine: boolean;
+}
+type FileInfo = { name: string; size: number }[];
+export interface JournalList {
+  room: string; files: FileInfo; total: number; matched: number; rows: JournalRow[]; next: number | null;
+  facets: { type: Partial<Record<string, number>>; actor: Partial<Record<string, number>>; outcome: Record<typeof OUT[number], number>; kind: Record<Kind, number> };
+  first: number | null | undefined; last: number | null | undefined; types: string[]; players: { id: string; name: string | null }[];
+}
+export type JournalOne = Engine.Detail & { room: string; files: FileInfo; g: number };
+export interface JournalLoadReply { room: string; files: FileInfo; g: number; load: JournalLoad }
+export type JournalReply = JournalList | JournalOne | JournalLoadReply | { room: string; files: FileInfo; gone: number };
+
+export default function journal(query: URLSearchParams, tools: Pick<Tools, 'ROOM_RE' | 'journalFiles' | 'load' | 'redactKeys'>): JournalReply | null {
   const id = query.get('room') || query.get('id') || '';
   if (!tools.ROOM_RE.test(id)) return null;
   const files = tools.journalFiles(id);
   const r = tools.load(id); // kľúče hráčov z uložení sa tým odstránia z odpovede
   if (!files.length && !r) return null;
   // všetky riadky oboch súborov: g = poradie (najprv starší .1)
-  const all = [];
-  const names = new Map();
+  const all: { fi: number; it: Item }[] = [];
+  const names = new Map<string, string>();
   for (const [fi, f] of files.entries()) {
     for (const it of index(f.path)) all.push({ fi, it });
     const c = cache.get(f.path);
@@ -104,66 +135,67 @@ module.exports = (query, tools) => {
   const fileInfo = files.map(f => ({ name: f.name, size: fs.statSync(f.path).size }));
 
   if (query.has('g')) {
-    const g = query.get('g') | 0, x = all[g];
+    const g = Number(query.get('g')) | 0, x = all[g];
     if (!x) return { room: id, files: fileInfo, gone: g };
-    const e = readEntry(files[x.fi].path, x.it);
+    const e = readEntry(files[x.fi]?.path ?? '', x.it);
+    if ('load' in e) return { room: id, files: fileInfo, g, load: e };
     for (const p of Array.isArray(e.presence) ? e.presence : []) if (p && p.key) tools.redactKeys([p.key]);
-    if (e.load) return { room: id, files: fileInfo, g, load: e };
     const d = Engine.detail({ n: g, tick: e.tick, wall: e.wall, source: 'journal', entry: e, results: {}, filter: null, timing: null });
     return Object.assign({ room: id, files: fileInfo, g }, d);
   }
 
   // filtre: každý je predikát; počty (facets) pre jeden filter sa rátajú so všetkými ostatnými
-  const list = v => (v || '').split(',').map(x => x.trim()).filter(Boolean);
+  const list = (v: string | null): string[] => (v || '').split(',').map(x => x.trim()).filter(Boolean);
   const kind = query.get('kind') || '';
   const tl = list(query.get('type')), inc = new Set(tl.filter(t => t[0] !== '-')), exc = new Set(tl.filter(t => t[0] === '-').map(t => t.slice(1)));
   const actors = new Set(list(query.get('actor')).map(a => byId.get(a) || a.toLowerCase()));
-  const outs = list(query.get('outcome')).map(o => OUT.indexOf(o)).filter(i => i >= 0);
+  const outs = list(query.get('outcome')).map(o => OUT.findIndex(x => x === o)).filter(i => i >= 0);
   const keyQ = (query.get('key') || '').trim().replace(/p-[0-9a-f]{8}/g, m => byId.get(m) || m); // kľúč zadaný s odtlačkom hráča
   const words = norm(query.get('q') || '').replace(/p-[0-9a-f]{8}/g, m => byId.get(m) || m).split(/\s+/).filter(Boolean);
-  const num = k => (query.has(k) && query.get(k) !== '' && isFinite(+query.get(k)) ? +query.get(k) : null);
-  const from = num('from') == null ? -Infinity : num('from'), to = num('to') == null ? Infinity : num('to');
+  const num = (k: string): number | null => { const v = query.get(k); return v != null && v !== '' && isFinite(+v) ? +v : null; };
+  const from = num('from') ?? -Infinity, to = num('to') ?? Infinity;
   const hideRoutine = query.get('moves') === '0';
-  const routine = it => it.kind === 'actions' && !it.o[1] && !it.o[2] && !it.o[3] && it.types.every(t => t === 'pos' || t === 'seen');
-  const load = it => it.kind === 'load';
+  const routine = (it: Item): boolean => it.kind === 'actions' && !it.o[1] && !it.o[2] && !it.o[3] && it.types.every(t => t === 'pos' || t === 'seen');
+  const load = (it: Item): boolean => it.kind === 'load';
   const P = {
-    kind: it => !kind || it.kind === kind,
-    tick: it => it.tick >= from && it.tick <= to,
-    type: it => (!inc.size || (!load(it) && it.types.some(t => inc.has(t)))) && !it.types.some(t => exc.has(t)),
-    actor: it => !actors.size || it.actors.some(a => actors.has(a)),
-    outcome: it => !outs.length || outs.some(i => it.o[i] > 0),
-    key: it => !keyQ || it.keys.includes(keyQ),
-    q: it => words.every(w => it.text.includes(w)),
-    routine: it => !hideRoutine || !routine(it)
+    kind: (it: Item): boolean => !kind || it.kind === kind,
+    tick: (it: Item): boolean => it.tick >= from && it.tick <= to,
+    type: (it: Item): boolean => (!inc.size || (!load(it) && it.types.some(t => inc.has(t)))) && !it.types.some(t => exc.has(t)),
+    actor: (it: Item): boolean => !actors.size || it.actors.some(a => actors.has(a)),
+    outcome: (it: Item): boolean => !outs.length || outs.some(i => (it.o[i] ?? 0) > 0),
+    key: (it: Item): boolean => !keyQ || it.keys.includes(keyQ),
+    q: (it: Item): boolean => words.every(w => it.text.includes(w)),
+    routine: (it: Item): boolean => !hideRoutine || !routine(it)
   };
-  const names_ = Object.keys(P);
-  const facets = { type: {}, actor: {}, outcome: { applied: 0, held: 0, rejected: 0, error: 0 }, kind: { events: 0, actions: 0, load: 0 } };
-  const before = query.has('before') ? query.get('before') | 0 : all.length;
-  const limit = Math.max(1, Math.min(500, query.get('limit') | 0 || 100));
-  const rows = [];
-  let matched = 0, next = null;
+  const names_ = ['kind', 'tick', 'type', 'actor', 'outcome', 'key', 'q', 'routine'] as const satisfies readonly (keyof typeof P)[]; // poradie ako v P
+  const typeCounts: Partial<Record<string, number>> = {}, actorCounts: Partial<Record<string, number>> = {};
+  const facets = { type: typeCounts, actor: actorCounts, outcome: { applied: 0, held: 0, rejected: 0, error: 0 }, kind: { events: 0, actions: 0, load: 0 } };
+  const before = query.has('before') ? Number(query.get('before')) | 0 : all.length;
+  const limit = Math.max(1, Math.min(500, Number(query.get('limit')) | 0 || 100));
+  const rows: JournalRow[] = [];
+  let matched = 0, next: number | null = null;
   for (let g = all.length - 1; g >= 0; g--) {
-    const it = all[g].it;
-    let fails = 0, failed = null;
+    const it = must(all[g]).it;
+    let fails = 0, failed: keyof typeof P | null = null;
     for (const n of names_) if (!P[n](it)) { fails++; failed = n; if (fails > 1) break; }
     if (fails > 1) continue;
     // počty: riadok, ktorý prešiel všetkým okrem jedného filtra, sa počíta len do počtov toho filtra
     if (!fails || failed === 'type') for (const t of it.types) facets.type[t] = (facets.type[t] || 0) + 1;
     if (!fails || failed === 'actor') for (const a of it.actors) facets.actor[a] = (facets.actor[a] || 0) + 1;
-    if (!fails || failed === 'outcome') it.o.forEach((c, i) => { if (c) facets.outcome[OUT[i]]++; });
+    if (!fails || failed === 'outcome') it.o.forEach((c, i) => { const name = OUT[i]; if (c && name) facets.outcome[name]++; });
     if (!fails || failed === 'kind') facets.kind[it.kind]++;
     if (fails) continue;
     matched++;
     if (g >= before) continue;
     if (rows.length < limit) rows.push({ g, tick: it.tick, wall: it.wall, kind: it.kind, step: it.step, n: it.n, types: it.types, actors: it.actors, applied: it.o[0], held: it.o[1], rejected: it.o[2], errors: it.o[3], rounds: it.rounds, migratedFrom: it.migratedFrom, routine: routine(it) });
-    else if (next === null) next = rows[rows.length - 1].g;
+    else if (next === null) next = rows[rows.length - 1]?.g ?? null;
   }
-  const typesAll = new Set();
+  const typesAll = new Set<string>();
   for (const { it } of all) for (const t of it.types) typesAll.add(t);
   return {
     room: id, files: fileInfo, total: all.length, matched, rows, next, facets,
-    first: all.length ? all[0].it.tick : null, last: all.length ? all[all.length - 1].it.tick : null,
+    first: all.length ? all[0]?.it.tick : null, last: all.length ? all[all.length - 1]?.it.tick : null,
     types: [...typesAll].sort(), players: [...players].map(k => ({ id: k, name: names.get(k) || null }))
   };
-};
-module.exports.summarize = summarize;
+}
+/* eslint-enable @typescript-eslint/no-unnecessary-condition -- koniec denníka zo súboru */

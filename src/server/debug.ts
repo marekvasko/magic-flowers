@@ -4,10 +4,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { createRequire } from 'node:module';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AreaId } from '../shared/data.ts';
-import type { PlayerKey } from '../shared/save.ts';
+import type { Icehouse, PlayerKey, SavedTile, Weather } from '../shared/save.ts';
 import { isRecord } from '../shared/util.ts';
 import * as E from './engine.ts';
 import type { BatchOut, EngineEvent, JournalEntry, PeriodicDef } from './engine.ts';
@@ -15,7 +14,6 @@ import * as Econ from './economy.ts';
 import type { GameSpec, GameWorld, Msg } from './game.ts';
 import type { Presence } from './world.ts';
 
-const require = createRequire(import.meta.url);
 export const ROOM_RE = /^[a-z0-9-]{1,16}$/; // rovnaké mená svetov ako pri pripojení hráča
 const MIME: Readonly<Partial<Record<string, string>>> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
 
@@ -108,9 +106,26 @@ export interface DebugRoom {
   saves?: GameWorld['saves'];
 }
 // Stav sveta ako JSON (serialize alebo prečítaný a prevedený súbor): uložené polia, nič navyše nepredpokladá
-export interface DebugState { tick: number; events?: EngineEvent[]; saves?: GameWorld['saves']; market?: GameWorld['market']; seed?: string; scavSalt?: number; [key: string]: unknown }
+export interface DebugState {
+  tick: number;
+  events?: EngineEvent[];
+  saves?: GameWorld['saves'];
+  market?: GameWorld['market'];
+  contracts?: GameWorld['contracts'];
+  seed?: string;
+  scavSalt?: number;
+  weather?: Weather;
+  // políčka a plochy, ako sú v uložení (záhrada len pôda, hory a Les divov zakódované)
+  tiles?: SavedTile[] | null;
+  hory?: unknown;
+  les?: unknown;
+  pomedzieSeed?: number;
+  lesSeed?: number;
+  icehouse?: Icehouse | null;
+  [key: string]: unknown;
+}
 export interface Loaded { id: string; source: 'memory' | 'file'; file: { size: number; saved: number } | null; online: { name: string; area: AreaId; player: string }[]; state: DebugState }
-// Nástroje pre rozšírenia API (debug/api/<meno>.js)
+// Nástroje pre rozšírenia API (src/server/debug-api/<meno>.ts)
 export interface Tools {
   ROOM_RE: RegExp;
   rooms: () => RoomInfo[];
@@ -120,13 +135,13 @@ export interface Tools {
   journalFiles: (id: unknown) => { path: string; name: string }[];
   redactKeys: (list: unknown[] | null | undefined) => void;
 }
-// debug/api/<meno>.js exportuje (query, tools) → objekt na odpoveď (null = 404)
-type DebugApi = (query: URLSearchParams, tools: Tools) => unknown;
+// Rozšírenie API: (query, tools) → objekt na odpoveď (null = 404)
+export type DebugApi = (query: URLSearchParams, tools: Tools) => unknown;
 // Zo špecifikácie simulácie stačia návrhy a periodické udalosti (stav reconcilera); server ju má nad svojím typom sveta
 export type DebugSim = Pick<GameSpec, 'proposers' | 'periodic'>;
 export interface RoomInfo { id: string; size: number | null; saved: number | null; loaded: boolean; online: Loaded['online']; tick?: number }
-// ctx: { dataDir, debugDir, rooms (Map id → svet v pamäti), serialize(room) → JSON, migrate(stav) → stav,
-//        sim() → špecifikácia simulácie { proposers, periodic } pre stav reconcilera }
+// ctx: { dataDir, debugDir (stránka), rooms (Map id → svet v pamäti), serialize(room) → JSON, migrate(stav) → stav,
+//        sim() → špecifikácia simulácie { proposers, periodic } pre stav reconcilera, apis: meno → rozšírenie API }
 export interface DebugCtx<R extends DebugRoom> {
   dataDir: string;
   debugDir: string;
@@ -134,6 +149,7 @@ export interface DebugCtx<R extends DebugRoom> {
   serialize: (room: R) => string;
   migrate: (state: DebugState) => DebugState;
   sim?: () => DebugSim | null | undefined;
+  apis?: Readonly<Partial<Record<string, DebugApi>>>;
 }
 
 // Vráti handle(req, res) → true, ak požiadavku vybavil (inak ju server spracuje ako obyčajný súbor).
@@ -217,7 +233,7 @@ export function create<R extends DebugRoom>(ctx: DebugCtx<R>): (req: Pick<Incomi
     return redact(secretless(Object.assign({}, r, { reconciler: reconcilerView(r.state) })), Object.keys(r.state.saves || {}));
   }
 
-  // Rozšírenia API pre záložky: debug/api/<name>.js exportuje (query, tools) → objekt na odpoveď (null = 404).
+  // Rozšírenia API pre záložky: ctx.apis[name] (src/server/debug-api/<name>.ts) je (query, tools) → objekt na odpoveď (null = 404).
   //   tools.load(id) → { id, source, file, online, state } kópia sveta (alebo null), tools.rooms() → zoznam svetov,
   //   tools.sim → špecifikácia simulácie, tools.trace(id) → { max, n, records, origins } kruhová pamäť dávok sveta
   //   v pamäti (alebo null), tools.journalFiles(id) → [{ path, name }] denník sveta na disku (najprv starší .1),
@@ -227,8 +243,8 @@ export function create<R extends DebugRoom>(ctx: DebugCtx<R>): (req: Pick<Incomi
   const idOf = (id: unknown): string => String(id || '');
   function extension(res: Res, name: string, query: URLSearchParams): boolean {
     if (!/^[a-z][a-z0-9-]{0,30}$/.test(name)) return notFound(res);
-    const old = path.join(ctx.debugDir, 'api', name + '.js'), file = fs.existsSync(old) ? old : path.join(import.meta.dirname, 'debug-api', name + '.ts');
-    if (!fs.existsSync(file)) return notFound(res);
+    const api = ctx.apis && Object.hasOwn(ctx.apis, name) ? ctx.apis[name] : undefined; // len vlastné mená tabuľky (nie toString…)
+    if (!api) return notFound(res);
     const keys = new Set<string>();
     const tools: Tools = {
       ROOM_RE, rooms: listRooms, sim: ctx.sim && ctx.sim(),
@@ -249,7 +265,7 @@ export function create<R extends DebugRoom>(ctx: DebugCtx<R>): (req: Pick<Incomi
       redactKeys: list => { for (const k of list || []) if (typeof k === 'string' && k) keys.add(k); }
     };
     let body: unknown;
-    try { body = (require(file) as DebugApi)(query, tools); } catch (e) { console.error('[debug]', name, e); return json(res, 500, { error: e instanceof Error ? e.message : undefined }); }
+    try { body = api(query, tools); } catch (e) { console.error('[debug]', name, e); return json(res, 500, { error: e instanceof Error ? e.message : undefined }); }
     return body == null ? json(res, 404, { error: 'not found' }) : json(res, 200, redact(body, keys));
   }
 
