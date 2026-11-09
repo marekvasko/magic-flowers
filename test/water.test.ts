@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import * as D from '../src/shared/data.ts';
 import type { AreaId, SpeciesId } from '../src/shared/data.ts';
-import type { Icehouse, PlayerSave } from '../src/shared/save.ts';
+import type { Icehouse, PlayerSave, Soil } from '../src/shared/save.ts';
 import * as E from '../src/server/engine.ts';
 import * as Econ from '../src/server/economy.ts';
 import * as Events from '../src/server/events.ts';
@@ -220,4 +220,21 @@ test('uložený trh spred vodných kvetov (v11): pri načítaní dostane ich pol
   const r = E.commitBatch(w, [act('buy', { id: 'seed_lekno', n: 1 }), act('sell', { id: 'fl_lekno', n: 2 })], SPEC);
   assert.deepStrictEqual(r.rejected, []);
   assert.deepStrictEqual([ana(w).inv.seed_lekno, ana(w).inv.fl_lekno ?? 0], [1, 0]);
+});
+
+test('každý vodný kvet zasadený v 1. deň svojho obdobia stihne zakvitnúť – bez kompostu, ktorý sa do vody nedáva', () => {
+  for (const sp of (Object.keys(D.SPECIES) as SpeciesId[]).filter(D.isAqua)) for (const se of D.SPECIES[sp].seasons) {
+    const zone = must(D.SPECIES[sp].aqua).zone, i = spot('garden', zone); // na vodnej ploche rast nezávisí
+    const tiles = D.buildMap().map((g): { g: D.Ground; s: Soil | null } => ({ g, s: null }));
+    must(tiles[i]).s = { k: 'water', w: 1, r: 0, o: 'ana', p: { sp, prog: 0, q: 3, dry: 0 } };
+    const day0 = se * D.DAYS_PER_SEASON + 1;
+    let bloom = 0;
+    for (let day = day0 + 1; day <= day0 + D.DAYS_PER_SEASON + 2 && !bloom; day++) {
+      Events.growPlant(tiles, i, (day - 1) * TPD + D.DAWN_TICK, D.seasonOf(day), false);
+      const p = must(must(tiles[i]).s?.p ?? undefined);
+      assert.ok(!p.d, `${sp} (${must(D.SEASONS[se])}) uhynul ${String(day - day0)}. deň: ${p.why ?? ''}`);
+      if (p.prog >= D.SPECIES[sp].days) bloom = day - day0;
+    }
+    assert.ok(bloom > 0, `${sp} (${must(D.SEASONS[se])}) nezakvitne`);
+  }
 });

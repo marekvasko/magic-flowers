@@ -146,16 +146,17 @@ const SPECIES_DEF = {
     light: 'sun', soil: 'rock', strict: true, seed: 80, sell: 210, color: '#f4f3e8', center: '#d9d4a0', shape: 'edel',
     fact: 'Symbol hôr. Na Slovensku rastie divo len v Belianskych Tatrách a Pieninách a je prísne chránený.'
   },
-  // ---- Vodné kvety (#38): water nemá význam (voda ich polieva sama), soil = null ----
+  // ---- Vodné kvety (#38): water nemá význam (voda ich polieva sama), soil = null. Kompost vo vode nejde, preto days
+  // musí stačiť bez neho: zasadený v 1. deň obdobia musí stihnúť zakvitnúť (najviac 4 dni; v jeseni 3, lebo po nej mrzne – test) ----
   lekno: {
-    name: 'Lekno biele', latin: 'Nymphaea alba', seasons: [1], days: 6, water: 3,
-    light: 'sun', soil: null, seed: 40, sell: 85, color: '#fbfbf5', center: '#f2c230', shape: 'lily', perennial: true,
+    name: 'Lekno biele', latin: 'Nymphaea alba', seasons: [1], days: 4, water: 3,
+    light: 'sun', soil: null, seed: 30, sell: 65, color: '#fbfbf5', center: '#f2c230', shape: 'lily', perennial: true,
     aqua: { in: ['jazierko', 'rameno'], zone: 'deep' },
     fact: 'Kráľovná stojatých vôd. Korene má v bahne aj dva metre hlboko a kvet sa na noc zatvára. Na Slovensku je chránené – v prírode ho netrhaj!'
   },
   leknica: {
-    name: 'Leknica žltá', latin: 'Nuphar lutea', seasons: [1], days: 5, water: 3,
-    light: 'sun', soil: null, seed: 30, sell: 60, color: '#f7d21e', center: '#c9a400', shape: 'lily', perennial: true,
+    name: 'Leknica žltá', latin: 'Nuphar lutea', seasons: [1], days: 4, water: 3,
+    light: 'sun', soil: null, seed: 24, sell: 50, color: '#f7d21e', center: '#c9a400', shape: 'lily', perennial: true,
     aqua: { in: ['jazierko', 'rameno', 'potok'], zone: 'deep' },
     fact: 'Žltá guľka nad hladinou, ktorá vonia ako alkohol – ľudovo „fľaškovník“. Znesie aj pomalý prúd. V prírode je chránená, netrhaj ju!'
   },
@@ -166,14 +167,14 @@ const SPECIES_DEF = {
     fact: 'Ponorené listy má jemné ako vlasy, nad hladinu vystrčí len biele kvietky. Neprekáža jej studená voda – rastie aj v tatranskom plese.'
   },
   kotvica: {
-    name: 'Kotvica plávajúca', latin: 'Trapa natans', seasons: [1], days: 5, water: 3,
-    light: 'sun', soil: null, seed: 25, sell: 55, color: '#ffffff', center: '#d8e8a0', shape: 'lily',
+    name: 'Kotvica plávajúca', latin: 'Trapa natans', seasons: [1], days: 4, water: 3,
+    light: 'sun', soil: null, seed: 20, sell: 45, color: '#ffffff', center: '#d8e8a0', shape: 'lily',
     aqua: { in: ['rameno'], zone: 'deep' },
     fact: 'Jej tvrdý plod s rožkami ako kotva sa volá „vodný orech“ a dá sa jesť. U nás rastie len v ramenách Dunaja, Ipľa, Bodrogu a Latorice a je chránená.'
   },
   leknovec: {
-    name: 'Leknovec štítnatý', latin: 'Nymphoides peltata', seasons: [1, 2], days: 6, water: 3,
-    light: 'sun', soil: null, seed: 45, sell: 100, color: '#ffd21f', center: '#e8a800', shape: 'lily', perennial: true,
+    name: 'Leknovec štítnatý', latin: 'Nymphoides peltata', seasons: [1, 2], days: 3, water: 3,
+    light: 'sun', soil: null, seed: 35, sell: 75, color: '#ffd21f', center: '#e8a800', shape: 'lily', perennial: true,
     aqua: { in: ['rameno'], zone: 'deep' },
     fact: 'Žlté kvety so strapatými okrajmi sa ráno otvoria a večer sa zatvoria a ponoria. Je veľmi vzácny – na Slovensku prísne chránený, rastie napríklad na Senianskych rybníkoch.'
   },
@@ -190,20 +191,20 @@ const SPECIES_DEF = {
     fact: 'Zlaté kvety na jar rozžiaria mokrade od nížin až vysoko do hôr. Celá rastlina je jedovatá.'
   },
   okrasa: {
-    name: 'Okrasa okolíková', latin: 'Butomus umbellatus', seasons: [1], days: 5, water: 3,
-    light: 'sun', soil: null, seed: 22, sell: 45, color: '#f2a0b8', center: '#b0406a', shape: 'pom', perennial: true,
+    name: 'Okrasa okolíková', latin: 'Butomus umbellatus', seasons: [1], days: 4, water: 3,
+    light: 'sun', soil: null, seed: 18, sell: 38, color: '#f2a0b8', center: '#b0406a', shape: 'pom', perennial: true,
     aqua: { in: ['jazierko', 'rameno'], zone: 'shore' },
     fact: 'Ružové kvety má v okolíku ako dáždnik na vysokej stonke. Rastie v plytkej vode pri brehu.'
   },
   iskernik: {
-    name: 'Iskerník zakoreňujúci', latin: 'Ranunculus reptans', seasons: [1], days: 6, water: 3,
-    light: 'sun', soil: null, seed: 60, sell: 150, color: '#ffe02a', center: '#d9a800', shape: 'cup', perennial: true,
+    name: 'Iskerník zakoreňujúci', latin: 'Ranunculus reptans', seasons: [1], days: 4, water: 3,
+    light: 'sun', soil: null, seed: 50, sell: 120, color: '#ffe02a', center: '#d9a800', shape: 'cup', perennial: true,
     aqua: { in: ['pleso'], zone: 'shore' },
     fact: 'Drobný iskerník, ktorý sa plazí po brehoch horských jazier a zakoreňuje sa v každom uzlíku. V Tatrách je kriticky ohrozený a prísne chránený – v prírode ho netrhaj!'
   },
   riecna: {
-    name: 'Močiarka riečna', latin: 'Ranunculus fluitans', seasons: [1], days: 5, water: 3,
-    light: 'sun', soil: null, seed: 30, sell: 62, color: '#ffffff', center: '#f5d22a', shape: 'lily', perennial: true,
+    name: 'Močiarka riečna', latin: 'Ranunculus fluitans', seasons: [1], days: 4, water: 3,
+    light: 'sun', soil: null, seed: 24, sell: 50, color: '#ffffff', center: '#f5d22a', shape: 'lily', perennial: true,
     aqua: { in: ['potok'], zone: 'deep' },
     fact: 'Dlhé zelené vlasy jej vlajú v prúde a nad hladinu vykúkajú biele kvety. V stojatej vode takmer nerastie. Na Slovensku je chránená.'
   },
