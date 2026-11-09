@@ -177,7 +177,7 @@ Every flower has a short real-world fact in the 📖 **Herbár** (the in-game pl
 - **Fern flower** (Slavic legend): grows in shade and can only be picked **at night**. Using it grants a wish:
   - *golden rain* – 400 coins for every connected player;
   - *eternal spring* – the garden waters itself forever and the season no longer matters;
-  - *fairy treasure* – 3 rainbow seeds, 3 edelweiss seeds and a new fern seed.
+  - *fairy treasure* – 3 rainbow seeds and 3 edelweiss seeds (no new fern seed, so the fern can't multiply by itself).
 - **Rainbow rose:** changes colour and grows in every season.
 - **Wishing well:** throw in 5 coins: a hint (45 %), 2 seeds of a common species (20 %; no magic or strict species such as edelweiss), rain (10 %; when it can't come – already raining or winter – nothing happens), and rarely (0.5 % each) a fern seed (at most once per player per season, `wellFern` in the save), a coin geyser (+60 coins) or a cheap elixir (growth or rain). Otherwise nothing. Selling what it gives back is a loss on average (about 90 % back for a few throws, under 60 % for thousands) – it's for luck, not for farming; growing the seeds from the pack is still cheaper than buying them in the shop.
 - **The moon:** tap 🌙 in the top bar 7 times at night.
