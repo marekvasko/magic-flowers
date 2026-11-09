@@ -127,3 +127,48 @@ test('debug: rozšírenia API (ctx.apis, src/server/debug-api/<name>.ts) dostan�
     try { assert.strictEqual((await s.get('/api/debug/boom')).status, 500); } finally { console.error = warn; }
   } finally { s.close(); }
 });
+
+test('debug: poškodené uloženie odpovie chybou, server beží ďalej a súbor ostane nedotknutý (#134)', async () => {
+  const s = await setup();
+  const warn = console.error; console.error = () => {};
+  try {
+    const cases: [string, string][] = [['cislo', '5\n'], ['useknuty', '{"v":1,"tick":100,"saves":{']];
+    for (const [id, text] of cases) {
+      const file = path.join(s.dataDir, 'room-' + id + '.json');
+      fs.writeFileSync(file, text);
+      const before = fs.statSync(file).mtimeMs;
+      const r = await s.get('/api/debug/room?id=' + id);
+      assert.strictEqual(r.status, 500, id);
+      assert.deepStrictEqual(parseJson<unknown>(r.body), { error: 'corrupt save' }, id);
+      const t = await s.get('/api/debug/coins?id=' + id);
+      assert.strictEqual(t.status, 500, 'záložky (tools.load) rovnako: ' + id);
+      assert.deepStrictEqual(parseJson<unknown>(t.body), { error: 'corrupt save' }, id);
+      assert.strictEqual(fs.readFileSync(file, 'utf8'), text);
+      assert.strictEqual(fs.statSync(file).mtimeMs, before);
+    }
+    // a ďalej obsluhuje: zoznam (aj s poškodenými) a zdravé svety
+    const list = parseJson<{ rooms: Debug.RoomInfo[] }>((await s.get('/api/debug/rooms')).body).rooms.map(x => x.id).sort();
+    assert.deepStrictEqual(list, ['cislo', 'stary', 'useknuty', 'zivy']);
+    assert.strictEqual((await s.get('/api/debug/room?id=stary')).status, 200);
+    assert.strictEqual((await s.get('/api/debug/room?id=zivy')).status, 200);
+    assert.deepStrictEqual([...s.rooms.keys()], ['zivy'], 'poškodený svet sa nenačíta do servera');
+  } finally { console.error = warn; s.close(); }
+});
+
+test('debug: neočakávaná chyba v ladiacej požiadavke je 500, nie pád servera (#134)', async () => {
+  const s = await setup();
+  const warn = console.error; console.error = () => {};
+  try {
+    // serialize živého sveta zlyhá – mimo rozšírení to nič iné nechytí
+    Object.defineProperty(must(s.rooms.get('zivy')).state, 'saves', { get: () => { throw new Error('bum'); } });
+    const r = await s.get('/api/debug/room?id=zivy');
+    assert.strictEqual(r.status, 500);
+    assert.strictEqual((await s.get('/api/debug/rooms')).status, 200, 'server obsluhuje ďalej');
+    // chyba mimo snímky aj rozšírení (zoznam svetov) chytí poistka v handle()
+    s.rooms.set('zly', partial<Debug.DebugRoom & { state: { tick: number; saves: Partial<Record<string, { coins: number }>> } }>({ tick: 1 }));
+    const l = await s.get('/api/debug/rooms');
+    assert.strictEqual(l.status, 500);
+    assert.deepStrictEqual(parseJson<unknown>(l.body), { error: 'internal error' });
+    assert.strictEqual((await s.get('/api/debug/room?id=stary')).status, 200, 'server obsluhuje ďalej');
+  } finally { console.error = warn; s.close(); }
+});

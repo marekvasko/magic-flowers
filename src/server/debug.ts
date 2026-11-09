@@ -223,10 +223,14 @@ export function create<R extends DebugRoom>(ctx: DebugCtx<R>): (req: Pick<Incomi
     if (room) return { id, source: 'memory', file: null, online: online(room), state: parseState(ctx.serialize(room)) };
     let text;
     try { text = fs.readFileSync(roomFile(id), 'utf8'); } catch { return null; }
-    const st = fs.statSync(roomFile(id));
-    const state = ctx.migrate(parseState(text));
-    if (state.market) Econ.syncFestival(state.market); // ako pri načítaní na serveri: sviatočné násobky v položkách kvetov
-    return { id, source: 'file', file: { size: st.size, saved: st.mtimeMs }, online: [], state };
+    // Poškodený súbor (zlý JSON, nie objekt, migrate zlyhá) je chyba len tejto požiadavky – nikdy nie pád servera (#134).
+    // Hra s ním zaobchádza po svojom; /debug ho len ohlási ako „corrupt save“ (podrobnosti sú v príčine, v logu).
+    try {
+      const st = fs.statSync(roomFile(id));
+      const state = ctx.migrate(parseState(text));
+      if (state.market) Econ.syncFestival(state.market); // ako pri načítaní na serveri: sviatočné násobky v položkách kvetov
+      return { id, source: 'file', file: { size: st.size, saved: st.mtimeMs }, online: [], state };
+    } catch (e) { throw new Error('corrupt save', { cause: e }); }
   }
   // Uložený svet (JSON zapísaný serverom): objekt s krokom; tvar ďalších polí sa tu neoveruje
   function parseState(text: string): DebugState {
@@ -291,17 +295,21 @@ export function create<R extends DebugRoom>(ctx: DebugCtx<R>): (req: Pick<Incomi
     return true;
   }
 
+  // Chyba v ladiacej požiadavke odpovie 500 – nikdy nevyletí do HTTP servera (to by zhodilo celý proces so všetkými svetmi)
   return function handle(req, res) {
     const reqUrl = req.url || '/', q = reqUrl.indexOf('?');
     const url = (q >= 0 ? reqUrl.slice(0, q) : reqUrl) || '/';
-    const query = new URLSearchParams(q >= 0 ? reqUrl.slice(q + 1) : '');
     if (url !== '/debug' && !url.startsWith('/debug/') && !url.startsWith('/api/debug/')) return false;
+    try { return route(req, res, url, new URLSearchParams(q >= 0 ? reqUrl.slice(q + 1) : '')); } catch (e) { console.error('[debug]', reqUrl, e); return json(res, 500, { error: 'internal error' }); }
+  };
+  function route(req: Pick<IncomingMessage, 'method'>, res: Res, url: string, query: URLSearchParams): boolean {
     if (req.method !== 'GET') return notFound(res); // len na čítanie
     if (url === '/api/debug/rooms') return json(res, 200, { rooms: listRooms(), now: Date.now() });
     if (url === '/api/debug/room') {
       const id = query.get('id') || '';
       if (!ROOM_RE.test(id)) return json(res, 400, { error: 'bad room id' });
-      const snap = roomSnapshot(id);
+      let snap;
+      try { snap = roomSnapshot(id); } catch (e) { console.error('[debug] room', id, e); return json(res, 500, { error: e instanceof Error ? e.message : undefined }); }
       return snap ? json(res, 200, snap) : json(res, 404, { error: 'no such room' });
     }
     if (url.startsWith('/api/debug/')) return extension(res, url.slice(11), query);
@@ -309,5 +317,5 @@ export function create<R extends DebugRoom>(ctx: DebugCtx<R>): (req: Pick<Incomi
     let rel;
     try { rel = decodeURIComponent(url.slice(7)); } catch { return notFound(res); }
     return serveFile(res, rel);
-  };
+  }
 }
