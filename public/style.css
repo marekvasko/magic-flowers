@@ -218,6 +218,7 @@ button { font: inherit; cursor: pointer; border: none; }
 .ctl .btn { padding: 9px 10px; }
 .cnt { display: flex; align-items: center; border-radius: 10px; background: #f0dcb0; overflow: hidden; }
 .cnt button { padding: 8px 10px; font-weight: 800; font-size: 14px; background: none; }
+.cnt.off { opacity: .45; }
 .cnt span { min-width: 30px; text-align: center; font-weight: 800; font-size: 15px; background: #fff8e7; padding: 7px 2px; }
 .blk { margin-top: 8px; padding: 8px; border-radius: 10px; background: #f4eefa; }
 .blk .lbl { font-size: 14px; color: #5a4a7a; font-weight: 700; margin-bottom: 4px; }
