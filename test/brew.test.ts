@@ -47,7 +47,7 @@ test('brewHintText: dva kvety s obdobím chýbajúceho („iné“, keď zvyšn�
   assert.strictEqual(text(['cemerica', 'cemerica', 'cemerica']), 'Fuj! Tieto kvety sa spolu vôbec neznesú. 🤢');
 });
 
-test('každý z 810 slizov z obyčajných kvetov (816 trojíc bez 6 receptov) dostane pravdivú radu', () => {
+test('každý sliz z obyčajných kvetov (všetky trojice bez receptov; 4 054 s vodnými kvetmi z #38) dostane pravdivú radu', () => {
   const sp = keys(D.SPECIES).filter(k => !D.SPECIES[k].magic);
   let n = 0;
   for (let i = 0; i < sp.length; i++) for (let j = i; j < sp.length; j++) for (let k = j; k < sp.length; k++) {
@@ -69,7 +69,10 @@ test('každý z 810 slizov z obyčajných kvetov (816 trojíc bez 6 receptov) do
     // rada nikdy netvrdí, že niektorý z ostatných kvetov do receptu nepatrí – len že trojica spolu nie
     assert.ok(!/ďalšie dva|ostatné nie/.test(t), t);
   }
-  assert.strictEqual(n, 810);
+  // trojice s opakovaním z k druhov = C(k + 2, 3); recepty z obyčajných kvetov sa nerátajú (16 druhov: 816 − 6 = 810, s vodnými 4 060 − 6)
+  const all = sp.length * (sp.length + 1) * (sp.length + 2) / 6, plain = Object.keys(D.RECIPES).filter(r => r.split('+').every(f => sp.some(x => x === f))).length;
+  assert.strictEqual(n, all - plain);
+  assert.strictEqual(n, 4054);
 });
 
 test('babkine rady: každý recept má radu v TIPS, rady s receptami z obyčajných kvetov idú prvé, kým hráč nepozná recept', () => {
