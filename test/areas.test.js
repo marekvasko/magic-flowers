@@ -6,7 +6,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
 const D = require('../src/shared/data.ts');
-const W3 = require('../src/shared/world3d.js');
+const W3 = require('../src/shared/world3d.ts');
 const Areas = require('../src/server/areas.ts');
 
 const SEEDS = Array.from({ length: 200 }, (_, i) => (i * 2654435761) >>> 0);

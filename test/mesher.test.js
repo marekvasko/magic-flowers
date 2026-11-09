@@ -1,8 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const D = require('../src/shared/data.ts');
-const W = require('../src/shared/world3d.js');
-const MS = require('../src/shared/mesher.js');
+const W = require('../src/shared/world3d.ts');
+const MS = require('../src/shared/mesher.ts');
 const A = require('../src/server/areas.ts');
 
 // Pôvodná sieť: každá viditeľná stena kocky samostatne – (stena, bunka, materiál, zatienenie rohov)
