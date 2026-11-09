@@ -41,7 +41,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     others: new Map(), inv: {}, coins: 0, water: 20, recipes: [], seen: [], vily: false,
     sel: 'hoe', area: 'garden', areaSeq: 0, W: D.W, H: D.H, tilesGen: 0, storageRate: D.STORAGE_AGE_RATE, icehouse: { built: false, ice: 0, bl: 0 }, dielna: { built: false, loom: false }, loom: { busy: false, mine: null, ready: 0 }, eternal: false, names: [],
     keys: {}, stick: { x: 0, y: 0 }, path: null, pendingAct: null, tapMark: null, lastSent: '', sentAt: 0,
-    fx: [], screenFx: [], bubbles: {}, modal: null, cauldron: [], brewed: null, anchors: {}, joined: false,
+    fx: [], screenFx: [], bubbles: {}, modal: null, cauldron: [], brewed: null, brewHint: null, anchors: {}, joined: false,
     skyTaps: [], tipIdx: Math.floor(Math.random() * D.TIPS.length), stuckT: 0,
     // pavúky (#57): pavučiny v Lese divov (webTile: políčko → pavučina), nory a čistina pradleny, kútové pavučiny krížiaka,
     // pavúky na ploche (plynulo dobiehajú polohu zo servera) a spomalenie (lepkavá pavučina, pavúk na chrbte)
@@ -193,7 +193,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       }
       case 'webbed': { const now = performance.now(); S.web = { start: now, stuck: m.stuck, end: now + m.ms, k: m.k }; stopWalk(); break; } // pavúk ťa zabalil do pavučiny
       case 'shove': S.me.x = m.x; S.me.y = m.y; stopWalk(); break; // stará pradlena odhodila hráča za okraj čistiny
-      case 'brewed': S.brewed = m.k; S.cauldron = []; sfx(m.k === 'sliz' ? 'bad' : 'magic'); if (S.modal) S.modal.refresh(); break;
+      case 'brewed': S.brewed = m.k; S.brewHint = m.hint ?? null; S.cauldron = []; sfx(m.k === 'sliz' ? 'bad' : 'magic'); if (S.modal) S.modal.refresh(); break;
       case 'error': alert(m.text); S.joined = false; $('conn').classList.add('hidden'); break;
     }
   }
@@ -825,6 +825,12 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     S.modal.refresh();
     $('modal').classList.remove('hidden');
   }
+  // Ďalšia babkina rada pri príchode; kým hráč nepozná žiadny recept, babka vždy povie niektorý recept
+  function nextTip(i: number): number {
+    const n = (i + 1) % D.TIPS.length;
+    if (S.recipes.length || D.RECIPE_TIP_IDX.includes(n)) return n;
+    return D.RECIPE_TIP_IDX.find(j => j > i) ?? must(D.RECIPE_TIP_IDX[0]);
+  }
   function closeModal(): void { $('modal').classList.add('hidden'); S.modal = null; S.brewed = null; }
   $('mClose').onclick = closeModal;
   $('modal').addEventListener('click', e => { if (e.target === $('modal')) closeModal(); });
@@ -855,7 +861,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     sfx('pop');
     if (kind === 'shop') { openShop('buy'); return; }
     if (kind === 'cauldron') { S.brewed = null; openModal('⚗️ Čarovný kotlík', renderCauldron); return; }
-    if (kind === 'babka') { S.tipIdx = (S.tipIdx + 1) % D.TIPS.length; openModal('👵 Babka bylinkárka', renderBabka); return; }
+    if (kind === 'babka') { S.tipIdx = nextTip(S.tipIdx); openModal('👵 Babka bylinkárka', renderBabka); return; }
     if (kind === 'book') { openBook('flowers'); return; }
     if (kind === 'menu') { openModal('☰ Menu', renderMenu); return; }
     if (kind === 'help') { openModal('❓ Ako hrať', renderHelp); return; }
@@ -1027,8 +1033,9 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       const p = D.POTIONS[S.brewed];
       body.appendChild(h('div', { class: 'row', style: 'border-color:#9b59d0;background:#f7eeff' }, img('po_' + S.brewed),
         h('div', { class: 'info' }, h('b', null, 'Uvarené: ' + p.name + '!'), h('small', null, p.desc))));
+      if (S.brewed === 'sliz' && S.brewHint) body.appendChild(h('p', { class: 'brew-hint', style: 'margin:6px 2px;font-size:14px;font-style:italic;text-align:center;color:#5b3b7a' }, '⚗️ ' + D.brewHintText(S.brewHint)));
     }
-    body.appendChild(h('p', { style: 'margin:4px 0;font-size:14px;text-align:center' }, 'Vlož do kotlíka tri kvety a uvidíš, čo sa stane…'));
+    body.appendChild(h('p', { style: 'margin:4px 0;font-size:14px;text-align:center' }, 'Do kotlíka patria vždy tri kvety – no elixír dá len správna trojica. Ostatné skončia ako sliz.'));
     body.appendChild(slots);
     body.appendChild(h('button', { class: 'big', style: 'margin-bottom:12px', onclick: () => { if (S.cauldron.length === 3) send({ t: 'brew', items: S.cauldron.slice() }); } }, S.cauldron.length === 3 ? '🔥 Uvariť!' : `Vyber ešte ${3 - S.cauldron.length}`));
     const grid = h('div', { class: 'grid' });
@@ -1040,7 +1047,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     }
     body.appendChild(grid);
     body.appendChild(h('h3', { style: 'margin:14px 0 6px' }, `📜 Objavené recepty (${S.recipes.length}/${Object.keys(D.RECIPES).length})`));
-    if (!S.recipes.length) body.appendChild(h('small', null, 'Zatiaľ žiadne. Babka a studňa vraj poznajú pár tajomstiev.'));
+    if (!S.recipes.length) body.appendChild(h('small', null, 'Zatiaľ žiadne. Babka pozná recepty – vypočuj si jej rady (aj viackrát). 👵'));
     for (const key of S.recipes) {
       const k = lookup(D.RECIPES, key);
       if (!k) continue;

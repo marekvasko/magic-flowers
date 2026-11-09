@@ -791,7 +791,8 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
       give(sv, `po_${k}`, 1, ctx.tick);
       if (k !== 'sliz' && !sv.recipes.includes(recipe)) sv.recipes.push(recipe);
       ctx.emit(fx$('garden', 'brew', 17.5, 5.5, { c: D.POTIONS[k].color }));
-      ctx.emit({ to: d.key, t: 'brewed', k });
+      // sliz: rada podľa najbližšieho receptu (počíta sa pred zápisom nového receptu – ten pri slize aj tak nepribudne)
+      ctx.emit(k === 'sliz' ? { to: d.key, t: 'brewed', k, hint: D.brewHint(items.map(id => D.speciesOfItem(id)).filter(x => x !== null), sv.recipes) } : { to: d.key, t: 'brewed', k });
       if (k === 'duha') ctx.emit(toast$(E.ALL, `🌈 V kotlíku babky sa niečo dúhovo rozžiarilo… ${nameOf(ctx, d.key)} uvaril(a) niečo, čo tu ešte nebolo!`, 'magic'));
     }
   },

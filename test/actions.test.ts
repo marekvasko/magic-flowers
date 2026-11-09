@@ -433,7 +433,14 @@ test('ľadovňa a sklad: stavba, naplnenie ľadom pri ľadovni, vylepšenia (spo
   for (const id of fls) give(save(w, 'ana'), item(id), 1, w.tick);
   r = E.commitBatch(w, [act('brew', 'ana', { items: fls })], SPEC);
   assert.strictEqual(save(w, 'ana').inv[item('po_' + must(D.RECIPES[recipe]))], 1);
-  assert.ok(save(w, 'ana').recipes.includes(recipe) && r.outbox.some(m => m.t === 'brewed'));
+  assert.ok(save(w, 'ana').recipes.includes(recipe) && r.outbox.some(m => m.t === 'brewed' && !('hint' in m)));
+  // sliz: správa brewed nesie radu kotlíka (#84) – známy recept rastu sa pri zhode s hojnosťou neuprednostní
+  const slime = ['fl_levandula', 'fl_harmancek', 'fl_mak'].map(item);
+  for (const id of slime) give(save(w, 'ana'), id, 1, w.tick);
+  r = E.commitBatch(w, [act('brew', 'ana', { items: slime })], SPEC);
+  assert.strictEqual(save(w, 'ana').inv.po_sliz, 1);
+  const brewed = r.outbox.find(m => m.t === 'brewed');
+  assert.deepStrictEqual(brewed && 'hint' in brewed ? brewed.hint : null, { fit: 2, hit: ['levandula', 'mak'], miss: 'plesnivec', recipe: 'hojnost', known: false });
   assert.deepStrictEqual(E.commitBatch(w, [act('brew', 'ana', { items: fls })], SPEC).rejected.map(x => x.reject), ['Tieto kvety nemáš.']);
 });
 
