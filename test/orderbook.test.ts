@@ -235,3 +235,14 @@ test('po roztopení neseného ľadu sa čakajúci dopyt vyplní v tej istej hodi
   E.commitBatch(w, [{ type: 'hourly', id: 'hourly', data: null }], { ...spec, proposers: { ...spec.proposers, hourly: Events.PROPOSERS.hourly } });
   assert.equal(save(w, 'ana').inv.ice, 1); assert.equal(orders(w).length, 0);
 });
+
+test('súčasné expirácie kotácií jedného NPC sa vrátia spolu a nahradia jednou údržbou', () => {
+  const w = world(), m = must(w.market ?? undefined), b = must(m.book);
+  b.accounts.wholesale.coins = 1000; b.accounts.wholesale.inv.seed_mak = 5; b.accounts.wholesale.inv.seed_ruza = 5;
+  E.commitBatch(w, [], spec); const count = orders(w).length; assert.ok(count > 3);
+  const cash = b.accounts.wholesale.coins + Book.reserved(m, 'wholesale'), stock = Book.owned(m, 'seed_mak');
+  let refreshes = 0;
+  E.advanceTo(w, w.tick + 3 * D.TICKS_PER_DAY, { ...spec, onBatch(w, out) { refreshes += out.entry.proposals.filter(p => p.type === 'marketQuotes' && p.outcome === 'applied').length; } });
+  assert.equal(refreshes, 1); assert.equal(Book.owned(m, 'seed_mak'), stock);
+  assert.equal(b.accounts.wholesale.coins + Book.reserved(m, 'wholesale'), cash);
+});

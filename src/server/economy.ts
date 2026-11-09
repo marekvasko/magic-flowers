@@ -205,9 +205,7 @@ export const PROPOSERS: { [T in keyof EconInputs]: GameProposer<EconInputs[T]> }
     run(s, d, ctx) {
       const m = sl(s, 'market:*');
       Book.cancelNpc(m, 'zuzka', ctx);
-      const book = Book.levels(m, ctx.tick);
-      const demand = PLANTABLE.map(sp => ({ sp, stock: book.filter(o => o.item === `fl_${sp}` && o.side === 'sell').reduce((n, o) => n + o.remaining, 0), fest: m.flowers[sp]?.fest || 0 }))
-        .sort((a, b) => b.fest - a.fest || b.stock - a.stock || PLANTABLE.indexOf(a.sp) - PLANTABLE.indexOf(b.sp));
+      const demand = zuzkaDemand(m, ctx.tick);
       for (const [i, { sp, stock, fest }] of demand.entries()) {
         const n = Math.max(1, Math.ceil(stock * 0.3)) + (fest ? 3 : 0);
         Book.npcOrder(m, 'zuzka', `fl_${sp}`, 'buy', Math.ceil(flowerPrice(m, ctx.tick, sp) * 1.25), n, ctx, i);
@@ -273,6 +271,12 @@ export const PROPOSERS: { [T in keyof EconInputs]: GameProposer<EconInputs[T]> }
 // Uloženia v návrhu cDue: deklaruje ich, len keď zákazku niekto mal (inak výrez v slices nie je)
 function takenSaves(s: GameSlices, c: Contract): Partial<Record<PlayerKey, PlayerSave>> | undefined {
   return c.takenBy ? maybe(s, 'save:*') : undefined;
+}
+
+function zuzkaDemand(m: Market, tick: number): { sp: SpeciesId; stock: number; fest: number }[] {
+  const book = Book.levels(m, tick);
+  return PLANTABLE.map(sp => ({ sp, stock: book.filter(o => o.item === `fl_${sp}` && o.side === 'sell').reduce((n, o) => n + o.remaining, 0), fest: m.flowers[sp]?.fest || 0 }))
+    .sort((a, b) => b.fest - a.fest || b.stock - a.stock || PLANTABLE.indexOf(a.sp) - PLANTABLE.indexOf(b.sp));
 }
 
 // ---------- Zákazky ----------

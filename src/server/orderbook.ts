@@ -166,9 +166,9 @@ export function settle(w: GameWorld): Input[] {
     const sp = D.speciesOfItem(id), actual = assets[id] || 0;
     return id === 'compost' ? m.compost.stock !== actual : sp && id.startsWith('seed_') ? m.seeds[sp]?.stock !== actual : sp && id.startsWith('fl_') ? m.flowers[sp]?.stock !== actual : false;
   });
-  if (stocks.length) return stocks.map(item => ({ type: 'marketStock', data: { item }, id: `stock:${item}:${w.step || 0}` }));
   const quotes = items.filter(id => { const own = wholesaleOrders.get(id) || []; return !sameQuotes(targets(m, w.tick, id, own, assets[id] || 0), own); });
   if (quotes.length) return [{ type: 'marketQuotes', data: { items: quotes }, id: `quotes:${w.step || 0}` }];
+  if (stocks.length) return stocks.map(item => ({ type: 'marketStock', data: { item }, id: `stock:${item}:${w.step || 0}` }));
   const fills = [...perItem.keys()].filter(id => pair(w, id, perItem.get(id)));
   if (fills.length) return fills.map(item => ({ type: 'marketFill', data: { item }, id: `fill:${item}:${w.step || 0}` }));
   return orders.filter(o => o.ioc && o.active).map(o => ({ type: 'marketExpire', data: { id: o.id }, id: `ioc:${o.id}:${w.step || 0}` }));
@@ -213,6 +213,12 @@ export function placement(side?: MarketSide): GameProposer<Place> {
 }
 // Kolekcia čítaná pri okamžitom obchode; nový kľúč je mimo nej, engine kontroluje prekryv iba medzi výrezmi.
 function orderCollection(s: GameSlices): MarketOrder[] { return Object.keys(s).filter(k => k.startsWith('market:order:')).map(k => sl(s, orderKey(k.slice(13)))).filter((o): o is MarketOrder => !!o && o.active); }
+function expiring(w: GameWorld, id: string): MarketOrder[] {
+  const first = w.market?.book?.orders[id];
+  if (!first) return [];
+  if (first.owner.kind === 'player') return [first];
+  return Object.values(w.market?.book?.orders || {}).filter((o): o is MarketOrder => !!o && (o.id === id || (o.active && o.owner.kind === 'npc' && o.owner.key === first.owner.key && (o.expires <= w.tick || staleAssets(o, w.tick)))));
+}
 export const PROPOSERS: {
   marketQuotes: GameProposer<{ items: ItemId[] }>;
   marketStock: GameProposer<{ item: ItemId }>;
@@ -261,7 +267,7 @@ export const PROPOSERS: {
     settle,
     keys(d, w) {
       const p = pair(w, d.item);
-      return { writes: p ? [...new Set([`market:match:${d.item}`, ...p.map(o => orderKey(o.id)), ...p.map(o => ownerKey(o.owner)), `market:trades:${d.item}`])] : [] };
+      return { writes: p ? [...new Set([`market:match:${d.item}`, ...p.map(o => orderKey(o.id)), ...p.map(o => ownerKey(o.owner)), ...(p.some(wholesale) ? [Econ.marketKey(d.item)].filter((k): k is NonNullable<typeof k> => !!k) : []), `market:trades:${d.item}`])] : [] };
     },
     run(s, d, ctx) {
       const orders = Object.keys(s).filter(k => k.startsWith('market:order:')).map(k => sl(s, orderKey(k.slice(13)))).filter((o): o is MarketOrder => !!o);
@@ -274,6 +280,12 @@ export const PROPOSERS: {
       if (!batches) throw new Error('nekrytá ponuka');
       buy.coins -= n * (buy.ioc ? price : buy.price); ba.coins += buy.ioc ? 0 : n * (buy.price - price); sa.coins += n * price;
       I.addItems(ownerContainer(s, buy.owner), d.item, n, ctx.tick, batches);
+      if (wholesale(buy) || wholesale(sell)) {
+        const delta = wholesale(buy) ? n : -n, part = Econ.marketSlice(s, d.item), sp = D.speciesOfItem(d.item);
+        if (d.item === 'compost' && part.compost) part.compost.stock += delta;
+        else if (sp && d.item.startsWith('seed_') && part.seeds[sp]) must(part.seeds[sp]).stock += delta;
+        else if (sp && d.item.startsWith('fl_') && part.flowers[sp]) must(part.flowers[sp]).stock += delta;
+      }
       for (const [o, counterparty] of [[buy, sell.name], [sell, buy.name]] as const) {
         o.remaining -= n; o.filled += n; o.value += n * price;
         if (!(o.counterparties || []).includes(counterparty)) (o.counterparties ??= []).push(counterparty);
@@ -298,8 +310,12 @@ export const PROPOSERS: {
   },
   marketExpire: {
     settle,
-    keys(d, w) { const o = w.market?.book?.orders[d.id]; return { writes: o ? [orderKey(d.id), ownerKey(o.owner)] : [] }; },
-    run(s, d, ctx) { const o = sl(s, orderKey(d.id)); if (o) refund(s, o, ctx, true); }
+    keys(d, w) { const orders = expiring(w, d.id); return { writes: [...new Set(orders.flatMap(o => [orderKey(o.id), ownerKey(o.owner)]))] }; },
+    run(s, d, ctx) {
+      // Kotácie jedného NPC často končia naraz. Vrátime všetky splatné rezervácie účtu v jednom návrhu,
+      // aby sa medzi jednotlivými expiráciami nevytvárali a hneď nerušili rovnaké náhradné kotácie.
+      for (const key of Object.keys(s).filter(k => k.startsWith('market:order:'))) { const o = sl(s, orderKey(key.slice(13))); if (o) refund(s, o, ctx, true); }
+    }
   },
   marketCancel: {
     settle,
@@ -319,11 +335,12 @@ export function cancelNpc(m: Market, npc: NpcId, ctx: GameCtx): void {
     delete b.orders[o.id]; ctx.cancel(`marketExpire:${o.id}`);
   }
 }
+export const npcOrderId = (tick: number, step: number, identity: string, npc: NpcId, item: ItemId, side: MarketSide, offset: number): string => newId(tick, step, `${identity}:${npc}:${item}:${side}:${offset}`);
 export function npcOrder(m: Market, npc: NpcId, item: ItemId, side: MarketSide, price: number, n: number, ctx: GameCtx, offset = 0): void {
   const b = must(m.book), a = b.accounts[npc];
   n = Math.min(n, side === 'buy' ? Math.floor(a.coins / price) : a.inv[item] || 0);
   if (n < 1) return;
-  const id = newId(ctx.tick, ctx.step, `${ctx.id}:${npc}:${item}:${side}:${offset}`);
+  const id = npcOrderId(ctx.tick, ctx.step, ctx.id, npc, item, side, offset);
   if (b.orders[id]) throw new Error('kolízia čísla NPC objednávky');
   b.orders[id] = create(a, { kind: 'npc', key: npc }, NPC_NAMES[npc], id, item, side, price, n, ctx, offset);
 }

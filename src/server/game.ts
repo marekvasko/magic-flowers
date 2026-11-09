@@ -148,6 +148,8 @@ export type KeyedSlice<K extends string> =
   : K extends 'market:*' ? Market
   : K extends 'market:seed_*' ? Market['seeds']
   : K extends 'market:fl_*' ? Market['flowers']
+  : K extends 'market:festival' ? Market['festival']
+  : K extends 'market:news' ? Market['news']
   : K extends 'market:compost' ? Market['compost']
   : K extends `market:seed_${string}` ? NonNullable<Market['seeds'][keyof Market['seeds']]> | undefined
   : K extends `market:fl_${string}` ? NonNullable<Market['flowers'][keyof Market['flowers']]> | undefined

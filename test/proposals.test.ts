@@ -664,7 +664,7 @@ test('v hre už nie je zapisovač cez Proxy, návrh (draft) ani náhoda zo sveta
   }
 });
 
-test('dobiehanie: 30 dní s plnou záhradou (rýchlosť sa vypíše; stráž proti regresii: pod 150 µs na udalosť, zapisovač fázy 1 mal ≈200)', () => {
+test('dobiehanie: 30 dní s knihou objednávok – pod 150 µs CPU na udalosť a pod sekundu celkovo', () => {
   const w = makeWorld(24, D.DAWN_TICK + 6);
   w.up.plots = 4;
   const sp = Econ.PLANTABLE.filter(k => !D.SPECIES[k].strict);
@@ -676,10 +676,14 @@ test('dobiehanie: 30 dní s plnou záhradou (rýchlosť sa vypíše; stráž pro
 
   E.advanceTo(w, w.tick + 2 * TPD, spec);
   proposals = 0;
-  const t0 = process.hrtime.bigint();
+  const t0 = process.hrtime.bigint(), cpu0 = process.threadCpuUsage();
   const n = E.advanceTo(w, w.tick + 30 * TPD, spec);
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  const cpu = process.threadCpuUsage(cpu0), cpuMs = (cpu.user + cpu.system) / 1000;
+  console.log(`  CPU: ${(cpuMs / n * 1000).toFixed(1)} µs/udalosť`);
   console.log(`  vyhodnotených návrhov: ${proposals}`);
   console.log(`  dobiehanie 30 dní: ${n} udalostí za ${ms.toFixed(1)} ms (${(ms / n * 1000).toFixed(1)} µs/udalosť)`);
-  assert.ok(n > 900 && ms / n * 1000 < 150, `${(ms / n * 1000).toFixed(1)} µs/udalosť`);
+  // CPU zachováva pôvodný limit práce enginu; na zdieľanom CI nezapočítava čakanie na procesor.
+  assert.ok(n > 900 && cpuMs / n * 1000 < 150, `${(cpuMs / n * 1000).toFixed(1)} µs CPU/udalosť`);
+  assert.ok(ms < 1000, `dobeh sveta trval ${ms.toFixed(1)} ms`);
 });
