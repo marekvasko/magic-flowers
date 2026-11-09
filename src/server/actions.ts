@@ -92,6 +92,8 @@ const input = <T extends keyof ActInputs>(type: T, data: ActInputs[T]): { type: 
 // ---------- Prítomnosť ----------
 // Záznam prítomnosti: { key, name, area, x, y, scav: { i, n, px, py } | null, emote, emoteAt } – snímka pripojeného hráča (server: presenceOf)
 type Where = Pick<Presence, 'area' | 'x' | 'y'> | null | undefined;
+// Prianie „zlatý dážď“: koľko dostane ten, kto si prial, a koľko každý ďalší pripojený hráč (#100)
+export const WISH_GOLD = { me: 400, others: 100 } as const;
 export function inRing(p: Where): boolean { if (!p || p.area !== 'garden') return false; const x = Math.floor(p.x), y = Math.floor(p.y); return x >= D.RING.x0 && x <= D.RING.x1 && y >= D.RING.y0 && y <= D.RING.y1; }
 export function nearHouse(p: Where): boolean { return !!p && p.area === 'garden' && Math.hypot(p.x - HOUSE.x, p.y - HOUSE.y) <= 3.5; }
 export function nearIcehouse(p: Where): boolean {
@@ -804,9 +806,14 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
       const me = who(ctx), sv = saveOf(s, d.key, ctx);
       if (!take(sv, 'fl_papradie', 1, ctx.tick)) ctx.reject(null);
       if (d.kind === 'zlato') {
-        for (const p of ctx.presence || []) { const o = sl(s, `save:${p.key}`); if (o) o.coins += 400; }
+        // celú sumu dostane ten, kto si prial, ostatní pripojení menší podiel – inak by sa zlato s hráčmi násobilo (#100)
+        let others = 0;
+        for (const p of ctx.presence || []) { const o = sl(s, `save:${p.key}`); if (o && p.key !== d.key) { o.coins += WISH_GOLD.others; others++; } }
+        sv.coins += WISH_GOLD.me;
         ctx.emit({ to: E.ALL, t: 'fx', k: 'gold' });
-        ctx.emit(toast$(E.ALL, `✨ ${me.name} si prial(a) zlatý dážď! Každý dostáva 400 🪙.`, 'magic'));
+        ctx.emit(toast$(E.ALL, others
+          ? `✨ ${me.name} si prial(a) zlatý dážď! ${me.name} dostáva ${String(WISH_GOLD.me)} 🪙 a každý ďalší hráč ${String(WISH_GOLD.others)} 🪙.`
+          : `✨ ${me.name} si prial(a) zlatý dážď a dostáva ${String(WISH_GOLD.me)} 🪙.`, 'magic'));
       } else if (d.kind === 'jar') {
         s.eternal = true;
         for (const t of sl(s, 'tile:garden:*')) if (t.s) t.s.w = 1;

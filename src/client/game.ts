@@ -1330,7 +1330,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
   function renderWish(body: HTMLElement): void {
     body.appendChild(h('p', { style: 'text-align:center' }, 'Kvet papradia sa rozžiaril v tvojich dlaniach. Máš jedno želanie…'));
     const opts: readonly (readonly [WishKind, string, string])[] = [
-      ['zlato', '💰 Zlatý dážď', 'Každý hráč v záhrade dostane 400 mincí.'],
+      ['zlato', '💰 Zlatý dážď', 'Dostaneš 400 mincí a každý ďalší hráč v záhrade 100.'],
       ['jar', '🌸 Večná jar', 'Záhrada sa navždy polieva sama a kvetom nevadí ročné obdobie.'],
       ['poklad', '🎁 Poklad víl', 'Dúhové semienka a semienka plesnivca.']
     ];
