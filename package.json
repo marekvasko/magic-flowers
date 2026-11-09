@@ -2,12 +2,13 @@
   "name": "magic-flowers",
   "version": "1.0.0",
   "description": "Čarovná záhrada – multiplayerová hra o pestovaní kvetov (mobil, vertikálne)",
+  "type": "module",
   "main": "src/server/server.ts",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "start": "npm run build && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON src/server/server.ts",
-    "dev": "npm run build && DAY_SECONDS=60 node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON src/server/server.ts",
-    "test": "NODE_OPTIONS=--disable-warning=MODULE_TYPELESS_PACKAGE_JSON node --test 'test/*.test.js' 'test/*.test.ts'",
+    "start": "npm run build && node src/server/server.ts",
+    "dev": "npm run build && DAY_SECONDS=60 node src/server/server.ts",
+    "test": "node --test 'test/*.test.js' 'test/*.test.ts'",
     "typecheck": "tsc",
     "lint": "eslint --no-error-on-unmatched-pattern ."
   },
