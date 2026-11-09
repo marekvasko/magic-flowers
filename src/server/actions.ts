@@ -92,6 +92,7 @@ export interface ActionInputs {
   sell: { key: PlayerKey; id: string; n: number; lim?: number };
   order: { key: PlayerKey; id: string; side: OrderSide; n: number; p: number };
   cancelOrder: { key: PlayerKey; id: string };
+  collect: { key: PlayerKey; id: string };
   upgrade: { key: PlayerKey; kind: string };
   buyTool: { key: PlayerKey; id: string };
   build: { key: PlayerKey; id: 'icehouse' | 'dielna' };
@@ -755,9 +756,18 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
       if ('err' in r) { ctx.reject(r.err); return; }
       Mkt.announce(mk);
       const name = D.itemName(item), buy = d.side === 'buy';
-      const now = r.got ? `${buy ? 'Kúpené' : 'Predané'} hneď ${String(r.got)}× ${name} za ${String(r.coins)} 🪙. ` : '';
+      const now = r.got ? `${buy ? 'Kúpené' : 'Predané'} hneď ${String(r.got)}× ${name} za ${String(r.coins)} 🪙${buy ? ' (čaká v Moje)' : ''}. ` : '';
       const wait = r.rest ? `${buy ? 'Dopyt' : 'Ponuka'}: ${String(r.rest)}× ${name} za ${String(d.p)} 🪙/ks čaká v knihe (Moje).` : '';
       ctx.emit(toast$(d.key, '🏷️ ' + (now + wait).trim(), 'gift'));
+    }
+  },
+  // Vyzdvihnutie tovaru z trhu (d: { key, id: tovar }): z Moje → Na vyzdvihnutie do batohu
+  collect: {
+    keys: d => ({ writes: [`save:${d.key}`] }),
+    run(s, d, ctx) {
+      const sv = saveOf(s, d.key, ctx), n = D.isItemId(d.id) ? Mkt.collect(sv, d.id, ctx.tick) : 0;
+      if (!n) { ctx.reject('Tu nič nečaká.'); return; }
+      ctx.emit(toast$(d.key, `📦 Vyzdvihnuté: ${String(n)}× ${D.itemName(d.id)}`));
     }
   },
   // Zrušenie vlastnej objednávky (d: { key, id: '<tovar>#<n>' }): len tá objednávka a uloženie hráča

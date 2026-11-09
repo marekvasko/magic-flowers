@@ -39,7 +39,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
 
   const S: ClientState = {
     ws: null, id: 0, room: '', name: '', look: null,
-    tiles: [], tick: 0, market: null, board: [], rep: 0, up: {}, canCap: 5, plotLimit: 8, plotsUsed: 0, maxActive: 1, orders: [], orderLimit: 2, day: 1, min: 390, weather: 'sun', timeAt: 0, tickMs: 1000, daySeconds: 300, mode: 'running', storage: {},
+    tiles: [], tick: 0, market: null, board: [], rep: 0, up: {}, canCap: 5, plotLimit: 8, plotsUsed: 0, maxActive: 1, orders: [], orderLimit: 2, box: {}, boxFb: {}, day: 1, min: 390, weather: 'sun', timeAt: 0, tickMs: 1000, daySeconds: 300, mode: 'running', storage: {},
     me: { x: D.SPAWN.x, y: D.SPAWN.y, dir: 0, phase: 0, moving: false, jz: 0, jv: 0, crawl: false }, crawlKey: false, crawlTgl: false, myEmote: null,
     others: new Map(), inv: {}, coins: 0, water: 20, recipes: [], seen: [], vily: false,
     sel: 'hoe', area: 'garden', areaSeq: 0, W: D.W, H: D.H, tilesGen: 0, storageRate: D.STORAGE_AGE_RATE, icehouse: { built: false, ice: 0, bl: 0 }, dielna: { built: false, loom: false }, loom: { busy: false, mine: null, ready: 0 }, eternal: false, names: [],
@@ -141,7 +141,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       case 'me':
         S.coins = m.coins; S.water = m.water; S.inv = m.inv; S.recipes = m.recipes; S.seen = m.seen; S.vily = m.vily;
         S.fb = m.fb; S.fbTick = m.tick;
-        Object.assign(S, { rep: m.rep, up: m.up, canCap: m.canCap, plotLimit: m.plotLimit, plotsUsed: m.plotsUsed, maxActive: m.maxActive, loom: m.loom, orders: m.orders, orderLimit: m.orderLimit });
+        Object.assign(S, { rep: m.rep, up: m.up, canCap: m.canCap, plotLimit: m.plotLimit, plotsUsed: m.plotsUsed, maxActive: m.maxActive, loom: m.loom, orders: m.orders, orderLimit: m.orderLimit, box: m.box, boxFb: m.boxFb });
         if (S.sel && !S.inv[S.sel]) S.sel = 'hoe'; // '' = prázdna ruka (vybraté prázdne miesto v lište)
         renderHotbar(); updateHud();
         if (S.modal) S.modal.refresh();
@@ -979,7 +979,8 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     for (let i = 0; i < 3; i++) {
       const y = 2 + i * 6;
       const lit = n && (up ? i >= 3 - n : i < n);
-      const d = (up || !n) ? `M2 ${y + 5}L8 ${y}L14 ${y + 5}` : `M2 ${y}L8 ${y + 5}L14 ${y}`;
+      // bez zmeny tri vodorovné čiarky, inak šípky hore / dole
+      const d = !n ? `M3 ${y + 2.5}L13 ${y + 2.5}` : up ? `M2 ${y + 5}L8 ${y}L14 ${y + 5}` : `M2 ${y}L8 ${y + 5}L14 ${y}`;
       paths += `<path d="${d}" fill="none" stroke="${lit && col ? col : GRAY}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>`;
     }
     const el = document.createElement('span');
@@ -1093,7 +1094,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       body.appendChild(h('div', { class: 'tabs tabs5' },
         h('button', { class: tab === 'buy' ? 'on' : '', onclick: () => { openShop('buy'); } }, 'Kúpiť'),
         h('button', { class: tab === 'sell' ? 'on' : '', onclick: () => { openShop('sell'); } }, 'Predať'),
-        h('button', { class: tab === 'mine' ? 'on' : '', onclick: () => { openShop('mine'); } }, 'Moje'),
+        h('button', { class: tab === 'mine' ? 'on' : '', onclick: () => { openShop('mine'); } }, keys(S.box).length ? 'Moje 📦' : 'Moje'),
         h('button', { class: tab === 'up' ? 'on' : '', onclick: () => { openShop('up'); } }, 'Vylepšiť'),
         h('button', { class: tab === 'news' ? 'on' : '', onclick: () => { openShop('news'); } }, 'Správy')));
       body.appendChild(h('div', { style: 'text-align:center;font-weight:700;margin-bottom:8px' }, `Máš 🪙 ${S.coins} · ⭐ reputácia ${S.rep} (úroveň ${D.repLevel(S.rep)})`));
@@ -1130,10 +1131,23 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
         }
       } else if (tab === 'mine') {
         body.appendChild(h('small', { style: 'display:block;color:#7a6a4a;margin-bottom:6px' }, `Otvorené: ${S.orders.length} z ${S.orderLimit} · vyššia reputácia dovolí viac · objednávka platí ${Bk.ORDER_DAYS} dni`));
+        // na vyzdvihnutie: kúpené cez Dopyt, vrátené z vypršanej ponuky, zvädnuté z ponuky
+        const box = entries(S.box).filter(([, k]) => k > 0);
+        if (box.length) {
+          body.appendChild(h('b', { style: 'display:block;margin:2px 0 6px' }, '📦 Na vyzdvihnutie'));
+          for (const [id, k] of box) {
+            const b = lookup(S.boxFb, id)?.[0], sp = id.slice(3);
+            const fr = b && id.startsWith('fl_') && D.isSpeciesId(sp) ? ` · čerstvosť ${Math.round(D.freshness(sp, b.age) * 100)} %` : '';
+            body.appendChild(h('div', { class: 'row' }, img(id), h('div', { class: 'info' }, h('b', null, D.itemName(id)), h('small', null, `${k} ks${fr}`)),
+              h('div', { class: 'btns' }, h('button', { class: 'btn', onclick: () => { send({ t: 'collect', id }); sfx('pop'); } }, 'Vybrať'))));
+          }
+        }
         if (!S.orders.length) body.appendChild(h('p', null, 'Nemáš žiadne otvorené objednávky. Dopyt alebo Ponuku zadáš pri tovare v Kúpiť a Predať. 🏷️'));
         for (const o of S.orders) {
-          const buy = o.side === 'buy', done = o.q - o.rem;
-          const parts = [`${done} z ${o.q} ${buy ? 'kúpené' : 'predané'}`, `${o.p} 🪙/ks`];
+          const buy = o.side === 'buy', dead = o.dead ?? 0, done = o.q - o.rem - dead;
+          const parts = [`${done} z ${o.q} ${buy ? 'kúpené' : 'predané'}`];
+          if (dead) parts.push(`${dead} zvädlo · ${o.rem} ostáva`);
+          parts.push(`${o.p} 🪙/ks`);
           if (buy) parts.push(`odložené ${o.coins} 🪙`);
           if (o.exp != null) parts.push(`ešte ${fmtLeft(o.exp - S.tick)}`);
           if (o.fr != null) parts.push(`čerstvosť ${Math.round(o.fr * 100)} %`);

@@ -22,6 +22,7 @@ export type ClientMessage =
   | { t: 'buy' | 'sell'; id: ItemId; n: number; lim?: number }
   | { t: 'order'; id: ItemId; side: OrderSide; n: number; p: number }
   | { t: 'cancelOrder'; id: string }
+  | { t: 'collect'; id: ItemId }                         // vyzdvihnúť tovar z trhu (Moje → Na vyzdvihnutie)
   | { t: 'upgrade'; kind: UpgradeId }
   | { t: 'ctake' | 'cdeliver'; id: number }
   | { t: 'brew'; items: ItemId[] }                          // tri kvety fl_*
@@ -56,7 +57,7 @@ export type BatchesView = Partial<Record<ItemId, { n: number; age: number }[]>>;
 // kniha objednávok: a = ponuky (od najlepšej), b = dopyty (od najlepšej) – #112
 export interface MarketItemView { p: number; st: number; h: number[]; a: Level[]; b: Level[] }
 // Otvorená objednávka hráča (záložka Moje): kúpené / predané q − rem z q, záloha mincí, kedy vyprší, čerstvosť kvetov
-export interface OrderView { id: string; item: ItemId; side: OrderSide; p: number; q: number; rem: number; coins: number; exp: number | null; fr?: number }
+export interface OrderView { id: string; item: ItemId; side: OrderSide; p: number; q: number; rem: number; coins: number; exp: number | null; fr?: number; dead?: number }
 export interface UpcomingFestival {
   id: ActiveFestival['id'];
   name: string;
@@ -135,7 +136,7 @@ export type ServerMessage =
     t: 'me'; coins: number; water: number; inv: Partial<Record<ItemId, number>>; recipes: string[]; seen: SpeciesId[]; vily: boolean;
     rep: number; up: { can: number; composter: number; plots: number }; canCap: number; plotLimit: number; plotsUsed: number; maxActive: number;
     fb: BatchesView; tick: number; loom: { busy: boolean; mine: number | null; ready: number };
-    orders: OrderView[]; orderLimit: number;
+    orders: OrderView[]; orderLimit: number; box: Partial<Record<ItemId, number>>; boxFb: BatchesView;
   }
   | {
     t: 'room'; eternal: boolean; mode: WorldMode; daySeconds: number; storage: Partial<Record<ItemId, number>>; storageFb: BatchesView;

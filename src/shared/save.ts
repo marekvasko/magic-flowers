@@ -68,6 +68,7 @@ export interface PlayerSave {
   wellFern?: number;          // v ktorom období (seasonNo) mu studňa naposledy dala papraďové semienko
   orders?: string[];          // id otvorených objednávok v knihe ('<tovar>#<n>'; limit podľa reputácie, záložka Moje)
   away?: AwayTrades;          // obchody z knihy objednávok, kým nebol v hre (súhrn po prihlásení, #112)
+  box?: { inv: Inventory; fb: Batches };   // na vyzdvihnutie na trhu (Moje): kúpené cez Dopyt, vrátené z vypršanej ponuky, zvädnuté z ponuky
 }
 // Súhrn obchodov offline hráča: kľúč 'buy:<tovar>' / 'sell:<tovar>' → kusy a mince
 export type AwayTrades = Partial<Record<string, { n: number; c: number }>>;
@@ -86,7 +87,7 @@ export type SavedEvent =
   | EventBase<'festAnnounce' | 'festStart' | 'festEnd', { id: FestivalId }>
   | EventBase<'jano_sell', { sp: SpeciesId; n: number }>
   | EventBase<'cExpire' | 'cDue', { id: number }>
-  | EventBase<'oExpire', { item: ItemId; n: number }>
+  | EventBase<'oExpire' | 'oWilt', { item: ItemId; n: number }>
   | EventBase<'scavDone', { key: PlayerKey; n: string; i: number; seeds: boolean }>
   | EventBase<'vilyEnd' | 'loomDone', { key: PlayerKey }>
   | EventBase<'pullDone', { key: PlayerKey; id: number; n: string }>
@@ -123,6 +124,7 @@ export interface Order {
   coins: number;              // záloha dopytu
   fb?: Batch[];               // várky ponuky kvetov (súčet n = rem)
   ioc?: 1;                    // okamžitý príkaz: čo sa hneď nevybaví, zruší sa (v knihe nikdy nezostane)
+  dead?: number;              // ponuka kvetov: koľko kusov v nej zvädlo
 }
 export interface Book {
   next: number;               // ďalšie číslo objednávky
