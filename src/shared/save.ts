@@ -66,7 +66,11 @@ export interface PlayerSave {
   area?: AreaId;              // staršie uloženia ju nemajú (= záhrada)
   lastTick?: number;          // kedy bol hráč naposledy v hre
   wellFern?: number;          // v ktorom období (seasonNo) mu studňa naposledy dala papraďové semienko
+  orders?: string[];          // id otvorených objednávok v knihe ('<tovar>#<n>'; limit podľa reputácie, záložka Moje)
+  away?: AwayTrades;          // obchody z knihy objednávok, kým nebol v hre (súhrn po prihlásení, #112)
 }
+// Súhrn obchodov offline hráča: kľúč 'buy:<tovar>' / 'sell:<tovar>' → kusy a mince
+export type AwayTrades = Partial<Record<string, { n: number; c: number }>>;
 
 // ---- Udalosti v plánovači (engine.js) ----
 interface EventBase<T extends string, D> {
@@ -82,6 +86,7 @@ export type SavedEvent =
   | EventBase<'festAnnounce' | 'festStart' | 'festEnd', { id: FestivalId }>
   | EventBase<'jano_sell', { sp: SpeciesId; n: number }>
   | EventBase<'cExpire' | 'cDue', { id: number }>
+  | EventBase<'oExpire', { item: ItemId; n: number }>
   | EventBase<'scavDone', { key: PlayerKey; n: string; i: number; seeds: boolean }>
   | EventBase<'vilyEnd' | 'loomDone', { key: PlayerKey }>
   | EventBase<'pullDone', { key: PlayerKey; id: number; n: string }>
@@ -98,14 +103,49 @@ export interface ActiveFestival {
   mult: Partial<Record<SpeciesId, number>>;
   until: number;
 }
+// Kniha objednávok (#112): jedna kniha na tovar a záhradu. Objednávka je dopyt (buy: najviac p mincí za kus) alebo
+// ponuka (sell: aspoň p za kus); jej záloha (escrow) je v nej samej – mince dopytu (coins = rem × p) alebo tovar ponuky
+// (rem kusov; kvety aj s várkami fb, aby si niesli vek). Vlastník je hráč (pl) alebo postava (npc), nikdy oboje.
+export type NpcId = 'vo' | 'jano' | 'fero' | 'zuzka';   // vo = veľkoobchodník (predáva semienka a kompost, vykupuje)
+export type Trader = Exclude<NpcId, 'vo'>;
+export type OrderSide = 'buy' | 'sell';
+export interface Order {
+  n: number;                  // číslo v knihe tovaru; poradie zadania (FIFO), id objednávky je '<tovar>#<n>'
+  side: OrderSide;
+  pl?: PlayerKey;
+  npc?: NpcId;
+  nm: string;                 // meno vlastníka na zobrazenie ('' = veľkoobchodník)
+  p: number;                  // limitná cena za kus (celé mince)
+  q: number;                  // zadané kusy
+  rem: number;                // ešte nevybavené kusy
+  at: number;                 // kedy bola zadaná (krok) – starnutie priority
+  exp: number | null;         // kedy vyprší (null = veľkoobchodník, ten ceny obnovuje sám)
+  coins: number;              // záloha dopytu
+  fb?: Batch[];               // várky ponuky kvetov (súčet n = rem)
+  ioc?: 1;                    // okamžitý príkaz: čo sa hneď nevybaví, zruší sa (v knihe nikdy nezostane)
+}
+export interface Book {
+  next: number;               // ďalšie číslo objednávky
+  orders: Partial<Record<string, Order>>;   // číslo → objednávka
+  vo: NpcAccount;             // pokladňa veľkoobchodníka pre tento tovar (mince na výkup, voľný tovar) – každý tovar zvlášť,
+                              // aby sa obchody s rôznym tovarom nikdy nestretli na jednom účte
+}
+// Účet postavy: voľné mince a tovar (to, čo je v jej objednávkach, je v ich zálohe)
+export interface NpcAccount {
+  coins: number;
+  inv: Inventory;
+  fb: Batches;
+}
 export interface Market {
+  // zásoba veľkoobchodníka (odvodená: voľný tovar + ponuky v knihe; prepočíta ju každé obnovenie jeho cien) – z nej sú ceny
   seeds: Partial<Record<SpeciesId, { stock: number }>>;
   flowers: Partial<Record<SpeciesId, { stock: number; fest?: number }>>;   // fest = sviatočný násobok výkupnej ceny
   compost: { stock: number };
   hist: Partial<Record<ItemId, number[]>>;   // posledné ceny (graf na trhu)
   news: { tick: number; text: string }[];    // najnovšia prvá
   festival: ActiveFestival | null;
-  npcs: { jano: { coins: number }; fero: { coins: number; hold: Partial<Record<SpeciesId, number>> } };
+  books: Partial<Record<ItemId, Book>>;
+  npcs: Record<Trader, NpcAccount>;           // postavy (veľkoobchodník má pokladňu v knihe každého tovaru)
 }
 export type ContractKind = 'short' | 'long' | 'big';
 export interface Contract {

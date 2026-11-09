@@ -6,6 +6,7 @@ import type { ServerMessage } from '../src/shared/protocol.ts';
 import type { Contracts, Icehouse, Market, PlayerSave } from '../src/shared/save.ts';
 import type * as E from '../src/server/engine.ts';
 import * as Econ from '../src/server/economy.ts';
+import * as Mkt from '../src/server/market.ts';
 import * as Events from '../src/server/events.ts';
 import * as Actions from '../src/server/actions.ts';
 import * as I from '../src/server/items.ts';
@@ -41,3 +42,11 @@ export const save = (w: GameWorld, key: string): PlayerSave => must(w.saves[key]
 export function give(sv: PlayerSave, id: ItemId, n: number, tick: number): void { I.addItems(I.playerC(sv), id, n, tick); }
 export const textOf = (m: Msg | ServerMessage): string => ('text' in m ? m.text : '');
 export const json = (v: unknown): string => JSON.stringify(v);
+// Zásoba veľkoobchodníka (#112: jeho tovar je v ponukách knihy): stiahne ponuky tovaru, nastaví zásobu a vypíše ceny znova
+export function setStock(w: Pick<GameWorld, 'saves' | 'tick' | 'market'>, item: ItemId, n: number): void {
+  const m = must(w.market ?? undefined), mk = Mkt.mkWorld(w, m, null), c = Mkt.npcC(must(m.books[item]).vo);
+  Mkt.npcWithdrawAll(mk, 'vo', [item]);
+  I.removeItems(c, item, c.inv[item] || 0, w.tick);
+  I.addItems(c, item, n, w.tick);
+  Mkt.requote(mk, item);
+}

@@ -27,7 +27,7 @@ test('lampáš sa kupuje raz, s dostatkom mincí', () => {
 test('trh lampáš nevykupuje', () => {
   const room = { market: partial<Econ.MarketPart>({ compost: { stock: 50 } }), tick: 0 };
   const sv = partial<PlayerSave>({ coins: 0, rep: 0, inv: { lamp: 1 } });
-  const r = Econ.sell(room.market, room.tick, sv, 'lamp', 1);
+  const r = Econ.sellFixed(room.market, room.tick, sv, 'lamp', 1);
   assert.strictEqual(r.n, 0);
   assert.strictEqual(sv.inv.lamp, 1);
 });

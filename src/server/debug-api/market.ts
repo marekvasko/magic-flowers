@@ -62,17 +62,23 @@ function view(market: Market, w: { events?: EngineEvent[]; contracts?: Parameter
     fero: {
       coins: fero.coins, next: nextOf('npc_fero'),
       // zásoba podľa druhu (neznámy druh v starom uložení sa preskočí – v JS by výpočet ceny spadol)
-      hold: Object.entries(fero.hold || {}).flatMap(([sp, n]) => {
+      // od #112 je zásoba semienkami v jeho účte (a v jeho ponukách v knihe – tie sú v knihe objednávok)
+      hold: Object.entries(fero.inv || {}).flatMap(([id, n]) => {
+        const sp = id.startsWith('seed_') ? id.slice(5) : '';
         if (!D.isSpeciesId(sp) || n === undefined) return [];
         const p = m.seeds[sp] ? Econ.seedPrice(m, tick, sp) : null;
         return [{ sp, name: spName(sp), n, price: p, value: p == null ? null : p * n, sellsAt: D.SPECIES[sp].seed * 1.5 }];
       })
     },
-    zuzka: { next: nextOf('npc_zuzka') }
+    zuzka: { coins: npcs.zuzka?.coins, next: nextOf('npc_zuzka') },
+    vo: { coins: Object.values(m.books || {}).reduce((a, b) => a + (b ? b.vo.coins + Object.values(b.orders).reduce((c, o) => c + (o && o.npc === 'vo' ? o.coins : 0), 0) : 0), 0) }
   };
+  // Kniha objednávok (#112): otvorené objednávky podľa tovaru (bez veľkoobchodníka, ten má ponuky po kusoch)
+  const book = Object.entries(m.books || {}).flatMap(([item, b]) => Object.values(b ? b.orders : {}).flatMap(o => (o && o.npc !== 'vo'
+    ? [{ id: item + '#' + String(o.n), item, name: D.itemName(item), side: o.side, who: o.nm, p: o.p, q: o.q, rem: o.rem, coins: o.coins, exp: o.exp }] : [])));
   const fest = m.festival;
   return {
-    seeds, flowers, compost, npcs: npcView, nextDelivery: nextOf('delivery'),
+    seeds, flowers, compost, npcs: npcView, book, nextDelivery: nextOf('delivery'),
     festival: fest ? { id: fest.id, name: fest.name, icon: fest.icon, mult: fest.mult, until: fest.until } : null,
     upcoming: Econ.upcomingFestival(w.events || [], tick),
     news: (m.news || []).slice(),

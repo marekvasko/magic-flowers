@@ -298,6 +298,7 @@ export function reconcile<W extends EngineWorld, P extends { key: string }, M>(w
 //                                         preto je to vlastný výrez a uloženie (save:) ju nikdy neprepíše
 //   market:seed_<sp> | market:fl_<sp> | market:compost | market:festival | market:hist | market:news | market:npc:<meno>
 //   market:seed_* | market:fl_* | market:npc:* | market:*     kolekcie trhu / celý trh
+//   market:book:<tovar>:* | market:book:<tovar>:<n> | market:book:*   kniha objednávok tovaru / jedna objednávka / všetky knihy
 //   storage                               sklad ako { inv, fb } (world.storage + world.storageFb)
 //   čokoľvek iné                          vlastnosť sveta s tým menom (weather, contracts, icehouse, scav, up, plotsUsed…)
 // Výrez vráti { get() → hodnota, set(value, changes?) } alebo null, ak kľúč nikam nevedie (napr. neexistujúce uloženie).
@@ -360,6 +361,13 @@ export function sliceOf(world: EngineWorld, key: string): Slice | null {
       if (b.startsWith('seed_')) return at(m['seeds'], b.slice(5));
       if (b.startsWith('fl_')) return at(m['flowers'], b.slice(3));
       if (b === 'npc') return c === '*' ? at(m, 'npcs') : at(m['npcs'], c);
+      if (b === 'book') { // kniha objednávok (#112): market:book:* všetky, market:book:<tovar>:* kniha tovaru, market:book:<tovar>:<n> objednávka
+        const n = key.split(':')[3] ?? '*', books = m['books'];
+        if (c === '*') return at(m, 'books');
+        if (n === '*') return at(books, c);
+        const book = isObj(books) ? books[c] : null;
+        return at(isObj(book) ? book['orders'] : null, n);
+      }
       return at(m, b);
     }
     case 'storage': return {

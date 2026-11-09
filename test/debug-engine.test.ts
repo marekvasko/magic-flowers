@@ -29,6 +29,7 @@ import type { JournalList, JournalLoadReply, JournalOne } from '../src/server/de
 import type { GameWorld, Msg } from '../src/server/game.ts';
 import type { Presence } from '../src/server/world.ts';
 import { isMsg, must, parseJson, parseMsg, partial, portOf, rethrow, testWorld } from './helpers.ts';
+import { setStock } from './game-world.ts';
 import type { MsgOf, MsgType } from './helpers.ts';
 const TPD = D.TICKS_PER_DAY;
 const json = (v: unknown): string => JSON.stringify(v);
@@ -101,7 +102,7 @@ test('kruhová pamäť: nikdy nepresiahne N, drží posledných N v poradí, po�
 
 test('dávka: dve kúpy posledného semienka – poradie, odloženie s vinníkom a kľúčom, odmietnutie, skupiny, zmeny pred / po', () => {
   const w = makeWorld(2), spec = traced(w);
-  must(w.market.seeds[SP]).stock = 1; must(w.market.seeds[SP2]).stock = 5;
+  setStock(w, `seed_${SP}`, 1); setStock(w, `seed_${SP2}`, 5);
   const a = act('buy', 'ana', { id: `seed_${SP}`, n: 1 }), b = act('buy', 'bob', { id: `seed_${SP2}`, n: 2 }), c = act('buy', 'bob', { id: `seed_${SP}`, n: 1 });
   E.commitBatch(w, [a, b, c], spec);
   const list = get<TimelineReply>(w, {});
@@ -117,7 +118,7 @@ test('dávka: dve kúpy posledného semienka – poradie, odloženie s vinníkom
   const r1 = must(rounds[0]), r2 = must(rounds[1]);
   assert.deepStrictEqual(r1.proposals.map(p => [p.id, p.outcome]), [[a.id, 'applied'], [b.id, 'applied'], [c.id, 'held']]);
   // vinníci: ana už kúpila to isté semienko, bob už zapísal svoje vlastné uloženie
-  assert.deepStrictEqual(must(r1.proposals[2]).blockedBy, [{ id: a.id, type: 'buy', keys: [`market:seed_${SP}`] }, { id: b.id, type: 'buy', keys: ['save:bob'] }]);
+  assert.deepStrictEqual(must(r1.proposals[2]).blockedBy, [{ id: a.id, type: 'buy', keys: [`market:book:seed_${SP}:*`, `market:seed_${SP}`] }, { id: b.id, type: 'buy', keys: ['save:bob'] }]);
   assert.deepStrictEqual(r1.groups.shared, [[a.id, b.id, c.id]], 'riešili sa spolu cez spoločné kľúče');
   assert.deepStrictEqual(r1.groups.independent, []);
   assert.deepStrictEqual(groupsOf([{ id: 'x', reads: [], writes: ['save:ana'] }, { id: 'y', reads: [], writes: ['save:bob'] }, { id: 'z', reads: ['save:*'], writes: [] }]), { shared: [['x', 'y', 'z']], independent: [] });
@@ -129,7 +130,7 @@ test('dávka: dve kúpy posledného semienka – poradie, odloženie s vinníkom
   assert.deepStrictEqual(stock.writes.map(x => x.id), [a.id]);
   assert.deepStrictEqual(must(stock.writes[0]).leaves.find(l => l.p[0] === 'stock'), { p: ['stock'], from: 1, to: 0 });
   assert.deepStrictEqual(stock.contenders.map(x => [x.id, x.round, x.outcome]), [[c.id, 1, 'held'], [c.id, 2, 'rejected']]);
-  assert.strictEqual(must(changes[0]).key, `market:seed_${SP}`, 'kľúče, o ktoré sa súperilo, idú prvé');
+  assert.ok(must(changes[0]).key.startsWith(`market:book:seed_${SP}:`) || must(changes[0]).key === `market:seed_${SP}`, 'kľúče, o ktoré sa súperilo, idú prvé');
   assert.ok(changes.some(x => x.key === 'save:ana' && must(x.writes[0]).leaves.some(l => l.p.join('.') === 'coins')));
   assert.ok(!JSON.stringify(d).includes(must(w.seed ?? undefined)), 'semienko sveta sa nikdy neukáže');
 });
@@ -337,7 +338,7 @@ test('denník: riadky od najnovšieho, filtre (druh, typ, hráč odtlačkom, osu
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-dbg-journal-'));
   const file = path.join(dir, 'journal-x.jsonl');
   const w = makeWorld(7);
-  must(w.market.seeds[SP]).stock = 1;
+  setStock(w, `seed_${SP}`, 1);
   const spec: Spec = { ...traced(w), onBatch: (x, out) => { fs.appendFileSync(file, json(Object.assign({ wall: 1700000000000 }, out.entry)) + '\n'); } };
   fs.writeFileSync(file, json({ wall: 1700000000000, load: true, tick: w.tick, step: 0, seq: 0, migratedFrom: null }) + '\n');
   E.commitBatch(w, [act('pos', 'ana', { x: 10.5, y: 10.5 })], spec);

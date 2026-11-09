@@ -16,6 +16,7 @@ import { isRecord } from '../src/shared/util.ts';
 import type { JsonRecord } from '../src/shared/util.ts';
 import * as E from '../src/server/engine.ts';
 import * as Econ from '../src/server/economy.ts';
+import * as Mkt from '../src/server/market.ts';
 import * as Events from '../src/server/events.ts';
 import * as I from '../src/server/items.ts';
 import * as Ice from '../src/server/ice.ts';
@@ -23,6 +24,7 @@ import { sl } from '../src/server/game.ts';
 import type { GameSlices, GameWorld } from '../src/server/game.ts';
 import type { Container, Presence, Tile } from '../src/server/world.ts';
 import { must, parseJson, parseMsg, partial, rethrow, testWorld } from './helpers.ts';
+import { setStock } from './game-world.ts';
 const TPD = D.TICKS_PER_DAY;
 const SP = must(Econ.PLANTABLE.find(k => !D.SPECIES[k].strict)); // bežný kvet
 const json = (v: unknown): string => JSON.stringify(v);
@@ -111,17 +113,21 @@ const PROPOSERS = {
   buy: prop<Trade>({
     keys: ({ key }) => ({ writes: ['market:*', 'save:' + key] }),
     run(s, { key, id, n }, ctx) {
-      const r = Econ.buy(sl(s, 'market:*'), ctx.tick, sv(s, key), id, n);
-      if (!r.n) ctx.reject(r.msg);
-      ctx.emit({ to: key, t: 'toast', text: r.msg });
+      // kniha objednávok (#112): okamžitý príkaz; protistranou je tu len veľkoobchodník (v market:*)
+      const mk = Mkt.mkOf(s, ctx, key), item = must(D.isItemId(id) ? id : undefined);
+      if (!Mkt.side(mk.book(item), 'sell', ctx.tick).length) ctx.reject('Vypredané. Veľkoobchodník príde o pár dní.');
+      const r = Mkt.playerOrder(mk, item, key, key, 'buy', n, 99999, true);
+      if ('err' in r || !r.got) ctx.reject('err' in r ? r.err : 'Vypredané.');
+      if (!('err' in r)) ctx.emit({ to: key, t: 'toast', text: `Kúpené: ${String(r.got)}× za ${String(r.coins)} 🪙` });
     }
   }),
   sell: prop<Trade>({
     keys: ({ key }) => ({ writes: ['market:*', 'save:' + key] }),
     run(s, { key, id, n }, ctx) {
-      const r = Econ.sell(sl(s, 'market:*'), ctx.tick, sv(s, key), id, n);
-      if (!r.n) ctx.reject(r.msg);
-      ctx.emit({ to: key, t: 'toast', text: r.msg });
+      // kniha objednávok (#112): okamžitý príkaz; protistranou je tu len veľkoobchodník (v market:*)
+      const mk = Mkt.mkOf(s, ctx, key), r = Mkt.playerOrder(mk, must(D.isItemId(id) ? id : undefined), key, key, 'sell', n, 1, true);
+      if ('err' in r || !r.got) ctx.reject('err' in r ? r.err : 'Vypredané.');
+      if (!('err' in r)) ctx.emit({ to: key, t: 'toast', text: `Predané: ${String(r.got)}× za ${String(r.coins)} 🪙` });
     }
   }),
   ctake: prop<{ key: string; id: number }>({
@@ -251,7 +257,7 @@ test('zmiešaná dávka v ľubovoľnom poradí: rovnaké návrhy; vykonaná v pe
     Econ.takeContract(w.contracts, w.tick, save(w, 'ana'), 'ana', c.id); give(save(w, 'ana'), `fl_${c.sp}`, c.n, w.tick);
     E.reconcile(w, SPEC);
     w.tick = D.DAWN_TICK + TPD;
-    must(w.market.seeds[SP]).stock = 2;
+    setStock(w, `seed_${SP}`, 2);
     const events = w.events.filter(e => e.at <= w.tick + 1).map(ev => ({ type: ev.type, data: ev.data, ev }));
     const inputs = [...events,
       input('pick', { key: 'ana', i: ti[0] }), input('pick', { key: 'bob', i: ti[0] }), input('wilt', { i: ti[1] }), input('pick', { key: 'bob', i: ti[1] }),
@@ -292,7 +298,7 @@ test('náhoda návrhu závisí len od semienka, kola a identity vstupu – ubrat
 
 test('ten istý tovar: posledné semienko kúpi práve jeden, druhý dostane „Vypredané“; kto nemá mince, nekúpi', () => {
   const w = makeWorld(8);
-  must(w.market.seeds[SP]).stock = 1;
+  setStock(w, `seed_${SP}`, 1);
   save(w, 'bob').coins = 0;
   w.saves['cyril'] = Object.assign(parseJson<PlayerSave>(json(save(w, 'ana'))), { coins: 500 });
   const price = Econ.seedPrice(w.market, w.tick, SP);
@@ -313,7 +319,7 @@ test('ten istý tovar: posledné semienko kúpi práve jeden, druhý dostane „
 test('ten istý tovar: nákupy a predaje v jednom kroku – zásoba, mince a batohy sedia, každý kus za cenu platnú pri predaji', () => {
   for (const order of [0, 1, 2]) {
     const w = makeWorld(9);
-    must(w.market.seeds[SP]).stock = 3;
+    setStock(w, `seed_${SP}`, 3);
     give(save(w, 'bob'), `seed_${SP}`, 5, w.tick);
     const coins0 = save(w, 'ana').coins + save(w, 'bob').coins, seeds0 = 3 + 5;
     const inputs = [input('buy', { key: 'ana', id: `seed_${SP}`, n: 4 }), input('sell', { key: 'bob', id: `seed_${SP}`, n: 3 }), input('buy', { key: 'bob', id: `seed_${SP}`, n: 1 })];
@@ -636,7 +642,7 @@ test('server: denník sa píše do data/journal-<svet>.jsonl – značka načít
   // uloženie starého formátu (v9) – migrácia na serveri ho doplní
   const save = Object.assign(parseJson<JsonRecord>(json(w)), { tick: w.tick, v: 9, mode: 'running', wall: Date.now() - 2 * TPD * (1200 * 1000 / TPD), seed: E.newSeed(), scavSalt: 7, pomedzieSeed: 1, lesSeed: 1, les: null, hory: null, tiles: w.tiles.map(t => ({ s: t.s })) });
   fs.writeFileSync(path.join(dir, 'room-dennik.json'), JSON.stringify(save));
-  const proc = await startServer(dir, port, { JOURNAL_MAX_MB: '0.02' });
+  const proc = await startServer(dir, port, { JOURNAL_MAX_MB: '0.04' }); // #112: kniha objednávok zapisuje viac (rebríky veľkoobchodníka)
   try {
     const ws = new WebSocket('ws://127.0.0.1:' + port);
     await new Promise(r => ws.on('open', r));
@@ -660,7 +666,7 @@ test('server: denník sa píše do data/journal-<svet>.jsonl – značka načít
     for (const p of e.proposals) assert.ok(['applied', 'held', 'rejected', 'error'].includes(p.outcome) && Array.isArray(p.writes), json(p));
   }
   assert.ok(lines.some(e => e.inputs.some(i => i.type === 'dawn')), 'ráno je v denníku');
-  assert.ok(fs.statSync(file).size < 0.02 * 1024 * 1024 * 1.5, 'aktuálny súbor je malý');
+  assert.ok(fs.statSync(file).size < 0.04 * 1024 * 1024 * 1.5, 'aktuálny súbor je malý');
   // dva po sebe idúce záznamy sú po krokoch a kolách súvislé
   for (let k = 1; k < lines.length; k++) { const cur = must(lines[k]), prev = must(lines[k - 1]); assert.ok(cur.tick >= prev.tick && cur.step > prev.step, String(k)); }
 });

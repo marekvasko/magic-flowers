@@ -16,6 +16,8 @@ import type { JsonRecord } from '../shared/util.ts';
 import * as E from './engine.ts';
 import type { BatchOut, EngineEvent, Input, JournalLoad } from './engine.ts';
 import * as Econ from './economy.ts';
+import * as Mkt from './market.ts';
+import * as B from '../shared/book.ts';
 import * as I from './items.ts';
 import * as Scav from './scavenge.ts';
 import * as Ice from './ice.ts';
@@ -252,6 +254,8 @@ function migrate(saved: JsonRecord): LoadedState {
   }
   if (from < 9) scaleTicks(out, TICK_SCALE); // jemnejší čas: každý uložený krok ×40 (deň a hodina ostávajú tie isté)
   if (from < 10) { out.webs = null; out.corners = null; } // pavúky (#57): pavučiny sa utkajú pri prvom načítaní, v každej ploche jeden kút
+  if (from < 12) { /* kniha objednávok (#112): trh dostane knihy a účty postáv pri načítaní (initEconomy → Mkt.initBooks) zo
+    zásob veľkoobchodníka a Ferovho skladu; batohy a mince hráčov sa nemenia */ }
   if (from < 11) { // Dielňa a majster hodvábu (#23): ich políčka sa uvoľnia, čo tam rástlo, dostane prvý hráč, ktorý príde
     out.dielna = Dielna.newDielna();
     out.redeem = Dielna.clearForDielna(out.tiles);
@@ -459,7 +463,8 @@ function sendMe(pl: Player): void {
   send(pl.ws, {
     t: 'me', coins: sv.coins, water: sv.water, inv: sv.inv, recipes: sv.recipes, seen: sv.seen, vily: sv.vily > room.tick,
     rep: sv.rep, up: upView(room, sv), canCap: Econ.canCap(sv), plotLimit: Econ.plotLimit(room.up), plotsUsed: room.plotsUsed, maxActive: Econ.maxActive(sv),
-    fb: I.batchesView(I.playerC(sv), room.tick), tick: room.tick, loom: loomView(room, pl.key)
+    fb: I.batchesView(I.playerC(sv), room.tick), tick: room.tick, loom: loomView(room, pl.key),
+    orders: Mkt.ordersView(room.market, sv, room.tick), orderLimit: B.orderLimit(sv.rep || 0)
   });
   room.dirty = true;
 }
@@ -668,7 +673,7 @@ function timeMsg(room: Room): ServerMessage {
 // Udalosti a akcie nie sú nikdy v jednej dávke: dávka akcií sa vykoná v kroku, v ktorom správy prišli (svet sa medzi
 // rámcami nehýbe, takže to je práve aktuálny krok), až potom rámec posunie čas.
 const INBOX_MAX = 2000, PLAYER_INBOX_MAX = 100, DEFER_MAX = 3; // ochrana pred zaplavením: čo sa nezmestí (na svet, na hráča, odložené akcie), sa zahodí
-const MESSAGES = new Set(['move', 'act', 'jump', 'sleep', 'emote', 'buy', 'sell', 'upgrade', 'ctake', 'cdeliver', 'brew', 'wish', 'settings', 'store', 'unstore', 'compostWilted', 'buyTool', 'build', 'icehouse', 'buyLoom', 'masterWeave', 'loomStart', 'loomTake', 'chat', 'veh']);
+const MESSAGES = new Set(['move', 'act', 'jump', 'sleep', 'emote', 'buy', 'sell', 'order', 'cancelOrder', 'collect', 'upgrade', 'ctake', 'cdeliver', 'brew', 'wish', 'settings', 'store', 'unstore', 'compostWilted', 'buyTool', 'build', 'icehouse', 'buyLoom', 'masterWeave', 'loomStart', 'loomTake', 'chat', 'veh']);
 const PRESENCE_ONLY = new Set(['jump', 'sleep', 'emote', 'settings', 'chat']); // správy len o prítomnosti – engine ich nevidí
 const EMOTES: readonly Emote[] = ['dance', 'wave', 'heart', 'laugh', 'flower'];
 const WISHES: readonly WishKind[] = ['zlato', 'jar', 'poklad'];
@@ -778,8 +783,15 @@ function toInput(room: Room, pl: Player, e: InboxEntry, presence: Presence[], in
       }
       return mk(r.type, r.data);
     }
-    case 'buy': return mk('buy', { id: String(m['id']), n: count(1, 20) });
-    case 'sell': return mk('sell', { id: String(m['id']), n: count(1, 999) });
+    case 'buy': case 'sell': { // okamžitý obchod; lim = najhoršia cena za kus, ktorú hráč videl (#112)
+      const lim = Number(m['lim']) | 0;
+      return mk(m.t, Object.assign({ id: String(m['id']), n: count(1, m.t === 'buy' ? 99 : 999) }, lim > 0 ? { lim: Math.min(lim, 99999) } : {}));
+    }
+    case 'order': { // Dopyt / Ponuka: n kusov za p za kus
+      const p = Number(m['p']) | 0, side = m['side'] === 'sell' ? 'sell' : m['side'] === 'buy' ? 'buy' : null;
+      return side && p >= 1 && p <= 99999 ? mk('order', { id: String(m['id']), side, n: count(1, 999), p }) : no('invalid order');
+    }
+    case 'cancelOrder': return mk('cancelOrder', { id: String(m['id']).slice(0, 64) });
     case 'upgrade': return mk('upgrade', { kind: String(m['kind']) });
     case 'ctake': return mk('ctake', { id: Number(m['id']) | 0 });
     case 'cdeliver': return mk('cdeliver', { id: Number(m['id']) | 0 });
