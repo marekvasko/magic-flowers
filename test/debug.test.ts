@@ -170,5 +170,37 @@ test('debug: neočakávaná chyba v ladiacej požiadavke je 500, nie pád server
     assert.strictEqual(l.status, 500);
     assert.deepStrictEqual(parseJson<unknown>(l.body), { error: 'internal error' });
     assert.strictEqual((await s.get('/api/debug/room?id=stary')).status, 200, 'server obsluhuje ďalej');
+    s.rooms.delete('zly');
+    // odpoveď, ktorá sa nedá zapísať ako JSON (BigInt): telo sa skladá pred hlavičkou, takže 500 ešte odíde
+    Object.defineProperty(must(s.rooms.get('zivy')), 'tick', { get: () => BigInt(7) });
+    const b = await s.get('/api/debug/rooms');
+    assert.strictEqual(b.status, 500);
+    assert.deepStrictEqual(parseJson<unknown>(b.body), { error: 'internal error' });
+    assert.strictEqual((await s.get('/api/debug/room?id=stary')).status, 200, 'server obsluhuje ďalej');
   } finally { console.error = warn; s.close(); }
+});
+
+test('debug: snímka neprezradí chybu kódu, zlyhanie migrate je „migrate failed“ (#134)', async () => {
+  const s = await setup();
+  const warn = console.error; console.error = () => {};
+  try {
+    Object.defineProperty(must(s.rooms.get('zivy')).state, 'saves', { get: () => { throw new Error('tajná podrobnosť'); } });
+    const m = await s.get('/api/debug/room?id=zivy');
+    assert.strictEqual(m.status, 500);
+    assert.deepStrictEqual(parseJson<unknown>(m.body), { error: 'internal error' });
+    // platný JSON, ktorý migrate nezvládne (market bez tvaru trhu) – nie je to poškodený súbor
+    fs.writeFileSync(path.join(s.dataDir, 'room-zlamigr.json'), JSON.stringify({ tick: 1, market: 5 }));
+    const f = await s.get('/api/debug/room?id=zlamigr');
+    assert.strictEqual(f.status, 500);
+    assert.deepStrictEqual(parseJson<unknown>(f.body), { error: 'migrate failed' });
+  } finally { console.error = warn; s.close(); }
+});
+
+test('debug: /debug/%00 je 404, nie výnimka z fs.readFile (#134)', async () => {
+  const s = await setup();
+  try {
+    assert.strictEqual((await s.get('/debug/%00')).status, 404);
+    assert.strictEqual((await s.get('/debug/index.html%00')).status, 404);
+    assert.strictEqual((await s.get('/debug/')).status, 200, 'server obsluhuje ďalej');
+  } finally { s.close(); }
 });
