@@ -2,7 +2,7 @@
 // Engine (engine.ts) je všeobecný; tu sa dosadí, čo je herný svet, prítomnosť a správa.
 import type { AreaId } from '../shared/data.ts';
 import type { ServerMessage } from '../shared/protocol.ts';
-import type { Contracts, Dielna, Dock, GroundOverrides, Icehouse, Inventory, Market, PlayerKey, PlayerSave, SaveFile, Vehicles, Weather, Webs, WorldMode } from '../shared/save.ts';
+import type { Book, Contracts, Dielna, Dock, GroundOverrides, Icehouse, Inventory, Market, NpcAccount, Order, PlayerKey, PlayerSave, SaveFile, Vehicles, Weather, Webs, WorldMode } from '../shared/save.ts';
 import type { Ctx, EngineWorld, Keys, PeriodicDef, Proposer, Slices, Spec } from './engine.ts';
 import type { Scav } from './scavenge.ts';
 import type { AreaTilesWorld, Presence, StorageSlice, Tile } from './world.ts';
@@ -147,6 +147,13 @@ export type KeyedSlice<K extends string> =
   : K extends `tile:${string}:*` ? Tile[]
   : K extends `tile:${string}:${number}` ? Tile | undefined   // index mimo plochy → výrez bez hodnoty
   : K extends 'market:*' ? Market
+  : K extends 'market:book:*' ? Market['books']
+  : K extends `market:book:${string}:*` ? Book | undefined
+  : K extends `market:book:${string}:${string}` ? Order | undefined
+  : K extends 'market:npc:*' ? Market['npcs']
+  : K extends `market:npc:${string}` ? NpcAccount | undefined
+  : K extends 'market:news' ? Market['news']
+  : K extends 'market:festival' ? Market['festival']
   : K extends 'market:seed_*' ? Market['seeds']
   : K extends 'market:fl_*' ? Market['flowers']
   : K extends 'market:compost' ? Market['compost']

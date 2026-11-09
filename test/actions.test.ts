@@ -18,6 +18,7 @@ import { entries, isRecord, keys } from '../src/shared/util.ts';
 import type { JsonRecord } from '../src/shared/util.ts';
 import * as E from '../src/server/engine.ts';
 import * as Econ from '../src/server/economy.ts';
+import * as Mkt from '../src/server/market.ts';
 import * as Events from '../src/server/events.ts';
 import * as Actions from '../src/server/actions.ts';
 import * as I from '../src/server/items.ts';
@@ -30,6 +31,7 @@ import * as Dock from '../src/server/dock.ts';
 import type { GameCtx, GameWorld, Msg } from '../src/server/game.ts';
 import type { Presence, Tile } from '../src/server/world.ts';
 import { isMsg, must, parseJson, parseMsg, partial, portOf, readJson, rethrow, testWorld } from './helpers.ts';
+import { setStock } from './game-world.ts';
 import type { MsgOf, MsgType } from './helpers.ts';
 const TPD = D.TICKS_PER_DAY;
 const json = (v: unknown): string => JSON.stringify(v);
@@ -165,13 +167,13 @@ test('act: kliknutie sa rozloží na konkrétnu akciu podľa políčka, predmetu
 
 test('trh: kľúče po položkách – nákupy rôznych semienok v jednom kroku sa nebrzdia, posledný kus toho istého kúpi práve jeden', () => {
   const w = makeWorld(2);
-  seedOf(w, SP).stock = 1; seedOf(w, SP2).stock = 5;
+  setStock(w, `seed_${SP}`, 1); setStock(w, `seed_${SP2}`, 5);
   const r = E.commitBatch(w, [act('buy', 'ana', { id: `seed_${SP}`, n: 1 }), act('buy', 'bob', { id: `seed_${SP2}`, n: 2 }), act('buy', 'bob', { id: `seed_${SP}`, n: 1 })], SPEC);
   assert.strictEqual(r.rounds, 2, 'len tretí nákup (to isté semienko) čaká na druhé kolo');
   assert.deepStrictEqual(r.applied.map(x => field(x.input.data, 'id')), [`seed_${SP}`, `seed_${SP2}`]);
   assert.deepStrictEqual(r.rejected.map(x => [x.input.actor, x.reject]), [['bob', 'Vypredané. Veľkoobchodník príde o pár dní.']]);
   const first = must(r.applied[0]);
-  assert.deepStrictEqual(first.writes.has(`market:seed_${SP}`) && !first.writes.has('market:*'), true, 'nákup deklaruje len svoju položku');
+  assert.deepStrictEqual(first.writes.has(`market:book:seed_${SP}:*`) && first.writes.has(`market:seed_${SP}`) && !first.writes.has('market:*'), true, 'nákup deklaruje len knihu a zásobu svojho tovaru');
   assert.deepStrictEqual([seedOf(w, SP).stock, seedOf(w, SP2).stock, save(w, 'ana').inv[`seed_${SP}`], save(w, 'bob').inv[`seed_${SP2}`]], [0, 3, 1, 2]);
   // predaj kvetu číta sviatočný násobok z položky kvetu, nie zo súhrnu trhu
   const w2 = makeWorld(3);
@@ -179,10 +181,11 @@ test('trh: kľúče po položkách – nákupy rôznych semienok v jednom kroku 
   // skúšobný sviatok s id skutočného sviatku (test na id nič neoveruje; festEnd tu nenastane)
   const f: ActiveFestival = { id: must(D.FESTIVALS[0]).id, name: 'Skúška', icon: '✨', mult: { [SP]: 2 }, until: w2.tick + TPD };
   w2.market.festival = f; Econ.setFestival(w2.market, f);
+  Mkt.requoteAll(Mkt.mkWorld(w2, w2.market, null), [`fl_${SP}`]); // veľkoobchodník vypíše sviatočný výkup (ako festStart)
   const price = Econ.flowerPrice(w2.market, w2.tick, SP);
   assert.strictEqual(must(w2.market.flowers[SP]).fest, 2);
   const r2 = E.commitBatch(w2, [act('sell', 'ana', { id: `fl_${SP}`, n: 1 })], SPEC);
-  assert.deepStrictEqual([...must(r2.applied[0]).writes].sort(), [`market:fl_${SP}`, 'save:ana']);
+  assert.deepStrictEqual([...must(r2.applied[0]).writes].sort(), [`market:book:fl_${SP}:*`, `market:fl_${SP}`, 'save:ana']);
   assert.strictEqual(save(w2, 'ana').coins, 500 + price);
   // predaj bez položky trhu (elixír) deklaruje len uloženie
   give(save(w2, 'ana'), 'po_sliz', 1, w2.tick);
@@ -275,7 +278,7 @@ test('zmiešaná dávka akcií v ľubovoľnom poradí dáva rovnaké návrhy; vy
     const ti = tillable(w);
     plant(w, ti[0], 'ana', true); plant(w, ti[1], 'bob', true); plant(w, ti[2], 'ana', false);
     give(save(w, 'ana'), `fl_${SP}`, 4, w.tick); give(save(w, 'bob'), `seed_${SP}`, 2, w.tick); give(save(w, 'ana'), 'po_rast', 1, w.tick); give(save(w, 'bob'), 'fl_papradie', 1, w.tick);
-    seedOf(w, SP).stock = 2;
+    setStock(w, `seed_${SP}`, 2);
     const c = must(w.contracts.list.find(x => !x.takenBy));
     const inputs = [
       act('pick', 'ana', { i: ti[0] }), act('pick', 'bob', { i: ti[0] }), act('pick', 'bob', { i: ti[1] }), act('water', 'ana', { i: ti[2] }),
@@ -528,7 +531,7 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
   give(save(w, 'ana'), `seed_${SP}`, 3, w.tick); give(save(w, 'ana'), `fl_${SP}`, 2, w.tick);
   w.icehouse = partial<Icehouse>({ built: false, ice: 0 }); Ice.applyIcehouse(w.icehouse, w.tiles);
   save(w, 'bob').rep = must(D.REP_LEVELS[D.ICEHOUSE.rep]); save(w, 'bob').coins = D.ICEHOUSE.price + 10;
-  seedOf(w, SP).stock = 1;
+  setStock(w, `seed_${SP}`, 1);
   save(w, 'ana').wellFern = 3; // voliteľné pole uloženia (studňa, #100): prežije prevod, načítanie aj uloženie
   // uloženie starého formátu (v9) – migrácia na serveri ho doplní
   const save9 = Object.assign(parseJson<JsonRecord>(json(w)), { v: 9, mode: 'paused', wall: Date.now(), tiles: w.tiles.map(t => ({ s: t.s })), hory: Ice.saveHory(w.hory), les: null, pomedzieSeed: 1, lesSeed: 1 });

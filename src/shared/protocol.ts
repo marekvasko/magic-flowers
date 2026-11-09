@@ -5,7 +5,8 @@
 // Pokyny návrhov len pre server (joined, travel, me, scavStart, scavDone, pullStart, pullDone) klient nedostane;
 // typuje ich engine (fáza 3). Správa webbed ide aj klientovi.
 import type { AreaId, BrewHint, Ground, ItemId, Look, PotionId, SpeciesId, UpgradeId } from './data.ts';
-import type { ActiveFestival, Contract, CornerArea, Dock, Icehouse, Plant, Soil, VehicleId, Weather, WorldMode } from './save.ts';
+import type { Level } from './book.ts';
+import type { ActiveFestival, Contract, CornerArea, Dock, Icehouse, OrderSide, Plant, Soil, VehicleId, Weather, WorldMode } from './save.ts';
 
 // ---- Klient → server ----
 export type Emote = 'dance' | 'wave' | 'heart' | 'laugh' | 'flower';
@@ -15,7 +16,12 @@ export type ClientMessage =
   // a = presný smer pohľadu, cr = plazí sa, lp = drží lampáš, ar = poradie plochy (pohyb z predchádzajúcej plochy sa zahodí)
   | { t: 'move'; x: number; y: number; dir: number; a?: number | undefined; cr?: boolean; lp?: boolean; ar: number }
   | { t: 'act'; x: number; y: number; item: ItemId | '' }   // '' = prázdna ruka
-  | { t: 'buy' | 'sell' | 'store' | 'unstore'; id: ItemId; n: number }
+  | { t: 'store' | 'unstore'; id: ItemId; n: number }
+  // trh (#112): okamžitý nákup / predaj n kusov (lim = najhoršia cena za kus, ktorú hráč videl – drahšie nekúpi, lacnejšie
+  // nepredá); limitná objednávka (Dopyt / Ponuka) n kusov za p za kus; zrušenie objednávky (id '<tovar>#<n>')
+  | { t: 'buy' | 'sell'; id: ItemId; n: number; lim?: number }
+  | { t: 'order'; id: ItemId; side: OrderSide; n: number; p: number }
+  | { t: 'cancelOrder'; id: string }
   | { t: 'upgrade'; kind: UpgradeId }
   | { t: 'ctake' | 'cdeliver'; id: number }
   | { t: 'brew'; items: ItemId[] }                          // tri kvety fl_*
@@ -46,7 +52,11 @@ export interface TileView {
 // Várky s vekom pre klienta (vek prepočítaný k aktuálnemu kroku)
 export type BatchesView = Partial<Record<ItemId, { n: number; age: number }[]>>;
 // Položka trhu: cena, zásoba a posledné ceny
-export interface MarketItemView { p: number; st: number; h: number[] }
+// Položka trhu: cena veľkoobchodníka (predaj semienok a kompostu / výkup kvetov) pri jeho zásobe st, posledné ceny,
+// kniha objednávok: a = ponuky (od najlepšej), b = dopyty (od najlepšej) – #112
+export interface MarketItemView { p: number; st: number; h: number[]; a: Level[]; b: Level[] }
+// Otvorená objednávka hráča (záložka Moje): kúpené / predané q − rem z q, záloha mincí, kedy vyprší, čerstvosť kvetov
+export interface OrderView { id: string; item: ItemId; side: OrderSide; p: number; q: number; rem: number; coins: number; exp: number | null; fr?: number }
 export interface UpcomingFestival {
   id: ActiveFestival['id'];
   name: string;
@@ -125,6 +135,7 @@ export type ServerMessage =
     t: 'me'; coins: number; water: number; inv: Partial<Record<ItemId, number>>; recipes: string[]; seen: SpeciesId[]; vily: boolean;
     rep: number; up: { can: number; composter: number; plots: number }; canCap: number; plotLimit: number; plotsUsed: number; maxActive: number;
     fb: BatchesView; tick: number; loom: { busy: boolean; mine: number | null; ready: number };
+    orders: OrderView[]; orderLimit: number;
   }
   | {
     t: 'room'; eternal: boolean; mode: WorldMode; daySeconds: number; storage: Partial<Record<ItemId, number>>; storageFb: BatchesView;

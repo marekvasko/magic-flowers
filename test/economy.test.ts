@@ -6,6 +6,7 @@ import { isRecord } from '../src/shared/util.ts';
 import * as E from '../src/server/engine.ts';
 import * as Econ from '../src/server/economy.ts';
 import * as I from '../src/server/items.ts';
+import * as Mkt from '../src/server/market.ts';
 import type { GameCtx, GameProposer, GameSpec, GameWorld, Msg } from '../src/server/game.ts';
 import type { Presence } from '../src/server/world.ts';
 import { must, partial, testWorld } from './helpers.ts';
@@ -69,23 +70,31 @@ test('semienka sú v sezóne v priemere drahšie ako tesne pred sezónou (treba 
   assert.ok(during > pre * 1.2);
 });
 
+// Okamžitý obchod hráča key cez knihu objednávok (#112) nad živým svetom: vráti vybavené kusy a mince
+function trade(room: Room, key: string, side: 'buy' | 'sell', id: D.ItemId, n: number): { got: number; coins: number } {
+  const mk = Mkt.mkWorld(room, room.market, ctxOf(room));
+  const r = Mkt.playerOrder(mk, id, key, key, side, n, side === 'buy' ? 99999 : 1, true);
+  return 'err' in r ? { got: 0, coins: 0 } : r;
+}
+
 test('nákup zvyšuje cenu, predaj kvetov ju znižuje; vypredané sa kúpiť nedá', () => {
   const { room } = makeWorld(7);
-  const sv = partial<PlayerSave>({ coins: 10000, inv: {}, rep: 0 });
+  const sv = partial<PlayerSave>({ coins: 10000, inv: {}, fb: {}, rep: 0 });
+  room.saves['t'] = sv;
   const sp = must(Econ.PLANTABLE.find(s => Econ.phase(s, 0) === 'now' && !D.SPECIES[s].strict));
   const m = room.market, tick = room.tick;
   const p0 = Econ.seedPrice(m, tick, sp);
-  const r = Econ.buy(m, tick, sv, 'seed_' + sp, 5);
-  assert.strictEqual(r.n, 5);
+  assert.strictEqual(trade(room, 't', 'buy', `seed_${sp}`, 5).got, 5);
   assert.ok(Econ.seedPrice(m, tick, sp) > p0);
-  Econ.buy(m, tick, sv, 'seed_' + sp, 999);
+  trade(room, 't', 'buy', `seed_${sp}`, 999);
   assert.strictEqual(must(room.market.seeds[sp]).stock, 0);
-  assert.strictEqual(Econ.buy(m, tick, sv, 'seed_' + sp, 1).n, 0);
+  assert.strictEqual(trade(room, 't', 'buy', `seed_${sp}`, 1).got, 0);
   sv.inv[`fl_${sp}`] = 10;
   const f0 = Econ.flowerPrice(m, tick, sp);
-  const s = Econ.sell(m, tick, sv, 'fl_' + sp, 10);
-  assert.ok(must(s.earned) < f0 * 10 && Econ.flowerPrice(m, tick, sp) < f0);
-  assert.strictEqual(Econ.buy(m, tick, partial<PlayerSave>({ coins: 9999, inv: {}, rep: 0 }), 'seed_plesnivec', 1).n, 0, 'plesnivec len od reputácie 2');
+  const s = trade(room, 't', 'sell', `fl_${sp}`, 10);
+  assert.ok(s.coins < f0 * 10 && Econ.flowerPrice(m, tick, sp) < f0);
+  room.saves['u'] = partial<PlayerSave>({ coins: 9999, inv: {}, fb: {}, rep: 0 });
+  assert.strictEqual(trade(room, 'u', 'buy', 'seed_plesnivec', 1).got, 0, 'plesnivec len od reputácie 2');
 });
 
 test('zákazka: rezervácia, odovzdanie po častiach, odmena; prepadnutá stojí reputáciu', () => {
@@ -135,17 +144,19 @@ test('krátke zákazky sú len na kvety, ktoré sa dajú vypestovať v aktuálno
   }
 });
 
-test('predaj starších kvetov vynesie menej než čerstvých', () => {
+test('predaj starších kvetov vynesie menej než čerstvých (veľkoobchodník platí cenu × čerstvosť)', () => {
   const { room } = makeWorld(5);
   const fresh = partial<PlayerSave>({ coins: 0, inv: {} }), old = partial<PlayerSave>({ coins: 0, inv: {} });
+  room.saves['f'] = fresh; room.saves['o'] = old;
   I.addItems(I.playerC(fresh), 'fl_tulipan', 3, room.tick);
   I.addItems(I.playerC(old), 'fl_tulipan', 3, room.tick - 3 * TPD);
-  const tulipan = must(room.market.flowers.tulipan), stock = tulipan.stock;
-  Econ.sell(room.market, room.tick, fresh, 'fl_tulipan', 3);
-  tulipan.stock = stock;
-  const r = Econ.sell(room.market, room.tick, old, 'fl_tulipan', 3);
-  assert.ok(old.coins < fresh.coins * 0.8, `${old.coins} vs ${fresh.coins}`);
-  assert.match(r.msg, /čerstvosť/);
+  const a = trade(room, 'f', 'sell', 'fl_tulipan', 3);
+  // rovnaká zásoba pre oboch: čerstvé kvety predané veľkoobchodníkovi mu zoberieme
+  I.removeItems(Mkt.npcC(must(room.market.books.fl_tulipan).vo), 'fl_tulipan', 3, room.tick);
+  Mkt.requote(Mkt.mkWorld(room, room.market, ctxOf(room)), 'fl_tulipan');
+  const b = trade(room, 'o', 'sell', 'fl_tulipan', 3);
+  assert.strictEqual(a.got, 3); assert.strictEqual(b.got, 3);
+  assert.ok(old.coins < fresh.coins * 0.8, `${String(old.coins)} vs ${String(fresh.coins)}`);
 });
 
 test('štartovný kapitál: chudobný začiatok, v testovacích prostrediach viac', () => {

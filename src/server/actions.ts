@@ -9,10 +9,12 @@
 import * as D from '../shared/data.ts';
 import type { AreaId, ItemId, Look, Point, PotionId } from '../shared/data.ts';
 import type { FxKind, ToastKind, WishKind } from '../shared/protocol.ts';
-import type { PlayerKey, PlayerSave } from '../shared/save.ts';
+import * as B from '../shared/book.ts';
+import type { OrderSide, PlayerKey, PlayerSave } from '../shared/save.ts';
 import { keys, lookup, must } from '../shared/util.ts';
 import * as E from './engine.ts';
 import * as Econ from './economy.ts';
+import * as Mkt from './market.ts';
 import * as I from './items.ts';
 import * as Ice from './ice.ts';
 import * as Scav from './scavenge.ts';
@@ -43,6 +45,23 @@ export const WELL_POTIONS: readonly PotionId[] = ['rast', 'dazd'];
 const toast$ = (to: To, text: string, kind?: ToastKind): Msg => ({ to, t: 'toast', text, kind: kind || 'info' });
 const fx$ = (area: AreaId, k: FxKind, x: number, y: number, extra?: { c: string }): Msg => ({ to: E.area(area), t: 'fx', k, x, y, ...extra });
 
+// Okamžitý obchod hráča cez knihu: limit je najhoršia cena, ktorú hráč videl (bez nej: kúpi za čokoľvek, čo zaplatí,
+// predá za čokoľvek aspoň 1)
+function instant(s: GameSlices, d: ActionInputs['buy'], side: OrderSide, ctx: GameCtx): void {
+  const item = d.id, sv = saveOf(s, d.key, ctx);
+  if (!B.isBookItem(item)) { ctx.reject(side === 'buy' ? 'Toto sa na trhu nepredáva.' : 'Toto trh nevykupuje.'); return; }
+  const lim = d.lim && d.lim > 0 ? d.lim : side === 'buy' ? Math.max(1, sv.coins) : 1;
+  const mk = Mkt.mkOf(s, ctx, d.key), other = Mkt.side(mk.book(item), side === 'buy' ? 'sell' : 'buy', ctx.tick).some(o => o.pl !== d.key);
+  const r = Mkt.playerOrder(mk, item, d.key, nameOf(ctx, d.key), side, d.n, lim, true);
+  if ('err' in r) { ctx.reject(r.err); return; }
+  if (!r.got) {
+    if (!other) ctx.reject(side === 'buy' ? 'Vypredané. Veľkoobchodník príde o pár dní.' : 'Toto teraz nikto nekúpi.');
+    ctx.reject(side === 'buy' ? 'Za túto cenu tu teraz nikto nepredáva.' : 'Za túto cenu to teraz nikto nekúpi.');
+  }
+  Mkt.announce(mk);
+  ctx.emit(toast$(d.key, `${side === 'buy' ? 'Kúpené' : 'Predané'}: ${String(r.got)}× ${D.itemName(item)} za ${String(r.coins)} 🪙`));
+}
+
 // Dáta akcií hráča (vstupy enginu; key = kľúč konajúceho hráča – server ho doplní, rovnaký ako actor)
 export interface ActionInputs {
   pos: { key: PlayerKey; x: number; y: number };
@@ -69,8 +88,10 @@ export interface ActionInputs {
   gift: { key: PlayerKey; to: PlayerKey; item: string };
   love: { key: PlayerKey; to: PlayerKey };
   wave: { key: PlayerKey; to: PlayerKey };
-  buy: { key: PlayerKey; id: string; n: number };
-  sell: { key: PlayerKey; id: string; n: number };
+  buy: { key: PlayerKey; id: string; n: number; lim?: number };
+  sell: { key: PlayerKey; id: string; n: number; lim?: number };
+  order: { key: PlayerKey; id: string; side: OrderSide; n: number; p: number };
+  cancelOrder: { key: PlayerKey; id: string };
   upgrade: { key: PlayerKey; kind: string };
   buyTool: { key: PlayerKey; id: string };
   build: { key: PlayerKey; id: 'icehouse' | 'dielna' };
@@ -352,6 +373,8 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
         const got = Dielna.handRedeem(s.redeem, sv, ctx.tick);
         if (got.length) ctx.emit(toast$(d.key, `🎁 Záhrada sa zmenila: pri trhu je pozemok pre Dielňu s majstrom hodvábu a jazierko pri domčeku sa zväčšilo. Čo rástlo na týchto miestach, dostávaš ty: ${got.map(([id, n]) => `${n}× ${D.itemName(id)}`).join(', ')}. 🎁`, 'gift'));
       }
+      const away = Mkt.awaySummary(sv); // obchody z knihy objednávok, kým nebol v hre (#112)
+      if (away) ctx.emit(toast$(d.key, away, 'gift'));
       if (!sv.talked) { sv.talked = true; ctx.emit(toast$(d.key, 'Vitaj! Začínaš s pár semienkami a prázdnym vreckom. Pri babke na severe je nástenka so zákazkami. 👵', 'gift')); }
     }
   },
@@ -704,23 +727,46 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
     run(s, d, ctx) { const me = who(ctx), other = byKey(ctx.presence, d.to); if (!other) { ctx.reject(null); return; } ctx.emit(fx$(me.area, 'wave', other.x, other.y)); }
   },
 
-  // --- trh (d: { key, id, n }): len položka tovaru a batoh hráča ---
+  // --- trh (#112): všetko ide cez knihu objednávok tovaru (market.ts). Návrh deklaruje knihu tovaru, svoje uloženie
+  // a účty vlastníkov všetkých objednávok v knihe (Mkt.bookKeys). Tovar bez knihy (elixíry, zvädnuté kvety, ľad,
+  // čarovné semienka) trh vykúpi za pevnú cenu (Econ.sellFixed) – len batoh hráča.
+  // Okamžitý nákup / predaj (d: { key, id, n, lim }): príkaz, ktorý zoberie, čo v knihe je (najviac za lim / aspoň za lim
+  // za kus), a zvyšok zruší
   buy: {
-    keys: d => ({ writes: [Econ.marketKey(d.id), `save:${d.key}`].filter((k): k is string => !!k) }),
+    keys: (d, w) => ({ writes: B.isBookItem(d.id) ? Mkt.bookKeys(w, d.id, d.key) : [`save:${d.key}`] }),
+    run(s, d, ctx) { instant(s, d, 'buy', ctx); }
+  },
+  sell: {
+    keys: (d, w) => ({ writes: B.isBookItem(d.id) ? Mkt.bookKeys(w, d.id, d.key) : [`save:${d.key}`] }),
     run(s, d, ctx) {
-      const id = d.id, sv = saveOf(s, d.key, ctx);
-      const r = Econ.buy(Econ.marketSlice(s, id), ctx.tick, sv, id, d.n);
+      if (B.isBookItem(d.id)) { instant(s, d, 'sell', ctx); return; }
+      const r = Econ.sellFixed({ seeds: {}, flowers: {}, compost: null }, ctx.tick, saveOf(s, d.key, ctx), d.id, d.n);
       if (!r.n) ctx.reject(r.msg);
       ctx.emit(toast$(d.key, r.msg));
     }
   },
-  sell: {
-    keys: d => ({ writes: [Econ.marketKey(d.id), `save:${d.key}`].filter((k): k is string => !!k) }),
+  // Dopyt / Ponuka (d: { key, id, side, n, p }): limitná objednávka; čo sa prekrýva s knihou, vybaví sa hneď, zvyšok čaká
+  order: {
+    keys: (d, w) => ({ writes: B.isBookItem(d.id) ? Mkt.bookKeys(w, d.id, d.key) : [`save:${d.key}`] }),
     run(s, d, ctx) {
-      const id = d.id, sv = saveOf(s, d.key, ctx);
-      const r = Econ.sell(Econ.marketSlice(s, id), ctx.tick, sv, id, d.n);
-      if (!r.n) ctx.reject(r.msg);
-      ctx.emit(toast$(d.key, r.msg));
+      const item = d.id;
+      if (!B.isBookItem(item)) { ctx.reject('Toto sa na trhu neobchoduje.'); return; }
+      const mk = Mkt.mkOf(s, ctx, d.key), r = Mkt.playerOrder(mk, item, d.key, nameOf(ctx, d.key), d.side, d.n, d.p, false);
+      if ('err' in r) { ctx.reject(r.err); return; }
+      Mkt.announce(mk);
+      const name = D.itemName(item), buy = d.side === 'buy';
+      const now = r.got ? `${buy ? 'Kúpené' : 'Predané'} hneď ${String(r.got)}× ${name} za ${String(r.coins)} 🪙. ` : '';
+      const wait = r.rest ? `${buy ? 'Dopyt' : 'Ponuka'}: ${String(r.rest)}× ${name} za ${String(d.p)} 🪙/ks čaká v knihe (Moje).` : '';
+      ctx.emit(toast$(d.key, '🏷️ ' + (now + wait).trim(), 'gift'));
+    }
+  },
+  // Zrušenie vlastnej objednávky (d: { key, id: '<tovar>#<n>' }): len tá objednávka a uloženie hráča
+  cancelOrder: {
+    keys: d => { const r = Mkt.parseOrderId(d.id); return { writes: r ? [`market:book:${r.item}:${String(r.n)}`, `save:${d.key}`] : [`save:${d.key}`] }; },
+    run(s, d, ctx) {
+      const r = Mkt.parseOrderId(d.id), err = r ? Mkt.cancelOrder(s, d.key, r.item, r.n, ctx) : 'Táto objednávka už nie je otvorená.';
+      if (err || !r) { ctx.reject(err); return; }
+      ctx.emit(toast$(d.key, `Objednávka zrušená – záloha (${D.itemName(r.item)}) sa ti vrátila.`));
     }
   },
   // vylepšenie (d: { key, kind }); spoločné (povolenie na pole) patrí záhrade – kľúč 'up'
