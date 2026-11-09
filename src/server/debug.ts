@@ -50,7 +50,7 @@ export function redactor(keys: Iterable<unknown>): (v: unknown) => unknown {
 // a rámce, v ktorých filter niečo rozhodol, no do enginu nič nešlo. Nikdy sa neukladá a nemení svet.
 // origins: seq udalosti → kto ju naplánoval (návrh, krok, kolo) – pre frontu; drží sa len pre udalosti, čo ešte čakajú.
 // Rozhodnutie filtra správ hráčov (server.ts): poradie správy, hráč, typ správy, čo sa s ňou stalo a podľa akého pravidla
-export interface FilterDecision { seq: number | null; actor: PlayerKey | null; t: string; what: string; rule: string; id?: string }
+export interface FilterDecision { seq: number | null; actor: PlayerKey | null; t: string; what: string; rule: string; id?: string | number | undefined; into?: number }
 // Časy častí dávky a rámca v ms (engine: schedule, evaluate, resolve, commit; server: filter, journal, notify)
 export type TraceTiming = Partial<Record<string, number>>;
 export interface TraceOp { op: 'cancel' | 'insert'; key?: string | undefined; seq?: number | undefined; at?: number; type?: string }
@@ -114,7 +114,7 @@ export interface Loaded { id: string; source: 'memory' | 'file'; file: { size: n
 export interface Tools {
   ROOM_RE: RegExp;
   rooms: () => RoomInfo[];
-  sim: GameSpec | null | undefined;
+  sim: DebugSim | null | undefined;
   load: (id: unknown) => Loaded | null;
   trace: (id: unknown) => { max: number; n: number; records: TraceRecord[]; origins: Map<number, TraceOrigin> } | null;
   journalFiles: (id: unknown) => { path: string; name: string }[];
@@ -122,6 +122,8 @@ export interface Tools {
 }
 // debug/api/<meno>.js exportuje (query, tools) → objekt na odpoveď (null = 404)
 type DebugApi = (query: URLSearchParams, tools: Tools) => unknown;
+// Zo špecifikácie simulácie stačia návrhy a periodické udalosti (stav reconcilera); server ju má nad svojím typom sveta
+export type DebugSim = Pick<GameSpec, 'proposers' | 'periodic'>;
 export interface RoomInfo { id: string; size: number | null; saved: number | null; loaded: boolean; online: Loaded['online']; tick?: number }
 // ctx: { dataDir, debugDir, rooms (Map id → svet v pamäti), serialize(room) → JSON, migrate(stav) → stav,
 //        sim() → špecifikácia simulácie { proposers, periodic } pre stav reconcilera }
@@ -131,7 +133,7 @@ export interface DebugCtx<R extends DebugRoom> {
   rooms: Map<string, R>;
   serialize: (room: R) => string;
   migrate: (state: DebugState) => DebugState;
-  sim?: () => GameSpec | null | undefined;
+  sim?: () => DebugSim | null | undefined;
 }
 
 // Vráti handle(req, res) → true, ak požiadavku vybavil (inak ju server spracuje ako obyčajný súbor).
