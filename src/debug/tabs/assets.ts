@@ -1,7 +1,15 @@
-// Záložka Assets v /debug (#79): zoznam všetkých jemných modelov z shared/world3d.js (World3D.FINE_MODELS),
+// Záložka Assets v /debug (#79): zoznam všetkých jemných modelov z shared/world3d.ts (World3D.FINE_MODELS),
 // 3D prehliadač s prepínaním obdobia a otočenia, mriežka 4 obdobia × 4 otočenia, údaje o modeli
-// a 2D galéria kvetov z art.js (druh × štádium rastu). Len zobrazuje, hru nemení.
-import { createViewer, loadWorld3D, loadArt, injectCss, modelStats, matName } from '/debug/tabs/modelview.mjs';
+// a 2D galéria kvetov z art.ts (druh × štádium rastu). Len zobrazuje, hru nemení.
+import { createViewer, loadWorld3D, loadArt, injectCss, modelStats, matName } from './modelview.ts';
+import type { Viewer } from './modelview.ts';
+import type * as World3D from '../../shared/world3d.ts';
+import type { FineModel, FineModelEntry } from '../../shared/world3d.ts';
+import type { Art as ArtApi, PlantOpts } from '../../client/art.ts';
+import type { SpeciesId } from '../../shared/data.ts';
+import { keys, must } from '../../shared/util.ts';
+import type { TabCtx, TabInstance, h as H } from '../ui.ts';
+import { errText } from '../ui.ts';
 
 export const CSS = `
 body.dbg-wide aside { display: none; }
@@ -48,24 +56,24 @@ body.dbg-wide aside { display: none; }
   .as-view.grid { height: 78vh; }
 }
 `;
-export const SEASONS = ['Spring', 'Summer', 'Autumn', 'Winter'];
-export const ROTS = ['0°', '90°', '180°', '270°'];
+export const SEASONS: readonly string[] = ['Spring', 'Summer', 'Autumn', 'Winter'];
+export const ROTS: readonly string[] = ['0°', '90°', '180°', '270°'];
 
 // Prepínač s tlačidlami (jedno je zapnuté)
-export function seg(h, labels, value, onPick, disabled) {
+export function seg(h: typeof H, labels: readonly string[], value: number, onPick: (i: number) => void, disabled?: boolean): HTMLElement {
   return h('div', { class: 'as-seg' }, labels.map((l, i) => {
-    const b = h('button', { class: i === value ? 'on' : null, onclick: () => onPick(i) }, l);
+    const b = h('button', { class: i === value ? 'on' : null, onclick: () => { onPick(i); } }, l);
     if (disabled) b.disabled = true;
     return b;
   }));
 }
-const intParam = (ctx, k, def, max) => { const v = parseInt(ctx.param(k), 10); return Number.isInteger(v) && v >= 0 && v <= max ? v : def; };
+const intParam = (ctx: Pick<TabCtx, 'param'>, k: string, def: number, max: number): number => { const v = parseInt(ctx.param(k) ?? '', 10); return Number.isInteger(v) && v >= 0 && v <= max ? v : def; };
 
-export function mount(el, ctx) {
+export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
   const { h } = ctx;
   injectCss('tab-assets-css', CSS);
   document.body.classList.add('dbg-wide');
-  let W = null, Art = null, viewer = null, gone = false, q = '';
+  let W: typeof World3D | null = null, Art: typeof ArtApi | null = null, viewer: Viewer | null = null, gone = false, q = '';
   const st = {
     model: ctx.param('model') || 'house',
     season: intParam(ctx, 'season', 1, 3),
@@ -78,11 +86,10 @@ export function mount(el, ctx) {
   Promise.all([loadWorld3D(), loadArt().catch(() => null)]).then(([w, a]) => {
     if (gone) return;
     W = w; Art = a;
-    if (!W.FINE_MODELS) throw new Error('World3D.FINE_MODELS is missing');
-    if (st.model !== 'flowers' && !W.FINE_MODELS.some(m => m.id === st.model)) st.model = W.FINE_MODELS[0].id;
+    if (st.model !== 'flowers' && !W.FINE_MODELS.some(m => m.id === st.model)) st.model = must(W.FINE_MODELS[0]).id;
     el.replaceChildren(root);
-    build();
-  }).catch(e => { if (!gone) el.replaceChildren(h('div', { class: 'as-err' }, 'Cannot load models: ' + e.message)); });
+    build(w);
+  }).catch((e: unknown) => { if (!gone) el.replaceChildren(h('div', { class: 'as-err' }, 'Cannot load models: ' + errText(e))); });
 
   const listEl = h('div', { class: 'as-list' });
   const mainEl = h('div', { class: 'as-main' });
@@ -93,41 +100,41 @@ export function mount(el, ctx) {
   root.append(listEl, mainEl);
   mainEl.append(barEl, viewEl, infoEl, galEl);
 
-  function save() {
+  function save(): void {
     ctx.setParam('model', st.model); ctx.setParam('season', st.season); ctx.setParam('rot', st.rot); ctx.setParam('grid', st.grid ? 1 : null);
   }
-  const entry = () => W.FINE_MODELS.find(m => m.id === st.model);
+  const entry = (W: typeof World3D): FineModelEntry => W.FINE_MODELS.find(m => m.id === st.model) ?? must(W.FINE_MODELS[0]);
 
   // ---------- zoznam ----------
   const search = h('input', { type: 'search', placeholder: 'Filter models…', autocomplete: 'off' });
-  search.oninput = () => { q = search.value.trim().toLowerCase(); renderList(); };
-  const pick = h('button', { class: 'as-pick', onclick: () => listEl.classList.toggle('open') });
+  search.oninput = () => { q = search.value.trim().toLowerCase(); if (W) renderList(W); };
+  const pick = h('button', { class: 'as-pick', onclick: () => { listEl.classList.toggle('open'); } });
   const items = h('div', { class: 'as-items' });
   listEl.append(pick, search, items);
-  function renderList() {
-    const all = W.FINE_MODELS.map(m => ({ id: m.id, name: m.name, group: m.group, sub: m.kind || m.id }))
+  function renderList(W: typeof World3D): void {
+    const all = W.FINE_MODELS.map(m => ({ id: m.id, name: m.name, group: m.group, sub: String(m.kind || m.id) }))
       .concat([{ id: 'flowers', name: 'Flower gallery', group: 'Flowers (2D, art.js)', sub: Object.keys(ctx.D.SPECIES).length + ' species' }]);
     const list = all.filter(m => !q || (m.name + ' ' + m.id + ' ' + m.group + ' ' + m.sub).toLowerCase().includes(q));
     const groups = [...new Set(list.map(m => m.group))];
     items.replaceChildren(...groups.flatMap(g => [h('h4', null, g), ...list.filter(m => m.group === g).map(m =>
-      h('button', { class: m.id === st.model ? 'on' : null, onclick: () => { st.model = m.id; listEl.classList.remove('open'); save(); renderList(); show(); } }, m.name, h('small', null, m.sub)))]));
+      h('button', { class: m.id === st.model ? 'on' : null, onclick: () => { st.model = m.id; listEl.classList.remove('open'); save(); renderList(W); show(W); } }, m.name, h('small', null, m.sub)))]));
     if (!list.length) items.appendChild(h('div', { class: 'muted', style: 'padding:8px' }, 'No match'));
     const cur = all.find(m => m.id === st.model);
     pick.textContent = `▾ ${cur ? cur.name : st.model} (${W.FINE_MODELS.length} models)`;
   }
 
   // ---------- ovládanie ----------
-  function renderBar() {
+  function renderBar(W: typeof World3D): void {
     const flowers = st.model === 'flowers';
     barEl.replaceChildren(
-      seg(h, SEASONS, st.grid ? -1 : st.season, i => { st.season = i; st.grid = false; save(); renderBar(); show(); }, flowers),
-      seg(h, ROTS, st.grid ? -1 : st.rot, i => { st.rot = i; st.grid = false; save(); renderBar(); show(); }, flowers),
-      seg(h, ['Single', 'Grid 4×4'], st.grid ? 1 : 0, i => { st.grid = i === 1; save(); renderBar(); show(); }, flowers),
-      h('button', { onclick: () => viewer && viewer.resetView(), disabled: flowers ? 'disabled' : null }, 'Reset view'));
+      seg(h, SEASONS, st.grid ? -1 : st.season, i => { st.season = i; st.grid = false; save(); renderBar(W); show(W); }, flowers),
+      seg(h, ROTS, st.grid ? -1 : st.rot, i => { st.rot = i; st.grid = false; save(); renderBar(W); show(W); }, flowers),
+      seg(h, ['Single', 'Grid 4×4'], st.grid ? 1 : 0, i => { st.grid = i === 1; save(); renderBar(W); show(W); }, flowers),
+      h('button', { onclick: () => { viewer?.resetView(); }, disabled: flowers ? 'disabled' : null }, 'Reset view'));
   }
 
   // ---------- zobrazenie ----------
-  function show() {
+  function show(W: typeof World3D): void {
     if (st.model === 'flowers') {
       if (viewer) { viewer.dispose(); viewer = null; }
       viewEl.style.display = 'none';
@@ -138,20 +145,20 @@ export function mount(el, ctx) {
     viewEl.style.display = '';
     viewEl.classList.toggle('grid', st.grid);
     galEl.replaceChildren();
-    const e = entry();
-    if (!viewer) viewer = createViewer(viewEl, W);
+    const e = entry(W);
+    viewer ??= createViewer(viewEl, W);
     const t0 = performance.now();
     const cells = st.grid
       ? [0, 1, 2, 3].flatMap(se => [0, 1, 2, 3].map(r => ({ model: e.build(se, r), season: se, label: `${SEASONS[se]} ${ROTS[r]}` })))
       : [{ model: e.build(st.season, st.rot), season: st.season }];
     viewer.setCells(cells, { cols: st.grid ? 4 : 0 });
-    info(e, cells[st.grid ? st.season * 4 + st.rot : 0].model, performance.now() - t0);
+    info(W, e, must(cells[st.grid ? st.season * 4 + st.rot : 0]).model, performance.now() - t0);
   }
-  function info(e, f, ms) {
+  function info(W: typeof World3D, e: FineModelEntry, f: FineModel, ms: number): void {
     const s = modelStats(f), F = W.FINE, tw = (f.sx - 2 * W.FM) / F, td = (f.sz - 2 * W.FM) / F;
     let top = 0;
     for (let i = 0; i < f.data.length; i++) if (f.data[i]) { const y = Math.floor(i / f.sx) % f.sy; if (y + 1 > top) top = y + 1; }
-    const kv = (label, v, sub) => h('div', null, h('small', null, label), h('b', null, v), sub ? h('small', null, sub) : null);
+    const kv = (label: string, v: string, sub: string | null): HTMLElement => h('div', null, h('small', null, label), h('b', null, v), sub ? h('small', null, sub) : null);
     const se = st.season;
     infoEl.replaceChildren(
       h('div', { class: 'as-info' }, h('h2', null, e.name), h('span', null, 'builder ', h('code', null, e.fn)),
@@ -161,37 +168,39 @@ export function mount(el, ctx) {
         kv('Footprint', `${tw} × ${td} tiles`, `+ ${W.FM} voxel margin each side`),
         kv('Height', `${top} voxels`, `${(top / F).toFixed(2)} blocks`),
         kv('Voxels', s.voxels.toLocaleString('en'), `${(100 * s.voxels / f.data.length).toFixed(1)} % of the box`),
-        kv('Materials', String(s.mats.length), SEASONS[se] + ' colours'),
+        kv('Materials', String(s.mats.length), (SEASONS[se] ?? '') + ' colours'),
         kv('Build + mesh', `${ms.toFixed(0)} ms`, st.grid ? '16 models' : '1 model')),
-      h('h3', null, `Materials (${SEASONS[se]})`),
+      h('h3', null, `Materials (${SEASONS[se] ?? ''})`),
       h('div', { class: 'as-mats' }, s.mats.map(([m, n]) => h('span', { title: `material ${m}: ${W.colorOf(m, se)}${W.EMISSIVE[m] ? ', glows at night' : ''}` },
         h('span', { class: 'as-sw', style: `background:${W.colorOf(m, se)}` }), `${matName(W, m)}${W.EMISSIVE[m] ? ' ✦' : ''}`, h('span', { class: 'muted' }, n.toLocaleString('en'))))));
   }
 
   // 2D galéria kvetov z art.js: riadok = druh, stĺpce = štádiá rastu (+ v noci, odkvitá, zvädnutá)
-  function flowerGallery() {
-    if (!Art) return [h('div', { class: 'as-err' }, 'Cannot load /art.js')];
-    const D = ctx.D, cols = [['Seed', 0, {}], ['Sprout', 1, {}], ['Bud', 2, {}], ['Bloom', 3, {}], ['Night', 3, { night: true }], ['Wilting', 3, { wilting: true }], ['Dead', 2, { dead: true }]];
-    const cell = (key, stage, o) => {
+  function flowerGallery(): HTMLElement[] {
+    const A = Art;
+    if (!A) return [h('div', { class: 'as-err' }, 'Cannot load the drawings (art.ts)')];
+    const D = ctx.D, cols: readonly (readonly [string, number, PlantOpts])[] = [['Seed', 0, {}], ['Sprout', 1, {}], ['Bud', 2, {}], ['Bloom', 3, {}], ['Night', 3, { night: true }], ['Wilting', 3, { wilting: true }], ['Dead', 2, { dead: true }]];
+    const cell = (key: SpeciesId, stage: number, o: PlantOpts): HTMLCanvasElement => {
       const c = h('canvas', { width: 112, height: 140 });
-      const g = c.getContext('2d');
+      const g = must(c.getContext('2d') ?? undefined);
       g.fillStyle = o.night ? '#1d2440' : '#cfe7b8'; g.fillRect(0, 0, 112, 140);
       g.fillStyle = o.night ? '#2a3350' : '#a07850'; g.fillRect(0, 118, 112, 22);
-      try { Art.plant(g, key, stage, 56, 124, 100, 0, o); } catch (e) { g.fillStyle = '#c0392b'; g.fillText('error', 10, 20); }
+      try { A.plant(g, key, stage, 56, 124, 100, 0, o); } catch { g.fillStyle = '#c0392b'; g.fillText('error', 10, 20); }
       return c;
     };
     return [
-      h('h2', null, 'Flowers (art.js)'),
+      h('h2', null, 'Flowers (art.ts)'),
       h('div', { class: 'muted', style: 'margin-bottom:8px' }, 'Art.plant(ctx, species, stage, x, y, size, t, opts) – the same drawing the 3D game uses as plant sprites.'),
       h('div', { class: 'as-gal' }, h('table', null,
         h('tr', null, h('th', null, 'Species'), cols.map(c => h('th', null, c[0]))),
-        Object.keys(D.SPECIES).map(k => h('tr', null,
+        keys(D.SPECIES).map(k => h('tr', null,
           h('td', null, h('b', null, D.SPECIES[k].name), h('br'), h('small', { class: 'muted mono' }, `${k} · ${D.SPECIES[k].shape}${D.SPECIES[k].magic ? ' · magic' : ''}`)),
           cols.map(([, stage, o]) => h('td', null, cell(k, stage, o)))))))
     ];
   }
 
-  function build() { renderList(); renderBar(); show(); }
+  function build(W: typeof World3D): void { renderList(W); renderBar(W); show(W); }
+
 
   return {
     update() { /* modely nezávisia od sveta ani plochy */ },
