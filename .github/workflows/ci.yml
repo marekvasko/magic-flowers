@@ -138,7 +138,10 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - run: scripts/deploy.sh up pr-${{ github.event.number }} ${{ env.IMAGE }}:sha-${{ github.sha }}
+      - env:
+          # kľúč cheatov ladiacej stránky (#153): tajomstvo prostredia GitHubu (production má vlastné); bez neho sú cheaty vypnuté
+          DEBUG_CHEATS_KEY: ${{ secrets.DEBUG_CHEATS_KEY }}
+        run: scripts/deploy.sh up pr-${{ github.event.number }} ${{ env.IMAGE }}:sha-${{ github.sha }}
       - name: Deaktivovať staršie deploymenty náhľadu
         continue-on-error: true
         env:
@@ -186,7 +189,10 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - run: scripts/deploy.sh up dev ${{ env.IMAGE }}:sha-${{ github.sha }}
+      - env:
+          # kľúč cheatov ladiacej stránky (#153): tajomstvo prostredia GitHubu (production má vlastné); bez neho sú cheaty vypnuté
+          DEBUG_CHEATS_KEY: ${{ secrets.DEBUG_CHEATS_KEY }}
+        run: scripts/deploy.sh up dev ${{ env.IMAGE }}:sha-${{ github.sha }}
       - name: Deaktivovať staršie deploymenty dev
         continue-on-error: true
         env:
@@ -249,7 +255,10 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - run: scripts/deploy.sh up prod ${{ env.IMAGE }}:sha-${{ github.sha }}
+      - env:
+          # kľúč cheatov ladiacej stránky (#153): tajomstvo prostredia GitHubu (production má vlastné); bez neho sú cheaty vypnuté
+          DEBUG_CHEATS_KEY: ${{ secrets.DEBUG_CHEATS_KEY }}
+        run: scripts/deploy.sh up prod ${{ env.IMAGE }}:sha-${{ github.sha }}
       - name: Deaktivovať staršie deploymenty produkcie
         continue-on-error: true
         env:

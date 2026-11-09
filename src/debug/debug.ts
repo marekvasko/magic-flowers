@@ -21,7 +21,8 @@ import type { Kid, TabCtx, TabInstance, TabModule } from './ui.ts';
     { id: 'generators', label: 'Generators', todo: 'Seeds and parameter sliders for the procedural generators (trees first, their parameters already exist in World3D.TREE_PARAMS), area layouts side by side, and “copy parameters”.' },
     { id: 'market', label: 'Market', todo: 'Prices, stock and price history of the selected room, NPC state, festivals, contracts, and why each price is what it is.' },
     { id: 'engine', label: 'Engine', todo: 'The last batches of the engine: proposals, keys, decisions with their reasons, world changes, the actor filter and the queue with who scheduled what.' },
-    { id: 'journal', label: 'Journal', todo: 'Browse and filter the journal file of a room: every committed batch, by kind, type, player, outcome, key and ticks.' }
+    { id: 'journal', label: 'Journal', todo: 'Browse and filter the journal file of a room: every committed batch, by kind, type, player, outcome, key and ticks.' },
+    { id: 'cheats', label: 'Cheats', todo: 'Give players coins, reputation and items, fill the storage and icehouse, jump forward in time and change the speed of time (needs the cheat key).' }
   ];
   const SEASON_EN = ['Spring', 'Summer', 'Autumn', 'Winter'];
 
@@ -94,7 +95,7 @@ import type { Kid, TabCtx, TabInstance, TabModule } from './ui.ts';
   const LOADERS: Readonly<Partial<Record<string, () => Promise<TabModule>>>> = {
     map: () => import('./tabs/map.ts'), world: () => import('./tabs/world.ts'), assets: () => import('./tabs/assets.ts'),
     generators: () => import('./tabs/generators.ts'), market: () => import('./tabs/market.ts'), engine: () => import('./tabs/engine.ts'),
-    journal: () => import('./tabs/journal.ts')
+    journal: () => import('./tabs/journal.ts'), cheats: () => import('./tabs/cheats.ts')
   };
   const mods: Partial<Record<string, Promise<TabModule | null>>> = {};
   let mounted: { id: string; inst: TabInstance } | null = null, renderSeq = 0;

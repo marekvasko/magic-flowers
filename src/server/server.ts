@@ -22,6 +22,7 @@ import * as Dielna from './dielna.ts';
 import * as Areas from './areas.ts';
 import * as P from './presence.ts';
 import * as Debug from './debug.ts';
+import * as Cheats from './cheats.ts';
 import type { FilterDecision, TraceRing, TraceTiming } from './debug.ts';
 import { DEBUG_APIS } from './debug-api/index.ts';
 import * as Events from './events.ts';
@@ -95,7 +96,8 @@ interface Room extends GameWorld {
   trace: TraceRing | null;
   traceFrame?: { filter: FilterDecision[]; ms: number } | null;
   traceSource?: string;
-  ff?: { until: number } | null;
+  ff?: { until: number; cheat?: boolean; step?: number } | null;   // pretočenie času: spánok, alebo skok z ladiacej stránky (cheat; step = krokov za posledný rámec)
+  speed?: number;   // rýchlosť času z ladiacej stránky (#153), len v pamäti – po reštarte servera 1×
   marketDirty?: boolean;
   boardDirty?: boolean;
   timeAt?: number;
@@ -137,6 +139,7 @@ function safely(req: IncomingMessage, res: ServerResponse, fn: () => void): void
 }
 const server = http.createServer((req, res) => { safely(req, res, () => { handleRequest(req, res); }); });
 function handleRequest(req: IncomingMessage, res: ServerResponse): void {
+  if (cheatHandle(req, res)) return; // POST /api/debug/cheat (len s kľúčom DEBUG_CHEATS_KEY)
   if (debugHandle(req, res)) return; // /debug a /api/debug/* (len na čítanie)
   const reqUrl = req.url || '/';
   let url: string;
@@ -386,6 +389,31 @@ function appendJournal(room: Room, entry: Omit<JournalLoad, 'wall'> | E.JournalE
 
 // Ladiaca stránka /debug: svety len číta (z pamäte alebo zo súboru), nič nenačíta ani neuloží
 const debugHandle = Debug.create({ dataDir: DATA_DIR, debugDir: path.join(ROOT, 'debug'), buildDir: path.join(ROOT, 'build', 'debug'), rooms, serialize, migrate, sim: () => SIM, apis: DEBUG_APIS });
+// Cheaty z ladiacej stránky (#153): bez kľúča DEBUG_CHEATS_KEY (v nasadení tajomstvo GitHubu) nejdú. Svet, ktorý nie je
+// v pamäti, sa načíta (ako pri pripojení hráča); úprava sveta je vstup enginu 'cheat' – v denníku, bez hráča a bez hlásení.
+let cheatSeq = 0;
+const cheatHandle = Cheats.http<Room>(process.env['DEBUG_CHEATS_KEY'], {
+  room: id => rooms.get(id) || (fs.existsSync(roomFile(id)) ? getRoom(id) : null),
+  apply(room, data) {
+    const id = 'cheat#' + String(++cheatSeq);
+    const out = traced(room, 'cheat', () => E.commitBatch(room, [{ type: 'cheat', data, id }], SIM));
+    E.reconcile(room, SIM);
+    const p = out.entry.proposals.find(x => x.id === id);
+    if (!p || p.outcome !== 'applied') return (p && p.msg) || (p ? p.outcome : 'not applied');
+    room.dirty = true;
+    return null;
+  },
+  jump(room, until) {
+    if (until !== null) { room.ff = { until, cheat: true }; return; }
+    if (!room.ff || !room.ff.cheat) return;
+    room.ff = null; room.wall = Date.now();
+    broadcast(room, timeMsg(room));
+    checkSleep(room);
+  },
+  speed(room, x) { room.speed = x; broadcast(room, timeMsg(room)); },
+  status: room => ({ tick: room.tick, speed: room.speed || 1, jump: room.ff && room.ff.cheat ? room.ff.until : null }),
+  keyId: Debug.keyId
+});
 let saveSeq = 0;
 // Atómový zápis: najprv dočasný súbor, potom premenovanie – pri páde nezostane rozbitý JSON.
 function saveRoom(room: Room, sync?: boolean): void {
@@ -456,7 +484,7 @@ function velocity(p: Player): { vx: number; vy: number } {
 function playerByKey(room: Room, key: string | undefined): Player | null { for (const p of room.players.values()) if (p.key === key) return p; return null; }
 
 const SIM: E.Spec<Room, Presence, Msg> = {
-  proposers: { ...Events.PROPOSERS, ...Actions.PROPOSERS, ...Spiders.PROPOSERS }, periodic: Events.PERIODIC.concat(Spiders.PERIODIC), presence: presenceOf, clock,
+  proposers: { ...Events.PROPOSERS, ...Actions.PROPOSERS, ...Spiders.PROPOSERS, ...Cheats.PROPOSERS }, periodic: Events.PERIODIC.concat(Spiders.PERIODIC), presence: presenceOf, clock,
   slice: (world, key) => { const s = Spiders.slice(world, key); return s === undefined ? E.sliceOf(world, key) : s; }, // pavúky: spider:<id>, kz:<plocha>
   // denník najprv (nech záznam nechýba), potom správy hráčom; chyba pri posielaní nesmie zhodiť simuláciu ani server;
   // nakoniec záznam pre ladiacu stránku (kto dávku spustil, rozhodnutia filtra, časy častí)
@@ -568,6 +596,7 @@ function flushEconomy(room: Room): void {
 // ---------- Spánok ----------
 // Keď spia všetci pripojení hráči, svet pretočí noc zrýchlene (FF_STEPS krokov za 100 ms) až do 6:00.
 const FF_STEPS = 5 * TICK_SCALE; // noc (12 h) prebehne za ~3 s
+const JUMP_MS = 50; // skok v čase z ladiacej stránky (#153): v každom rámci (100 ms) najviac toľko ms výpočtu, potom správy a vstupy
 const TIME_MS = 1000; // čas sa klientom posiela najviac raz za sekundu (krokov je ~10 za sekundu); klient si ho medzitým dopočíta
 const nearHouse = Actions.nearHouse;
 function sleepMsg(room: Room): Extract<ServerMessage, { t: 'sleep' }> {
@@ -580,21 +609,31 @@ function checkSleep(room: Room): void {
   room.ff = { until: E.nextDailyTick(room.tick + 1, D.DAWN_TICK) };
   broadcast(room, sleepMsg(room));
 }
+// Skok v čase (cheat) beží po kúskoch FF_STEPS krokov, kým nevyčerpá JUMP_MS – všetky udalosti sa vykonajú, len rýchlejšie.
 function fastForward(room: Room, now: number): void {
-  const ff = must(room.ff ?? undefined);
-  traced(room, 'ff', () => E.advanceTo(room, Math.min(ff.until, room.tick + FF_STEPS), SIM));
+  const ff = must(room.ff ?? undefined), from = room.tick;
+  if (ff.cheat) {
+    const t0 = clock();
+    do traced(room, 'jump', () => E.advanceTo(room, Math.min(ff.until, room.tick + FF_STEPS), SIM));
+    while (room.tick < ff.until && clock() - t0 < JUMP_MS);
+  } else traced(room, 'ff', () => E.advanceTo(room, Math.min(ff.until, room.tick + FF_STEPS), SIM));
+  ff.step = room.tick - from;
   room.wall = now; // pretočený čas sa nedobieha – po prebudení beží svet zase normálnym tempom
   room.dirty = true;
   if (room.tick >= ff.until) {
     room.ff = null;
-    for (const p of room.players.values()) p.sleep = false;
-    broadcast(room, sleepMsg(room));
+    if (ff.cheat) checkSleep(room); // spiaci hráči (skok prerušil spánok) zaspia znova a noc sa dopretočí
+    else {
+      for (const p of room.players.values()) p.sleep = false;
+      broadcast(room, sleepMsg(room));
+    }
   }
   broadcast(room, timeMsg(room));
 }
 
 function timeMsg(room: Room): ServerMessage {
-  return { t: 'time', tick: room.tick, tickMs: room.ff ? 100 / FF_STEPS : E.tickMs(room), weather: room.weather, mode: room.mode, daySeconds: room.daySeconds };
+  const tickMs = room.ff ? 100 / Math.max(FF_STEPS, room.ff.step || 0) : E.tickMs(room) / (room.speed || 1);
+  return { t: 'time', tick: room.tick, tickMs, weather: room.weather, mode: room.mode, daySeconds: room.daySeconds };
 }
 
 // ---------- Akcie hráčov ----------
@@ -608,6 +647,7 @@ function timeMsg(room: Room): ServerMessage {
 // rámcami nehýbe, takže to je práve aktuálny krok), až potom rámec posunie čas.
 const INBOX_MAX = 2000, PLAYER_INBOX_MAX = 100, DEFER_MAX = 3; // ochrana pred zaplavením: čo sa nezmestí (na svet, na hráča, odložené akcie), sa zahodí
 const MESSAGES = new Set(['move', 'act', 'jump', 'sleep', 'emote', 'buy', 'sell', 'upgrade', 'ctake', 'cdeliver', 'brew', 'wish', 'settings', 'store', 'unstore', 'compostWilted', 'buyTool', 'build', 'icehouse', 'buyLoom', 'masterWeave', 'loomStart', 'loomTake', 'chat']);
+const PRESENCE_ONLY = new Set(['jump', 'sleep', 'emote', 'settings', 'chat']); // správy len o prítomnosti – engine ich nevidí
 const EMOTES: readonly Emote[] = ['dance', 'wave', 'heart', 'laugh', 'flower'];
 const WISHES: readonly WishKind[] = ['zlato', 'jar', 'poklad'];
 // Správa servera samému sebe do schránky (odchod, „naposledy videný“) – nie od klienta
@@ -814,7 +854,8 @@ function frame(room: Room): void {
         continue;
       }
     }
-    if (['jump', 'sleep', 'emote', 'settings', 'chat'].includes(m.t)) { presenceMessage(room, pl, m, inputs); note(e, 'presence', 'presence only, handled outside the engine'); continue; }
+    if (room.ff && room.ff.cheat && !e.internal && !PRESENCE_ONLY.has(m.t)) { note(e, 'dropped', 'time jump from the debug page: player actions are ignored'); continue; }
+    if (PRESENCE_ONLY.has(m.t)) { presenceMessage(room, pl, m, inputs); note(e, 'presence', 'presence only, handled outside the engine'); continue; }
     let inp: Input | null = null;
     e.why = null;
     try { inp = toInput(room, pl, e, presence, inputs); } catch (err) { console.error(`[${room.id}] správa ${m.t} od ${pl.key}:`, err); e.why = 'error: ' + (err instanceof Error ? err.message : String(err)); }
@@ -919,7 +960,7 @@ setInterval(() => {
     frame(room);
     if (room.ff) { fastForward(room, now); flushEconomy(room); continue; }
     if (room.mode === 'paused' && !room.players.size) { room.wall = now; continue; }
-    const n = traced(room, 'live', () => E.advance(room, now, SIM, 50000));
+    const n = traced(room, 'live', () => E.advance(room, now, SIM, 50000, room.speed || 1));
     if (n) { room.dirty = true; if (room.players.size && now - (room.timeAt || 0) >= TIME_MS) { room.timeAt = now; broadcast(room, timeMsg(room)); } }
     flushEconomy(room);
   }
