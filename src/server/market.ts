@@ -32,7 +32,7 @@ export const NPC_NAME: Readonly<Record<NpcId, string>> = { vo: '', jano: 'Jano',
 // Veľkoobchodník: koľko kusov vykupuje dopredu (hĺbka dopytov). Peniaze má v pokladni každého tovaru zvlášť; každé ráno
 // mu odberatelia (zvonka) doplnia pokladňu tak, aby pokryla celý rebrík výkupu pri dnešnej zásobe (`need`), a čo má nad
 // `skim` × need, odvedie (zisk). Tak výkup nikdy nevyschne, ale peniaze ani nerastú donekonečna.
-export const WHOLESALE = { bidDepth: 20, compostBidDepth: 10, skim: 2 } as const;
+export const WHOLESALE = { bidDepth: 20, compostBidDepth: 10, skim: 2, step: 5 } as const;   // step = najviac kusov v jednej objednávke cenníka
 // Zuzka: každý deň dostane od svojich zákazníkov `budget` mincí na kvety (doplní na túto sumu); platí o `markup` viac než
 // výkup veľkoobchodníka, `perSpecies` kusov každého druhu v sezóne, počas sviatku `festExtra` navyše. Kúpené kvety
 // predá v kyticiach (zmiznú z jej účtu pri ďalšej návšteve).
@@ -40,6 +40,8 @@ export const ZUZKA = { budget: 250, markup: 1.15, perSpecies: 2, festExtra: 3 } 
 
 // Tovar s knihou (kľúče kníh): semienka a kvety pestovateľných druhov a kompost
 export const BOOK_ITEMS: readonly ItemId[] = ['compost', ...P.PLANTABLE.flatMap(sp => [`seed_${sp}` as const, `fl_${sp}` as const])];
+export const SEED_ITEMS: readonly ItemId[] = P.PLANTABLE.map(sp => `seed_${sp}` as const);
+export const FLOWER_ITEMS: readonly ItemId[] = P.PLANTABLE.map(sp => `fl_${sp}` as const);
 export const orderId = (item: ItemId, n: number): string => `${item}#${String(n)}`;
 export function parseOrderId(id: string): { item: ItemId; n: number } | null {
   const i = id.lastIndexOf('#'), item = id.slice(0, i), n = Number(id.slice(i + 1));
@@ -87,12 +89,16 @@ export function mkOf(s: GameSlices, ctx: MkCtx, actor: PlayerKey | null): Mk {
     news: text => { P.news({ news: all ? all.news : must(maybe(s, 'market:news')) }, ctx.tick, text); }
   };
 }
-// Kľúče udalosti postáv (návšteva, dodávka, Jano s kvetmi): knihy, účty postáv, zásoby veľkoobchodníka a správy – bez
-// histórie a sviatku – a uloženia len tých hráčov, ktorí majú v knihách objednávku (s nikým iným sa spárovať nedá)
-export const NPC_MARKET_KEYS: readonly string[] = ['market:book:*', 'market:npc:*', 'market:seed_*', 'market:fl_*', 'market:compost', 'market:news'];
-export function npcEventKeys(world: Pick<GameWorld, 'market'>, extra: readonly string[] = []): string[] {
-  const set = new Set([...NPC_MARKET_KEYS, ...extra]);
-  for (const b of Object.values(world.market ? world.market.books : {})) for (const o of Object.values(b.orders)) if (o && o.pl != null) set.add(`save:${o.pl}`);
+// Kľúče udalosti postáv (návšteva, dodávka, Jano s kvetmi): knihy a zásoby tovaru items, účty postáv npcs, správy –
+// a účty všetkých vlastníkov objednávok v týchto knihách (hráčov aj postáv – s nikým iným sa spárovať nedá)
+export function npcEventKeys(world: Pick<GameWorld, 'market'>, items: readonly ItemId[], npcs: readonly Trader[], extra: readonly string[] = []): string[] {
+  const set = new Set<string>(['market:news', ...extra]);
+  for (const id of npcs) set.add(`market:npc:${id}`);
+  for (const item of items) {
+    set.add(`market:book:${item}:*`); set.add(stockKey(item));
+    const b = world.market ? world.market.books[item] : undefined;
+    for (const o of Object.values(b ? b.orders : {})) if (o && o.npc !== 'vo') set.add(ownerKey(item, o));
+  }
   return [...set];
 }
 // Trh nad celým svetom (založenie a prevod trhu pri načítaní)
@@ -283,7 +289,7 @@ export function ladder(item: ItemId, stock: number, cash: number, fest: number |
   // pridá kus za cenu p; false = prvý stupeň strany je hotový (len pri first)
   const push = (s: OrderSide, p: number): boolean => {
     const l = out[out.length - 1];
-    if (l && l.side === s && l.p === p) { l.q++; return true; }
+    if (l && l.side === s && l.p === p && !(first && l.q >= WHOLESALE.step)) { l.q++; return true; }
     if (first && l && l.side === s) return false;
     out.push({ side: s, p, q: 1 });
     return true;
@@ -300,13 +306,16 @@ export function ladder(item: ItemId, stock: number, cash: number, fest: number |
 // Prepočíta ponuky a dopyty veľkoobchodníka pre tovar podľa jeho aktuálnej zásoby a mincí. Objednávky s cenou, ktorá
 // v novom rebríku ostáva, sa len zmenšia či zväčšia (záloha sa dorovná, číslo a poradie ostanú), ostatné sa stiahnu
 // a chýbajúce pribudnú – tak sa pri zmene zásoby o kus zmení len málo objednávok (a denník ostane malý).
-export function requote(mk: Mk, item: ItemId): void {
+// Vráti, či sa niečo zmenilo (bez zmeny sa kniha nemusí znova párovať – bola v poriadku).
+export function requote(mk: Mk, item: ItemId): boolean {
   const book = mk.book(item), vo = book.vo, c = npcC(vo), entry = mk.entry(item), tick = mk.tick;
   const cur = Object.values(book.orders).filter((o): o is Order => !!o && o.npc === 'vo').sort((a, b) => a.n - b.n);
   const stock = (vo.inv[item] || 0) + cur.reduce((a, o) => a + (o.side === 'sell' ? o.rem : 0), 0);
   const cash = vo.coins + cur.reduce((a, o) => a + (o.side === 'buy' ? o.coins : 0), 0);
   entry.stock = stock;
   const target = ladder(item, stock, cash, entry.fest, tick, true);
+  const sig = (l: readonly { side: OrderSide; p: number }[], q: (i: number) => number): string => l.map((x, i) => x.side + String(x.p) + 'x' + String(q(i))).sort().join();
+  if (sig(cur, i => must(cur[i]).rem) === sig(target, i => must(target[i]).q)) return false;
   const want = new Map(target.map(r => [r.side + String(r.p), r.q]));
   const keep = new Map<string, Order>();
   // najprv uvoľniť: stiahnuť, čo v rebríku nie je (alebo je tam dvakrát), zmenšiť, čo je priveľké
@@ -333,10 +342,11 @@ export function requote(mk: Mk, item: ItemId): void {
     }
     o.q = Math.max(o.q, o.rem);
   }
+  return true;
 }
-// Prepočet cien veľkoobchodníka všetkých tovarov (alebo vybraných) a spárovanie ich kníh
+// Prepočet cien veľkoobchodníka všetkých tovarov (alebo vybraných) a spárovanie kníh, ktoré sa zmenili
 export function requoteAll(mk: Mk, items: readonly ItemId[] = BOOK_ITEMS): void {
-  for (const item of items) { requote(mk, item); settle(mk, item); }
+  for (const item of items) if (requote(mk, item) || mk.requote.has(item)) settle(mk, item);
 }
 
 // Zrušenie objednávky v úzkom návrhu (výrez jednej objednávky market:book:<tovar>:<n> a účet vlastníka): záloha
@@ -452,7 +462,7 @@ const flowerQuote = (mk: Mk, sp: SpeciesId): number => { const e = mk.entry(`fl_
 // čo naozaj kúpi (npcBought); zvyšok dopytu čaká v knihe do ďalšej návštevy.
 export function janoVisit(mk: Mk, g: { int(n: number): number }): void {
   const tick = mk.tick, se = P.season(tick), jano = mk.npc('jano');
-  npcWithdrawAll(mk, 'jano');
+  npcWithdrawAll(mk, 'jano', [...SEED_ITEMS, ...FLOWER_ITEMS]);
   I.wiltSweep(npcC(jano), tick); delete jano.inv.wilted;
   for (const sp of P.PLANTABLE) janoOffer(mk, sp);
   const cands = P.PLANTABLE.filter(sp => !D.SPECIES[sp].strict && mk.entry(`seed_${sp}`).stock >= 3 && P.phase(sp, se) !== 'off')
@@ -488,7 +498,7 @@ export function janoSell(mk: Mk, sp: SpeciesId, n: number): void {
 // mimo sezóny ich predá do výkupu; potom skúpi lacné semienka na ďalšie obdobie (dopyt za cenu veľkoobchodníka).
 export function feroVisit(mk: Mk, g: { int(n: number): number; pick<T>(l: readonly T[]): T | undefined }): void {
   const tick = mk.tick, se = P.season(tick), fero = mk.npc('fero');
-  npcWithdrawAll(mk, 'fero');
+  npcWithdrawAll(mk, 'fero', SEED_ITEMS);
   for (const sp of P.PLANTABLE) {
     const item = `seed_${sp}` as const, n = fero.inv[item] || 0;
     if (!n) continue;
@@ -518,7 +528,7 @@ export function feroVisit(mk: Mk, g: { int(n: number): number; pick<T>(l: readon
 // dá dopyty o ZUZKA.markup nad výkup veľkoobchodníka na kvety v sezóne, počas sviatku viac na sviatočné druhy.
 export function zuzkaVisit(mk: Mk, festMult: Partial<Record<SpeciesId, number>> | null): void {
   const z = mk.npc('zuzka'), se = P.season(mk.tick);
-  npcWithdrawAll(mk, 'zuzka');
+  npcWithdrawAll(mk, 'zuzka', FLOWER_ITEMS);
   let sold = 0;
   for (const sp of P.PLANTABLE) sold += z.inv[`fl_${sp}`] || 0;
   z.inv = {}; z.fb = {};
