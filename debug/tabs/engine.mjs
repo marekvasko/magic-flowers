@@ -54,7 +54,7 @@ const WHAT = { input: 'applied', coalesced: 'held', deferred: 'held', dropped: '
 const ms = v => v == null ? '–' : v < 1 ? (v * 1000).toFixed(0) + ' µs' : v.toFixed(2) + ' ms';
 const val = v => v === undefined ? '∅' : JSON.stringify(v);
 
-// Spoločné so záložkou Journal: štýly a vykreslenie jednej dávky (výstup detail() z debug/api/engine.js)
+// Spoločné so záložkou Journal: štýly a vykreslenie jednej dávky (výstup detail() zo src/server/debug-api/engine.ts)
 export function ensureCss() {
   if (document.getElementById('tab-engine-css')) return;
   const st = document.createElement('style');
