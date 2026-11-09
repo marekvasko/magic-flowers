@@ -5,7 +5,7 @@
 //                         GET /api/debug/engine?room=<id>&view=queue – fronta: kto udalosť naplánoval, z čoho bude jej náhoda
 // Všetko sa odvodí zo záznamov, ktoré engine aj tak robí pre denník (entry) – nič sa nevyhodnocuje znova, svet sa nemení.
 // Semienko sveta sa nikdy neukáže: pri náhode len vstupy odvodenia (krok, id vstupu, účel). Kľúče hráčov odstráni debug.js.
-const E = require('../../src/server/engine.ts');
+const E = require('../engine.ts');
 
 const NPC = /^npc_|^jano_/;
 // Kto vstup poslal: hráč (kľúč – na odtlačok ho zmení debug.js), NPC alebo plánovač (udalosť z fronty)

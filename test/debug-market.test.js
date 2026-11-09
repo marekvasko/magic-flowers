@@ -9,7 +9,7 @@ const D = require('../src/shared/data.ts');
 const E = require('../src/server/engine.ts');
 const Econ = require('../src/server/economy.ts');
 const Debug = require('../src/server/debug.ts');
-const market = require('../debug/api/market.js');
+const market = require('../src/server/debug-api/market.ts');
 const TPD = D.TICKS_PER_DAY;
 
 const KEY = 'tajny-kluc-hraca';

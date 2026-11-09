@@ -1,8 +1,8 @@
 'use strict';
 // Ladiaca stránka (#76): GET /api/debug/market?id=… – trh sveta s rozkladom cien.
 // Počíta sa len na kópii stavu (tools.load); funkcie ekonomiky len čítajú, svet sa nikdy nezmení.
-const D = require('../../src/shared/data.ts');
-const Econ = require('../../src/server/economy.ts');
+const D = require('../../shared/data.ts');
+const Econ = require('../economy.ts');
 
 const TPD = D.TICKS_PER_DAY, DPS = D.DAYS_PER_SEASON;
 const MARKET_EVENTS = new Set(['delivery', 'npc_jano', 'npc_fero', 'npc_zuzka', 'jano_sell', 'festAnnounce', 'festStart', 'festEnd', 'cExpire', 'cDue']);

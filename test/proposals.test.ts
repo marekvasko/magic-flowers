@@ -669,7 +669,7 @@ test('server: denník sa píše do data/journal-<svet>.jsonl – značka načít
 
 test('v hre už nie je zapisovač cez Proxy, návrh (draft) ani náhoda zo sveta; v jadre simulácie nie je Math.random ani Date.now', () => {
   const root = path.join(import.meta.dirname, '..');
-  const files = [...fs.readdirSync(path.join(root, 'src', 'server')).filter(f => f.endsWith('.js') || f.endsWith('.ts')).map(f => 'src/server/' + f), ...fs.readdirSync(path.join(root, 'test')).map(f => 'test/' + f), ...fs.readdirSync(path.join(root, 'debug', 'api')).map(f => 'debug/api/' + f)];
+  const files = [...fs.readdirSync(path.join(root, 'src', 'server')).filter(f => f.endsWith('.js') || f.endsWith('.ts')).map(f => 'src/server/' + f), ...fs.readdirSync(path.join(root, 'test')).map(f => 'test/' + f), ...fs.readdirSync(path.join(root, 'src', 'server', 'debug-api')).map(f => 'src/server/debug-api/' + f)];
   assert.ok(!fs.existsSync(path.join(root, 'src', 'server', 'draft.js')) && !fs.existsSync(path.join(root, 'src', 'server', 'draft.ts')));
   for (const f of files) {
     if (f === 'test/proposals.test.ts') continue; // tento súbor obsahuje samotný vzor

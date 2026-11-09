@@ -12,8 +12,8 @@
 // Súbory sa len čítajú. Prehľad riadkov (krok, typy, aktéri, osudy, kľúče, poloha v súbore) sa drží v pamäti a pri
 // ďalšej požiadavke sa dočíta len to, čo do súboru pribudlo (denník sa iba pripisuje; pri otočení sa začne odznova).
 const fs = require('fs');
-const { keyId } = require('../../src/server/debug.ts');
-const Engine = require('./engine.js');
+const { keyId } = require('../debug.ts');
+const Engine = require('./engine.ts');
 
 const CHUNK = 4 << 20, TEXT_MAX = 600;
 const OUT = ['applied', 'held', 'rejected', 'error'];

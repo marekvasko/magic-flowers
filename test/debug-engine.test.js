@@ -16,7 +16,7 @@ const Events = require('../src/server/events.ts');
 const Actions = require('../src/server/actions.ts');
 const Ice = require('../src/server/ice.ts');
 const Debug = require('../src/server/debug.ts');
-const api = require('../debug/api/engine.js');
+const api = require('../src/server/debug-api/engine.ts');
 const TPD = D.TICKS_PER_DAY;
 const json = v => JSON.stringify(v);
 const SP = Econ.PLANTABLE.find(k => !D.SPECIES[k].strict), SP2 = Econ.PLANTABLE.filter(k => !D.SPECIES[k].strict)[1];
@@ -270,7 +270,7 @@ test('server: dobiehanie po načítaní je v pamäti, filter správ (odložená 
 });
 
 // ---- záložka Journal: denník na disku ----
-const journalApi = require('../debug/api/journal.js');
+const journalApi = require('../src/server/debug-api/journal.ts');
 
 test('denník: riadky od najnovšieho, filtre (druh, typ, hráč odtlačkom, osud, kľúč, kroky, pohyby), strany, dočítanie a otočenie', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-dbg-journal-'));

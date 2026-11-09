@@ -227,7 +227,7 @@ export function create<R extends DebugRoom>(ctx: DebugCtx<R>): (req: Pick<Incomi
   const idOf = (id: unknown): string => String(id || '');
   function extension(res: Res, name: string, query: URLSearchParams): boolean {
     if (!/^[a-z][a-z0-9-]{0,30}$/.test(name)) return notFound(res);
-    const file = path.join(ctx.debugDir, 'api', name + '.js');
+    const old = path.join(ctx.debugDir, 'api', name + '.js'), file = fs.existsSync(old) ? old : path.join(import.meta.dirname, 'debug-api', name + '.ts');
     if (!fs.existsSync(file)) return notFound(res);
     const keys = new Set<string>();
     const tools: Tools = {
