@@ -136,6 +136,16 @@ function acctOf(mk: Mk, item: ItemId, o: Pick<Order, 'pl' | 'npc'>): Acct {
 }
 const npcAcct = (mk: Mk, item: ItemId, id: NpcId): NpcAccount => (id === 'vo' ? mk.book(item).vo : mk.npc(id));
 export function npcC(a: NpcAccount): Container { return { inv: a.inv, fb: a.fb, rate: 1 }; }
+// Na vyzdvihnutie na trhu (#112): sem ide, čo hráč kúpil cez Dopyt, čo sa vrátilo z vypršanej ponuky a čo v ponuke
+// zvädlo – nič sa neteleportuje do batohu, kým hráč nie je pri trhu. Kvety tu starnú normálne.
+export function boxC(sv: PlayerSave): Container { const b = sv.box = sv.box || { inv: {}, fb: {} }; return { inv: b.inv, fb: b.fb, rate: 1 }; }
+// Vyzdvihne všetok tovar item z trhu do batohu; vráti počet kusov
+export function collect(sv: PlayerSave, item: ItemId, tick: number): number {
+  const c = boxC(sv), n = c.inv[item] || 0;
+  if (n > 0) I.addItems(I.playerC(sv), item, n, tick, I.removeItems(c, item, n, tick));
+  if (!Object.keys(c.inv).length) delete sv.box;
+  return n;
+}
 // Záloha ponuky ako kontajner (kvety vo várkach s vekom; v knihe starnú normálne, rýchlosťou 1)
 function escrowC(item: ItemId, o: Order): Container {
   return { inv: { [item]: o.rem }, fb: o.fb ? { [item]: o.fb } : {}, rate: 1 };
@@ -165,6 +175,7 @@ export function insert(mk: Mk, item: ItemId, o: NewOrder, coins: number, batches
   book.orders[String(n)] = ord;
   if (o.pl != null && !o.ioc) { const sv = must(mk.save(o.pl)); (sv.orders = sv.orders || []).push(orderId(item, n)); }
   if (o.exp != null && !o.ioc && mk.ctx) mk.ctx.scheduleUnique('oExpire:' + orderId(item, n), o.exp, 'oExpire', { item, n });
+  if (o.side === 'sell' && !o.ioc && mk.ctx) planWilt(mk.ctx, item, ord);
   return ord;
 }
 // Odstráni objednávku z knihy (záloha už musí byť vydaná)
@@ -172,6 +183,7 @@ function drop(mk: Mk, item: ItemId, o: Order): void {
   delete mk.book(item).orders[String(o.n)];
   if (o.pl != null) { const sv = mk.save(o.pl); if (sv && sv.orders) sv.orders = sv.orders.filter(x => x !== orderId(item, o.n)); }
   if (o.exp != null && !o.ioc && mk.ctx) mk.ctx.cancel('oExpire:' + orderId(item, o.n));
+  if (o.side === 'sell' && isFlower(item) && !o.ioc && mk.ctx) mk.ctx.cancel('oWilt:' + orderId(item, o.n));
 }
 // Zruší objednávku v knihe (vráti zálohu vlastníkovi)
 export function withdraw(mk: Mk, item: ItemId, o: Order): void { release(item, o, acctOf(mk, item, o), mk.tick); drop(mk, item, o); }
@@ -221,7 +233,8 @@ function fill(mk: Mk, item: ItemId, b: Order, a: Order): boolean {
   b.coins -= pay; b.rem -= k;
   if (!b.ioc) { const extra = b.coins - b.rem * b.p; if (extra > 0) { buyer.coins.coins += extra; b.coins -= extra; } }
   seller.coins.coins += pay;
-  I.addItems(buyer.c, item, k, tick, batches);
+  // kúpené cez Dopyt čaká na trhu; okamžitý nákup ide rovno do batohu (hráč stojí pri trhu)
+  I.addItems(b.pl != null && !b.ioc ? boxC(must(mk.save(b.pl))) : buyer.c, item, k, tick, batches);
   mk.trades.push({ item, k, pay, buyer: { ...b }, seller: { ...a } });
   if (b.npc === 'vo' || a.npc === 'vo') mk.requote.add(item);
   if (b.npc) npcBought(mk, b.npc, item, k);
@@ -239,17 +252,16 @@ function npcBought(mk: Mk, npc: NpcId, item: ItemId, k: number): void {
   ctx.schedule(Math.max(mk.tick + 1, start + D.SPECIES[sp].days * TPD + ctx.rng.int(TPD / 2)), 'jano_sell', { sp, n: k * 2 });
 }
 
-// Kedy vyprší nová objednávka: o ORDER_DAYS dní; ponuka kvetov skôr, než najstarší kvet zvädne
-export function expiry(item: ItemId, tick: number, batches: readonly MovedBatch[] | null): number {
-  let exp = tick + B.ORDER_DAYS * TPD;
+// Kedy vyprší nová objednávka: o ORDER_DAYS dní
+export function expiry(tick: number): number { return tick + B.ORDER_DAYS * TPD; }
+// Kvety v ponuke vädnú ako v batohu: udalosť oWilt:<id> príde, keď zvädne najstaršia várka ponuky
+type Planner = Pick<MkCtx, 'scheduleUnique' | 'tick'>;
+function planWilt(ctx: Planner, item: ItemId, o: Order): void {
   const sp = speciesOf(item);
-  if (isFlower(item) && sp && batches && batches.length) {
-    const oldest = Math.max(...batches.map(x => x.age));
-    exp = Math.min(exp, tick + D.SPECIES[sp].life * TPD - oldest);
-  }
-  return Math.max(tick + 1, Math.floor(exp));
+  if (!sp || !isFlower(item) || !o.fb || !o.fb.length) return;
+  const life = D.SPECIES[sp].life * TPD, oldest = Math.max(...o.fb.map(b => D.batchAge(b, ctx.tick, 1)));
+  ctx.scheduleUnique('oWilt:' + orderId(item, o.n), Math.max(ctx.tick + 1, Math.ceil(ctx.tick + life - oldest)), 'oWilt', { item, n: o.n });
 }
-
 // Objednávka postavy: odoberie zálohu z jej účtu (dopyt: mince, ponuka: tovar; čo nemá, to nezadá) a spáruje knihu.
 // Vráti zadanú objednávku (alebo null, ak nebolo čo zadať).
 export function npcOrder(mk: Mk, npc: NpcId, item: ItemId, s: OrderSide, p: number, q: number): Order | null {
@@ -259,7 +271,7 @@ export function npcOrder(mk: Mk, npc: NpcId, item: ItemId, s: OrderSide, p: numb
   if (q <= 0 || p <= 0) return null;
   let batches: MovedBatch[] | null = null;
   if (s === 'buy') a.coins -= q * p; else batches = must(I.removeItems(c, item, q, mk.tick) ?? undefined);
-  const o = insert(mk, item, { side: s, npc, nm: NPC_NAME[npc], p, q, exp: npc === 'vo' ? null : expiry(item, mk.tick, batches) }, s === 'buy' ? q * p : 0, batches);
+  const o = insert(mk, item, { side: s, npc, nm: NPC_NAME[npc], p, q, exp: npc === 'vo' ? null : expiry(mk.tick) }, s === 'buy' ? q * p : 0, batches);
   if (npc !== 'vo') settle(mk, item);
   return o;
 }
@@ -353,17 +365,18 @@ export function requoteAll(mk: Mk, items: readonly ItemId[] = BOOK_ITEMS): void 
 // späť vlastníkovi, objednávka z knihy von. Hráčovi v uložení ubudne zo zoznamu otvorených objednávok.
 // Výrez jednej objednávky (kľúč so zloženým tovarom a číslom: typ výrezu podľa šablóny kľúča sa tu neodvodí)
 const orderSlice = (s: GameSlices, item: ItemId, n: number): Order | undefined => s[`market:book:${item}:${String(n)}`] as Order | undefined;
-function removeNarrow(s: GameSlices, item: ItemId, n: number, ctx: GameCtx): Order | null {
+// toBox = tovar hráčovi na vyzdvihnutie (vypršanie, keď nie je pri trhu), inak do batohu (zrušenie pri trhu)
+function removeNarrow(s: GameSlices, item: ItemId, n: number, ctx: GameCtx, toBox = false): Order | null {
   const key = `market:book:${item}:${String(n)}`, o = orderSlice(s, item, n);
   if (!o) return null;
   const sv = o.pl != null ? sl(s, `save:${o.pl}`) : undefined, a = o.npc ? sl(s, `market:npc:${o.npc}`) : undefined;
-  const acct: Acct | null = sv ? { coins: sv, c: I.playerC(sv) } : a ? { coins: a, c: npcC(a) } : null;
+  const acct: Acct | null = sv ? { coins: sv, c: toBox ? boxC(sv) : I.playerC(sv) } : a ? { coins: a, c: npcC(a) } : null;
   if (!acct) return null;
   const view: Order = { ...o };
   release(item, o, acct, ctx.tick);
   if (sv && sv.orders) sv.orders = sv.orders.filter(x => x !== orderId(item, n));
   s[key] = undefined;
-  ctx.cancel('oExpire:' + orderId(item, n));
+  ctx.cancel('oExpire:' + orderId(item, n)); ctx.cancel('oWilt:' + orderId(item, n));
   return view;
 }
 // Hráč key ruší svoju objednávku
@@ -375,10 +388,28 @@ export function cancelOrder(s: GameSlices, key: PlayerKey, item: ItemId, n: numb
 }
 // Objednávka vypršala (udalosť oExpire): záloha späť; hráčovi v hre správa
 export function expireOrder(s: GameSlices, item: ItemId, n: number, ctx: GameCtx): void {
-  const o = removeNarrow(s, item, n, ctx);
+  const o = removeNarrow(s, item, n, ctx, true);
   if (!o || o.pl == null || !(ctx.presence || []).some(p => p.key === o.pl)) return;
-  const back = o.side === 'buy' ? `${String(o.coins)} 🪙` : `${String(o.rem)}× ${D.itemName(item)}`;
+  const back = o.side === 'buy' ? `${String(o.coins)} 🪙` : `${String(o.rem)}× ${D.itemName(item)} (čaká na trhu v Moje)`;
   ctx.emit({ to: o.pl, t: 'toast', text: `⌛ ${o.side === 'buy' ? 'Tvoj dopyt' : 'Tvoja ponuka'} na ${D.itemName(item)} vypršal(a) – vrátené: ${back}.`, kind: 'info' });
+}
+// Udalosť oWilt: kvety v ponuke, ktoré dožili, zvädnú – z ponuky von (dead), hráčovi ako zvädnuté kvety na vyzdvihnutie
+// (dajú sa skompostovať), postave sa zahodia. Kým v ponuke niečo ostane, naplánuje sa ďalšia várka.
+export function wiltOrder(s: GameSlices, item: ItemId, n: number, ctx: GameCtx): void {
+  const o = orderSlice(s, item, n), sp = speciesOf(item);
+  if (!o || !sp || !o.fb) return;
+  const life = D.SPECIES[sp].life * TPD, k = o.fb.filter(b => D.batchAge(b, ctx.tick, 1) >= life).reduce((a, b) => a + b.n, 0);
+  if (k > 0) {
+    takeEscrow(item, o, k, ctx.tick);
+    o.dead = (o.dead || 0) + k;
+    const sv = o.pl != null ? sl(s, `save:${o.pl}`) : undefined;
+    if (sv) {
+      I.addItems(boxC(sv), 'wilted', k, ctx.tick);
+      if ((ctx.presence || []).some(p => p.key === o.pl)) ctx.emit({ to: must(o.pl), t: 'toast', text: `🥀 V tvojej ponuke zvädlo ${String(k)}× ${D.itemName(item)} – zvädnuté kvety čakajú na trhu v Moje.`, kind: 'info' });
+    }
+  }
+  if (o.rem <= 0) { removeNarrow(s, item, n, ctx, true); return; }
+  planWilt(ctx, item, o);
 }
 
 // ---------- Hráč ----------
@@ -403,7 +434,7 @@ export function playerOrder(mk: Mk, item: ItemId, key: PlayerKey, name: string, 
     if (n <= 0 || (sv.inv[item] || 0) < n) return { err: 'Toľko toho nemáš.' };
     batches = must(I.removeItems(I.playerC(sv), item, n, tick) ?? undefined);
   }
-  const o = insert(mk, item, { side: s, pl: key, nm: name, p, q: n, exp: ioc ? null : expiry(item, tick, batches), ioc }, coins, batches);
+  const o = insert(mk, item, { side: s, pl: key, nm: name, p, q: n, exp: ioc ? null : expiry(tick), ioc }, coins, batches);
   settle(mk, item);
   let got = 0, paid = 0;
   for (const t of mk.trades) if ((s === 'buy' ? t.buyer : t.seller).pl === key && (s === 'buy' ? t.buyer : t.seller).n === o.n && t.item === item) { got += t.k; paid += t.pay; }
@@ -421,7 +452,8 @@ export function announce(mk: Mk): void {
     for (const [o, verb] of [[t.seller, 'predané'], [t.buyer, 'kúpené']] as const) {
       if (o.pl == null || o.pl === mk.actor) continue;
       const other = o === t.seller ? t.buyer : t.seller, who = other.nm || 'veľkoobchodník';
-      if (online.has(o.pl) && mk.ctx) mk.ctx.emit({ to: o.pl, t: 'toast', text: `🏷️ ${o.side === 'sell' ? 'Tvoja ponuka' : 'Tvoj dopyt'}: ${verb} ${String(t.k)}× ${name} za ${String(t.pay)} 🪙 (${who}).`, kind: 'gift' });
+      const box = o.side === 'buy' ? ' Čaká na trhu v Moje.' : '';
+      if (online.has(o.pl) && mk.ctx) mk.ctx.emit({ to: o.pl, t: 'toast', text: `🏷️ ${o.side === 'sell' ? 'Tvoja ponuka' : 'Tvoj dopyt'}: ${verb} ${String(t.k)}× ${name} za ${String(t.pay)} 🪙 (${who}).${box}`, kind: 'gift' });
       else { const sv = mk.save(o.pl); if (sv) { const aw = sv.away = sv.away || {}, k = `${o.side}:${t.item}`, cur = aw[k] || { n: 0, c: 0 }; aw[k] = { n: cur.n + t.k, c: cur.c + t.pay }; } }
     }
     if ((t.seller.pl != null || t.buyer.pl != null) && t.seller.npc !== 'vo' && t.buyer.npc !== 'vo') {
@@ -440,7 +472,7 @@ export function awaySummary(sv: PlayerSave): string | null {
     const [s, item = ''] = k.split(':');
     (s === 'sell' ? sold : bought).push(`${String(v.n)}× ${D.itemName(item)} za ${String(v.c)} 🪙`);
   }
-  const parts = [sold.length ? 'predal(a) si ' + sold.join(', ') : '', bought.length ? 'kúpil(a) si ' + bought.join(', ') : ''].filter(Boolean);
+  const parts = [sold.length ? 'predal(a) si ' + sold.join(', ') : '', bought.length ? 'kúpil(a) si ' + bought.join(', ') + ' (čaká na trhu v Moje)' : ''].filter(Boolean);
   return parts.length ? `🏷️ Kým si nebol(a) v hre, ${parts.join(' a ')}.` : null;
 }
 
@@ -652,6 +684,7 @@ export function ordersView(m: Market | null, sv: PlayerSave, tick: number): Orde
     const r = parseOrderId(id), o = r && m ? lookup(m.books[r.item]?.orders ?? {}, String(r.n)) : undefined;
     if (!r || !o) continue;
     const v: OrderView = { id, item: r.item, side: o.side, p: o.p, q: o.q, rem: o.rem, coins: o.coins, exp: o.exp };
+    if (o.dead) v.dead = o.dead;
     const fr = o.side === 'sell' ? freshOf(r.item, o, tick) : undefined;
     if (fr != null) v.fr = fr;
     out.push(v);

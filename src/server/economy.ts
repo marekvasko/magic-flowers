@@ -97,6 +97,7 @@ export interface EconInputs {
   cExpire: { id: number };
   cDue: { id: number };
   oExpire: { item: ItemId; n: number };
+  oWilt: { item: ItemId; n: number };
 }
 const festival = (id: FestivalId): Festival => must(D.FESTIVALS.find(x => x.id === id));
 
@@ -191,6 +192,14 @@ export const PROPOSERS: { [T in keyof EconInputs]: GameProposer<EconInputs[T]> }
       return { writes: [`market:book:${d.item}:${String(d.n)}`].concat(o ? [Mkt.ownerKey(d.item, o)] : []) };
     },
     run(s, d, ctx) { Mkt.expireOrder(s, d.item, d.n, ctx); }
+  },
+  // Kvety v ponuke zvädli (najstaršia várka dožila): tie isté kľúče ako vypršanie
+  oWilt: {
+    keys(d, w) {
+      const o = w.market?.books[d.item]?.orders[String(d.n)];
+      return { writes: [`market:book:${d.item}:${String(d.n)}`].concat(o ? [Mkt.ownerKey(d.item, o)] : []) };
+    },
+    run(s, d, ctx) { Mkt.wiltOrder(s, d.item, d.n, ctx); }
   },
 
   // Zákazka, ktorú nikto nezobral, zmizne z nástenky

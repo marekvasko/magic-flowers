@@ -464,7 +464,8 @@ function sendMe(pl: Player): void {
     t: 'me', coins: sv.coins, water: sv.water, inv: sv.inv, recipes: sv.recipes, seen: sv.seen, vily: sv.vily > room.tick,
     rep: sv.rep, up: upView(room, sv), canCap: Econ.canCap(sv), plotLimit: Econ.plotLimit(room.up), plotsUsed: room.plotsUsed, maxActive: Econ.maxActive(sv),
     fb: I.batchesView(I.playerC(sv), room.tick), tick: room.tick, loom: loomView(room, pl.key),
-    orders: Mkt.ordersView(room.market, sv, room.tick), orderLimit: B.orderLimit(sv.rep || 0)
+    orders: Mkt.ordersView(room.market, sv, room.tick), orderLimit: B.orderLimit(sv.rep || 0),
+    box: sv.box ? sv.box.inv : {}, boxFb: sv.box ? I.batchesView(Mkt.boxC(sv), room.tick) : {}
   });
   room.dirty = true;
 }
@@ -792,6 +793,7 @@ function toInput(room: Room, pl: Player, e: InboxEntry, presence: Presence[], in
       return side && p >= 1 && p <= 99999 ? mk('order', { id: String(m['id']), side, n: count(1, 999), p }) : no('invalid order');
     }
     case 'cancelOrder': return mk('cancelOrder', { id: String(m['id']).slice(0, 64) });
+    case 'collect': return mk('collect', { id: String(m['id']).slice(0, 64) });
     case 'upgrade': return mk('upgrade', { kind: String(m['kind']) });
     case 'ctake': return mk('ctake', { id: Number(m['id']) | 0 });
     case 'cdeliver': return mk('cdeliver', { id: Number(m['id']) | 0 });

@@ -85,6 +85,7 @@ E.pending(world, key)                         // the pending event or null
 | `scavDone:<player>` | searching the grass finishes (moving or acting cancels it) |
 | `cExpire:<contract>` / `cDue:<contract>` | a contract leaves the board / its deadline (delivering it cancels both) |
 | `oExpire:<item>#<n>` | an order in the market's order book expires and returns its escrow (a fill or a cancel cancels it) |
+| `oWilt:<item>#<n>` | the oldest flowers in a flower offer wilt and leave the offer (re-planned for the next batch) |
 | `pull:<player>` | pulling silk from a web finishes (`pullDone`; moving or raising the lantern cancels it) |
 
 ### 3. Periodic (declared)
