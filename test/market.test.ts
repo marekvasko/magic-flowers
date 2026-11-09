@@ -9,6 +9,7 @@ import * as B from '../src/shared/book.ts';
 import type { Market, Order } from '../src/shared/save.ts';
 import * as E from '../src/server/engine.ts';
 import * as Econ from '../src/server/economy.ts';
+import * as I from '../src/server/items.ts';
 import * as Mkt from '../src/server/market.ts';
 import { TPD, SPEC, act, give, makeWorld, save, textOf } from './game-world.ts';
 import type { W } from './game-world.ts';
@@ -236,5 +237,66 @@ test('prevod v11: zásoby veľkoobchodníka sa stanú jeho tovarom v ponukách, 
   assert.strictEqual(w.market.npcs.fero.inv.seed_mak, 4);
   assert.strictEqual(units(w, 'seed_ruza'), stock);
   assert.strictEqual(units(w, 'compost'), 9 + Object.values(w.saves).reduce((s, sv) => s + (must(sv).inv.compost || 0), 0));
+  invariants(w);
+});
+
+// ---- Postavy v knihe: obchody medzi návštevami, s hráčmi aj medzi sebou ----
+const live = (w: W): Mkt.Mk => Mkt.mkWorld(w, w.market, E.liveCtx(w, 'test'));
+const npcBid = (w: W, item: ItemId): number => Math.max(0, ...orders(w, item).filter(o => o.side === 'buy').map(o => o.p));
+
+test('Jano: dopyt po semienkach vybaví hráč medzi návštevami – Jano pestuje len kúpené (jano_sell s 2 × kúpené)', () => {
+  const w = makeWorld(20), id: ItemId = 'seed_mak', p = npcBid(w, id) + 3;
+  const mk = live(w);
+  w.market.npcs.jano.coins = 100;
+  Mkt.npcOrder(mk, 'jano', id, 'buy', p, 5);
+  const before = w.events.filter(e => e.type === 'jano_sell').length;
+  give(save(w, 'bob'), id, 2, w.tick);
+  run(w, act('sell', 'bob', { id, n: 2, lim: p }));
+  assert.strictEqual(save(w, 'bob').coins, 500 + 2 * p, 'bob predal Janovi za jeho limit');
+  const ev = w.events.filter(e => e.type === 'jano_sell');
+  assert.strictEqual(ev.length, before + 1);
+  assert.deepStrictEqual(must(ev[ev.length - 1]).data, { sp: 'mak', n: 4 });
+  assert.strictEqual(w.market.npcs.jano.inv[id] || 0, 0, 'kúpené semienka hneď zasadil');
+  assert.strictEqual(orders(w, id).find(o => o.npc === 'jano')?.rem, 3, 'zvyšok dopytu čaká');
+  invariants(w);
+});
+
+test('Zuzka: hráčov kvet kúpi za svoj limit (podľa čerstvosti), kvet ide do jej účtu', () => {
+  const w = makeWorld(21);
+  Mkt.zuzkaVisit(live(w), null);
+  const z = must(Mkt.BOOK_ITEMS.map(item => orders(w, item).find(o => o.npc === 'zuzka')).find(o => o));
+  const item = must(Mkt.BOOK_ITEMS.find(i => orders(w, i).includes(z)));
+  assert.ok(z.p > npcBid(w, item) - 1 && z.p >= Math.max(...orders(w, item).filter(o => o.npc === 'vo').map(o => o.p)), 'Zuzka platí viac než veľkoobchodník');
+  const coins = w.market.npcs.zuzka.coins + z.coins;
+  give(save(w, 'ana'), item, 1, w.tick);
+  run(w, act('sell', 'ana', { id: item, n: 1 }));
+  assert.strictEqual(save(w, 'ana').coins, 500 + z.p, 'čerstvý kvet za plný limit');
+  assert.strictEqual(w.market.npcs.zuzka.inv[item], 1);
+  const left = orders(w, item).find(o => o.npc === 'zuzka');
+  assert.strictEqual(w.market.npcs.zuzka.coins + (left ? left.coins : 0), coins - z.p);
+  invariants(w);
+});
+
+test('Fero: jeho ponuka o mincu lacnejšia než veľkoobchodník ide pri okamžitom nákupe prvá', () => {
+  const w = makeWorld(22), id: ItemId = 'seed_ruza';
+  const ask = Math.min(...orders(w, id).filter(o => o.npc === 'vo' && o.side === 'sell').map(o => o.p));
+  I.addItems(Mkt.npcC(w.market.npcs.fero), id, 3, w.tick);
+  Mkt.npcOrder(live(w), 'fero', id, 'sell', ask - 1, 3);
+  const fero = w.market.npcs.fero.coins;
+  run(w, act('buy', 'ana', { id, n: 2 }));
+  assert.strictEqual(save(w, 'ana').coins, 500 - 2 * (ask - 1));
+  assert.strictEqual(w.market.npcs.fero.coins, fero + 2 * (ask - 1));
+  invariants(w);
+});
+
+test('postava s postavou: Jano prinesie kvety, Zuzkin čakajúci dopyt ich kúpi za jej limit, zvyšok ide veľkoobchodníkovi', () => {
+  const w = makeWorld(23), mk = live(w);
+  Mkt.zuzkaVisit(mk, null);
+  const z = must(Mkt.BOOK_ITEMS.map(item => orders(w, item).find(o => o.npc === 'zuzka')).find(o => o));
+  const item = must(Mkt.BOOK_ITEMS.find(i => orders(w, i).includes(z))), sp = must(D.speciesOfItem(item) ?? undefined), q = z.rem, p = z.p;
+  const jano = w.market.npcs.jano.coins;
+  Mkt.janoSell(mk, sp, q + 2);
+  assert.strictEqual(w.market.npcs.zuzka.inv[item], q, 'Zuzka kúpila všetko, čo chcela');
+  assert.ok(w.market.npcs.jano.coins >= jano + q * p, 'Jano dostal aspoň Zuzkin limit za každý jej kus');
   invariants(w);
 });
