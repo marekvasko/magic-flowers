@@ -4,8 +4,12 @@
 import fs from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import type WebSocket from 'ws';
+import type { ItemId } from '../src/shared/data.ts';
 import type { ServerMessage } from '../src/shared/protocol.ts';
 import type { GameWorld } from '../src/server/game.ts';
+import * as Book from '../src/server/orderbook.ts';
+import * as E from '../src/server/engine.ts';
+import { must } from '../src/shared/util.ts';
 export { must } from '../src/shared/util.ts';
 
 // Čiastočný objekt typu T (napr. uloženie hráča len s mincami a batohom)
@@ -36,3 +40,13 @@ export function parseMsg(raw: WebSocket.RawData): ServerMessage {
 export type MsgType = ServerMessage['t'];
 export type MsgOf<T extends MsgType> = Extract<ServerMessage, { t: T }>;
 export const isMsg = <T extends MsgType>(m: ServerMessage, t: T): m is MsgOf<T> => m.t === t;
+
+// Zmena počiatočnej NPC zásoby testu: najprv uvoľníme rezervácie, potom znovu publikujeme skutočné objednávky.
+export function wholesaleStock(w: GameWorld, id: ItemId, n: number): void {
+  const m = w.market;
+  if (!m) throw new Error('chýba trh');
+  Book.cancelNpc(m, 'wholesale', E.liveCtx(w, 'test-stock'));
+  const a = must(m.book).accounts.wholesale;
+  if (n) a.inv[id] = n; else delete a.inv[id];
+  Book.bootstrap(w);
+}

@@ -86,6 +86,9 @@ export type Recipient = string | { readonly all: true } | { readonly area: strin
 export interface Ctx<P, M> {
   tick: number;
   id: string;
+  step: number;
+  ordinal: number;
+  batch: number;
   rng: Rng;
   presence: P[] | null | undefined;
   actor: P | undefined;
@@ -103,7 +106,8 @@ export type Scheduler = Pick<Ctx<unknown, unknown>, 'tick' | 'id' | 'rng' | 'sch
 // Návrh pre jeden typ vstupu. Metódy (nie vlastnosti s funkciou) zámerne: parametre metód TypeScript porovnáva
 // bivariantne, takže návrh s presnými dátami (napr. { key, i }) sa zmestí do zoznamu návrhov enginu s dátami unknown.
 export interface Proposer<D, W, P, M, S = Slices> {
-  keys?(data: D, world: W, presence?: P[]): Keys;
+  keys?(data: D, world: W, presence?: P[], id?: string, batch?: number): Keys;
+  settle?(world: W): Input[];
   run(slices: S, data: D, ctx: Ctx<P, M>): void;
 }
 // Periodická udalosť: kľúč, typ, dáta a kedy má nastať (od kroku from)
@@ -120,6 +124,7 @@ export interface Input {
   ev?: EngineEvent;
   id?: string | number;
   actor?: string;
+  batch?: number;
 }
 export type Outcome = 'applied' | 'held' | 'rejected' | 'error';
 export interface ProposalRecord {
@@ -359,6 +364,12 @@ export function sliceOf(world: EngineWorld, key: string): Slice | null {
       if (b === 'fl_*') return at(m, 'flowers');
       if (b.startsWith('seed_')) return at(m['seeds'], b.slice(5));
       if (b.startsWith('fl_')) return at(m['flowers'], b.slice(3));
+      if (b === 'order' || b === 'account' || b === 'trades') {
+        const book = m['book'];
+        if (!isObj(book)) return null;
+        const field = b === 'order' ? 'orders' : b === 'account' ? 'accounts' : 'trades';
+        return c === '*' ? at(book, field) : at(book[field], key.slice(('market:' + b + ':').length));
+      }
       if (b === 'npc') return c === '*' ? at(m, 'npcs') : at(m['npcs'], c);
       return at(m, b);
     }
@@ -458,7 +469,7 @@ function makeCtx<P, M>(world: EngineWorld, id: string, rng: Rng, queue: QueueOps
   const touch = (key: string): void => { if (events) events.add('event:' + key); };
   const outbox: M[] = [];
   return {
-    tick: world.tick, id, rng, presence, actor, outbox,
+    tick: world.tick, id, step: world.step || 0, ordinal: 0, batch: world.step || 0, rng, presence, actor, outbox,
     emit: msg => { outbox.push(msg); },
     reject: msg => { throw new Reject(msg === undefined ? null : msg); },
     schedule: (at, type, data) => queue.insert(at, type, data),
@@ -478,19 +489,17 @@ export function liveCtx<P, M>(world: EngineWorld, id: string): Ctx<P, M> {
 }
 // Fronta tak, ako ju vidí návrh: snímok plus to, čo návrh sám zrušil a naplánoval; zmeny sa len zapisujú ako ops
 function draftQueue(world: EngineWorld, ops: Op[]): QueueOps {
-  const view = (): DraftEvent[] => {
-    let q: DraftEvent[] = world.events;
-    for (const o of ops) q = o.op === 'cancel' ? q.filter(e => e.key !== o.key) : q.concat([o.ev]);
-    return q;
-  };
+  let current: DraftEvent[] | undefined;
+  const view = (): DraftEvent[] => current ??= world.events.slice();
   return {
     insert(at, type, data, key) {
       const ev: DraftEvent = { at: Math.max(at, world.tick + 1), type, data: data === undefined ? null : data };
       if (key != null) ev.key = key;
+      view().push(ev);
       ops.push({ op: 'insert', ev });
       return ev;
     },
-    cancel(key) { const n = view().filter(e => e.key === key).length; ops.push({ op: 'cancel', key }); return n; },
+    cancel(key) { const before = view(); current = before.filter(e => e.key !== key); const n = before.length - current.length; ops.push({ op: 'cancel', key }); return n; },
     pending(key) { return view().find(e => e.key === key) || null; }
   };
 }
@@ -501,13 +510,12 @@ export function keysOf<W extends EngineWorld, P extends { key: string }, M>(worl
   const proposer = spec.proposers && spec.proposers[input.type];
   if (!proposer) return { error: new Error(`neznámy typ vstupu ${input.type}`) };
   try {
-    const k = proposer.keys ? proposer.keys(input.data, world, presence) : {};
+    const k = proposer.keys ? proposer.keys(input.data, world, presence, inputId(input), input.batch) : {};
     const writes = new Set(k.writes || []), reads = new Set((k.reads || []).filter(r => !writes.has(r)));
     // dva deklarované kľúče sa nesmú prekrývať ('save:*' a 'save:ana' by boli dve nezávislé kópie toho istého)
     const all = [...reads, ...writes];
-    for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
-      const a = all[i] ?? '', b = all[j] ?? '';
-      if (meets(a, b)) throw new Error(`návrh ${input.type} deklaruje prekrývajúce sa kľúče ${a} a ${b}`);
+    for (const a of all) if (a.endsWith('*')) for (const b of all) {
+      if (a !== b && meets(a, b)) throw new Error(`návrh ${input.type} deklaruje prekrývajúce sa kľúče ${a} a ${b}`);
     }
     return { reads, writes };
   } catch (error) { return { error }; }
@@ -518,7 +526,7 @@ export function keysOf<W extends EngineWorld, P extends { key: string }, M>(worl
 //   { …, reject: msg }                                   – odmietnutie (nič sa nevykoná, hráč dostane správu; null = bez správy)
 //   { …, error }                                         – chyba (nič sa nevykoná, vstup sa spotrebuje)
 // presence je snímka dávky; návrh dostane vlastnú kópiu a v nej (ak je to zoznam záznamov s key) záznam input.actor ako ctx.actor.
-export function evaluate<W extends EngineWorld, P extends { key: string }, M>(world: W, input: Input, spec: Spec<W, P, M>, presence?: P[]): Result<M> {
+export function evaluate<W extends EngineWorld, P extends { key: string }, M>(world: W, input: Input, spec: Spec<W, P, M>, presence?: P[], ordinal = 0): Result<M> {
   const id = inputId(input);
   const k = keysOf(world, input, spec, presence);
   const res: Result<M> = { id, input, reads: k.reads || new Set(), writes: k.writes || new Set(), slices: {}, ops: [], outbox: [] };
@@ -531,6 +539,8 @@ export function evaluate<W extends EngineWorld, P extends { key: string }, M>(wo
     const ctx = makeCtx<P, M>(world, id, generator(seedOf(world.seed, world.step || 0, id)), draftQueue(world, res.ops), res.writes, pr, actor);
     const proposer = spec.proposers && spec.proposers[input.type];
     if (!proposer) throw new Error(`neznámy typ vstupu ${input.type}`);
+    ctx.ordinal = ordinal;
+    ctx.batch = input.batch ?? (world.step || 0);
     proposer.run(res.slices, input.data, ctx);
     res.outbox = ctx.outbox;
     for (const key in res.slices) if (!res.reads.has(key) && !res.writes.has(key)) throw new Error(`návrh ${id} zapísal do nedeklarovaného výrezu ${key}`);
@@ -569,6 +579,7 @@ export function applyResult<W extends EngineWorld, P extends { key: string }, M>
 // dodá volajúci v `scheduleMs`), evaluate (kľúče a beh návrhov), resolve (kolízie), commit (zápis do sveta).
 // Čas nie je v entry – denník musí byť pri prehratí rovnaký.
 export function commitBatch<W extends EngineWorld, P extends { key: string }, M>(world: W, inputs: Input[], spec: Spec<W, P, M>, scheduleMs?: number): BatchOut<P, M> {
+  for (const input of inputs) input.batch = world.step || 0;
   const journal = !!spec.onBatch;
   const presence = spec.presence ? spec.presence(world) : undefined;
   const entry: JournalEntry<P, M> = {
@@ -580,10 +591,14 @@ export function commitBatch<W extends EngineWorld, P extends { key: string }, M>
   const clock = spec.clock, timing: Timing | null = clock ? { schedule: scheduleMs || 0, evaluate: 0, resolve: 0, commit: 0 } : null;
   let t0 = clock ? clock() : 0;
   const lap = (part: keyof Timing): void => { if (!clock || !timing) return; const t = clock(); timing[part] += t - t0; t0 = t; };
-  let todo = inputs;
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- settle je čistá funkcia bez this; rovnaké koordinátory zdieľajú identitu
+  const reconcilers = new Set(Object.values(spec.proposers || {}).flatMap(p => p?.settle ? [p.settle] : []));
+  let todo = inputs.length ? inputs : [...reconcilers].flatMap(fn => fn(world));
   while (todo.length) {
     out.rounds++;
+    if (out.rounds > 10000) throw new Error(`vyrovnanie dávky nekonverguje: ${JSON.stringify(todo.slice(0, 2))}`);
     const written: string[] = [], held: Input[] = [];
+    const roundReconcilers = new Set<(world: W) => Input[]>();
     const record = (r: Pick<Result<M>, 'id' | 'input' | 'reads' | 'writes'>, outcome: Outcome, extra?: Partial<ProposalRecord>): void => {
       entry.proposals.push(Object.assign({ id: r.id, type: r.input.type, round: out.rounds, reads: [...r.reads], writes: [...r.writes], outcome }, extra));
     };
@@ -595,7 +610,7 @@ export function commitBatch<W extends EngineWorld, P extends { key: string }, M>
         if (clock) lap('resolve');
         if (clash) { held.push(input); record({ id: inputId(input), input, reads: k.reads, writes: k.writes }, 'held'); continue; }
       }
-      const r = evaluate(world, input, spec, presence);
+      const r = evaluate(world, input, spec, presence, Math.max(0, inputs.indexOf(input)));
       if (clock) lap('evaluate');
       if (r.error !== undefined) {
         (spec.onError || logError)(r.error, input.ev || input, world);
@@ -611,11 +626,17 @@ export function commitBatch<W extends EngineWorld, P extends { key: string }, M>
       if (clock) lap('commit');
       written.push(...r.writes);
       out.applied.push(r);
+      const handler = spec.proposers?.[input.type];
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- settle je čistá funkcia bez this
+      if (handler?.settle) roundReconcilers.add(handler.settle);
       out.outbox.push(...r.outbox);
       record(r, 'applied', changes ? { changes } : undefined);
     }
     world.step = (world.step || 0) + 1;
-    todo = held;
+    // Hra môže po kole vložiť úzke návrhy vyrovnania. Sú v rovnakom denníku aj snímke prítomnosti;
+    // klient dostane správy až po ich dokončení. Prehranie ich znova odvodí z pôvodných vstupov.
+    const followups = [...roundReconcilers].flatMap(fn => fn(world));
+    todo = followups.concat(held.filter(input => inputs.includes(input)));
   }
   out.step = world.step;
   if (timing) out.timing = timing;

@@ -10,6 +10,7 @@ import type { PlayerKey, PlayerSave, Weather } from '../shared/save.ts';
 import { entries, lookup, must } from '../shared/util.ts';
 import * as E from './engine.ts';
 import * as Econ from './economy.ts';
+import * as Book from './orderbook.ts';
 import type { EconInputs } from './economy.ts';
 import { sl } from './game.ts';
 import type { GamePeriodic, GameProposer, Msg, To } from './game.ts';
@@ -90,6 +91,7 @@ export interface EventInputs {
 const OWN: { [T in keyof EventInputs]: GameProposer<EventInputs[T]> } = {
   // Ráno o 6:00: rastliny rastú, počasie, ľad, trh, kompostéry a nástenka.
   dawn: {
+    settle: Book.settle,
     keys: (d, w) => E.mergeKeys({ writes: ['tile:garden:*', 'tile:hory:*', 'save:*', 'scav', 'weather', 'glacierFed'], reads: ['eternal'] }, Econ.DAWN.keys(d, w)),
     run(s, d, ctx) {
       const tick = ctx.tick, day = D.dayOfTick(tick), se = D.seasonOf(day), tiles = sl(s, 'tile:garden:*');
@@ -108,6 +110,7 @@ const OWN: { [T in keyof EventInputs]: GameProposer<EventInputs[T]> } = {
   },
   // Každú hernú hodinu: kvety staršie než ich životnosť zvädnú (v batohoch aj v sklade, aj u offline hráčov), ľad sa topí.
   hourly: {
+    settle: Book.hourlySettlement,
     keys: () => ({ writes: ['save:*', 'storage', 'icehouse'] }),
     run(s, d, ctx) {
       const tick = ctx.tick, saves = sl(s, 'save:*');

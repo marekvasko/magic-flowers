@@ -4,6 +4,8 @@
 //  - ServerMessage: čo dostane klient (posiela server sám alebo ide z návrhov enginu cez ctx.emit)
 // Pokyny návrhov len pre server (joined, travel, me, scavStart, scavDone, pullStart, pullDone) klient nedostane;
 // typuje ich engine (fáza 3). Správa webbed ide aj klientovi.
+import type { BookLevel } from './market.ts';
+import type { MarketOrder } from './save.ts';
 import type { AreaId, Ground, ItemId, Look, PotionId, SpeciesId, UpgradeId } from './data.ts';
 import type { ActiveFestival, Contract, CornerArea, Icehouse, Plant, Soil, Weather, WorldMode } from './save.ts';
 
@@ -16,6 +18,8 @@ export type ClientMessage =
   | { t: 'move'; x: number; y: number; dir: number; a?: number | undefined; cr?: boolean; lp?: boolean; ar: number }
   | { t: 'act'; x: number; y: number; item: ItemId | '' }   // '' = prázdna ruka
   | { t: 'buy' | 'sell' | 'store' | 'unstore'; id: ItemId; n: number }
+  | { t: 'marketOrder'; id: ItemId; n: number; side: 'buy' | 'sell'; price: number }
+  | { t: 'marketCancel'; id: string }
   | { t: 'upgrade'; kind: UpgradeId }
   | { t: 'ctake' | 'cdeliver'; id: number }
   | { t: 'brew'; items: ItemId[] }                          // tri kvety fl_*
@@ -104,6 +108,7 @@ export type ServerMessage =
   | {
     t: 'me'; coins: number; water: number; inv: Partial<Record<ItemId, number>>; recipes: string[]; seen: SpeciesId[]; vily: boolean;
     rep: number; up: { can: number; composter: number; plots: number }; canCap: number; plotLimit: number; plotsUsed: number; maxActive: number;
+    orders?: MarketOrder[];
     fb: BatchesView; tick: number; loom: { busy: boolean; mine: number | null; ready: number };
   }
   | {
@@ -113,7 +118,7 @@ export type ServerMessage =
   | { t: 'time'; tick: number; tickMs: number; weather: Weather; mode: WorldMode; daySeconds: number }
   | { t: 'plots'; used: number; limit: number }
   | {
-    t: 'market'; seeds: Partial<Record<SpeciesId, MarketItemView>>; flowers: Partial<Record<SpeciesId, MarketItemView>>; compost: MarketItemView;
+    t: 'market'; book?: BookLevel[]; seeds: Partial<Record<SpeciesId, MarketItemView>>; flowers: Partial<Record<SpeciesId, MarketItemView>>; compost: MarketItemView;
     festival: ActiveFestival | null; upcoming: UpcomingFestival | null; news: { tick: number; text: string }[];
   }
   | { t: 'board'; list: Contract[] }

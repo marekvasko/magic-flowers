@@ -1,5 +1,7 @@
 // Čarovná záhrada – klient (#136: TypeScript, jeden balík esbuild; 3D pohľad sa načíta až po štarte ako ďalší kúsok)
 import * as D from '../shared/data.ts';
+import { instantQuote, ORDER_STEPS, orderLimit } from '../shared/market.ts';
+import type { MarketSide } from '../shared/save.ts';
 import type { ItemId, Potion, Species, SpeciesId, UpgradeId } from '../shared/data.ts';
 import * as Players from '../shared/players.ts';
 import * as SpiderModel from '../shared/spidermodel.ts';
@@ -135,7 +137,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
         break;
       case 'me':
         S.coins = m.coins; S.water = m.water; S.inv = m.inv; S.recipes = m.recipes; S.seen = m.seen; S.vily = m.vily;
-        S.fb = m.fb; S.fbTick = m.tick;
+        S.fb = m.fb; S.fbTick = m.tick; S.orders = m.orders || [];
         Object.assign(S, { rep: m.rep, up: m.up, canCap: m.canCap, plotLimit: m.plotLimit, plotsUsed: m.plotsUsed, maxActive: m.maxActive, loom: m.loom });
         if (S.sel && !S.inv[S.sel]) S.sel = 'hoe'; // '' = prázdna ruka (vybraté prázdne miesto v lište)
         renderHotbar(); updateHud();
@@ -917,12 +919,64 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     else if (M.upcoming) body.appendChild(h('div', { class: 'row' }, h('div', { class: 'info' }, h('b', null, `📅 ${M.upcoming.icon} ${M.upcoming.name} o ${fmtLeft(M.upcoming.start - S.tick)}`), h('small', null, 'Vyšší výkup: ' + list(M.upcoming.mult)))));
   }
 
-  function openShop(tab: 'buy' | 'sell' | 'up' | 'news'): void {
+  const shopCounts = new Map<string, number>(), shopOpen = new Set<string>();
+  function tradeRow(body: HTMLElement, id: ItemId, side: MarketSide): void {
+    const M = S.market;
+    if (!M) return;
+    const key = `${side}:${id}`, buy = side === 'buy', owner = `player:${S.name.toLowerCase()}`;
+    const book = M.book || [], sp = D.speciesOfItem(id), q0 = id === 'compost' ? M.compost : sp ? (id.startsWith('seed_') ? M.seeds[sp] : M.flowers[sp]) : undefined;
+    const fallback = Math.max(1, buy ? q0?.p || D.sellPrice(id) : marketSellPrice(id));
+    const quoteFor = (n: number): ReturnType<typeof instantQuote> => instantQuote(book, side, id, n, S.tick, owner);
+    const reference = (n: number): number => { const q = quoteFor(n); return (q.mean || fallback) * n; };
+    let n = Math.min(shopCounts.get(key) || 1, buy ? 999 : S.inv[id] || 1);
+    while (buy && n > 1 && reference(n) > S.coins) n--;
+    shopCounts.set(key, n);
+    const q = quoteFor(n), total = reference(n), mean = total / n;
+    const rep = buy && id.startsWith('seed_') && sp ? D.MIN_SEED_REP[sp] || 0 : 0;
+    const locked = D.repLevel(S.rep) < rep;
+    const info = h('div', { class: 'info' }, h('b', null, D.itemName(id)));
+    if (sp && id.startsWith('seed_')) info.appendChild(seasonBadges(D.SPECIES[sp]));
+    const available = book.filter(o => o.item === id && o.side !== side && o.owner !== owner).reduce((sum, o) => sum + o.remaining, 0);
+    const line = h('small', null, `${buy ? `na trhu ${available}` : `${S.inv[id] || 0} ks`} · Ø ${mean.toLocaleString('sk-SK', { maximumFractionDigits: 1 })} 🪙/ks `);
+    if (q0) line.appendChild(priceTrend(q0.h, q0.p, !buy));
+    info.appendChild(line);
+    if (q.name) info.appendChild(h('small', { class: 'trade-owner' }, `🏷️ ${buy ? 'Predáva' : 'Kupuje'}: ${q.name}`));
+    const flower = id.startsWith('fl_') && oldestBatch(id);
+    if (!buy && flower) info.appendChild(h('small', { style: `color:${freshColor(flower.rem)};font-weight:700` }, `🌷 ${freshText(id)}`));
+    if (buy && id.startsWith('fl_') && q.n) info.appendChild(h('small', null, `🌷 čerstvosť ${Math.round(q.fresh * 100)} %`));
+    if (locked) info.appendChild(h('small', { class: 'trade-bad' }, `🔒 od reputácie ${rep}`));
+    const update = (value: number): void => {
+      let next = Math.max(1, Math.min(value, buy ? 999 : S.inv[id] || 1));
+      while (buy && next > 1 && reference(next) > S.coins) next--;
+      shopCounts.set(key, next); refreshModal();
+    };
+    const count = h('input', { type: 'number', min: '1', max: buy ? '999' : String(S.inv[id] || 1), value: String(n), 'aria-label': `Počet: ${D.itemName(id)}` });
+    count.onchange = () => { update(Number(count.value) || 1); };
+    const counter = h('div', { class: 'trade-counter' },
+      h('button', { onclick: () => { update(n - 1); }, disabled: n <= 1 ? 'disabled' : null, 'aria-label': 'Menej' }, '−'), count,
+      h('button', { onclick: () => { update(n + 1); }, 'aria-label': 'Viac' }, '+'),
+      h('button', { onclick: () => { update(buy ? n + 5 : S.inv[id] || 1); } }, buy ? '+5' : 'Všetko'));
+    const instant = h('button', { class: 'btn trade-instant', disabled: locked || q.n < n || (buy && q.total > S.coins) ? 'disabled' : null, title: buy ? 'Kúpiť ihneď' : 'Predať ihneď', onclick: () => { send({ t: side, id, n }); } }, `${q.n === n ? q.total : Math.round(total)}🪙`);
+    const toggle = h('button', { class: `btn alt trade-toggle${shopOpen.has(key) ? ' pressed' : ''}`, 'aria-expanded': String(shopOpen.has(key)), onclick: () => { if (shopOpen.has(key)) shopOpen.delete(key); else shopOpen.add(key); refreshModal(); } }, buy ? 'Dopyt' : 'Ponuka');
+    const row = h('div', { class: 'trade-row' }, h('div', { class: 'row' }, img(id), info), h('div', { class: 'trade-controls' }, counter, instant, toggle));
+    if (shopOpen.has(key)) {
+      const block = h('div', { class: 'trade-limit' }, h('b', null, buy ? 'Dopyt' : 'Ponuka'));
+      const buttons = h('div', { class: 'trade-prices' });
+      for (const step of ORDER_STEPS) {
+        const price = Math.max(1, Math.round(mean * step)), cost = price * n, better = buy ? step < 1 : step > 1;
+        buttons.appendChild(h('button', { class: `btn ${better ? 'trade-good' : 'trade-bad'}`, title: `${price} 🪙/ks · platnosť 3 dni`, disabled: locked || (buy && cost > S.coins) || (S.orders || []).filter(o => o.active).length >= orderLimit(D.repLevel(S.rep)) ? 'disabled' : null, onclick: () => { send({ t: 'marketOrder', id, n, side, price }); } }, `${cost}🪙`));
+      }
+      block.appendChild(buttons); row.appendChild(block);
+    }
+    body.appendChild(row);
+  }
+  function openShop(tab: 'buy' | 'sell' | 'mine' | 'up' | 'news'): void {
     openModal('🛒 Trh', body => {
       const M = S.market;
-      body.appendChild(h('div', { class: 'tabs' },
+      body.appendChild(h('div', { class: 'tabs market-tabs' },
         h('button', { class: tab === 'buy' ? 'on' : '', onclick: () => { openShop('buy'); } }, 'Kúpiť'),
         h('button', { class: tab === 'sell' ? 'on' : '', onclick: () => { openShop('sell'); } }, 'Predať'),
+        h('button', { class: tab === 'mine' ? 'on' : '', onclick: () => { openShop('mine'); } }, 'Moje'),
         h('button', { class: tab === 'up' ? 'on' : '', onclick: () => { openShop('up'); } }, 'Vylepšiť'),
         h('button', { class: tab === 'news' ? 'on' : '', onclick: () => { openShop('news'); } }, 'Správy')));
       body.appendChild(h('div', { style: 'text-align:center;font-weight:700;margin-bottom:8px' }, `Máš 🪙 ${S.coins} · ⭐ reputácia ${S.rep} (úroveň ${D.repLevel(S.rep)})`));
@@ -932,42 +986,25 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
         const se = season();
         const rank = (sp: SpeciesId): number => D.SPECIES[sp].seasons.some(s => s === se) ? 0 : D.SPECIES[sp].seasons.some(s => s === (se + 1) % 4) ? 1 : 2;
         const ids: ItemId[] = ['compost', ...keys(M.seeds).sort((a, b) => rank(a) - rank(b)).map(sp => `seed_${sp}` as const)];
-        for (const id of ids) {
-          const spId = id.startsWith('seed_') ? id.slice(5) : '';
-          const q = id === 'compost' ? M.compost : lookup(M.seeds, spId);
-          if (!q) continue;
-          const sp = speciesOf(spId) ?? null;
-          const lockedRep = sp && lookup(D.MIN_SEED_REP, spId);
-          const info = h('div', { class: 'info' }, h('b', null, sp ? sp.name : 'Kompost'),
-            sp ? seasonBadges(sp) : h('small', null, 'Výživná pôda: rýchlejší rast a +1 kvet pri zbere'));
-          const st = q.st > 0 ? `na sklade ${q.st}` : 'VYPREDANÉ';
-          const line = h('small', null, `${st} · ${q.p} 🪙 `);
-          line.appendChild(priceTrend(q.h, q.p, false));
-          info.appendChild(line);
-          if (sp) info.appendChild(h('small', null, `${sp.days} dní · ${'💧'.repeat(sp.water)} · ${({ sun: '☀️', shade: '🌳', any: '⛅' })[sp.light]}${sp.soil ? ' · ' + ({ sand: 'piesok', rich: 'kompost', rock: 'len skalka' })[sp.soil] : ''}`));
-          if (lockedRep && D.repLevel(S.rep) < lockedRep) info.appendChild(h('small', { style: 'color:#b0432a' }, `🔒 od reputácie ${lockedRep}`));
-          const b1 = h('button', { class: 'btn', onclick: () => { send({ t: 'buy', id, n: 1 }); } }, q.p + '🪙');
-          const b5 = h('button', { class: 'btn alt', onclick: () => { send({ t: 'buy', id, n: 5 }); } }, '×5');
-          if (!q.st || S.coins < q.p) { b1.disabled = true; b5.disabled = true; }
-          body.appendChild(h('div', { class: 'row', style: q.st ? '' : 'opacity:.6' }, img(id), info, h('div', { class: 'btns' }, b1, b5)));
-        }
+        const extra = [...new Set<ItemId>([...keys(M.flowers).map(sp => `fl_${sp}` as const), ...(M.book || []).filter(o => o.side === 'sell').map(o => o.item)])].filter(id => !ids.includes(id));
+        for (const id of [...ids, ...extra]) tradeRow(body, id, 'buy');
       } else if (tab === 'sell') {
         festivalBanner(body);
-        body.appendChild(h('small', { style: 'display:block;margin-bottom:6px' }, 'Každý predaný kus trochu zníži výkupnú cenu – trh sa nasycuje. Cez noc zákazníci kvety rozkúpia.'));
-        const ids = hotbarIds().filter(id => !D.isTool(id) && marketSellPrice(id) > 0);
+        const ids = hotbarIds().filter(id => !D.isTool(id) && !id.startsWith('wild_'));
         if (!ids.length) body.appendChild(h('p', null, 'Nemáš nič na predaj. Vypestuj nejaké kvety! 🌷'));
-        for (const id of ids) {
-          const n = S.inv[id] ?? 0, f = id.startsWith('fl_') && lookup(M.flowers, id.slice(3));
-          const o = f && oldestBatch(id);
-          const p = o ? Math.max(1, Math.round(marketSellPrice(id) * o.fresh)) : marketSellPrice(id);
-          const line = h('small', null, `${n} ks · ${p} 🪙/ks `);
-          if (f) { line.appendChild(priceTrend(f.h, f.p, true)); line.appendChild(document.createTextNode(` · na trhu ${f.st} ks`)); }
-          const info = h('div', { class: 'info' }, h('b', null, D.itemName(id)), line);
-          if (o) info.appendChild(h('small', { style: `color:${freshColor(o.rem)};font-weight:700` }, `🌷 ${freshText(id)}`));
-          body.appendChild(h('div', { class: 'row' }, img(id), info,
-            h('div', { class: 'btns' },
-              h('button', { class: 'btn', onclick: () => { send({ t: 'sell', id, n: 1 }); sfx('coin'); } }, '1'),
-              h('button', { class: 'btn alt', onclick: () => { send({ t: 'sell', id, n }); sfx('coin'); } }, 'Všetko'))));
+        for (const id of ids) tradeRow(body, id, 'sell');
+      } else if (tab === 'mine') {
+        const orders = S.orders || [], limit = orderLimit(D.repLevel(S.rep));
+        body.appendChild(h('p', { class: 'trade-summary' }, `Otvorené: ${orders.filter(o => o.active).length} z ${limit}`));
+        if (!orders.length) body.appendChild(h('p', null, 'Zatiaľ nemáš žiadne objednávky. Dopyt alebo ponuku vytvoríš pri tovare.'));
+        for (const o of orders) {
+          const buy = o.side === 'buy', progress = Math.round(o.filled / o.quantity * 100);
+          const info = h('div', { class: 'info' }, h('span', { class: `trade-kind ${buy ? 'demand' : ''}` }, buy ? 'Dopyt' : 'Ponuka'), h('b', null, D.itemName(o.item)),
+            h('small', null, `${o.filled} z ${o.quantity} ${buy ? 'kúpené' : 'predané'}`),
+            h('div', { class: 'trade-progress' }, h('div', { style: `width:${progress}%` })),
+            h('small', null, `${o.price} 🪙/ks${buy ? ` · rezervované ${o.coins} 🪙` : ''}`),
+            h('small', null, o.active ? `⌛ ${fmtLeft(o.expires - S.tick)}` : 'Čaká na vyzdvihnutie · uvoľni miesto v batohu'));
+          body.appendChild(h('div', { class: 'row' }, img(o.item), info, h('button', { class: 'btn alt', onclick: () => { send({ t: 'marketCancel', id: o.id }); } }, o.active ? 'Zrušiť' : 'Vyzdvihnúť')));
         }
       } else if (tab === 'up') {
         const lvl = D.repLevel(S.rep), next = D.REP_LEVELS[lvl + 1], cur = D.REP_LEVELS[lvl] ?? 0;

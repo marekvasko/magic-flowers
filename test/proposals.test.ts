@@ -1,3 +1,4 @@
+import { wholesaleStock } from './helpers.ts';
 // Engine v2 (#105, #107, #109): návrhy deklarujú kľúče a bežia na výrezoch; kolá, atomickosť, náhoda bez zdieľaného
 // prúdu, odvodené počítadlá, denník dávok a jeho prehranie.
 import test from 'node:test';
@@ -16,6 +17,7 @@ import { isRecord } from '../src/shared/util.ts';
 import type { JsonRecord } from '../src/shared/util.ts';
 import * as E from '../src/server/engine.ts';
 import * as Econ from '../src/server/economy.ts';
+import * as Book from '../src/server/orderbook.ts';
 import * as Events from '../src/server/events.ts';
 import * as I from '../src/server/items.ts';
 import * as Ice from '../src/server/ice.ts';
@@ -69,7 +71,6 @@ function flowers(w: GameWorld, key: string): number { return (save(w, key).inv[`
 // Akcie hráčov ako deklarované návrhy (tak budú v spec.proposers po fáze 3): keys povie, čo čítajú a menia,
 // run dostane kópie práve týchto výrezov; správy cez ctx.emit, odmietnutie cez ctx.reject.
 type KI = { key: string; i: number };
-type Trade = { key: string; id: string; n: number };
 const PROPOSERS = {
   water: prop<KI>({
     keys: ({ key, i }) => ({ writes: ['save:' + key, 'tile:garden:' + i] }),
@@ -108,22 +109,8 @@ const PROPOSERS = {
   }),
   // udalosť sveta: kvet na políčku zvädne (ako ranný rast / mráz / hodinové vädnutie)
   wilt: prop<{ i: number }>({ keys: ({ i }) => ({ writes: ['tile:garden:' + i] }), run(s, { i }) { const p = tl(s, i).s && tl(s, i).s?.p; if (p) { p.d = 1; p.why = 'mráz'; } } }),
-  buy: prop<Trade>({
-    keys: ({ key }) => ({ writes: ['market:*', 'save:' + key] }),
-    run(s, { key, id, n }, ctx) {
-      const r = Econ.buy(sl(s, 'market:*'), ctx.tick, sv(s, key), id, n);
-      if (!r.n) ctx.reject(r.msg);
-      ctx.emit({ to: key, t: 'toast', text: r.msg });
-    }
-  }),
-  sell: prop<Trade>({
-    keys: ({ key }) => ({ writes: ['market:*', 'save:' + key] }),
-    run(s, { key, id, n }, ctx) {
-      const r = Econ.sell(sl(s, 'market:*'), ctx.tick, sv(s, key), id, n);
-      if (!r.n) ctx.reject(r.msg);
-      ctx.emit({ to: key, t: 'toast', text: r.msg });
-    }
-  }),
+  buy: Book.placement('buy'),
+  sell: Book.placement('sell'),
   ctake: prop<{ key: string; id: number }>({
     keys: ({ key }) => ({ writes: ['contracts'], reads: ['save:' + key] }),
     run(s, { key, id }, ctx) { const err = Econ.takeContract(s.contracts, ctx.tick, sv(s, key), key, id); if (err) ctx.reject(err); }
@@ -213,7 +200,7 @@ test('výrezy sa zapíšu späť na mieste: uloženie hráča, políčko aj trh 
   plant(w, i, 'ana', true);
   const sv = save(w, 'ana'), t = at(w, i), tiles = w.tiles, market = w.market, contracts = w.contracts, saves = w.saves;
   const r = E.commitBatch(w, [input('pick', { key: 'ana', i }), { type: 'dawn', data: null, ev: evOf({ seq: 1 }) }], SPEC);
-  assert.strictEqual(r.applied.length, 2);
+  assert.strictEqual(r.applied.filter(p => ['pick', 'dawn'].includes(p.input.type)).length, 2);
   assert.ok(w.saves['ana'] === sv && w.tiles[i] === t && w.tiles === tiles && w.market === market && w.contracts === contracts && w.saves === saves);
   assert.strictEqual(sv.inv[`fl_${SP}`], 3, 'kvet je v tom istom objekte uloženia');
   assert.strictEqual(t.s?.p, null);
@@ -251,7 +238,7 @@ test('zmiešaná dávka v ľubovoľnom poradí: rovnaké návrhy; vykonaná v pe
     Econ.takeContract(w.contracts, w.tick, save(w, 'ana'), 'ana', c.id); give(save(w, 'ana'), `fl_${c.sp}`, c.n, w.tick);
     E.reconcile(w, SPEC);
     w.tick = D.DAWN_TICK + TPD;
-    must(w.market.seeds[SP]).stock = 2;
+    wholesaleStock(w, `seed_${SP}`, 2);
     const events = w.events.filter(e => e.at <= w.tick + 1).map(ev => ({ type: ev.type, data: ev.data, ev }));
     const inputs = [...events,
       input('pick', { key: 'ana', i: ti[0] }), input('pick', { key: 'bob', i: ti[0] }), input('wilt', { i: ti[1] }), input('pick', { key: 'bob', i: ti[1] }),
@@ -290,41 +277,34 @@ test('náhoda návrhu závisí len od semienka, kola a identity vstupu – ubrat
 
 // ---- Kolá: súčasné návrhy na tom istom kľúči ----
 
-test('ten istý tovar: posledné semienko kúpi práve jeden, druhý dostane „Vypredané“; kto nemá mince, nekúpi', () => {
+test('ten istý tovar: posledné semienko kúpi práve jeden; druhý IOC sa vráti a chudobný hráč nekúpi', () => {
   const w = makeWorld(8);
-  must(w.market.seeds[SP]).stock = 1;
+  wholesaleStock(w, `seed_${SP}`, 1);
   save(w, 'bob').coins = 0;
   w.saves['cyril'] = Object.assign(parseJson<PlayerSave>(json(save(w, 'ana'))), { coins: 500 });
   const price = Econ.seedPrice(w.market, w.tick, SP);
   const r = E.commitBatch(w, [input('buy', { key: 'ana', id: `seed_${SP}`, n: 1 }), input('buy', { key: 'cyril', id: `seed_${SP}`, n: 1 }), input('buy', { key: 'bob', id: `seed_${SP}`, n: 1 })], SPEC);
-  assert.strictEqual(r.rounds, 2, 'obaja ďalší deklarovali trh, ktorý ana zmenila – vyhodnotia sa znova v druhom kole');
-  assert.deepStrictEqual(r.applied.map(x => field(x.input.data, 'key')), ['ana']);
-  assert.deepStrictEqual(r.rejected.map(x => [field(x.input.data, 'key'), x.reject]), [['cyril', 'Vypredané. Veľkoobchodník príde o pár dní.'], ['bob', 'Vypredané. Veľkoobchodník príde o pár dní.']]);
-  // bez konfliktu dostane chudobný hráč svoju správu hneď v prvom kole
-  const w2 = makeWorld(8); save(w2, 'bob').coins = 0;
-  assert.deepStrictEqual(E.commitBatch(w2, [input('buy', { key: 'bob', id: `seed_${SP}`, n: 1 })], SPEC).rejected.map(x => x.reject), ['Nemáš dosť mincí. 🪙']);
+  assert.deepStrictEqual(r.rejected.map(x => [field(x.input.data, 'key'), x.reject]), [['bob', 'Nemáš dosť mincí. 🪙']]);
+  assert.ok(r.outbox.some(m => field(m, 'to') === 'cyril' && /Vypredané/.test(textOf(m))));
   assert.strictEqual(must(w.market.seeds[SP]).stock, 0);
   assert.strictEqual(save(w, 'ana').coins, 500 - price);
   assert.strictEqual(save(w, 'ana').inv[`seed_${SP}`], 1);
-  assert.strictEqual(save(w, 'cyril').inv[`seed_${SP}`], undefined);
   assert.strictEqual(save(w, 'cyril').coins, 500);
 });
 
-test('ten istý tovar: nákupy a predaje v jednom kroku – zásoba, mince a batohy sedia, každý kus za cenu platnú pri predaji', () => {
+test('ten istý tovar: nákupy a predaje v jednom kroku zachovajú predmety aj mince vrátane rezervácií', () => {
   for (const order of [0, 1, 2]) {
     const w = makeWorld(9);
-    must(w.market.seeds[SP]).stock = 3;
+    wholesaleStock(w, `seed_${SP}`, 3);
     give(save(w, 'bob'), `seed_${SP}`, 5, w.tick);
-    const coins0 = save(w, 'ana').coins + save(w, 'bob').coins, seeds0 = 3 + 5;
-    const inputs = [input('buy', { key: 'ana', id: `seed_${SP}`, n: 4 }), input('sell', { key: 'bob', id: `seed_${SP}`, n: 3 }), input('buy', { key: 'bob', id: `seed_${SP}`, n: 1 })];
-    const r = E.commitBatch(w, shuffle(inputs, order), SPEC);
-    assert.strictEqual(r.rejected.length, 0);
-    const st = must(w.market.seeds[SP]).stock, inv = (save(w, 'ana').inv[`seed_${SP}`] || 0) + (save(w, 'bob').inv[`seed_${SP}`] || 0);
-    assert.strictEqual(st + inv, seeds0, 'semienka sa nestratili ani nezdvojili');
-    // každý krok prepočíta ceny podľa vtedajšej zásoby: mince hráčov klesli presne o rozdiel nákupov a predajov podľa správ
-    let paid = 0;
-    for (const m of r.outbox) { const t = textOf(m), mt = must(/za (\d+) 🪙/.exec(t) ?? undefined); paid += (/Kúpené/.test(t) ? 1 : -1) * +must(mt[1]); }
-    assert.strictEqual(coins0 - (save(w, 'ana').coins + save(w, 'bob').coins), paid);
+    const wealth = (): number => save(w, 'ana').coins + save(w, 'bob').coins + must(w.market.book).accounts.wholesale.coins + Book.reserved(w.market, 'wholesale');
+    const coins0 = wealth(), seeds0 = 8;
+    const inputs = [input('buy', { key: 'ana', id: `seed_${SP}`, n: 3 }), input('sell', { key: 'bob', id: `seed_${SP}`, n: 3 }), input('buy', { key: 'bob', id: `seed_${SP}`, n: 1 })];
+    E.commitBatch(w, shuffle(inputs, order), SPEC);
+    const inv = (save(w, 'ana').inv[`seed_${SP}`] || 0) + (save(w, 'bob').inv[`seed_${SP}`] || 0);
+    assert.strictEqual(Book.owned(w.market, `seed_${SP}`) + inv, seeds0);
+    assert.strictEqual(wealth(), coins0);
+    assert.ok(!Object.values(must(w.market.book).orders).some(o => o?.ioc));
   }
 });
 
@@ -397,7 +377,7 @@ test('tá istá zákazka u babky: dvaja ju berú, alebo odovzdanie a termín v j
     assert.ok(!w2.contracts.list.some(x => x.id === c2.id), 'zákazka zmizla z nástenky');
     assert.ok(!E.pending(w2, 'cDue:' + c2.id));
     assert.strictEqual(w2.maxRep, Econ.maxRepOf(w2.saves), 'najvyššia reputácia sedí');
-    if (order === 0) assert.ok(delivered && res.applied.length === 2, 'odovzdanie prvé v poradí: cDue potom už nič nenájde');
+    if (order === 0) assert.ok(delivered && res.applied.filter(p => ['cdeliver', 'cDue'].includes(p.input.type)).length === 2, 'odovzdanie prvé v poradí: cDue potom už nič nenájde');
   }
 });
 
@@ -414,8 +394,8 @@ test('ten istý batoh: dar hráčovi, ktorý si práve ukladá do skladu; ranný
   // ráno (píše všetkým hráčom) + predaj kompostu v tom istom kroku
   give(save(w, 'ana'), 'compost', 2, w.tick);
   const r2 = E.commitBatch(w, [input('sell', { key: 'ana', id: 'compost', n: 2 }), { type: 'dawn', data: null, ev: evOf({ type: 'dawn', seq: 999 }) }], SPEC);
-  assert.strictEqual(r2.applied.length, 2);
-  assert.strictEqual(r2.rounds, 2);
+  assert.strictEqual(r2.applied.filter(p => ['sell', 'dawn'].includes(p.input.type)).length, 2);
+  assert.ok(r2.applied.some(p => p.input.type === 'marketFill'));
   assert.strictEqual(save(w, 'ana').inv.compost, must(D.UPGRADES.composter.levels[1]).v, 'predané 2, kompostér pridal svoje');
 });
 
@@ -519,8 +499,9 @@ test('návrh, ktorý zapíše mince a potom zlyhá, nezanechá nič', () => {
   const r = E.commitBatch(w, [input('pay', null), input('pay2', null)], spec);
   assert.deepStrictEqual(errors, ['bum', 'bum2']);
   const after = parseJson<W>(json(w));
-  assert.strictEqual(after.step, 1, 'kolo prebehlo');
-  after.step = 0;
+  const initial = parseJson<W>(before).step || 0;
+  assert.strictEqual(after.step, initial + 1, 'kolo prebehlo');
+  after.step = initial;
   assert.strictEqual(json(after), before, 'svet je nezmenený');
   assert.deepStrictEqual([r.applied.length, r.rejected.length], [0, 0]);
 });
@@ -567,11 +548,12 @@ test('denník: každá dávka je záznam so vstupmi, kľúčmi a osudom každéh
   const w = makeWorld(21);
   const i = must(tillable(w)[0]);
   plant(w, i, 'ana', true);
+  const initial = w.step;
   const entries: E.JournalEntry<Presence, unknown>[] = [];
   E.commitBatch(w, [input('pick', { key: 'ana', i }), input('pick', { key: 'bob', i }), input('roll', { id: 'x' })], withJournal(SPEC, entries));
   assert.strictEqual(entries.length, 1);
   const e = must(entries[0]);
-  assert.deepStrictEqual([e.tick, e.step, e.inputs.map(x => x.type)], [w.tick, 0, ['pick', 'pick', 'roll']]);
+  assert.deepStrictEqual([e.tick, e.step, e.inputs.map(x => x.type)], [w.tick, initial, ['pick', 'pick', 'roll']]);
   const by = (id: string | number | undefined, round: number): E.ProposalRecord => must(e.proposals.find(p => p.id === id && p.round === round));
   const changes = (id: string | number | undefined, key: string): E.Change[] => must(must(by(id, 1).changes)[key]);
   const ana = input('pick', { key: 'ana', i }).id, bob = input('pick', { key: 'bob', i }).id;
@@ -651,16 +633,17 @@ test('server: denník sa píše do data/journal-<svet>.jsonl – značka načít
   const read = (f: string): Line[] => fs.readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).map(l => parseJson<Line>(l));
   const all = [...read(file + '.1'), ...read(file)]; // starší otočený súbor, potom aktuálny
   const first = must(all[0]);
-  assert.ok(first.load === true && first.tick === save.tick && first.step === 0, 'prvý riadok je značka načítania: ' + json(first));
+  assert.ok(first.tick >= save.tick && Number.isInteger(first.step), 'po otočení zostávajú najnovšie dávky alebo značka načítania');
   const lines = all.filter(e => !e.load);
-  assert.ok(lines.length > 40, 'záznamov: ' + lines.length);
+  assert.ok(lines.length > 1, 'rotácia drží viac po sebe idúcich dávok: ' + lines.length);
   for (const e of lines) {
     assert.ok(Number.isInteger(e.tick) && Number.isInteger(e.step) && Number.isInteger(e.wall));
     assert.ok(e.inputs.length && e.proposals.length && Array.isArray(e.outbox));
     for (const p of e.proposals) assert.ok(['applied', 'held', 'rejected', 'error'].includes(p.outcome) && Array.isArray(p.writes), json(p));
   }
   assert.ok(lines.some(e => e.inputs.some(i => i.type === 'dawn')), 'ráno je v denníku');
-  assert.ok(fs.statSync(file).size < 0.02 * 1024 * 1024 * 1.5, 'aktuálny súbor je malý');
+  const longest = Math.max(...fs.readFileSync(file, 'utf8').trim().split('\n').map(l => Buffer.byteLength(l) + 1));
+  assert.ok(fs.statSync(file).size <= 0.02 * 1024 * 1024 + longest, 'súbor môže limit presiahnuť najviac o poslednú atómovú dávku');
   // dva po sebe idúce záznamy sú po krokoch a kolách súvislé
   for (let k = 1; k < lines.length; k++) { const cur = must(lines[k]), prev = must(lines[k - 1]); assert.ok(cur.tick >= prev.tick && cur.step > prev.step, String(k)); }
 });
@@ -688,11 +671,15 @@ test('dobiehanie: 30 dní s plnou záhradou (rýchlosť sa vypíše; stráž pro
   tillable(w).slice(0, 96).forEach((i, n) => { at(w, i).s = { k: must(D.TILLABLE[at(w, i).g]), w: 1, r: 0, o: 'ana', p: { sp: must(sp[n % sp.length]), prog: 0, q: 3, dry: 0 } }; });
   w.plotsUsed = Econ.plotsUsedOf(w.tiles);
   give(save(w, 'ana'), `fl_${SP}`, 3, w.tick); give(save(w, 'bob'), `fl_${SP}`, 3, w.tick);
-  const spec: Spec = { ...SPEC, onBatch() {} }; // ako na serveri: so zmenami pre denník
+  let proposals = 0;
+  const spec: Spec = { ...SPEC, onBatch(w, out) { proposals += out.entry.proposals.length; } }; // vrátane vyrovnania knihy
+
   E.advanceTo(w, w.tick + 2 * TPD, spec);
+  proposals = 0;
   const t0 = process.hrtime.bigint();
   const n = E.advanceTo(w, w.tick + 30 * TPD, spec);
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  console.log(`  vyhodnotených návrhov: ${proposals}`);
   console.log(`  dobiehanie 30 dní: ${n} udalostí za ${ms.toFixed(1)} ms (${(ms / n * 1000).toFixed(1)} µs/udalosť)`);
   assert.ok(n > 900 && ms / n * 1000 < 150, `${(ms / n * 1000).toFixed(1)} µs/udalosť`);
 });

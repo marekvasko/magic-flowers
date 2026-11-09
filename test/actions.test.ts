@@ -1,3 +1,4 @@
+import { wholesaleStock } from './helpers.ts';
 // Engine v2, fáza 3 (#111): akcie hráčov ako návrhy (actions.js) – rozklad správy act, kľúče po položkách trhu,
 // kolá pri tom istom tovare / políčku / zákazke / batohu, odmietnutia, prítomnosť v denníku a prehranie, server.
 import test from 'node:test';
@@ -163,13 +164,13 @@ test('act: kliknutie sa rozloží na konkrétnu akciu podľa políčka, predmetu
 
 test('trh: kľúče po položkách – nákupy rôznych semienok v jednom kroku sa nebrzdia, posledný kus toho istého kúpi práve jeden', () => {
   const w = makeWorld(2);
-  seedOf(w, SP).stock = 1; seedOf(w, SP2).stock = 5;
+  wholesaleStock(w, `seed_${SP}`, 1); wholesaleStock(w, `seed_${SP2}`, 5);
   const r = E.commitBatch(w, [act('buy', 'ana', { id: `seed_${SP}`, n: 1 }), act('buy', 'bob', { id: `seed_${SP2}`, n: 2 }), act('buy', 'bob', { id: `seed_${SP}`, n: 1 })], SPEC);
-  assert.strictEqual(r.rounds, 2, 'len tretí nákup (to isté semienko) čaká na druhé kolo');
-  assert.deepStrictEqual(r.applied.map(x => field(x.input.data, 'id')), [`seed_${SP}`, `seed_${SP2}`]);
-  assert.deepStrictEqual(r.rejected.map(x => [x.input.actor, x.reject]), [['bob', 'Vypredané. Veľkoobchodník príde o pár dní.']]);
+  assert.equal(r.entry.proposals.find(p => p.id === r.entry.inputs[2]?.id && p.round === 1)?.outcome, 'held');
+  assert.deepStrictEqual(r.applied.filter(x => x.input.type === 'buy').map(x => field(x.input.data, 'id')), [`seed_${SP}`, `seed_${SP2}`]);
+  assert.deepStrictEqual(r.rejected.map(x => [x.input.actor, x.reject]), [['bob', 'Vypredané. V knihe objednávok nie je dosť kusov.']]);
   const first = must(r.applied[0]);
-  assert.deepStrictEqual(first.writes.has(`market:seed_${SP}`) && !first.writes.has('market:*'), true, 'nákup deklaruje len svoju položku');
+  assert.deepStrictEqual([...first.writes].some(k => k.startsWith('market:order:')) && !first.writes.has('market:*'), true, 'nákup deklaruje len svoju položku');
   assert.deepStrictEqual([seedOf(w, SP).stock, seedOf(w, SP2).stock, save(w, 'ana').inv[`seed_${SP}`], save(w, 'bob').inv[`seed_${SP2}`]], [0, 3, 1, 2]);
   // predaj kvetu číta sviatočný násobok z položky kvetu, nie zo súhrnu trhu
   const w2 = makeWorld(3);
@@ -177,15 +178,16 @@ test('trh: kľúče po položkách – nákupy rôznych semienok v jednom kroku 
   // skúšobný sviatok s id skutočného sviatku (test na id nič neoveruje; festEnd tu nenastane)
   const f: ActiveFestival = { id: must(D.FESTIVALS[0]).id, name: 'Skúška', icon: '✨', mult: { [SP]: 2 }, until: w2.tick + TPD };
   w2.market.festival = f; Econ.setFestival(w2.market, f);
+  Econ.initEconomy(w2);
   const price = Econ.flowerPrice(w2.market, w2.tick, SP);
   assert.strictEqual(must(w2.market.flowers[SP]).fest, 2);
   const r2 = E.commitBatch(w2, [act('sell', 'ana', { id: `fl_${SP}`, n: 1 })], SPEC);
-  assert.deepStrictEqual([...must(r2.applied[0]).writes].sort(), [`market:fl_${SP}`, 'save:ana']);
+  assert.ok(r2.applied.some(p => p.input.type === 'marketFill' && p.writes.has('save:ana')));
   assert.strictEqual(save(w2, 'ana').coins, 500 + price);
   // predaj bez položky trhu (elixír) deklaruje len uloženie
   give(save(w2, 'ana'), 'po_sliz', 1, w2.tick);
   const r3 = E.commitBatch(w2, [act('sell', 'ana', { id: 'po_sliz', n: 1 })], SPEC);
-  assert.deepStrictEqual([...must(r3.applied[0]).writes], ['save:ana']);
+  assert.ok([...must(r3.applied[0]).writes].some(k => k.startsWith('market:order:')));
   // chudobný hráč a neznámy tovar
   save(w2, 'bob').coins = 0;
   const r4 = E.commitBatch(w2, [act('buy', 'bob', { id: `seed_${SP}`, n: 1 }), act('buy', 'ana', { id: 'lopata', n: 1 })], SPEC);
@@ -273,7 +275,7 @@ test('zmiešaná dávka akcií v ľubovoľnom poradí dáva rovnaké návrhy; vy
     const ti = tillable(w);
     plant(w, ti[0], 'ana', true); plant(w, ti[1], 'bob', true); plant(w, ti[2], 'ana', false);
     give(save(w, 'ana'), `fl_${SP}`, 4, w.tick); give(save(w, 'bob'), `seed_${SP}`, 2, w.tick); give(save(w, 'ana'), 'po_rast', 1, w.tick); give(save(w, 'bob'), 'fl_papradie', 1, w.tick);
-    seedOf(w, SP).stock = 2;
+    wholesaleStock(w, `seed_${SP}`, 2);
     const c = must(w.contracts.list.find(x => !x.takenBy));
     const inputs = [
       act('pick', 'ana', { i: ti[0] }), act('pick', 'bob', { i: ti[0] }), act('pick', 'bob', { i: ti[1] }), act('water', 'ana', { i: ti[2] }),
@@ -476,7 +478,7 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
   give(save(w, 'ana'), `seed_${SP}`, 3, w.tick); give(save(w, 'ana'), `fl_${SP}`, 2, w.tick);
   w.icehouse = partial<Icehouse>({ built: false, ice: 0 }); Ice.applyIcehouse(w.icehouse, w.tiles);
   save(w, 'bob').rep = must(D.REP_LEVELS[D.ICEHOUSE.rep]); save(w, 'bob').coins = D.ICEHOUSE.price + 10;
-  seedOf(w, SP).stock = 1;
+  wholesaleStock(w, `seed_${SP}`, 1);
   // uloženie starého formátu (v9) – migrácia na serveri ho doplní
   const save9 = Object.assign(parseJson<JsonRecord>(json(w)), { v: 9, mode: 'paused', wall: Date.now(), tiles: w.tiles.map(t => ({ s: t.s })), hory: Ice.saveHory(w.hory), les: null, pomedzieSeed: 1, lesSeed: 1 });
   fs.writeFileSync(path.join(dir, 'room-akcie.json'), json(save9));
@@ -619,10 +621,10 @@ test('uloženie v8 (288 krokov za deň) sa prevedie na v9: každý krok ×40 –
   const proc = await startServer(dir, port);
   try { const c = await client(port, 'stary', 'Eva'); c.ws.close(); await sleep(100); } finally { await stopServer(proc); }
   const s = readJson<SaveFile>(path.join(dir, 'room-stary.json'));
-  assert.strictEqual(s.v, 11);
+  assert.strictEqual(s.v, 12);
   assert.strictEqual(s.tick, old.tick * K);
   assert.deepStrictEqual([D.dayOfTick(s.tick), D.minOfTick(s.tick)], [3, 450], 'deň 3, 7:30 ako predtým');
-  assert.deepStrictEqual(s.events.filter(e => e.key !== 'dawn' && !/^(delivery|npc_|fest|spider:|kz:|kriziakTrip|webDawn|weave:)/.test(e.key ?? '')).map(e => [e.key, e.at]).sort(), [['cDue:1', 1000 * K], ['hourly', 666 * K], ['vilyEnd:eva', 700 * K]]);
+  assert.deepStrictEqual(s.events.filter(e => e.key !== 'dawn' && !/^(marketExpire:|delivery|npc_|fest|spider:|kz:|kriziakTrip|webDawn|weave:)/.test(e.key ?? '')).map(e => [e.key, e.at]).sort(), [['cDue:1', 1000 * K], ['hourly', 666 * K], ['vilyEnd:eva', 700 * K]]);
   const eva = must(s.saves['eva']), fb = must(must(eva.fb?.[`fl_${SP}`])[0]);
   assert.deepStrictEqual([eva.vily, fb.a, fb.at], [700 * K, 30 * K, 600 * K]);
   assert.ok((eva.lastTick ?? 0) >= 650 * K, 'lastTick preškálovaný (a pri odchode obnovený)');
@@ -676,7 +678,7 @@ test('pohyb a nákup v jednom rámci: uloženie (save:) polohu neprepíše, polo
   const w = makeWorld(18);
   const price = Econ.seedPrice(w.market, w.tick, SP);
   const r = E.commitBatch(w, [act('buy', 'ana', { id: `seed_${SP}`, n: 1 }), act('pos', 'ana', { x: 7.5, y: 7.5 }), act('pos', 'bob', { x: 8.5, y: 7.5 }), act('sell', 'bob', { id: 'hoe', n: 1 })], SPEC);
-  assert.strictEqual(r.rounds, 1, 'pos a save sú nezávislé výrezy');
+  assert.ok(r.entry.proposals.filter(p => ['pos', 'buy'].includes(p.type) && p.outcome === 'applied').every(p => p.round === 1), 'pos a vklad objednávky sú nezávislé; plnenie nasleduje potom');
   assert.deepStrictEqual([save(w, 'ana').coins, save(w, 'ana').x, save(w, 'ana').y, save(w, 'ana').inv[`seed_${SP}`]], [500 - price, 7.5, 7.5, 1]);
   assert.deepStrictEqual([save(w, 'bob').x, save(w, 'bob').coins], [8.5, 500]);
   // ráno píše všetky uloženia (save:*) – poloha sa nemení ani nezmizne
