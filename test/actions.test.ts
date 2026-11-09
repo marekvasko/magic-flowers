@@ -477,6 +477,7 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
   w.icehouse = partial<Icehouse>({ built: false, ice: 0 }); Ice.applyIcehouse(w.icehouse, w.tiles);
   save(w, 'bob').rep = must(D.REP_LEVELS[D.ICEHOUSE.rep]); save(w, 'bob').coins = D.ICEHOUSE.price + 10;
   seedOf(w, SP).stock = 1;
+  save(w, 'ana').wellFern = 3; // voliteľné pole uloženia (studňa, #100): prežije prevod, načítanie aj uloženie
   // uloženie starého formátu (v9) – migrácia na serveri ho doplní
   const save9 = Object.assign(parseJson<JsonRecord>(json(w)), { v: 9, mode: 'paused', wall: Date.now(), tiles: w.tiles.map(t => ({ s: t.s })), hory: Ice.saveHory(w.hory), les: null, pomedzieSeed: 1, lesSeed: 1 });
   fs.writeFileSync(path.join(dir, 'room-akcie.json'), json(save9));
@@ -557,6 +558,7 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
   const types = entries.flatMap(e => e.inputs.map(i => i.type));
   for (const t of ['join', 'pos', 'till', 'plant', 'water', 'buy', 'sell', 'store', 'fillIce', 'build', 'ctake', 'leave']) assert.ok(types.includes(t), t);
   const final = readJson<SaveFile>(path.join(dir, 'room-akcie.json'));
+  assert.strictEqual(must(final.saves['ana']).wellFern, 3, 'wellFern sa uloží a načíta bez zmeny verzie uloženia');
   const start = parseJson<SaveFile>(json(save9));
   const { tiles: savedTiles, hory: savedHory, les: savedLes, ...rest } = start;
   const room = testWorld({ ...rest, tiles: D.buildMap().map((g, i) => ({ g, s: must(savedTiles[i]).s })), hory: Ice.loadHory(savedHory) });

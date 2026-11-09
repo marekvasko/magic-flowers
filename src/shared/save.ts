@@ -60,6 +60,7 @@ export interface PlayerSave {
   y: number;
   area?: AreaId;              // staršie uloženia ju nemajú (= záhrada)
   lastTick?: number;          // kedy bol hráč naposledy v hre
+  wellFern?: number;          // v ktorom období (seasonNo) mu studňa naposledy dala papraďové semienko
 }
 
 // ---- Udalosti v plánovači (engine.js) ----
