@@ -662,9 +662,9 @@ export function advanceTo<W extends EngineWorld, P extends { key: string }, M>(w
 }
 
 // Dobehne reálny čas: posunie svet o toľko celých krokov, koľko ubehlo od world.wall (najviac maxTicks).
-// Vráti, o koľko krokov sa čas posunul.
-export function advance<W extends EngineWorld, P extends { key: string }, M>(world: W, nowMs: number, spec: Spec<W, P, M>, maxTicks?: number): number {
-  const ms = tickMs(world);
+// speed > 1 čas zrýchli (2 = dvojnásobok krokov za sekundu), < 1 spomalí. Vráti, o koľko krokov sa čas posunul.
+export function advance<W extends EngineWorld, P extends { key: string }, M>(world: W, nowMs: number, spec: Spec<W, P, M>, maxTicks?: number, speed = 1): number {
+  const ms = tickMs(world) / speed;
   // tickMs nie je celé číslo – malá tolerancia, aby zaokrúhlenie wall nestratilo celý krok
   const due = Math.min(Math.floor((nowMs - world.wall) / ms + 1e-9), maxTicks || Infinity);
   if (!(due > 0)) return 0;

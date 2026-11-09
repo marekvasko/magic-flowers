@@ -55,6 +55,7 @@ See `README.md` for gameplay and architecture. [`CONTRIBUTING.md`](CONTRIBUTING.
 
 - Pipeline: `Testy` (syntax check, `npm run typecheck`, `npm run build`, `npm run lint`, `npm test`) → `Docker image` (build, smoke test, push to `ghcr.io/marekvasko/magic-flowers`) → deploy.
 - The deploy jobs run on a **self-hosted runner on the host** (label `magicflowers`) and call `scripts/deploy.sh`. One `docker-compose.yml` serves all environments via `NAME`, `DOMAIN` and `IMAGE`.
+- **Cheat key:** the deploy jobs pass the GitHub environment secret `DEBUG_CHEATS_KEY` (separate values for `production` and for `dev` / `preview`) to the container; it turns on the cheats in /debug (#153). Never print or commit it.
 - PRs from forks are tested but **never deployed**. Fork workflow runs need maintainer approval. Never approve one without reading its workflow changes, because the runner has Docker access on the host.
 - The `Testy` and `Docker image` checks must pass before merging into `dev` or `main`.
 - **Missed GitHub events** (outages) can leave staging stale or a merged PR's preview running. To recover:

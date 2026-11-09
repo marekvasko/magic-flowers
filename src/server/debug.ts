@@ -1,6 +1,7 @@
 // Ladiaca stránka /debug (#64, #74): statické súbory z debug/ a API len na čítanie, prístupné priamo (bez kľúča).
 // Nič sa tu nedá zmeniť: čítanie sveta ho nikdy nenačíta do servera, neposúva čas ani neukladá.
 // Kľúče hráčov (ich identita, s ňou by sa dalo prihlásiť za hráča) sa nikdy neukážu.
+// Cheaty (záložka Cheats, POST /api/debug/cheat s tajným kľúčom) sú zvlášť v cheats.ts (#153).
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
