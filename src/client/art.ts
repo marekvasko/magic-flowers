@@ -1,16 +1,27 @@
 // Procedurálna grafika – textúry zeme, kvety, postavičky a ikony (3D ich používa ako textúry a sprity).
-const Art = (() => {
-  const D = window.GameData;
+import * as D from '../shared/data.ts';
+import type { Ground, Look, SpeciesId } from '../shared/data.ts';
+import type { SoilView } from '../shared/protocol.ts';
+import { must } from '../shared/util.ts';
+
+type C2 = CanvasRenderingContext2D;
+// Voľby kreslenia rastliny (plant): zahynutá, v noci (papraď svieti), odkvitá, pripravená na zber (trblietka)
+export interface PlantOpts { dead?: boolean; night?: boolean; wilting?: boolean; ready?: boolean }
+// Voľby postavičky (char): plazí sa, tancuje, hrabe v tráve (dig = čas v s), babka, lampáš v ruke ('lit' = svieti), bez tieňa
+export interface CharOpts { crawl?: boolean; dance?: boolean; dig?: number; babka?: boolean; lamp?: 'lit' | boolean; noShadow?: boolean }
+// Prechod na okraji plochy: strana, kam vedie, a ikona cieľovej plochy
+export interface GateInfo { side: 'n' | 's' | 'w' | 'e'; icon: string }
+export const Art = (() => {
   const TAU = Math.PI * 2;
 
-  function ell(c, x, y, rx, ry, rot, fill, stroke) {
+  function ell(c: C2, x: number, y: number, rx: number, ry: number, rot: number | null, fill: string | null, stroke?: string | null): void {
     c.beginPath(); c.ellipse(x, y, Math.max(0.1, rx), Math.max(0.1, ry), rot || 0, 0, TAU);
     if (fill) { c.fillStyle = fill; c.fill(); }
     if (stroke) { c.strokeStyle = stroke; c.lineWidth = Math.max(0.6, rx * 0.12); c.stroke(); }
   }
-  function circ(c, x, y, r, fill) { c.beginPath(); c.arc(x, y, Math.max(0.1, r), 0, TAU); c.fillStyle = fill; c.fill(); }
-  function hash(x, y, k) { let h = (x * 374761393 + y * 668265263 + (k || 0) * 2147483647) | 0; h = (h ^ (h >>> 13)) * 1274126177; return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
-  function shade(hex, f) {
+  function circ(c: C2, x: number, y: number, r: number, fill: string | CanvasGradient): void { c.beginPath(); c.arc(x, y, Math.max(0.1, r), 0, TAU); c.fillStyle = fill; c.fill(); }
+  function hash(x: number, y: number, k?: number): number { let h = (x * 374761393 + y * 668265263 + (k || 0) * 2147483647) | 0; h = (h ^ (h >>> 13)) * 1274126177; return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
+  function shade(hex: string, f: number): string {
     const n = parseInt(hex.slice(1), 16);
     let r = n >> 16, g = (n >> 8) & 255, b = n & 255;
     if (f < 0) { r *= 1 + f; g *= 1 + f; b *= 1 + f; } else { r += (255 - r) * f; g += (255 - g) * f; b += (255 - b) * f; }
@@ -18,7 +29,7 @@ const Art = (() => {
   }
   const OUT = 'rgba(40,30,20,0.35)';
 
-  function petals(c, x, y, n, len, wid, color, rot, stroke) {
+  function petals(c: C2, x: number, y: number, n: number, len: number, wid: number, color: string, rot: number, stroke: boolean): void {
     for (let i = 0; i < n; i++) {
       const a = (rot || 0) + i * TAU / n;
       ell(c, x + Math.sin(a) * len * 0.55, y - Math.cos(a) * len * 0.55, wid, len * 0.55, a, color, stroke ? OUT : null);
@@ -26,7 +37,7 @@ const Art = (() => {
   }
 
   // Kvet (rozkvitnutá hlavička) so stredom v x,y a polomerom r
-  function bloom(c, key, x, y, r, t, night) {
+  function bloom(c: C2, key: SpeciesId, x: number, y: number, r: number, t: number, night: boolean | undefined): void {
     const sp = D.SPECIES[key];
     const col = sp.color, cen = sp.center;
     switch (sp.shape) {
@@ -132,11 +143,10 @@ const Art = (() => {
     }
   }
 
-  function leaf(c, x, y, len, ang, col) { ell(c, x + Math.cos(ang) * len * 0.5, y + Math.sin(ang) * len * 0.5, len * 0.5, len * 0.2, ang, col); }
+  function leaf(c: C2, x: number, y: number, len: number, ang: number, col: string): void { ell(c, x + Math.cos(ang) * len * 0.5, y + Math.sin(ang) * len * 0.5, len * 0.5, len * 0.2, ang, col); }
 
   // Rastlina na políčku – x je stred, y spodok, s veľkosť políčka
-  function plant(c, key, stage, x, y, s, t, o) {
-    o = o || {};
+  function plant(c: C2, key: SpeciesId, stage: number, x: number, y: number, s: number, t: number, o: PlantOpts = {}): void {
     const sp = D.SPECIES[key];
     const sway = Math.sin(t * 2 + x * 0.05) * 0.06;
     const green = o.dead ? '#8a6a3a' : '#3f8f2f', leafC = o.dead ? '#9b7b45' : '#56a83a';
@@ -194,7 +204,7 @@ const Art = (() => {
   // dir: 0 dole, 1 vľavo, 2 vpravo, 3 hore, 4 vľavo dole, 5 vpravo dole, 6 vľavo hore, 7 vpravo hore
   // o.crawl: plazí sa (pokrčené kolená, predklon)
   // o.dig: čas v s, keď hráč hrabe v tráve – je prikrčený a rukami striedavo hrabe pred sebou
-  function lantern(c, x, y, h, lit) {
+  function lantern(c: C2, x: number, y: number, h: number, lit: boolean): void {
     const w = h * 0.5;
     c.strokeStyle = '#3a3a3a'; c.lineWidth = Math.max(1, h * 0.05);
     c.beginPath(); c.arc(x, y + h * 0.16, h * 0.14, Math.PI, TAU); c.stroke(); // ucho
@@ -207,8 +217,8 @@ const Art = (() => {
     c.fillRect(x - w * 0.04, y + h * 0.3, w * 0.08, h * 0.5); // priečka
   }
 
-  function char(c, x, y, s, look, dir, phase, o) {
-    o = o || {};
+  function char(c: C2, x: number, y: number, s: number, look: Partial<Look> | null, dir: number, phase: number, o: CharOpts = {}): void {
+    look = look || {};
     const skin = '#f2c9a0';
     let d = dir;
     if (o.dig) { o = Object.assign({}, o, { crawl: true }); phase = 0; }
@@ -240,7 +250,7 @@ const Art = (() => {
     c.fillStyle = shirt;
     c.beginPath();
     if (o.babka) { c.moveTo(x - s * 0.26, yb - s * 0.02); c.lineTo(x - s * 0.16, yb - s * 0.55); c.lineTo(x + s * 0.16, yb - s * 0.55); c.lineTo(x + s * 0.26, yb - s * 0.02); }
-    else { c.roundRect ? c.roundRect(x - s * 0.19, yb - s * 0.56, s * 0.38, s * 0.38, s * 0.1) : c.rect(x - s * 0.19, yb - s * 0.56, s * 0.38, s * 0.38); }
+    else c.roundRect(x - s * 0.19, yb - s * 0.56, s * 0.38, s * 0.38, s * 0.1);
     c.fill();
     if (o.babka) { c.fillStyle = '#f5f0e0'; c.fillRect(x - s * 0.12, yb - s * 0.4, s * 0.24, s * 0.3); c.fillStyle = '#e57373'; for (let i = 0; i < 3; i++) circ(c, x - s * 0.06 + i * s * 0.06, yb - s * 0.2, s * 0.02, '#e57373'); }
     else { c.fillStyle = 'rgba(0,0,0,0.12)'; c.fillRect(x - s * 0.19, yb - s * 0.26, s * 0.38, s * 0.06); }
@@ -248,7 +258,7 @@ const Art = (() => {
     const sw = o.dance ? Math.sin(phase * 3) * s * 0.15 : step;
     if (o.dig) { // obe ruky dole pred telom, jemne a striedavo hrabú
       const k1 = Math.sin(o.dig * 8), k2 = Math.sin(o.dig * 8 + Math.PI);
-      const reach = k => fx ? fx * s * (0.18 + 0.04 * k) : 0;
+      const reach = (k: number): number => fx ? fx * s * (0.18 + 0.04 * k) : 0;
       circ(c, x + (fx ? reach(k1) - fx * s * 0.06 : -s * 0.15 + k1 * s * 0.015), yb - s * 0.2 + k1 * s * 0.03, s * 0.065, skin);
       circ(c, x + (fx ? reach(k2) : s * 0.15 - k2 * s * 0.015), yb - s * 0.2 + k2 * s * 0.03, s * 0.065, skin);
     } else {
@@ -296,35 +306,37 @@ const Art = (() => {
   }
 
   // ---- Prostredie ----
-  const GRASS = ['#86c95b', '#74b84a', '#aab24e', '#e7edf0'];
-  const FOREST = ['#5f9a46', '#4f8a3c', '#8a8a3f', '#cfd8dc'];
-  const ALP = ['#8cc76a', '#7fbb5c', '#b0a95a', '#eef3f6'];
-  const MEADOW = ['#8ccf5e', '#86c255', '#b5b553', '#e9eff2'];
-  const MOSS = ['#4f7a3a', '#466f35', '#6b6634', '#cdd6d9']; // Les divov: tmavý mach pod stromami (v zime len poprašok snehu)
-  const GLADE = ['#7cb557', '#6ea64b', '#a39d4a', '#e3eaee']; // čistina v Lese divov
+  type Seasonal = readonly [string, string, string, string];
+  const GRASS: Seasonal = ['#86c95b', '#74b84a', '#aab24e', '#e7edf0'];
+  const FOREST: Seasonal = ['#5f9a46', '#4f8a3c', '#8a8a3f', '#cfd8dc'];
+  const ALP: Seasonal = ['#8cc76a', '#7fbb5c', '#b0a95a', '#eef3f6'];
+  const MEADOW: Seasonal = ['#8ccf5e', '#86c255', '#b5b553', '#e9eff2'];
+  const MOSS: Seasonal = ['#4f7a3a', '#466f35', '#6b6634', '#cdd6d9']; // Les divov: tmavý mach pod stromami (v zime len poprašok snehu)
+  const GLADE: Seasonal = ['#7cb557', '#6ea64b', '#a39d4a', '#e3eaee']; // čistina v Lese divov
+  const bySeason = (list: Seasonal, se: number): string => list[se & 3] ?? list[0];
 
   // gate = { side: 'n'|'s'|'w'|'e', icon } – na ktorú stranu prechod vedie a ikona cieľovej plochy (inak podľa riadku)
-  function ground(c, g, x, y, s, se, t, tx, ty, gate) {
+  function ground(c: C2, g: Ground, x: number, y: number, s: number, se: number, t: number, tx: number, ty: number, gate: GateInfo | null): void {
     const h = hash(tx, ty);
-    let base;
+    let base: string;
     switch (g) {
       case 'path': case 'majster': base = se === 3 ? '#e0dccf' : '#d9b77e'; break;
       case 'sand': base = se === 3 ? '#efece0' : '#ecd9a0'; break;
       case 'rock': case 'boulder': base = se === 3 ? '#d8dcde' : '#a9a39a'; break;
       case 'water': base = se === 3 ? '#a9d4ec' : '#4aa3df'; break;
-      case 'forest': case 'ring': case 'shroom': case 'tree': case 'fern': case 'bush': base = FOREST[se]; break;
-      case 'meadow': base = MEADOW[se]; break;
-      case 'moss': case 'fungi': case 'giant': case 'trunk': case 'log': base = MOSS[se]; break;
+      case 'forest': case 'ring': case 'shroom': case 'tree': case 'fern': case 'bush': base = bySeason(FOREST, se); break;
+      case 'meadow': base = bySeason(MEADOW, se); break;
+      case 'moss': case 'fungi': case 'giant': case 'trunk': case 'log': base = bySeason(MOSS, se); break;
       case 'roots': base = se === 3 ? '#d6d2c4' : '#b99a68'; break; // korene cez chodník
-      case 'glade': base = GLADE[se]; break;
-      case 'alp': case 'spruce': base = ALP[se]; break;
+      case 'glade': base = bySeason(GLADE, se); break;
+      case 'alp': case 'spruce': base = bySeason(ALP, se); break;
       case 'scree': base = se === 3 ? '#e3e7ea' : '#b7b1a6'; break;
       case 'snow': base = se === 3 ? '#f7fbfd' : '#eaf1f5'; break;
       case 'glacier': base = '#a9d4ec'; break; // ako ľad na jazierku v zime
       case 'cliff': base = se === 3 ? '#cfd4d7' : '#7d776f'; break;
       case 'gate': base = se === 3 ? '#e0dccf' : '#d9b77e'; break;
       case 'lot': base = se === 3 ? '#e4e1d8' : '#cfc6b4'; break;
-      default: base = GRASS[se];
+      default: base = bySeason(GRASS, se);
     }
     c.fillStyle = base; c.fillRect(x, y, s + 1, s + 1);
     if (g === 'alp' || g === 'spruce') {
@@ -371,7 +383,7 @@ const Art = (() => {
     }
     if (g === 'lot') { // stavebný pozemok: štrk a kolíky v rohoch
       for (let i = 0; i < 5; i++) circ(c, x + hash(tx, ty, i) * s, y + hash(tx, ty, i + 5) * s, s * 0.03, 'rgba(110,100,85,0.4)');
-      const DL = D.DIELNA && D.DIELNA.lot, L = DL && tx >= DL.x0 && tx <= DL.x1 && ty >= DL.y0 && ty <= DL.y1 ? DL : { x0: 0, y0: 0 }; // kolíky v rohoch pozemku (ľadovne či Dielne)
+      const DL = D.DIELNA.lot, L = tx >= DL.x0 && tx <= DL.x1 && ty >= DL.y0 && ty <= DL.y1 ? DL : { x0: 0, y0: 0 }; // kolíky v rohoch pozemku (ľadovne či Dielne)
       c.fillStyle = '#8b5a2b'; c.fillRect(x + s * ((tx - L.x0) % 2 ? 0.82 : 0.08), y + s * ((ty - L.y0) % 2 ? 0.8 : 0.08), s * 0.1, s * 0.12);
       return;
     }
@@ -401,9 +413,9 @@ const Art = (() => {
         c.beginPath(); c.moveTo(gx, gy); c.lineTo(gx - s * 0.03, gy - s * 0.1); c.moveTo(gx, gy); c.lineTo(gx + s * 0.04, gy - s * 0.09); c.stroke();
       }
       // kvety podľa obdobia: jar biele a žlté, leto maky, nevädze a margaréty, jeseň fialové astry
-      const cols = [['#fff', '#ffe14d', '#fff', '#b39ddb'], ['#e8261f', '#3f6fd8', '#fff', '#ffe14d'], ['#8a63d2', '#d58cd6', '#ffcc33', '#fff']][se];
+      const cols = must([['#fff', '#ffe14d', '#fff', '#b39ddb'], ['#e8261f', '#3f6fd8', '#fff', '#ffe14d'], ['#8a63d2', '#d58cd6', '#ffcc33', '#fff']][se]);
       const n = h > 0.5 ? 3 : h > 0.2 ? 2 : 1;
-      for (let i = 0; i < n; i++) circ(c, x + (0.12 + 0.76 * hash(tx, ty, 30 + i)) * s, y + (0.12 + 0.76 * hash(tx, ty, 40 + i)) * s, s * 0.045, cols[(hash(tx, ty, 50 + i) * 4) | 0]);
+      for (let i = 0; i < n; i++) circ(c, x + (0.12 + 0.76 * hash(tx, ty, 30 + i)) * s, y + (0.12 + 0.76 * hash(tx, ty, 40 + i)) * s, s * 0.045, must(cols[(hash(tx, ty, 50 + i) * 4) | 0]));
       if (se === 2 && h > 0.7) ell(c, x + hash(tx, ty, 7) * s, y + hash(tx, ty, 8) * s, s * 0.06, s * 0.035, h * 6, '#d9822b');
       return;
     }
@@ -469,19 +481,19 @@ const Art = (() => {
       }
       if (g === 'grass' && h > 0.86) {
         const cols = ['#fff', '#ffe14d', '#ff9ecf', '#b39ddb'];
-        circ(c, x + hash(tx, ty, 3) * s, y + hash(tx, ty, 4) * s, s * 0.04, cols[(h * 40 | 0) % 4]);
+        circ(c, x + hash(tx, ty, 3) * s, y + hash(tx, ty, 4) * s, s * 0.04, must(cols[(h * 40 | 0) % 4]));
       }
       if (se === 2 && h > 0.6) ell(c, x + hash(tx, ty, 7) * s, y + hash(tx, ty, 8) * s, s * 0.06, s * 0.035, h * 6, '#d9822b');
     } else if (h > 0.7) circ(c, x + hash(tx, ty, 3) * s, y + hash(tx, ty, 4) * s, s * 0.05, '#fff');
     if (g === 'ring') { c.fillStyle = 'rgba(255,255,255,0.06)'; c.fillRect(x, y, s, s); }
   }
 
-  function soil(c, so, x, y, s, se) {
+  function soil(c: C2, so: Pick<SoilView, 'k' | 'w' | 'r'>, x: number, y: number, s: number, se: number): void {
     const m = s * 0.06;
     let col = so.k === 'sand' ? '#c9a26a' : so.k === 'rock' ? '#8d7b6a' : '#8b5a2b';
     if (so.w) col = shade(col, -0.35);
     c.fillStyle = col;
-    if (c.roundRect) { c.beginPath(); c.roundRect(x + m, y + m, s - 2 * m, s - 2 * m, s * 0.12); c.fill(); } else c.fillRect(x + m, y + m, s - 2 * m, s - 2 * m);
+    c.beginPath(); c.roundRect(x + m, y + m, s - 2 * m, s - 2 * m, s * 0.12); c.fill();
     c.strokeStyle = 'rgba(0,0,0,0.15)'; c.lineWidth = Math.max(1, s * 0.03);
     for (let i = 1; i < 3; i++) { c.beginPath(); c.moveTo(x + s * 0.18, y + s * i / 3); c.lineTo(x + s * 0.82, y + s * i / 3); c.stroke(); }
     if (so.r) for (let i = 0; i < 5; i++) circ(c, x + s * (0.2 + 0.6 * hash(i, x | 0)), y + s * (0.2 + 0.6 * hash(y | 0, i)), s * 0.035, '#3a2410');
@@ -489,7 +501,7 @@ const Art = (() => {
     if (se === 3 && !so.w) { c.fillStyle = 'rgba(255,255,255,0.35)'; c.fillRect(x + m, y + m, s - 2 * m, s * 0.25); }
   }
 
-  function shroom(c, x, y, s, night, t) {
+  function shroom(c: C2, x: number, y: number, s: number, night: boolean, t: number): void {
     if (night) {
       const g = c.createRadialGradient(x, y - s * 0.15, 0, x, y - s * 0.15, s * 0.5);
       g.addColorStop(0, 'rgba(180,255,220,' + (0.35 + 0.15 * Math.sin(t * 2 + x)) + ')'); g.addColorStop(1, 'rgba(180,255,220,0)');
@@ -501,17 +513,18 @@ const Art = (() => {
   }
 
   // ---- Ikony ----
-  const iconCache = {};
-  function icon(id) {
-    if (iconCache[id]) return iconCache[id];
+  const iconCache = new Map<string, string>();
+  function icon(id: string): string {
+    const hit = iconCache.get(id);
+    if (hit) return hit;
     const cv = document.createElement('canvas'); cv.width = cv.height = 64;
-    const c = cv.getContext('2d');
+    const c = must(cv.getContext('2d') ?? undefined);
     const t = 1;
     if (id === 'hoe') {
       c.strokeStyle = '#8b5a2b'; c.lineWidth = 6; c.lineCap = 'round'; c.beginPath(); c.moveTo(14, 54); c.lineTo(46, 14); c.stroke();
       c.fillStyle = '#9aa4ad'; c.beginPath(); c.moveTo(40, 10); c.lineTo(58, 16); c.lineTo(54, 26); c.lineTo(44, 20); c.fill();
     } else if (id === 'can') {
-      c.fillStyle = '#4a9fd8'; c.beginPath(); c.roundRect ? c.roundRect(14, 24, 30, 28, 6) : c.rect(14, 24, 30, 28); c.fill();
+      c.fillStyle = '#4a9fd8'; c.beginPath(); c.roundRect(14, 24, 30, 28, 6); c.fill();
       c.strokeStyle = '#4a9fd8'; c.lineWidth = 5; c.beginPath(); c.moveTo(42, 40); c.lineTo(58, 22); c.stroke();
       c.beginPath(); c.arc(29, 24, 11, Math.PI, 0); c.stroke();
       ell(c, 58, 21, 4, 3, 0.8, '#2f7fb8');
@@ -544,7 +557,7 @@ const Art = (() => {
       c.strokeStyle = '#b7c3cc'; c.lineWidth = 1.5;
       for (let i = 0; i < 5; i++) { c.beginPath(); c.ellipse(32, 40, 15 - i * 2, 6 + i * 1.5, 0.6 + i * 0.5, 0, TAU); c.stroke(); }
     } else if (id === 'blanket') { // hodvábna prikrývka: zložená, so strieborným leskom a prešívaním
-      const fold = (y, h, col) => { c.fillStyle = col; c.beginPath(); c.moveTo(10, y); c.quadraticCurveTo(32, y - 4, 54, y); c.lineTo(54, y + h); c.quadraticCurveTo(32, y + h - 4, 10, y + h); c.fill(); };
+      const fold = (y: number, h: number, col: string): void => { c.fillStyle = col; c.beginPath(); c.moveTo(10, y); c.quadraticCurveTo(32, y - 4, 54, y); c.lineTo(54, y + h); c.quadraticCurveTo(32, y + h - 4, 10, y + h); c.fill(); };
       fold(40, 16, '#c9ced6'); fold(28, 14, '#dfe4ea'); fold(16, 14, '#f4f6f9');
       c.strokeStyle = '#9aa5b1'; c.lineWidth = 1.2; c.setLineDash([3, 3]);
       for (const y of [23, 35, 48]) { c.beginPath(); c.moveTo(14, y); c.quadraticCurveTo(32, y - 3, 50, y); c.stroke(); }
@@ -556,25 +569,25 @@ const Art = (() => {
       ell(c, 30, 40, 7, 4, 0.5, '#8d6e3f'); ell(c, 38, 44, 6, 3.5, -0.4, '#a1824a'); ell(c, 26, 47, 5, 3, 0.2, '#7a5a30');
       c.font = 'bold 22px system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
       c.lineWidth = 4; c.strokeStyle = '#fff'; c.strokeText('?', 46, 18); c.fillStyle = '#5b3a1a'; c.fillText('?', 46, 18);
-      c.font = '14px serif'; c.fillText(D.SEASON_ICONS[+id.slice(5)], 16, 14);
-    } else if (id.startsWith('seed_')) {
-      const k = id.slice(5);
+      c.font = '14px serif'; c.fillText(D.SEASON_ICONS[+id.slice(5)] ?? '', 16, 14);
+    } else if (id.startsWith('seed_') && D.isSpeciesId(id.slice(5))) {
+      const k = id.slice(5) as SpeciesId; // overené riadkom vyššie (isSpeciesId)
       c.fillStyle = '#e9d3a0'; c.beginPath(); c.moveTo(14, 12); c.lineTo(50, 12); c.lineTo(52, 56); c.lineTo(12, 56); c.fill();
       c.strokeStyle = '#b8955a'; c.lineWidth = 2; c.stroke();
       c.fillStyle = '#c9a46a'; c.fillRect(14, 12, 36, 7);
-      if (D.SPECIES[k] && D.SPECIES[k].magic) { c.fillStyle = 'rgba(180,120,255,0.3)'; c.fillRect(12, 12, 40, 44); }
+      if (D.SPECIES[k].magic) { c.fillStyle = 'rgba(180,120,255,0.3)'; c.fillRect(12, 12, 40, 44); }
       bloom(c, k, 32, 36, 12, t, true);
-    } else if (id.startsWith('fl_')) {
-      const k = id.slice(3);
+    } else if (id.startsWith('fl_') && D.isSpeciesId(id.slice(3))) {
+      const k = id.slice(3) as SpeciesId; // overené riadkom vyššie (isSpeciesId)
       c.strokeStyle = '#3f8f2f'; c.lineWidth = 3; c.beginPath(); c.moveTo(32, 60); c.lineTo(32, 30); c.stroke();
       leaf(c, 32, 50, 14, Math.PI + 0.5, '#56a83a'); leaf(c, 32, 46, 14, -0.5, '#56a83a');
       bloom(c, k, 32, 26, D.SPECIES[k].shape === 'bell' ? 13 : 17, t, true);
-    } else if (id.startsWith('po_')) {
-      const p = D.POTIONS[id.slice(3)];
+    } else if (id.startsWith('po_') && D.isPotionId(id.slice(3))) {
+      const p = D.POTIONS[id.slice(3) as D.PotionId]; // overené riadkom vyššie (isPotionId)
       c.fillStyle = '#e0f0f8'; c.beginPath(); c.arc(32, 40, 18, 0, TAU); c.fill(); c.fillRect(26, 10, 12, 16);
       if (id === 'po_duha') {
         const g = c.createLinearGradient(14, 30, 50, 56);
-        ['#ff5252', '#ffb74d', '#fff176', '#81c784', '#64b5f6', '#ba68c8'].forEach((col, i) => g.addColorStop(i / 5, col));
+        ['#ff5252', '#ffb74d', '#fff176', '#81c784', '#64b5f6', '#ba68c8'].forEach((col, i) => { g.addColorStop(i / 5, col); });
         c.fillStyle = g;
       } else c.fillStyle = p.color;
       c.beginPath(); c.arc(32, 40, 15, -0.2, Math.PI + 0.2); c.fill();
@@ -583,20 +596,21 @@ const Art = (() => {
       c.strokeStyle = 'rgba(0,0,0,0.3)'; c.lineWidth = 2; c.beginPath(); c.arc(32, 40, 18, 0, TAU); c.stroke();
       if (id !== 'po_sliz') { circ(c, 46, 14, 3, '#fff8b0'); circ(c, 52, 24, 2, '#fff8b0'); }
     }
-    iconCache[id] = cv.toDataURL();
-    return iconCache[id];
+    const url = cv.toDataURL();
+    iconCache.set(id, url);
+    return url;
   }
 
   // ---- Pavúky a pavučiny (#57) ----
   // Pavučina do obdĺžnika w × h: lúče z mierne posunutého stredu a špirála; silk 1–3 = koľko z nej ešte ostalo
   // (vyťahaná je rozpadnutá). k = semienko tvaru, a = krytie.
-  function web(c, w, h, silk, k, a) {
+  function web(c: C2, w: number, h: number, silk: number, k: number, a?: number): void {
     const cx = w * (0.45 + hash(k, 1) * 0.1), cy = h * (0.42 + hash(k, 2) * 0.1);
     const rays = 12, R = Math.hypot(w, h) * 0.6;
     c.save();
     c.beginPath(); c.rect(1, 1, w - 2, h - 2); c.clip();
     c.strokeStyle = `rgba(236,243,248,${a == null ? 0.95 : a})`; c.lineWidth = Math.max(1.5, Math.min(w, h) / 50);
-    const keep = i => silk >= 3 || hash(k, i + 10) < (silk === 2 ? 0.75 : 0.45);
+    const keep = (i: number): boolean => silk >= 3 || hash(k, i + 10) < (silk === 2 ? 0.75 : 0.45);
     for (let i = 0; i < rays; i++) {
       if (!keep(i)) continue;
       const ang = i / rays * TAU + hash(k, i) * 0.2;
@@ -617,7 +631,7 @@ const Art = (() => {
   // Postavička zabalená do pavučiny (#57; postavička nakreslená na (x, y) veľkosťou s ako v char): hodvábny závoj len na
   // jej pixeloch, vlákna ovinuté okolo tela a pri zodieraní strapky. left = koľko pavučiny ešte zostáva (1 → 0): vlákna
   // miznú v náhodnom poradí (podľa k), tie, ktoré práve odchádzajú, visia ako potrhané konce.
-  function cocoon(c, x, y, s, left, k) {
+  function cocoon(c: C2, x: number, y: number, s: number, left: number, k: number): void {
     if (!(left > 0)) return;
     c.save();
     c.globalCompositeOperation = 'source-atop'; // závoj len na postavičke
@@ -654,8 +668,8 @@ const Art = (() => {
   }
   // Bublina chatu nad hráčom: zalomí slová do max. 4 riadkov (šírka ~4,5 políčka), zvyšok skončí „…“.
   // (x, y) = účiarie menovky; bublina (biely obdĺžnik) sa kreslí nad ňu.
-  function wrapText(c, text, maxW, maxLines) {
-    const lines = []; let cur = '';
+  function wrapText(c: C2, text: string, maxW: number, maxLines: number): string[] {
+    const lines: string[] = []; let cur = '';
     for (let w of text.split(/\s+/).filter(Boolean)) {
       const tryL = cur ? cur + ' ' + w : w;
       if (c.measureText(tryL).width <= maxW) { cur = tryL; continue; }
@@ -670,12 +684,12 @@ const Art = (() => {
     if (cur) lines.push(cur);
     if (lines.length <= maxLines) return lines;
     lines.length = maxLines;
-    let l = lines[maxLines - 1];
+    let l = must(lines[maxLines - 1]);
     while (l && c.measureText(l + '…').width > maxW) l = l.slice(0, -1);
     lines[maxLines - 1] = l.trimEnd() + '…';
     return lines;
   }
-  function bubble(c, text, x, y, ts) {
+  function bubble(c: C2, text: string, x: number, y: number, ts: number): void {
     const fs = Math.max(11, ts * 0.26 | 0), lh = fs * 1.2, pad = ts * 0.14;
     c.font = fs + 'px system-ui, sans-serif'; c.textAlign = 'center';
     const lines = wrapText(c, text, Math.max(120, ts * 4.5), 4);
@@ -683,10 +697,10 @@ const Art = (() => {
     const top = y - ts * 0.34 - bh;
     c.fillStyle = '#fff'; c.fillRect(x - bw / 2, top, bw, bh);
     c.fillStyle = '#222'; c.textBaseline = 'middle';
-    lines.forEach((l, k) => c.fillText(l, x, top + pad * 0.7 + lh * (k + 0.5)));
+    lines.forEach((l, k) => { c.fillText(l, x, top + pad * 0.7 + lh * (k + 0.5)); });
     c.textBaseline = 'alphabetic';
   }
 
   return { plant, char, ground, soil, shroom, icon, hash, circ, bubble, web, cocoon };
 })();
-window.Art = Art; // pre 3D modul (render3d.mjs)
+

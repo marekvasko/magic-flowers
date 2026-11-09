@@ -1,0 +1,77 @@
+// Stav klienta (#136): jeden objekt S zdieľaný hrou (game.ts) a 3D pohľadom (render3d.ts, spiders3d.ts, particles3d.ts).
+// V konzole je to window.MF – jediný ladiaci háčik klienta (README).
+import type { AreaId, Ground, ItemId, Look, PotionId, SpeciesId } from '../shared/data.ts';
+import type { Other } from '../shared/players.ts';
+import type { BatchesView, CornerView, PlayerView, ServerMessage, SpiderKind, TileView, WebView } from '../shared/protocol.ts';
+import type { Contract, Icehouse, Weather, WorldMode } from '../shared/save.ts';
+import type { Render3D } from './render3d.ts';
+
+export type MsgOf<T extends ServerMessage['t']> = Extract<ServerMessage, { t: T }>;
+export interface Pt { x: number; y: number }
+
+// Vlastná postavička: poloha, smer (dir 0–3, a = presný uhol), fáza chôdze, výška a rýchlosť skoku, plazenie
+export interface Me { x: number; y: number; dir: number; a?: number; phase: number; moving: boolean; jz: number; jv: number; crawl: boolean }
+// Iný hráč: k polohe zo zdieľaného modulu (players.ts) cieľ pohybu (tx, ty) a údaje zo správy pl
+export interface OtherPlayer extends Other {
+  id: number; tx: number; ty: number; dir: number; a: number | undefined; look: Look | null; name: string;
+  e: PlayerView['e']; cr: boolean; lp: boolean; si: number; wb: number;
+}
+// Pavúk na ploche: poloha plynulo dobieha cieľ zo servera (tx, ty, tz), fáza nôh podľa prejdenej dráhy
+export interface Spider {
+  id: string; k: SpiderKind; x: number; y: number; z?: number; phase: number;
+  tx: number; ty: number; tz: number; a: number; m: boolean; c: boolean; h: boolean; n: [number, number] | null; u: boolean;
+}
+// Efekt (častica) nad svetom: obyčajná letí a padá, víla krúži okolo stredu (cx, cy)
+export interface FxParticle {
+  fairy?: undefined; x: number; y: number; vx: number; vy: number; g: number; life: number; max: number; size: number;
+  color?: string | undefined; text?: string; star?: boolean;
+}
+export interface FxFairy { fairy: true; cx: number; cy: number; a: number; rad: number; life: number; max: number; color: string }
+export type Fx = FxParticle | FxFairy;
+export interface ScreenFx { k: 'rainbow' | 'gold'; life: number; max: number; coins?: { x: number; y: number; v: number }[] }
+// Prechod do inej plochy (game.ts areaChange)
+export interface AreaFx { phase: 'out' | 'build' | 'named'; msg: MsgOf<'area'>; queue: ServerMessage[]; timer?: ReturnType<typeof setTimeout>; tok?: symbol }
+// Kontextová akcia na políčku: ikona, popis, okno (ui), len informácia, kde je majster…
+export type UiKind = 'shop' | 'cauldron' | 'babka' | 'book' | 'menu' | 'help' | 'storage' | 'house' | 'wish' | 'icehouse' | 'dielna' | 'majster';
+export interface CtxAction { i: string; l: string; ui?: UiKind; info?: boolean; only?: boolean; ma?: NonNullable<ReturnType<typeof import('../shared/data.ts').masterAt>> }
+export type Dir = 'u' | 'd' | 'l' | 'r';
+
+export interface ClientState {
+  ws: WebSocket | null; id: number; room: string; name: string; look: Look | null;
+  tiles: TileView[]; tick: number; market: MsgOf<'market'> | null; board: Contract[]; rep: number; up: Partial<MsgOf<'me'>['up']>;
+  canCap: number; plotLimit: number; plotsUsed: number; maxActive: number; day: number; min: number; weather: Weather;
+  timeAt: number; tickMs: number; daySeconds: number; mode: WorldMode; storage: Partial<Record<ItemId, number>>;
+  me: Me; crawlKey: boolean; crawlTgl: boolean; myEmote: PlayerView['e']; mySi?: number;
+  others: Map<number, OtherPlayer>; inv: Partial<Record<ItemId, number>>; coins: number; water: number; recipes: string[]; seen: SpeciesId[]; vily: boolean;
+  fb?: BatchesView; fbTick?: number; storageFb?: BatchesView; storageTick?: number;
+  sel: ItemId | ''; area: AreaId; areaSeq: number; W: number; H: number; tilesGen: number; worldGen?: number; storageRate: number;
+  icehouse: Icehouse; dielna: { built: boolean; loom: boolean }; loom: MsgOf<'me'>['loom']; eternal: boolean; names: string[];
+  keys: Partial<Record<Dir, boolean>>; kbd?: boolean; stick: Pt; path: Pt[] | null; pendingAct: (Pt & { onTile?: boolean }) | null;
+  tapMark: (Pt & { t: number; act: boolean }) | null; lastSent: string; sentAt: number;
+  fx: Fx[]; screenFx: ScreenFx[]; bubbles: Partial<Record<number, { text: string; until: number }>>; modal: { refresh: () => void } | null;
+  cauldron: ItemId[]; brewed: PotionId | null; anchors: Partial<Record<Ground, Pt>>; joined: boolean;
+  skyTaps: number[]; tipIdx: number; stuckT: number;
+  asleep?: boolean; ff?: boolean; sleepN?: number; sleepTotal?: number; areaFx?: AreaFx | null;
+  // pavúky (#57): pavučiny v Lese divov (webTile: políčko → pavučina), nory a čistina pradleny, kútové pavučiny krížiaka,
+  // pavúky na ploche (plynulo dobiehajú polohu zo servera) a spomalenie (lepkavá pavučina, pavúk na chrbte)
+  webs: WebView[]; webTile: Map<number, WebView>; homes: MsgOf<'webs'>['homes']; websGen: number; corner: CornerView[]; cornerGen: number;
+  spiders: Map<string, Spider>; slowK: number; slowUntil: number; web: { start: number; stuck: number; end: number; k: number } | null;
+  webLeft: () => number;
+  r3: Render3D | null; // 3D pohľad (pre ladenie v konzole: MF.r3.pick(x, y))
+}
+
+// Ladiace prepínače z konzoly (README): čítajú sa za behu, hra ich sama nenastavuje
+declare global {
+  interface Window {
+    MF: ClientState;
+    MF_TIME?: { season?: number; min?: number };
+    MF_WEB?: import('../shared/webs.ts').WebOverrides;
+    MF_FADE?: import('./render3d.ts').FadeOverrides;
+    MF_FADE_DEFAULTS?: import('./render3d.ts').FadeConfig;
+    MF_NOFADE?: boolean;
+    MF_LES_SUN?: 'dapple';
+    MF_RAY_K?: number;
+    MF_STEP?: 'snap' | 'lerp';
+    webkitAudioContext?: typeof AudioContext;
+  }
+}
