@@ -493,7 +493,7 @@ test('uloženie: pavučiny a kúty sa po načítaní zachovajú, neplatné sa za
 // voľný port od systému (náhodný port sa občas zrazil s iným testom)
 function freePort() { return new Promise(r => { const srv = require('net').createServer(); srv.listen(0, () => { const { port } = srv.address(); srv.close(() => r(port)); }); }); }
 function startServer(dataDir, port) {
-  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server', 'server.js')], {
+  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server', 'server.ts')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DEFAULT_MODE: 'paused' }), stdio: ['ignore', 'pipe', 'pipe']
   });
   return new Promise((resolve, reject) => {

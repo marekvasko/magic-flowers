@@ -190,7 +190,7 @@ test('kľúče hráčov: odtlačok v celej odpovedi – actor, data.key, save:/p
 // ---- server ----
 function freePort() { return new Promise(r => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => r(p)); }); }); }
 function startServer(dataDir, port) {
-  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server', 'server.js')], { env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DAY_SECONDS: '100000', DEBUG_TRACE: '300' }), stdio: ['ignore', 'pipe', 'pipe'] });
+  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server', 'server.ts')], { env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DAY_SECONDS: '100000', DEBUG_TRACE: '300' }), stdio: ['ignore', 'pipe', 'pipe'] });
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error('server sa nespustil')), 8000);
     proc.stdout.on('data', d => { if (/beží/.test(String(d))) { clearTimeout(t); resolve(proc); } });

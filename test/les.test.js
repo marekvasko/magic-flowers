@@ -162,7 +162,7 @@ test('3D: Les divov – obrovské stromy a kmene ako modely, mriežka podľa ve�
 
 // ---------- Server: migrácia v4 → v5 a cesta Les na pomedzí ↔ Les divov ----------
 function startServer(dataDir, port) {
-  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server', 'server.js')], {
+  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server', 'server.ts')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DEFAULT_MODE: 'paused' }), stdio: ['ignore', 'pipe', 'pipe']
   });
   return new Promise((resolve, reject) => {

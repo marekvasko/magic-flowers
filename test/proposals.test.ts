@@ -617,7 +617,7 @@ test('uložený svet + denník (alebo zaznamenané dávky akcií) dajú ten ist�
 
 type Server = ChildProcessByStdio<null, Readable, Readable>;
 function startServer(dataDir: string, port: number, env?: Partial<Record<string, string>>): Promise<Server> {
-  const proc = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'src', 'server', 'server.js')], {
+  const proc = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'src', 'server', 'server.ts')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir }, env || {}), stdio: ['ignore', 'pipe', 'pipe']
   });
   return new Promise((resolve, reject) => {

@@ -447,7 +447,7 @@ function takenSaves(s: GameSlices, c: Contract): Partial<Record<PlayerKey, Playe
 // ---------- Zákazky ----------
 // Odvodené počítadlá sveta (aby návrhy nemuseli čítať všetky uloženia či políčka):
 //   world.maxRep    – najvyššia reputácia medzi hráčmi (veľké zákazky od úrovne 2); udržiava každá zmena reputácie
-//   world.plotsUsed – počet obrobených políčok záhrady; udržiava kopanie a zarovnanie (server.js)
+//   world.plotsUsed – počet obrobených políčok záhrady; udržiava kopanie a zarovnanie (server.ts)
 export function maxRepOf(saves: Partial<Record<PlayerKey, PlayerSave>>): number { let m = 0; for (const [, sv] of entries(saves)) m = Math.max(m, sv.rep || 0); return m; }
 export function plotsUsedOf(tiles: readonly Tile[]): number { let n = 0; for (const t of tiles) if (t.s) n++; return n; }
 

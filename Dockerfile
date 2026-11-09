@@ -22,4 +22,4 @@ EXPOSE 3000
 VOLUME ["/app/data"]
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s CMD wget -qO- http://127.0.0.1:3000/ >/dev/null || exit 1
 # --disable-warning: balík je do fázy 4 (#122) CommonJS a .ts moduly sú ES moduly – Node by to pri štarte hlásil
-CMD ["node", "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON", "src/server/server.js"]
+CMD ["node", "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON", "src/server/server.ts"]

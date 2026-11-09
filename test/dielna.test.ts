@@ -274,7 +274,7 @@ test('mená postáv: Babka a Majster hodvábu sú vyhradené (veľké písmená,
 function freePort(): Promise<number> { return new Promise(r => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = portOf(srv); srv.close(() => { r(p); }); }); }); }
 type Server = ChildProcessByStdio<null, Readable, Readable>;
 function startServer(dataDir: string, port: number): Promise<Server> {
-  const proc = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'src', 'server', 'server.js')], {
+  const proc = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'src', 'server', 'server.ts')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DAY_SECONDS: '100000' }), stdio: ['ignore', 'pipe', 'pipe']
   });
   return new Promise((resolve, reject) => {

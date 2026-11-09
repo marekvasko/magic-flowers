@@ -59,7 +59,7 @@ test('zarovnať: prázdne obrobené políčko môže zarovnať ktokoľvek, niele
 // ---------- Server: migrácia osobných povolení a spoločný limit ----------
 type Server = ChildProcessByStdio<null, Readable, Readable>;
 function startServer(dataDir: string, port: number): Promise<Server> {
-  const proc = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'src', 'server', 'server.js')], {
+  const proc = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'src', 'server', 'server.ts')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DEFAULT_MODE: 'paused' }), stdio: ['ignore', 'pipe', 'pipe']
   });
   return new Promise((resolve, reject) => {

@@ -30,7 +30,7 @@ An event in the queue:
 { at: 1300, seq: 59, type: 'jano_sell', data: { sp: 'mak', n: 4 } }           // normal
 ```
 
-Save format v8 replaced the shared generator state `rng` with `seed` and `step` (`migrate()` in `server.js` creates a seed for older worlds; nothing else changes).
+Save format v8 replaced the shared generator state `rng` with `seed` and `step` (`migrate()` in `server.ts` creates a seed for older worlds; nothing else changes).
 
 ## Spec (behaviour, not saved)
 
@@ -140,7 +140,7 @@ spec.onBatch(world, { applied, rejected, outbox, entry })
 
 ### Slices and keys
 
-A **key** names a slice of the world. `E.sliceOf(world, key)` is the default mapping (game knowledge: how the world is stored, see `serialize` in `server.js`):
+A **key** names a slice of the world. `E.sliceOf(world, key)` is the default mapping (game knowledge: how the world is stored, see `serialize` in `server.ts`):
 
 | Key | Slice |
 |---|---|
@@ -237,7 +237,7 @@ advanceTo(world, target, spec):
 
 The queue, `seq`, `seed` and `step` are part of the save. Given the same saved world and the same spec, the simulation always produces the same result, whether it runs continuously, is saved and loaded halfway, jumps instead of stepping, or replays recorded batches of actions on a saved snapshot (`test/engine.test.js`, `test/proposals.test.js`).
 
-Save format version 5 added `key` and `periodic` to events (`migrate()` in `server.js` gives keys to the events of older saves). Version 8 added `seed` and `step`, dropped `rng`, and makes sure `scavSalt` exists (it used to be drawn lazily from the shared generator). The derived counters `plotsUsed` and `maxRep` and `glacierFed` are saved too but need no version: they are recounted (or default) on load.
+Save format version 5 added `key` and `periodic` to events (`migrate()` in `server.ts` gives keys to the events of older saves). Version 8 added `seed` and `step`, dropped `rng`, and makes sure `scavSalt` exists (it used to be drawn lazily from the shared generator). The derived counters `plotsUsed` and `maxRep` and `glacierFed` are saved too but need no version: they are recounted (or default) on load.
 
 ## Recipes
 

@@ -177,7 +177,7 @@ test('3D: svet Lesa na pomedzí – kry ako modely, stromy podľa plochy, mriež
 
 // ---------- Server: migrácia starého uloženia a cesta záhrada ↔ Les na pomedzí ----------
 function startServer(dataDir, port) {
-  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server', 'server.js')], {
+  const proc = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server', 'server.ts')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DEFAULT_MODE: 'paused' }), stdio: ['ignore', 'pipe', 'pipe']
   });
   return new Promise((resolve, reject) => {

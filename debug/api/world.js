@@ -8,7 +8,7 @@ const Areas = require('../../src/server/areas.ts');
 const Scav = require('../../src/server/scavenge.ts');
 const { keyId } = require('../../src/server/debug.ts');
 
-// Políčka plochy zo (skopírovaného) stavu sveta – rovnako ako getRoom + tilesView v server.js
+// Políčka plochy zo (skopírovaného) stavu sveta – rovnako ako getRoom + tilesView v server.ts
 function areaTiles(state, area) {
   if (area === 'hory') return Ice.loadHory(state.hory);
   if (area === 'pomedzie') return Areas.loadPomedzie(state.pomedzieSeed);
