@@ -1,4 +1,4 @@
-// Správy cez WebSocket medzi serverom (src/server/server.ts) a klientom (public/game.js) – #122, fáza 2.
+// Správy cez WebSocket medzi serverom (src/server/server.ts) a klientom (src/client/game.ts) – #122, fáza 2.
 // Typy opisujú existujúci protokol, nemenia ho. Každá správa je objekt s diskriminátorom t.
 //  - ClientMessage: čo posiela klient (server každú správu ešte overí – hodnoty mimo typu zahodí alebo opraví)
 //  - ServerMessage: čo dostane klient (posiela server sám alebo ide z návrhov enginu cez ctx.emit)
@@ -13,7 +13,7 @@ export type WishKind = 'zlato' | 'jar' | 'poklad';
 export type ClientMessage =
   | { t: 'join'; room: string; name: string; look?: Look | null }   // bez vzhľadu: z uloženia alebo predvolený
   // a = presný smer pohľadu, cr = plazí sa, lp = drží lampáš, ar = poradie plochy (pohyb z predchádzajúcej plochy sa zahodí)
-  | { t: 'move'; x: number; y: number; dir: number; a?: number; cr?: boolean; lp?: boolean; ar: number }
+  | { t: 'move'; x: number; y: number; dir: number; a?: number | undefined; cr?: boolean; lp?: boolean; ar: number }
   | { t: 'act'; x: number; y: number; item: ItemId | '' }   // '' = prázdna ruka
   | { t: 'buy' | 'sell' | 'store' | 'unstore'; id: ItemId; n: number }
   | { t: 'upgrade'; kind: UpgradeId }

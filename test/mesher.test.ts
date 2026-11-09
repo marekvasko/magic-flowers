@@ -93,7 +93,7 @@ test('modely Lesa na pomedzí: len povrch (bez materiálu a tieňa) – rovnaké
   let before = 0, after = 0;
   const seen = new Set<Uint8Array>();
   for (const f of g.fine) {
-    // ako render3d.mjs: steny sa zlučujú len podľa toho, či tam sú (farbu a zatienenie dopočíta shader)
+    // ako render3d.ts: steny sa zlučujú len podľa toho, či tam sú (farbu a zatienenie dopočíta shader)
     const get = fineGet(f), solid: MS.CellGet = (x, y, z) => (get(x, y, z) ? 1 : 0), dims: Vec3 = [f.sx, f.sy, f.sz];
     const quads = MS.greedy(dims, solid, fineVis, () => false);
     if (!seen.has(f.data)) {
