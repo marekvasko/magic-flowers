@@ -30,6 +30,14 @@ export const HOUSE: Point = { x: 3.5, y: 28.5 };
 const DANCE_MS = 6500; // ako dlho po emócii „tanec“ sa hráč ráta za tancujúceho
 const SCAV_MOVE = 0.35; // o koľko sa smie hľadajúci hráč pohnúť, kým hľadanie preruší
 const season = (tick: number): D.Season => D.seasonOf(D.dayOfTick(tick));
+// Poradové číslo obdobia od začiatku sveta (1, 2, …) – studňa dá papraďové semienko najviac raz za obdobie
+export const seasonNo = (tick: number): number => Math.floor((D.dayOfTick(tick) - 1) / D.DAYS_PER_SEASON) + 1;
+// Studňa prianí: horné prahy hodu r (kumulatívne) – tip 45 %, vrecúško 20 %, dážď 10 %, papraď 0,5 %, gejzír 0,5 %, elixír 0,5 %, inak nič
+export const WELL = { tip: 0.45, seeds: 0.65, rain: 0.75, fern: 0.755, gold: 0.76, potion: 0.765 } as const;
+export const WELL_GOLD = 60;
+// Vrecúško zo studne: len obyčajné druhy, ktoré rastú kdekoľvek (bez čarovných a bez prísnych ako plesnivec)
+export const WELL_SEEDS: readonly D.SpeciesId[] = keys(D.SPECIES).filter(k => !D.SPECIES[k].magic && !D.SPECIES[k].strict);
+export const WELL_POTIONS: readonly PotionId[] = ['rast', 'dazd'];
 const toast$ = (to: To, text: string, kind?: ToastKind): Msg => ({ to, t: 'toast', text, kind: kind || 'info' });
 const fx$ = (area: AreaId, k: FxKind, x: number, y: number, extra?: { c: string }): Msg => ({ to: E.area(area), t: 'fx', k, x, y, ...extra });
 
@@ -515,6 +523,8 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
   },
 
   // --- studňa prianí (d: { key }): 5 mincí za náhodu; dážď mení počasie a záhradu, preto ich deklaruje vždy ---
+  // Výsledok podľa jedného hodu r (prahy WELL): keď dážď nemôže prísť (už prší, v zime), je to „nič“ – žiadny prepad
+  // do ďalšieho riadku. Papraďové semienko najviac raz za obdobie (sv.wellFern = číslo obdobia), inak tiež nič.
   well: {
     keys: d => ({ writes: [`save:${d.key}`, ...RAIN_KEYS] }),
     run(s, d, ctx) {
@@ -522,17 +532,31 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
       if (sv.coins < 5) ctx.reject('Na prianie potrebuješ hodiť do studne 5 🪙.');
       sv.coins -= 5;
       const r = g.rand();
-      if (r < 0.45) ctx.emit(toast$(d.key, '🪙 Žbluňk… Zo studne zašepkal hlas: „' + must(g.pick(D.TIPS)) + '“', 'magic'));
-      else if (r < 0.65) {
-        const sp = must(g.pick(keys(D.SPECIES).filter(k => !D.SPECIES[k].magic)));
+      if (r < WELL.tip) ctx.emit(toast$(d.key, '🪙 Žbluňk… Zo studne zašepkal hlas: „' + must(g.pick(D.TIPS)) + '“', 'magic'));
+      else if (r < WELL.seeds) {
+        const sp = must(g.pick(WELL_SEEDS));
         give(sv, `seed_${sp}`, 2, ctx.tick);
         ctx.emit(toast$(d.key, `🪙 Žbluňk… Z hĺbky vyletelo vrecúško: 2× semienka ${D.SPECIES[sp].name}!`, 'gift'));
-      } else if (r < 0.75 && s.weather !== 'rain' && season(ctx.tick) !== 3) {
-        rain(s, ctx);
-        ctx.emit(toast$(E.ALL, '🪙 Studňa zahučala a z neba sa spustil dážď!', 'magic'));
-      } else if (r < 0.77) {
-        give(sv, 'seed_papradie', 1, ctx.tick);
-        ctx.emit(toast$(d.key, '🪙 Na dne studne sa niečo zalesklo… Papraďové semienko!', 'magic'));
+      } else if (r < WELL.rain) {
+        if (s.weather !== 'rain' && season(ctx.tick) !== 3) {
+          rain(s, ctx);
+          ctx.emit(toast$(E.ALL, '🪙 Studňa zahučala a z neba sa spustil dážď!', 'magic'));
+        } else ctx.emit(toast$(d.key, '🪙 Studňa zahučala, ale obloha ostala bez zmeny. Možno inokedy.'));
+      } else if (r < WELL.fern) {
+        const no = seasonNo(ctx.tick);
+        if (sv.wellFern === no) ctx.emit(toast$(d.key, '🪙 Na dne sa niečo zalesklo… no studňa si papraď tento raz nechala. Skús to v ďalšom období.', 'magic'));
+        else {
+          sv.wellFern = no;
+          give(sv, 'seed_papradie', 1, ctx.tick);
+          ctx.emit(toast$(d.key, '🪙 Na dne studne sa niečo zalesklo… Papraďové semienko!', 'magic'));
+        }
+      } else if (r < WELL.gold) {
+        sv.coins += WELL_GOLD;
+        ctx.emit(toast$(d.key, `🪙 Studňa zabublala a vystrelil z nej gejzír mincí! +${String(WELL_GOLD)} 🪙`, 'gift'));
+      } else if (r < WELL.potion) {
+        const k = must(g.pick(WELL_POTIONS));
+        give(sv, `po_${k}`, 1, ctx.tick);
+        ctx.emit(toast$(d.key, `🪙 Na hladine sa vynorila fľaštička… ${D.POTIONS[k].name}!`, 'gift'));
       } else ctx.emit(toast$(d.key, '🪙 Žbluňk. Nič sa nestalo. Možno nabudúce.'));
       ctx.emit(fx$('garden', 'splash', 7.5, 28.5));
     }

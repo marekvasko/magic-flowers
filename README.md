@@ -174,9 +174,12 @@ Every flower has a short real-world fact in the 📖 **Herbár** (the in-game pl
   - 3× Rainbow rose → *Rainbow elixir* (a rainbow over the garden, 300 coins for everyone)
   - Anything else → *Strange slime* 🫠
 - **Fairy ring** in the forest (north-west): at night (21:00–4:00), when **two players dance** 💃 inside the ring, fairies appear and give each of them a *fern seed* and a *rainbow seed*. Alone, it only works with the *Fairy elixir*.
-- **Fern flower** (Slavic legend): grows in shade and can only be picked **at night**. Using it grants a wish: a golden rain of coins, eternal spring (the garden waters itself forever) or a fairy treasure.
+- **Fern flower** (Slavic legend): grows in shade and can only be picked **at night**. Using it grants a wish:
+  - *golden rain* – 400 coins for every connected player;
+  - *eternal spring* – the garden waters itself forever and the season no longer matters;
+  - *fairy treasure* – 3 rainbow seeds, 3 edelweiss seeds and a new fern seed.
 - **Rainbow rose:** changes colour and grows in every season.
-- **Wishing well:** throw in 5 coins and you get a hint, seeds, rain… or rarely a fern seed.
+- **Wishing well:** throw in 5 coins: a hint (45 %), 2 seeds of a common species (20 %; no magic or strict species such as edelweiss), rain (10 %; when it can't come – already raining or winter – nothing happens), and rarely (0.5 % each) a fern seed (at most once per player per season, `wellFern` in the save), a coin geyser (+60 coins) or a cheap elixir (growth or rain). Otherwise nothing. Selling what it gives back is a loss on average (about 90 % back for a few throws, under 60 % for thousands) – it's for luck, not for farming; growing the seeds from the pack is still cheaper than buying them in the shop.
 - **The moon:** tap 🌙 in the top bar 7 times at night.
 
 </details>
