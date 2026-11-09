@@ -35,7 +35,9 @@ function deepFreeze<T>(o: T): T { if (isRecord(o) && !Object.isFrozen(o)) { Obje
 const q = (id: string): URLSearchParams => new URLSearchParams({ id });
 // Svet pre tools.load (súbor, bez hráčov online)
 const loaded = (id: string, state: DebugState): Loaded => ({ id, source: 'file', file: null, online: [], state });
-const view = (r: MarketView | null): MarketView => must(r ?? undefined);
+// pohľad na trh v teste: polia trhu ako voliteľné (svet bez trhu ich nemá)
+type Loose = MarketView & Omit<Partial<Extract<MarketView, { market: true }>>, 'market'>;
+const view = (r: MarketView | null): Loose => must(r ?? undefined);
 const field = (v: unknown, k: string): unknown => (isRecord(v) ? v[k] : undefined);
 
 test('debug trh: štruktúra a ceny zhodné s hrou, stav sa nezmení', () => {
@@ -116,7 +118,7 @@ test('debug trh: /api/debug/market pre svet zo súboru aj v pamäti, bez kľúč
       const r = await get('/api/debug/market?id=' + id);
       assert.strictEqual(r.status, 200, r.body);
       assert.ok(!r.body.includes(KEY), 'kľúč hráča nesmie byť vo výstupe');
-      const j = parseJson<MarketView>(r.body);
+      const j = parseJson<Loose>(r.body);
       assert.strictEqual(j.source, id === 'subor' ? 'file' : 'memory');
       assert.ok(must(j.contracts).some(c => c.takenBy === Debug.keyId(KEY)));
     }
