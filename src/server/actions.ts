@@ -813,7 +813,8 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
         ctx.emit({ to: E.ALL, t: 'fx', k: 'rainbow' });
         ctx.emit(toast$(E.ALL, `✨ ${me.name} si prial(a) večnú jar! Záhrada sa odteraz polieva sama a kvetom nevadí ročné obdobie.`, 'magic'));
       } else {
-        give(sv, 'seed_duhova', 3, ctx.tick); give(sv, 'seed_plesnivec', 3, ctx.tick); give(sv, 'seed_papradie', 1, ctx.tick);
+        // bez papraďového semienka: inak by sa papraď z pokladu množila sama (#100)
+        give(sv, 'seed_duhova', 3, ctx.tick); give(sv, 'seed_plesnivec', 3, ctx.tick);
         ctx.emit(toast$(E.ALL, `✨ ${me.name} si prial(a) poklad! Zo zeme vyrástla truhlica plná vzácnych semienok.`, 'magic'));
         ctx.emit(fx$(me.area, 'sparkle', me.x, me.y, { c: '#ffd700' }));
       }

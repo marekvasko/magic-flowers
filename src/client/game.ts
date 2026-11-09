@@ -1332,7 +1332,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     const opts: readonly (readonly [WishKind, string, string])[] = [
       ['zlato', '💰 Zlatý dážď', 'Každý hráč v záhrade dostane 400 mincí.'],
       ['jar', '🌸 Večná jar', 'Záhrada sa navždy polieva sama a kvetom nevadí ročné obdobie.'],
-      ['poklad', '🎁 Poklad víl', 'Dúhové semienka, plesnivce a nové papraďové semienko.']
+      ['poklad', '🎁 Poklad víl', 'Dúhové semienka a semienka plesnivca.']
     ];
     for (const [k, t, d] of opts) body.appendChild(h('button', { class: 'wish', onclick: () => { send({ t: 'wish', kind: k }); closeModal(); } }, h('b', null, t), d));
   }
