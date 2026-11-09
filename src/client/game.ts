@@ -1,11 +1,31 @@
-// Čarovná záhrada – klient
+// Čarovná záhrada – klient (#136: TypeScript, jeden balík esbuild; 3D pohľad sa načíta až po štarte ako ďalší kúsok)
+import * as D from '../shared/data.ts';
+import type { ItemId, Potion, Species, SpeciesId, UpgradeId } from '../shared/data.ts';
+import * as Players from '../shared/players.ts';
+import * as SpiderModel from '../shared/spidermodel.ts';
+import type { ClientMessage, Emote, ServerMessage, TileView, ToastKind, WebView, WishKind } from '../shared/protocol.ts';
+import type { Contract, WorldMode } from '../shared/save.ts';
+import { entries, isRecord, keys, lookup, must } from '../shared/util.ts';
+import { Art } from './art.ts';
+import type { Render3D } from './render3d.ts';
+import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, UiKind } from './state.ts';
+
 (() => {
-  const D = window.GameData, Players = window.Players;
-  const $ = id => document.getElementById(id);
+  const $ = (id: string): HTMLElement => must(document.getElementById(id) ?? undefined);
+  // prvok daného druhu (vstupné pole, plátno) – inak chyba v HTML
+  const $as = <T extends HTMLElement>(id: string, type: new () => T): T => { const el = $(id); if (!(el instanceof type)) throw new Error('#' + id + ': zlý druh prvku'); return el; };
+  const $in = (id: string): HTMLInputElement => $as(id, HTMLInputElement);
+  const $cv = (id: string): HTMLCanvasElement => $as(id, HTMLCanvasElement);
+  const ctx2d = (cv: HTMLCanvasElement): CanvasRenderingContext2D => must(cv.getContext('2d') ?? undefined);
+  // položky podľa textového kľúča (id predmetu je napr. 'fl_mak', 'po_duha', 'seed_ruza')
+  const speciesOf = (k: string): Species | undefined => D.isSpeciesId(k) ? D.SPECIES[k] : undefined;
+  const potionOf = (k: string): Potion | undefined => D.isPotionId(k) ? D.POTIONS[k] : undefined;
 
   const SHIRTS = ['#4a90d9', '#e05a5a', '#5cb85c', '#f0ad4e', '#9b59d0', '#20b2aa', '#ff7eb6', '#555555'];
   const HAIRS = ['#5b3a1a', '#2b1a10', '#e8c36a', '#c0532a', '#9e9e9e', '#d96fa8', '#3a6ea5'];
-  const EMOJI = { wave: '👋', heart: '❤️', laugh: '😂', flower: '🌸', dance: '🎵', sleep: '💤', search: '🔍', pull: '🕸️' };
+  const EMOJI: Readonly<Record<string, string>> = { wave: '👋', heart: '❤️', laugh: '😂', flower: '🌸', dance: '🎵', sleep: '💤', search: '🔍', pull: '🕸️' };
+  const EMOTES: readonly Emote[] = ['dance', 'wave', 'heart', 'laugh', 'flower'];
+  const isEmote = (e: string | undefined): e is Emote => EMOTES.some(x => x === e);
   const SECRETS = [
     'Mesiac šepká: „Keď sa dvaja roztancujú v kruhu z húb, víly to nevydržia a pridajú sa…“',
     'Mesiac šepká: „Kto pije jesenný odvar víl, môže tancovať aj sám.“',
@@ -14,46 +34,52 @@
     'Mesiac šepká: „Studňa má na dne viac než len vodu. Občas aj semienko z rozprávky.“'
   ];
 
-  const S = {
+  const S: ClientState = {
     ws: null, id: 0, room: '', name: '', look: null,
     tiles: [], tick: 0, market: null, board: [], rep: 0, up: {}, canCap: 5, plotLimit: 8, plotsUsed: 0, maxActive: 1, day: 1, min: 390, weather: 'sun', timeAt: 0, tickMs: 1000, daySeconds: 300, mode: 'running', storage: {},
     me: { x: D.SPAWN.x, y: D.SPAWN.y, dir: 0, phase: 0, moving: false, jz: 0, jv: 0, crawl: false }, crawlKey: false, crawlTgl: false, myEmote: null,
     others: new Map(), inv: {}, coins: 0, water: 20, recipes: [], seen: [], vily: false,
-    sel: 'hoe', area: 'garden', areaSeq: 0, W: D.W, H: D.H, tilesGen: 0, storageRate: D.STORAGE_AGE_RATE, icehouse: { built: false, ice: 0 }, dielna: { built: false, loom: false }, loom: { busy: false, mine: null, ready: 0 }, quest: null, eternal: false, names: [],
+    sel: 'hoe', area: 'garden', areaSeq: 0, W: D.W, H: D.H, tilesGen: 0, storageRate: D.STORAGE_AGE_RATE, icehouse: { built: false, ice: 0, bl: 0 }, dielna: { built: false, loom: false }, loom: { busy: false, mine: null, ready: 0 }, eternal: false, names: [],
     keys: {}, stick: { x: 0, y: 0 }, path: null, pendingAct: null, tapMark: null, lastSent: '', sentAt: 0,
     fx: [], screenFx: [], bubbles: {}, modal: null, cauldron: [], brewed: null, anchors: {}, joined: false,
     skyTaps: [], tipIdx: Math.floor(Math.random() * D.TIPS.length), stuckT: 0,
     // pavúky (#57): pavučiny v Lese divov (webTile: políčko → pavučina), nory a čistina pradleny, kútové pavučiny krížiaka,
     // pavúky na ploche (plynulo dobiehajú polohu zo servera) a spomalenie (lepkavá pavučina, pavúk na chrbte)
-    webs: [], webTile: new Map(), homes: [], websGen: 0, corner: [], cornerGen: 0, spiders: new Map(), slowK: 1, slowUntil: 0, web: null
+    webs: [], webTile: new Map(), homes: [], websGen: 0, corner: [], cornerGen: 0, spiders: new Map(), slowK: 1, slowUntil: 0, web: null,
+    r3: null
   };
 
   window.MF = S; // pre ladenie v konzole
 
   // ---------- Zvuky ----------
-  let actx = null;
-  function sfx(kind) {
+  let actx: AudioContext | null = null;
+  type Sfx = 'pop' | 'hop' | 'water' | 'magic' | 'coin' | 'dig' | 'bad';
+  const NOTES: Readonly<Record<Sfx, readonly number[]>> = { pop: [660, 880], hop: [392, 784], water: [420, 300], magic: [523, 659, 784, 1047], coin: [988, 1319], dig: [140, 110], bad: [220, 180] };
+  function sfx(kind: Sfx): void {
     try {
-      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
-      const notes = { pop: [660, 880], hop: [392, 784], water: [420, 300], magic: [523, 659, 784, 1047], coin: [988, 1319], dig: [140, 110], bad: [220, 180] }[kind] || [440];
-      notes.forEach((f, i) => {
-        const o = actx.createOscillator(), g = actx.createGain();
+      const ac = actx = actx || new (window.webkitAudioContext ?? AudioContext)();
+      NOTES[kind].forEach((f, i) => {
+        const o = ac.createOscillator(), g = ac.createGain();
         o.type = kind === 'dig' ? 'triangle' : 'sine'; o.frequency.value = f;
-        const t0 = actx.currentTime + i * 0.08;
+        const t0 = ac.currentTime + i * 0.08;
         g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.12, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.18);
-        o.connect(g).connect(actx.destination); o.start(t0); o.stop(t0 + 0.2);
+        o.connect(g).connect(ac.destination); o.start(t0); o.stop(t0 + 0.2);
       });
-    } catch (e) { }
+    } catch { /* bez zvuku (prehliadač ho nepovolil) */ }
   }
 
   // ---------- Prihlásenie ----------
   const params = new URLSearchParams(location.search);
-  const stored = JSON.parse(localStorage.getItem('mf') || '{}');
-  $('jName').value = stored.name || '';
-  $('jRoom').value = params.get('room') || stored.room || '';
-  let look = stored.look || { shirt: SHIRTS[(Math.random() * SHIRTS.length) | 0], hair: HAIRS[(Math.random() * HAIRS.length) | 0], hat: true };
+  // uložené meno, záhrada a vzhľad (localStorage – mohlo ho zmeniť čokoľvek, preto overené)
+  const raw: unknown = JSON.parse(localStorage.getItem('mf') || '{}');
+  const stored = isRecord(raw) ? raw : {};
+  const str = (v: unknown): string => typeof v === 'string' ? v : '';
+  $in('jName').value = str(stored['name']);
+  $in('jRoom').value = params.get('room') || str(stored['room']);
+  const savedLook = isRecord(stored['look']) ? stored['look'] : null;
+  const look = { shirt: str(savedLook?.['shirt']) || must(SHIRTS[(Math.random() * SHIRTS.length) | 0]), hair: str(savedLook?.['hair']) || must(HAIRS[(Math.random() * HAIRS.length) | 0]), hat: savedLook ? savedLook['hat'] === true : true };
 
-  function swatches(el, list, key) {
+  function swatches(el: HTMLElement, list: readonly string[], key: 'shirt' | 'hair'): void {
     el.innerHTML = '';
     list.forEach(col => {
       const b = document.createElement('button');
@@ -62,16 +88,16 @@
       el.appendChild(b);
     });
   }
-  function preview() {
-    const c = $('jPreview').getContext('2d');
+  function preview(): void {
+    const c = ctx2d($cv('jPreview'));
     c.clearRect(0, 0, 96, 96);
     Art.char(c, 48, 88, 90, look, 0, 0, {});
   }
   swatches($('jShirt'), SHIRTS, 'shirt'); swatches($('jHair'), HAIRS, 'hair'); preview();
 
   $('jGo').onclick = () => {
-    S.name = $('jName').value.trim() || 'Záhradník';
-    S.room = ($('jRoom').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '') || 'zahrada').slice(0, 16);
+    S.name = $in('jName').value.trim() || 'Záhradník';
+    S.room = ($in('jRoom').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '') || 'zahrada').slice(0, 16);
     S.look = look;
     localStorage.setItem('mf', JSON.stringify({ name: S.name, room: S.room, look }));
     history.replaceState(null, '', location.pathname + '?room=' + S.room);
@@ -80,50 +106,50 @@
   };
 
   // ---------- Sieť ----------
-  function send(m) { if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(m)); }
-  function connect() {
+  function send(m: ClientMessage): void { if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(m)); }
+  function connect(): void {
     $('conn').classList.remove('hidden');
     const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
     S.ws = ws;
-    ws.onopen = () => send({ t: 'join', room: S.room, name: S.name, look: S.look });
-    ws.onmessage = e => onMsg(JSON.parse(e.data));
+    ws.onopen = () => { send({ t: 'join', room: S.room, name: S.name, look: S.look }); };
+    ws.onmessage = (e: MessageEvent<string>) => { onMsg(JSON.parse(e.data) as ServerMessage); }; // správy servera (protocol.ts)
     ws.onclose = () => {
       if (S.ws !== ws) return;
       if (S.joined) { $('conn').textContent = 'Spojenie stratené – pripájam znova…'; $('conn').classList.remove('hidden'); setTimeout(connect, 1500); }
     };
   }
 
-  function onMsg(m) {
+  function onMsg(m: ServerMessage): void {
     // počas stmavovania pred prechodom sa správy z novej plochy odložia, kým sa svet za čiernou nevymení
     if (S.areaFx && S.areaFx.phase === 'out' && m.t !== 'area' && m.t !== 'welcome' && m.t !== 'error') { S.areaFx.queue.push(m); return; }
     switch (m.t) {
       case 'welcome':
         if (S.areaFx) endAreaFx(true); // nové pripojenie – rozbehnutý prechod už neplatí
         S.id = m.id; S.tiles = m.tiles; S.me.x = m.x; S.me.y = m.y; S.joined = true; S.others.clear(); // hráči sa načítajú znova (aj po znovupripojení)
-        S.area = m.area || 'garden'; S.areaSeq = m.seq | 0; S.tilesGen++;
+        S.area = m.area; S.areaSeq = m.seq | 0; S.tilesGen++;
         S.W = m.w || D.W; S.H = m.h || D.H;
         findAnchors();
-        if (!localStorage.getItem('mfHint')) { localStorage.setItem('mfHint', '1'); setTimeout(() => toast('👆 Potiahni prstom kdekoľvek pre pohyb · ťukni na objekt pre akciu'), 600); }
+        if (!localStorage.getItem('mfHint')) { localStorage.setItem('mfHint', '1'); setTimeout(() => { toast('👆 Potiahni prstom kdekoľvek pre pohyb · ťukni na objekt pre akciu'); }, 600); }
         $('join').classList.add('hidden'); $('game').classList.remove('hidden'); $('conn').classList.add('hidden');
         resize();
         break;
       case 'me':
         S.coins = m.coins; S.water = m.water; S.inv = m.inv; S.recipes = m.recipes; S.seen = m.seen; S.vily = m.vily;
-        S.fb = m.fb || {}; S.fbTick = m.tick;
-        Object.assign(S, { rep: m.rep || 0, up: m.up || {}, canCap: m.canCap, plotLimit: m.plotLimit, plotsUsed: m.plotsUsed, maxActive: m.maxActive, loom: m.loom || { busy: false, mine: null, ready: 0 } });
+        S.fb = m.fb; S.fbTick = m.tick;
+        Object.assign(S, { rep: m.rep, up: m.up, canCap: m.canCap, plotLimit: m.plotLimit, plotsUsed: m.plotsUsed, maxActive: m.maxActive, loom: m.loom });
         if (S.sel && !S.inv[S.sel]) S.sel = 'hoe'; // '' = prázdna ruka (vybraté prázdne miesto v lište)
         renderHotbar(); updateHud();
-        if (S.modal && S.modal.refresh) S.modal.refresh();
+        if (S.modal) S.modal.refresh();
         break;
       case 'area': areaChange(m); break; // prechod do inej plochy (záhrada ↔ hory, záhrada ↔ Les na pomedzí)
       case 'room':
-        S.storageRate = m.storageRate || D.STORAGE_AGE_RATE; S.icehouse = m.icehouse || { built: false, ice: 0 }; S.dielna = m.dielna || { built: false, loom: false };
-        S.eternal = m.eternal; S.storageFb = m.storageFb || {}; S.storageTick = m.tick; S.names = m.names; S.mode = m.mode; S.daySeconds = m.daySeconds; S.storage = m.storage || {};
-        if (S.modal && S.modal.refresh) S.modal.refresh();
+        S.storageRate = m.storageRate || D.STORAGE_AGE_RATE; S.icehouse = m.icehouse; S.dielna = m.dielna;
+        S.eternal = m.eternal; S.storageFb = m.storageFb; S.storageTick = m.tick; S.names = m.names; S.mode = m.mode; S.daySeconds = m.daySeconds; S.storage = m.storage;
+        if (S.modal) S.modal.refresh();
         break;
-      case 'plots': S.plotsUsed = m.used; S.plotLimit = m.limit; updateHud(); if (S.modal && S.modal.refresh) S.modal.refresh(); break; // spoločné povolenie na pole
-      case 'market': S.market = m; if (S.modal && S.modal.refresh) S.modal.refresh(); break;
-      case 'board': S.board = m.list; if (S.modal && S.modal.refresh) S.modal.refresh(); break;
+      case 'plots': S.plotsUsed = m.used; S.plotLimit = m.limit; updateHud(); if (S.modal) S.modal.refresh(); break; // spoločné povolenie na pole
+      case 'market': S.market = m; if (S.modal) S.modal.refresh(); break;
+      case 'board': S.board = m.list; if (S.modal) S.modal.refresh(); break;
       case 'tile': S.tiles[m.i] = m.v; break;
       case 'pos': S.me.x = m.x; S.me.y = m.y; stopWalk(); break; // server pohyb odmietol (neprechodná zem) – späť na potvrdené miesto
       case 'tiles': S.tiles = m.tiles; S.tilesGen++; findAnchors(); break;
@@ -136,8 +162,8 @@
         // vlastná postavička nikdy medzi ostatnými (#125)
         const mine = Players.syncOthers(S.others, m.list, S.id, (o, p) => {
           if (p.j !== o.j && !o.jz) o.jv = JUMP_V; // iný hráč skočil
-          Object.assign(o, { id: p.id, tx: p.x, ty: p.y, dir: p.dir, a: p.a, look: p.look || {}, name: p.name, e: p.e, cr: !!p.cr, lp: !!p.lp, j: p.j, si: p.si, wb: p.wb || 0 });
-        });
+          Object.assign(o, { id: p.id, tx: p.x, ty: p.y, dir: p.dir, a: p.a, look: p.look, name: p.name, e: p.e, cr: !!p.cr, lp: !!p.lp, j: p.j, si: p.si, wb: p.wb || 0 });
+        }, (p): OtherPlayer => ({ x: p.x, y: p.y, phase: 0, jz: 0, jv: 0, j: p.j, id: p.id, tx: p.x, ty: p.y, dir: p.dir, a: p.a, look: p.look, name: p.name, e: p.e, cr: false, lp: false, si: -1, wb: 0 }));
         if (mine) { S.myEmote = mine.e; S.mySi = mine.si; }
         break;
       }
@@ -155,54 +181,54 @@
       case 'webs': setWebs(m.webs, m.homes); break;
       case 'corner': if (m.area === S.area) { S.corner = m.list; S.cornerGen++; } break;
       case 'sp': {
-        const seen = new Set();
+        const seen = new Set<string>();
         for (const p of m.list) {
           seen.add(p.id);
-          let o = S.spiders.get(p.id);
-          if (!o) { o = { x: p.x, y: p.y, phase: 0 }; S.spiders.set(p.id, o); }
-          Object.assign(o, { id: p.id, k: p.k, tx: p.x, ty: p.y, a: p.a, m: !!p.m, c: !!p.c, h: !!p.h, tz: p.z || 0, n: p.n || null, u: !!p.u }); // n = na kmeni
+          const o = S.spiders.get(p.id), c = 'c' in p && !!p.c; // c = na chrbte hráča (server to dnes neposiela)
+          const next = { id: p.id, k: p.k, tx: p.x, ty: p.y, a: p.a, m: !!p.m, c, h: !!p.h, tz: p.z || 0, n: p.n || null, u: !!p.u }; // n = na kmeni
+          if (o) Object.assign(o, next); else S.spiders.set(p.id, { x: p.x, y: p.y, phase: 0, ...next });
         }
         for (const id of [...S.spiders.keys()]) if (!seen.has(id)) S.spiders.delete(id);
         break;
       }
-      case 'slow': S.slowK = m.k; S.slowUntil = performance.now() + m.ms; break;
       case 'webbed': { const now = performance.now(); S.web = { start: now, stuck: m.stuck, end: now + m.ms, k: m.k }; stopWalk(); break; } // pavúk ťa zabalil do pavučiny
       case 'shove': S.me.x = m.x; S.me.y = m.y; stopWalk(); break; // stará pradlena odhodila hráča za okraj čistiny
-      case 'brewed': S.brewed = m.k; S.cauldron = []; sfx(m.k === 'sliz' ? 'bad' : 'magic'); if (S.modal && S.modal.refresh) S.modal.refresh(); break;
+      case 'brewed': S.brewed = m.k; S.cauldron = []; sfx(m.k === 'sliz' ? 'bad' : 'magic'); if (S.modal) S.modal.refresh(); break;
       case 'error': alert(m.text); S.joined = false; $('conn').classList.add('hidden'); break;
     }
   }
 
   // ---------- Prechod do inej plochy: stmavnutie do čiernej, výmena sveta, meno plochy, rozjasnenie ----------
   const AREA_FADE = 300, AREA_HOLD = 900; // ms; meno plochy ostane na čiernej ≈ 0,9 s, aby sa dalo prečítať
-  const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let areaHideT = 0;
-  function applyArea(m) {
+  const reducedMotion = (): boolean => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let areaHideT: ReturnType<typeof setTimeout> | undefined;
+  function applyArea(m: MsgOf<'area'>): void {
     S.area = m.area; S.areaSeq = m.seq; S.tiles = m.tiles; S.tilesGen++;
     S.W = m.w || D.W; S.H = m.h || D.H; // každá plocha má vlastnú veľkosť
     S.me.x = m.x; S.me.y = m.y; S.others.clear(); stopWalk();
     setWebs([], []); S.corner = []; S.cornerGen++; S.spiders.clear(); S.slowUntil = 0; S.web = null;
     findAnchors();
   }
-  function setWebs(webs, homes) {
-    S.webs = webs || []; S.homes = homes || []; S.websGen++;
+  function setWebs(webs: WebView[], homes: MsgOf<'webs'>['homes']): void {
+    S.webs = webs; S.homes = homes; S.websGen++;
     S.webTile = new Map();
     for (const wb of S.webs) for (let k = 0; k < wb.n; k++) S.webTile.set((wb.y + (wb.ax ? k : 0)) * S.W + wb.x + (wb.ax ? 0 : k), wb);
   }
-  const cornerAt = (tx, ty) => S.corner.find(c => c.x === tx && c.y === ty);
+  const cornerAt = (tx: number, ty: number): boolean => S.corner.some(c => c.x === tx && c.y === ty);
   // vzhľad clony podľa cieľovej plochy (D.AREA_FX): farba žiary, ikona, meno a ozdoby rozložené po okrajoch
-  function paintAreaFade(area) {
-    const el = $('areaFade'), f = D.AREA_FX[area] || {}, deco = f.deco || ['✨'];
+  function paintAreaFade(area: D.AreaId): void {
+    const el = $('areaFade'), f = D.AREA_FX[area], deco = f.deco.length ? f.deco : ['✨'];
+    const part = (sel: string): Element => must(el.querySelector(sel) ?? undefined);
     el.style.setProperty('--af-glow', f.glow || '#ffffff88');
-    el.querySelector('.af-icon').textContent = f.icon || '✨';
-    el.querySelector('.af-name').textContent = D.AREA_NAMES[area] || area;
-    const N = 16, box = el.querySelector('.af-deco');
+    part('.af-icon').textContent = f.icon || '✨';
+    part('.af-name').textContent = D.AREA_NAMES[area] || area;
+    const N = 16, box = part('.af-deco');
     box.innerHTML = '';
     for (let i = 0; i < N; i++) {
       // obvod obdĺžnika: hore, vpravo, dole, vľavo (v % obrazovky, kúsok od okraja)
       const u = (i + 0.5) / N * 4, side = Math.floor(u), k = u - side, a = 4 + k * 92, sp = document.createElement('span');
       const [l, t] = side === 0 ? [a, 3] : side === 1 ? [93, a] : side === 2 ? [100 - a, 92] : [3, 100 - a];
-      sp.textContent = deco[i % deco.length];
+      sp.textContent = deco[i % deco.length] ?? '✨';
       sp.style.left = l + '%'; sp.style.top = t + '%'; sp.style.animationDelay = (-(i * 0.37) % 1.4) + 's';
       box.appendChild(sp);
     }
@@ -210,7 +236,7 @@
   // Priebeh prechodu (S.areaFx.phase): 'out' – stmavuje sa, 'build' – za čiernou sa stavia svet novej plochy,
   // 'named' – meno plochy svieti AREA_HOLD ms, potom sa rozjasní (endAreaFx). Stavba 3D sveta je ťažká a na mobile
   // na stovky ms zastaví stránku – meno sa preto ukáže až po nej a čas AREA_HOLD beží až odvtedy.
-  function areaChange(m) {
+  function areaChange(m: MsgOf<'area'>): void {
     stopWalk(); S.keys = {}; S.stick.x = S.stick.y = 0;
     const fx = S.areaFx;
     if (fx && fx.phase === 'out') { fx.msg = m; paintAreaFade(m.area); return; } // ešte stmavuje – platí posledná správa
@@ -218,9 +244,9 @@
     const el = $('areaFade');
     clearTimeout(areaHideT);
     paintAreaFade(m.area);
-    el.classList.remove('hidden', 'named'); void el.offsetWidth; el.classList.add('on');
+    el.classList.remove('hidden', 'named'); el.getBoundingClientRect(); el.classList.add('on'); // prepočet rozloženia – prechod sa spustí znova
     sfx('magic');
-    const nfx = S.areaFx = { phase: 'out', msg: m, queue: [] };
+    const nfx: NonNullable<ClientState['areaFx']> = S.areaFx = { phase: 'out', msg: m, queue: [] };
     nfx.timer = setTimeout(() => {
       applyArea(nfx.msg); // svet sa prestavia za čiernou
       for (const q of nfx.queue.splice(0)) onMsg(q);
@@ -228,14 +254,14 @@
     }, reducedMotion() ? 0 : AREA_FADE);
   }
   // Počká, kým 3D pohľad postaví a nakreslí svet novej plochy (najviac 4 s), potom ukáže meno a nechá ho svietiť AREA_HOLD.
-  function showAreaName(fx) {
+  function showAreaName(fx: NonNullable<ClientState['areaFx']>): void {
     fx.phase = 'build';
-    const el = $('areaFade'), t0 = performance.now(), gen = S.tilesGen, tok = fx.tok = {}; // platí len posledné čakanie
-    const live = () => S.areaFx === fx && fx.tok === tok;
-    const ready = () => !R3 || S.worldGen >= gen || performance.now() - t0 > 4000;
-    const step = () => {
+    const el = $('areaFade'), t0 = performance.now(), gen = S.tilesGen, tok = fx.tok = Symbol('čakanie'); // platí len posledné čakanie
+    const live = (): boolean => S.areaFx === fx && fx.tok === tok;
+    const ready = (): boolean => !R3 || (S.worldGen ?? -1) >= gen || performance.now() - t0 > 4000;
+    const step = (): void => {
       if (!live()) return; // medzitým prechod skončil alebo prišla ďalšia plocha
-      if (!ready()) return requestAnimationFrame(step);
+      if (!ready()) { requestAnimationFrame(step); return; }
       requestAnimationFrame(() => { // ešte jeden snímok, nech je postavený svet naozaj nakreslený
         if (!live()) return;
         fx.phase = 'named';
@@ -245,18 +271,18 @@
     };
     requestAnimationFrame(step);
   }
-  function endAreaFx(now) {
+  function endAreaFx(now?: boolean): void {
     const el = $('areaFade');
     if (S.areaFx) clearTimeout(S.areaFx.timer);
     S.areaFx = null;
     el.classList.remove('on');
-    areaHideT = setTimeout(() => el.classList.add('hidden'), now === true || reducedMotion() ? 0 : AREA_FADE);
+    areaHideT = setTimeout(() => { el.classList.add('hidden'); }, now === true || reducedMotion() ? 0 : AREA_FADE);
   }
 
-  function findAnchors() {
+  function findAnchors(): void {
     S.anchors = {};
     for (let i = 0; i < S.tiles.length; i++) {
-      const g = S.tiles[i].g;
+      const g = must(S.tiles[i]).g;
       if ((g === 'hut' || g === 'house' || g === 'stall' || g === 'well' || g === 'cauldron' || g === 'icehouse' || g === 'dielna') && !S.anchors[g]) S.anchors[g] = { x: i % S.W, y: (i / S.W) | 0 };
     }
   }
@@ -264,60 +290,61 @@
   // ---------- Pomocné ----------
   // ladenie: window.MF_TIME = { season: 0–3, min: 0–1439 } prepíše zobrazený čas (len lokálne vykresľovanie, nie server)
   // Hráč hrabe v tráve (si = index hľadaného políčka, inak -1) – hlinku a trávu kreslia častice vo svete (particles3d.mjs).
-  const searching = o => o && o.si != null && o.si >= 0;
-  function curMin() { if (window.MF_TIME && window.MF_TIME.min != null) return window.MF_TIME.min; return realMin(); }
+  const searching = (o: { si?: number | undefined } | null | undefined): boolean => !!o && o.si != null && o.si >= 0;
+  function curMin(): number { if (window.MF_TIME && window.MF_TIME.min != null) return window.MF_TIME.min; return realMin(); }
   // server posiela čas najviac raz za sekundu; medzitým ho dopočítame z tickMs (najviac o 1,5 s dopredu, keby správa meškala)
-  function realMin() { const el = Math.min(1500, performance.now() - S.timeAt); return (S.min + el / S.tickMs * D.MIN_PER_TICK) % 1440; }
-  function season() { return window.MF_TIME && window.MF_TIME.season != null ? window.MF_TIME.season : D.seasonOf(S.day); }
+  function realMin(): number { const el = Math.min(1500, performance.now() - S.timeAt); return (S.min + el / S.tickMs * D.MIN_PER_TICK) % 1440; }
+  function season(): number { return window.MF_TIME && window.MF_TIME.season != null ? window.MF_TIME.season : D.seasonOf(S.day); }
   const GLACIER_MAX = D.glacierLevels(D.buildMountains()); // pôvodná výška ľadu na políčkach hôr
-  function tileAt(x, y) { return (x < 0 || y < 0 || x >= S.W || y >= S.H) ? null : S.tiles[y * S.W + x]; }
+  function tileAt(x: number, y: number): TileView | null { return (x < 0 || y < 0 || x >= S.W || y >= S.H) ? null : S.tiles[y * S.W + x] ?? null; }
   // Dá sa vstúpiť na políčko pod bodom (x, y) z políčka here? Na ľadovec len o pol bloku vyššie (vo výskoku o blok),
   // plazením vôbec nie cez výškový rozdiel – políčka, na ktorých už čiastočne leží (overlap), ho však nezadržia.
-  function solid(x, y, here, lift, crawl, overlap) {
+  function solid(x: number, y: number, here: TileView | null, lift: number, crawl: boolean, overlap: Set<number>): boolean {
     const tx = Math.floor(x), ty = Math.floor(y), t = tileAt(tx, ty);
     if (!t) return true;
     if (crawl && D.passable(t) && overlap.has(ty * S.W + tx)) return false;
     return !D.canStep(here, t, lift, crawl);
   }
-  function playerOn(tx, ty) {
+  function playerOn(tx: number, ty: number): OtherPlayer | null {
     for (const o of S.others.values()) if (Math.hypot(o.x - (tx + 0.5), o.y - (ty + 0.5)) < 0.8) return o;
     return null;
   }
-  function frontTile() {
+  function frontTile(): Pt {
     if (S.me.a != null) return { x: Math.floor(S.me.x) + Math.round(Math.cos(S.me.a)), y: Math.floor(S.me.y) + Math.round(Math.sin(S.me.a)) };
-    const d = [[0, 1], [-1, 0], [1, 0], [0, -1]][S.me.dir];
+    const d = ([[0, 1], [-1, 0], [1, 0], [0, -1]] as const)[S.me.dir] ?? [0, 1];
     return { x: Math.floor(S.me.x) + d[0], y: Math.floor(S.me.y) + d[1] };
   }
 
-  function toast(text, kind) {
+  function toast(text: string, kind?: ToastKind): void {
     const box = $('toasts');
     const el = document.createElement('div');
     el.className = 'toast ' + (kind || '');
     el.textContent = text;
     box.appendChild(el);
-    while (box.children.length > 3) box.removeChild(box.firstChild);
-    setTimeout(() => el.classList.add('out'), kind === 'magic' ? 7000 : 4000);
-    setTimeout(() => el.remove(), kind === 'magic' ? 7600 : 4600);
+    while (box.firstChild && box.children.length > 3) box.removeChild(box.firstChild);
+    setTimeout(() => { el.classList.add('out'); }, kind === 'magic' ? 7000 : 4000);
+    setTimeout(() => { el.remove(); }, kind === 'magic' ? 7600 : 4600);
   }
-  function chatEl(name, text) {
+  function chatEl(name: string, text: string): HTMLElement {
     const el = document.createElement('div');
     el.className = 'chatline';
     el.innerHTML = '<b></b> ';
-    el.firstChild.textContent = name + ':';
+    must(el.firstChild ?? undefined).textContent = name + ':';
     el.appendChild(document.createTextNode(text));
     return el;
   }
   // História chatu (posledných 50 správ) – ukáže sa po otvorení chatu (T alebo 💬)
-  function chatLine(name, text) {
+  function chatLine(name: string, text: string): void {
     const hist = $('chathist'), atEnd = hist.scrollTop + hist.clientHeight >= hist.scrollHeight - 4;
     hist.appendChild(chatEl(name, text));
-    while (hist.children.length > 50) hist.removeChild(hist.firstChild);
+    while (hist.firstChild && hist.children.length > 50) hist.removeChild(hist.firstChild);
     if (atEnd) hist.scrollTop = hist.scrollHeight;
     const el = chatEl(name, text);
-    $('chatlog').appendChild(el);
-    while ($('chatlog').children.length > 5) $('chatlog').removeChild($('chatlog').firstChild);
+    const log = $('chatlog');
+    log.appendChild(el);
+    while (log.firstChild && log.children.length > 5) log.removeChild(log.firstChild);
     chatWheel();
-    setTimeout(() => el.classList.add('out'), 9000);
+    setTimeout(() => { el.classList.add('out'); }, 9000);
     setTimeout(() => { el.remove(); chatWheel(); }, 10000);
   }
   // Kolotoč v histórii: okno má 15 riadkov, spodných 13 je normálne, 14. a 15. riadok prichádzajú z pozadia –
@@ -326,14 +353,17 @@
   // sa dopredu dostane aj najstaršia. Pri menej ako 14 správach nič.
   // Počíta sa z polohy v rozložení (offsetTop), nie z bounding boxu, aby transformácia neovplyvňovala sama seba.
   const CHAT_ROW = 25;
-  function chatWheel() {
+  function chatWheel(): void {
     const box = $('chathist');
     if (!$('chatbox').classList.contains('open')) return;
     const H = parseFloat(getComputedStyle(box).maxHeight) || 0, flat = H - 2 * CHAT_ROW;
     const bottom = box.scrollTop + box.clientHeight, items = box.children;
     for (let i = 0; i < items.length; i++) {
-      const el = items[i], e = Math.max(0, (bottom - el.offsetTop - flat) / (2 * CHAT_ROW)), d = Math.min(1, e);
-      el.style.zIndex = i + 1;
+      const el = items[i];
+      if (!(el instanceof HTMLElement)) continue;
+      const e = Math.max(0, (bottom - el.offsetTop - flat) / (2 * CHAT_ROW)), d = Math.min(1, e);
+      el.style.zIndex = String(i + 1);
+
       el.style.transform = d ? `translateY(${(d * CHAT_ROW).toFixed(1)}px) perspective(500px) rotateX(${(d * 30).toFixed(1)}deg) scale(${(1 - d * 0.15).toFixed(3)})` : '';
       el.style.opacity = e ? Math.max(0, 1 - e * 0.8).toFixed(2) : '';
     }
@@ -342,7 +372,7 @@
   $('chathist').addEventListener('scroll', () => { if (!wheelRaf) wheelRaf = requestAnimationFrame(() => { wheelRaf = 0; chatWheel(); }); }, { passive: true });
 
   // ---------- Kontextová akcia ----------
-  function ctxAction(tx, ty) {
+  function ctxAction(tx: number, ty: number): CtxAction | null {
     const t = tileAt(tx, ty);
     if (!t) return null;
     const sel = S.sel;
@@ -379,7 +409,7 @@
     }
     // mimo záhrady sa nepestuje ani nehľadá – použiť sa dá len elixír
     if (S.area !== 'garden') return sel.startsWith('po_') ? { i: '🧪', l: 'Použiť' } : null;
-    const s = t.s, p = s && s.p;
+    const s = t.s, p = s?.p;
     if (p && !p.d && D.stageOf(p) === 3) return (p.sp === 'papradie' && !D.isNight(curMin())) ? { i: '🌙', l: 'Čaká na noc' } : { i: '🧺', l: 'Zbierať' };
     if (sel === 'hoe') {
       if (p && p.d) return { i: '🧹', l: 'Vyčistiť' };
@@ -398,55 +428,56 @@
 
   // ---- Čerstvosť odrezaných kvetov ----
   // Najstaršia várka kvetu: { age (kroky), fresh (0.5–1), left (kroky do zvädnutia) }
-  function oldestBatch(id, inStorage) {
+  function oldestBatch(id: string, inStorage?: boolean): { age: number; fresh: number; left: number; rem: number } | null {
     const fb = inStorage ? S.storageFb : S.fb, base = inStorage ? S.storageTick : S.fbTick;
-    const list = fb && fb[id];
-    if (!list || !list.length) return null;
-    const rate = inStorage ? S.storageRate : 1, sp = id.slice(3), ice = id === 'ice';
-    const age = list[0].age + Math.max(0, S.tick - (base || S.tick)) * rate;
-    const life = ice ? D.ICE_LIFE : D.SPECIES[sp].life * TPD; // ľad sa do pol dňa roztopí
-    return { age, fresh: ice ? 1 : D.freshness(sp, age), left: Math.max(0, (life - age) / rate), rem: Math.max(0, 1 - age / life) };
+    const first = fb && lookup(fb, id)?.[0];
+    if (!first) return null;
+    const rate = inStorage ? S.storageRate : 1, sp = id.slice(3), ice = id === 'ice', spec = speciesOf(sp);
+    if (!ice && !spec) return null;
+    const age = first.age + Math.max(0, S.tick - (base || S.tick)) * rate;
+    const life = ice || !spec ? D.ICE_LIFE : spec.life * TPD; // ľad sa do pol dňa roztopí
+    return { age, fresh: ice || !D.isSpeciesId(sp) ? 1 : D.freshness(sp, age), left: Math.max(0, (life - age) / rate), rem: Math.max(0, 1 - age / life) };
   }
-  const freshColor = rem => rem > 0.6 ? '#3aa04a' : rem > 0.3 ? '#e8b21c' : '#d0502a';
-  function freshText(id, inStorage) {
+  const freshColor = (rem: number): string => rem > 0.6 ? '#3aa04a' : rem > 0.3 ? '#e8b21c' : '#d0502a';
+  function freshText(id: string, inStorage?: boolean): string {
     const o = oldestBatch(id, inStorage);
     if (!o) return '';
     return `čerstvosť ${Math.round(o.fresh * 100)} % · najstaršie zvädnú o ${fmtLeft(o.left)}`;
   }
 
-  function plantInfo(tx, ty) {
-    const t = tileAt(tx, ty), p = t.s && t.s.p;
-    if (!p) return;
-    const sp = D.SPECIES[p.sp];
-    if (!sp) return toast('Divé semienko – uvidíme, čo z neho vyrastie, keď vyklíči.' + (p.d ? ' Žiaľ, zahynulo.' : t.s.w ? '' : ' · smäd'));
-    const st = ['semienko', 'klíčok', 'púčik', 'kvitne'][D.stageOf(p)];
+  function plantInfo(tx: number, ty: number): void {
+    const t = tileAt(tx, ty), s = t?.s, p = s?.p;
+    if (!t || !s || !p) return;
+    const sp = speciesOf(p.sp);
+    if (!sp) { toast('Divé semienko – uvidíme, čo z neho vyrastie, keď vyklíči.' + (p.d ? ' Žiaľ, zahynulo.' : s.w ? '' : ' · smäd')); return; }
+    const st = ['semienko', 'klíčok', 'púčik', 'kvitne'][D.stageOf(p)] ?? '';
     const shade = D.isShade(S.tiles, tx, ty);
-    const notes = [];
+    const notes: string[] = [];
     if (sp.light !== 'any' && (sp.light === 'shade') !== shade) notes.push(sp.light === 'shade' ? 'chce tieň' : 'chce slnko');
-    if (sp.soil && sp.soil !== t.s.k && !(sp.soil === 'rich' && t.s.r) && !(sp.soil === 'sand' && t.s.k === 'rock')) notes.push({ sand: 'chce piesok', rock: 'chce skalku', rich: 'chce kompost' }[sp.soil]);
-    if (!t.s.w) notes.push('smäd');
+    if (sp.soil && sp.soil !== s.k && !(sp.soil === 'rich' && s.r) && !(sp.soil === 'sand' && s.k === 'rock')) notes.push({ sand: 'chce piesok', rock: 'chce skalku', rich: 'chce kompost' }[sp.soil]);
+    if (!s.w) notes.push('smäd');
     if (R3) { const sh = R3.sunHoursAt(tx, ty); if (sh != null) notes.push(`☀️ ~${sh.toFixed(1).replace('.', ',')} h slnka denne`); }
     if (D.stageOf(p) === 3 && p.bt != null && !p.d) notes.push((sp.perennial ? 'odkvitne' : 'zvädne') + ' o ' + fmtLeft(sp.life * TPD - (S.tick - p.bt)));
     toast(`${sp.name}: ${st} (${Math.floor(p.prog)}/${sp.days} dní) · ${'⭐'.repeat(p.q)}${notes.length ? ' · ' + notes.join(', ') : ' · spokojná 😊'}`);
   }
 
   // Hľadať sa dá len stojac priamo na políčku – kým tam hráč nie je, najprv tam dôjde
-  const onTile = (tx, ty) => Math.hypot(S.me.x - (tx + 0.5), S.me.y - (ty + 0.5)) <= 0.3;
-  function walkOnto(tx, ty) {
+  const onTile = (tx: number, ty: number): boolean => Math.hypot(S.me.x - (tx + 0.5), S.me.y - (ty + 0.5)) <= 0.3;
+  function walkOnto(tx: number, ty: number): void {
     const path = findPath((x, y) => x === tx && y === ty);
     if (!path) return;
     S.path = path; S.pendingAct = { x: tx, y: ty, onTile: true }; S.stuckT = 0;
   }
 
   // kde je majster hodvábu teraz (podľa herného času, ako na serveri); null = je preč (leto, zima)
-  const masterNow = () => D.masterAt(S.day, curMin(), S.dielna.loom); // po kúpe krosien už nechodí
-  const onDielnaLot = (tx, ty) => { const L = D.DIELNA.lot; return tx >= L.x0 && tx <= L.x1 && ty >= L.y0 && ty <= L.y1; };
-  function doAction(tx, ty) {
+  const masterNow = (): D.MasterPos | null => D.masterAt(S.day, curMin(), S.dielna.loom); // po kúpe krosien už nechodí
+  const onDielnaLot = (tx: number, ty: number): boolean => { const L = D.DIELNA.lot; return tx >= L.x0 && tx <= L.x1 && ty >= L.y0 && ty <= L.y1; };
+  function doAction(tx: number, ty: number): void {
     const a = ctxAction(tx, ty);
     if (!a) return;
     if (a.only) toast('Do ľadovne patrí len ľad 🧊 (a hodvábne prikrývky na izoláciu). Kvety ulož do skladu v domčeku – ľad v ľadovni ho chladí, takže v ňom vädnú 4× pomalšie.');
-    if (a.ui) return openUI(a.ui);
-    if (a.l === 'Hľadať' && !onTile(tx, ty)) return walkOnto(tx, ty);
+    if (a.ui) { openUI(a.ui); return; }
+    if (a.l === 'Hľadať' && !onTile(tx, ty)) { walkOnto(tx, ty); return; }
     if (a.info) {
       if (a.l === 'Huby') toast(D.isNight(curMin()) ? 'Huby slabo svietia… Skús tu zatancovať 💃' : 'Kruh z húb. Babka hovorí, že tu v noci tancujú víly. 🍄');
       else if (a.l === 'Ľadovec') {
@@ -454,10 +485,10 @@
         const have = S.tiles.reduce((s, x) => s + (x.ice || 0), 0), max = GLACIER_MAX.reduce((s, v) => s + v, 0);
         const state = ` Ľadovec má ${Math.round(have / max * 100)} % ľadu – dorastie len v daždi alebo snehu.`;
         toast((!S.inv.pick ? 'Na ľad potrebuješ krompáč – kúpiš ho na trhu (záložka Vylepšiť). ⛏️'
-          : t.ice ? `Tu ešte vysekáš ${t.ice}× ľad. Vyber v lište krompáč. ⛏️` : 'Tu je ľad vysekaný až po dno. 🧊') + state);
+          : t?.ice ? `Tu ešte vysekáš ${t.ice}× ľad. Vyber v lište krompáč. ⛏️` : 'Tu je ľad vysekaný až po dno. 🧊') + state);
       } else if (a.l === 'Otvor v ľade') toast('Tu už je otvor v ľade. Cez noc zamrzne – skús iné miesto. 🧊');
       else if (a.l === 'Pavučina') toast('S lampášom v ruke hodváb neutrhneš – potrebuješ voľnú ruku. Vyber si v lište niečo iné alebo prázdnu ruku. 🕸️');
-      else if (a.l === 'Majster na ceste') toast(D.masterRoadText(a.ma));
+      else if (a.l === 'Majster na ceste' && a.ma) toast(D.masterRoadText(a.ma));
       else if (a.l === 'Miesto majstra') toast(masterNow() ? 'Majster hodvábu je na noc u babky v chalúpke. Ráno o 6:00 sa vráti na trh. 🧵' : 'Tu predáva majster hodvábu – do dedinky chodí len na jar a na jeseň. 🧵');
       else if (a.l === 'Pozemok') toast(onDielnaLot(tx, ty)
         ? `Pozemok pre Dielňu. Postaviť ju môže ktokoľvek zo záhrady na trhu (záložka Vylepšiť) za ${D.DIELNA.price} 🪙 (treba ⭐${D.DIELNA.rep}). 🪚`
@@ -473,30 +504,32 @@
   // ---------- Vstupy ----------
   // Skok (medzerník) a plazenie (Shift) sú len pre parádu – nič nemenia, ostatní hráči ich však vidia
   const JUMP_V = 5.6, JUMP_G = 23, CRAWL_SPEED = 0.45; // výskok ≈ 0,7 políčka, ≈ 0,5 s
-  function jump() {
+  function jump(): void {
     const me = S.me;
     if (S.asleep || me.jz > 0 || me.crawl) return;
     me.jv = JUMP_V; me.jz = 0.001;
     send({ t: 'jump' }); sfx('hop');
   }
-  function setCrawlToggle(on) { S.crawlTgl = on; $('bCrawl').classList.toggle('on', on); }
-  const KEYMAP = { ArrowUp: 'u', KeyW: 'u', ArrowDown: 'd', KeyS: 'd', ArrowLeft: 'l', KeyA: 'l', ArrowRight: 'r', KeyD: 'r' };
+  function setCrawlToggle(on: boolean): void { S.crawlTgl = on; $('bCrawl').classList.toggle('on', on); }
+  const KEYMAP: Readonly<Record<string, Dir>> = { ArrowUp: 'u', KeyW: 'u', ArrowDown: 'd', KeyS: 'd', ArrowLeft: 'l', KeyA: 'l', ArrowRight: 'r', KeyD: 'r' };
   addEventListener('keydown', e => {
-    if (!S.joined || S.asleep || S.areaFx || document.activeElement.tagName === 'INPUT') return;
+    if (!S.joined || S.asleep || S.areaFx || document.activeElement?.tagName === 'INPUT') return;
     S.kbd = true;
-    if (KEYMAP[e.code]) { S.keys[KEYMAP[e.code]] = true; stopWalk(); e.preventDefault(); }
+    const k = lookup(KEYMAP, e.code);
+    if (k) { S.keys[k] = true; stopWalk(); e.preventDefault(); }
     if (e.code === 'Space') { if (!e.repeat) jump(); e.preventDefault(); }
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') S.crawlKey = true;
     if (e.code === 'KeyE' || e.code === 'Enter') { const f = frontTile(); doAction(f.x, f.y); e.preventDefault(); }
     if (e.code === 'Escape') closeModal();
     if (/^Digit[1-9]$/.test(e.code)) { const ids = hotbarIds(); selectItem(ids[+e.code.slice(5) - 1] || ''); }
-    if (e.code === 'KeyQ') { const ids = hotbarIds().concat(''); selectItem(ids[(ids.indexOf(S.sel) + 1) % ids.length]); }
+    if (e.code === 'KeyQ') { const ids: (ItemId | '')[] = [...hotbarIds(), '']; selectItem(ids[(ids.indexOf(S.sel) + 1) % ids.length]); }
     if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
     if (R3 && e.code === 'BracketLeft') R3.rotate(-1);
     if (R3 && e.code === 'BracketRight') R3.rotate(1);
   });
   addEventListener('keyup', e => {
-    if (KEYMAP[e.code]) S.keys[KEYMAP[e.code]] = false;
+    const k = lookup(KEYMAP, e.code);
+    if (k) S.keys[k] = false;
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') S.crawlKey = false;
   });
   addEventListener('blur', () => { S.keys = {}; S.crawlKey = false; });
@@ -504,52 +537,53 @@
   $('bJump').addEventListener('pointerdown', e => { e.preventDefault(); jump(); });
   $('bCrawl').addEventListener('pointerdown', e => { e.preventDefault(); setCrawlToggle(!S.crawlTgl); sfx('pop'); });
 
-  document.querySelectorAll('#emotes button[data-e]').forEach(b => b.addEventListener('click', () => { send({ t: 'emote', e: b.dataset.e }); sfx('pop'); }));
+  document.querySelectorAll<HTMLElement>('#emotes button[data-e]').forEach(b => { b.addEventListener('click', () => { const e = b.dataset['e']; if (isEmote(e)) send({ t: 'emote', e }); sfx('pop'); }); });
 
   // Joystick – objaví sa tam, kde hráč začne ťahať prstom (kdekoľvek na obrazovke); kotva sa nehýbe
-  const cv = $('cv'), ctx = cv.getContext('2d');
+  const cv = $cv('cv'), ctx = ctx2d(cv);
   // Three.js kreslí do #gl, #cv zostáva navrchu ako prekrytie (mená, efekty) a prijíma dotyky
-  let R3 = null;
-  $('rotL').onclick = () => R3 && R3.rotate(-1);
-  $('rotR').onclick = () => R3 && R3.rotate(1);
-  import('/render3d.mjs').then(() => {
-    R3 = window.Render3D.create({
-      S, searching, glCanvas: $('gl'), ov: cv, ovCtx: ctx, EMOJI, curMin, season, ctxAction, frontTile
+  let R3: Render3D | null = null;
+  $('rotL').onclick = () => { R3?.rotate(-1); };
+  $('rotR').onclick = () => { R3?.rotate(1); };
+  // 3D pohľad aj s Three.js je samostatný kúsok balíka (esbuild ho načíta až teraz)
+  import('./render3d.ts').then(M => {
+    const r3 = R3 = S.r3 = M.create({
+      S, searching, glCanvas: $cv('gl'), ov: cv, ovCtx: ctx, EMOJI, curMin, season, ctxAction, frontTile
     });
-    window._r3pick = (x, y) => R3.pick(x, y); // pre ladenie / testy
-    window._r3 = R3;
-    R3.setStats(Fps.on);
-  }).catch(e => { console.error(e); toast('3D sa nepodarilo načítať – skús obnoviť stránku.'); });
+    r3.setStats(Fps.on);
+  }).catch((e: unknown) => { console.error(e); toast('3D sa nepodarilo načítať – skús obnoviť stránku.'); });
   // Počítadlo snímok (FPS): zapína sa v menu, platí len na tomto zariadení. Vypnuté nerobí nič navyše.
   const Fps = (() => {
     const N = 120; // graf: posledných 120 snímok
-    let on = false, el = null, txt = null, gc = null, last = 0, lastText = 0;
-    const frames = [], cpu = [];
-    try { on = localStorage.getItem('mfFps') === '1'; } catch (e) { }
-    const f1 = v => v.toFixed(1).replace('.', ',');
-    function build() {
-      el = h('div', { id: 'fps' }, txt = h('div'), gc = h('canvas', { width: N, height: 30 }));
-      $('game').appendChild(el);
+    let on = false, el: HTMLElement | null = null, last = 0, lastText = 0;
+    const frames: number[] = [], cpu: number[] = [];
+    const txt = h('div'), gc = h('canvas', { width: N, height: 30 });
+    try { on = localStorage.getItem('mfFps') === '1'; } catch { /* súkromné okno bez úložiska */ }
+    const f1 = (v: number): string => v.toFixed(1).replace('.', ',');
+    function build(): HTMLElement {
+      const box = el = h('div', { id: 'fps' }, txt, gc);
+      $('game').appendChild(box);
+      return box;
     }
-    function set(v) {
+    function set(v: boolean): void {
       on = v; frames.length = cpu.length = 0; last = 0;
-      try { localStorage.setItem('mfFps', v ? '1' : '0'); } catch (e) { }
+      try { localStorage.setItem('mfFps', v ? '1' : '0'); } catch { /* súkromné okno bez úložiska */ }
       if (R3) R3.setStats(v);
       if (!v && el) { el.remove(); el = null; }
     }
-    function draw() {
-      const c = gc.getContext('2d'), H = gc.height;
+    function draw(): void {
+      const c = ctx2d(gc), H = gc.height;
       c.clearRect(0, 0, N, H);
       c.fillStyle = '#ffffff22'; c.fillRect(0, H - 16.7 / 50 * H, N, 1); // čiara 60 FPS (16,7 ms)
       frames.forEach((ms, i) => { c.fillStyle = ms > 34 ? '#ff6b6b' : ms > 18 ? '#ffd166' : '#7bd88f'; const bh = Math.min(H, ms / 50 * H); c.fillRect(i + N - frames.length, H - bh, 1, bh); });
     }
     // now = čas snímku z requestAnimationFrame, cpuMs = koľko trval 3D snímok (R3.frame)
-    function tick(now, cpuMs) {
+    function tick(now: number, cpuMs: number): void {
       if (last) { frames.push(now - last); cpu.push(cpuMs); if (frames.length > N) { frames.shift(); cpu.shift(); } }
       last = now;
       if (now - lastText < 250 || !frames.length) return;
       lastText = now;
-      if (!el) build();
+      if (!el) el = build();
       const avg = frames.reduce((a, b) => a + b, 0) / frames.length, cAvg = cpu.reduce((a, b) => a + b, 0) / cpu.length;
       const r = R3 ? R3.stats() : null;
       txt.textContent = [
@@ -564,31 +598,31 @@
       ].filter(Boolean).join('\n');
       draw();
     }
-    return { get on() { return on; }, set, tick };
+    return { get on(): boolean { return on; }, set, tick };
   })();
   const gameEl = $('game'), joy = $('joy'), joyKnob = $('joyKnob');
   const JOY_R = 50, DRAG_START = 10;
-  const ptrs = new Map();
-  let joyId = null, joyBase = null;
-  function joyMove(x, y) {
+  const ptrs = new Map<number, { x0: number; y0: number; joy: boolean }>();
+  let joyId: number | null = null, joyBase: Pt = { x: 0, y: 0 };
+  function joyMove(x: number, y: number): void {
     let dx = x - joyBase.x, dy = y - joyBase.y, d = Math.hypot(dx, dy);
     if (d > JOY_R) { dx *= JOY_R / d; dy *= JOY_R / d; d = JOY_R; } // kotva ostáva na mieste
     joyKnob.style.transform = `translate(${dx}px,${dy}px)`;
     S.stick = d / JOY_R < 0.15 ? { x: 0, y: 0 } : { x: dx / JOY_R, y: dy / JOY_R };
   }
-  function endJoy() { joyId = null; S.stick = { x: 0, y: 0 }; joyKnob.style.transform = ''; joy.classList.add('hidden'); }
+  function endJoy(): void { joyId = null; S.stick = { x: 0, y: 0 }; joyKnob.style.transform = ''; joy.classList.add('hidden'); }
   cv.addEventListener('pointerdown', e => {
     if (!S.joined) return;
     if (e.pointerType === 'touch') gameEl.classList.add('touch');
     e.preventDefault();
-    try { cv.setPointerCapture(e.pointerId); } catch (err) { }
+    try { cv.setPointerCapture(e.pointerId); } catch { /* ukazovateľ už zmizol */ }
     ptrs.set(e.pointerId, { x0: e.clientX, y0: e.clientY, joy: false });
   });
   cv.addEventListener('pointermove', e => {
     const p = ptrs.get(e.pointerId);
     if (!p) return;
     const r = gameEl.getBoundingClientRect();
-    if (e.pointerId === joyId) return joyMove(e.clientX - r.left, e.clientY - r.top);
+    if (e.pointerId === joyId) { joyMove(e.clientX - r.left, e.clientY - r.top); return; }
     if (joyId === null && !p.joy && Math.hypot(e.clientX - p.x0, e.clientY - p.y0) > DRAG_START) {
       joyId = e.pointerId; p.joy = true;
       stopWalk();
@@ -598,11 +632,11 @@
       joyMove(e.clientX - r.left, e.clientY - r.top);
     }
   });
-  const ptrEnd = e => {
+  const ptrEnd = (e: PointerEvent): void => {
     const p = ptrs.get(e.pointerId);
     if (!p) return;
     ptrs.delete(e.pointerId);
-    if (e.pointerId === joyId) return endJoy();
+    if (e.pointerId === joyId) { endJoy(); return; }
     if (e.type === 'pointerup' && !p.joy && Math.hypot(e.clientX - p.x0, e.clientY - p.y0) <= DRAG_START) {
       if (joyId !== null) jump(); // ťuknutie druhým prstom počas riadenia joystickom = skok
       else tapWorld(e.clientX, e.clientY);
@@ -612,21 +646,21 @@
   cv.addEventListener('pointercancel', ptrEnd);
 
   // Ťuknutie na objekt: blízko → akcia hneď, ďaleko → dôjde tam a urobí ju
-  const GROUND = { 'Zarovnať': 1, 'Kopať': 1, 'Poliať': 1, 'Sadiť': 1, 'Pohnojiť': 1, 'Vyčistiť': 1, 'Použiť': 1, 'Vysekať ľad': 1 };
+  const GROUND = new Set(['Zarovnať', 'Kopať', 'Poliať', 'Sadiť', 'Pohnojiť', 'Vyčistiť', 'Použiť', 'Vysekať ľad']);
   const REACH = 1.7;
-  function inReach(tx, ty) { return Math.hypot(S.me.x - (tx + 0.5), S.me.y - (ty + 0.5)) <= REACH; }
-  function stopWalk() { S.path = null; S.pendingAct = null; }
+  function inReach(tx: number, ty: number): boolean { return Math.hypot(S.me.x - (tx + 0.5), S.me.y - (ty + 0.5)) <= REACH; }
+  function stopWalk(): void { S.path = null; S.pendingAct = null; }
   // Zabalený do pavučiny: najprv stojí (stuck), potom sa rýchlosť s pavučinou, ktorá sa zodiera, vracia od k k plnej
-  function webSpeed(now) {
+  function webSpeed(now: number): number {
     const w = S.web;
     if (!w || now >= w.end) return 1;
     if (now < w.start + w.stuck) return 0;
     return w.k + (1 - w.k) * (now - w.start - w.stuck) / Math.max(1, w.end - w.start - w.stuck);
   }
   // V pavučine (zaboril som sa do nej – server, alebo práve stojím na jej políčku) idem pomalšie, kým ju neprerazím
-  function webDrag() {
+  function webDrag(): number {
     if (S.area !== 'les') return 1;
-    const key = (S.name || '').toLowerCase(), me = S.me;
+    const key = S.name.toLowerCase(), me = S.me;
     const inIt = S.webs.some(w => w.in && w.in[key] != null) || S.webTile.has(Math.floor(me.y) * S.W + Math.floor(me.x));
     return inIt ? D.WEB.drag : 1;
   }
@@ -634,19 +668,19 @@
   S.webLeft = () => { const w = S.web, now = performance.now(); if (!w || now >= w.end) return 0; return (w.end - now) / (w.end - w.start); };
 
   // BFS po políčkach – nájde cestu k prvému políčku, ktoré spĺňa podmienku
-  function findPath(goal) {
+  function findPath(goal: (x: number, y: number) => boolean): Pt[] | null {
     const sx = Math.floor(S.me.x), sy = Math.floor(S.me.y);
     const prev = new Int32Array(S.W * S.H).fill(-2);
     const q = [sy * S.W + sx];
-    prev[q[0]] = -1;
+    prev[sy * S.W + sx] = -1;
     for (let qi = 0; qi < q.length; qi++) {
-      const i = q[qi], x = i % S.W, y = (i / S.W) | 0;
+      const i = must(q[qi]), x = i % S.W, y = (i / S.W) | 0;
       if (goal(x, y)) {
-        const path = [];
-        for (let k = i; k !== -1; k = prev[k]) path.unshift({ x: k % S.W + 0.5, y: ((k / S.W) | 0) + 0.5 });
+        const path: Pt[] = [];
+        for (let k = i; k !== -1; k = prev[k] ?? -1) path.unshift({ x: k % S.W + 0.5, y: ((k / S.W) | 0) + 0.5 });
         return path;
       }
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
         const nx = x + dx, ny = y + dy, n = ny * S.W + nx;
         if (nx < 0 || ny < 0 || nx >= S.W || ny >= S.H || prev[n] !== -2) continue;
         if (!D.canStep(S.tiles[i], S.tiles[n], 0, S.me.crawl)) continue;
@@ -658,7 +692,7 @@
   }
 
   const SEEN_WALK = 0.9; // v tme sa ťuknutím chodí len tam, kde je políčko viditeľné aspoň takto (0–1)
-  function tapWorld(cx, cy) {
+  function tapWorld(cx: number, cy: number): void {
     if (S.asleep || S.areaFx) return;
     if (!R3) return;
     const tgt = R3.pick(cx, cy); // lúč do 3D scény
@@ -679,8 +713,8 @@
     if (dark && R3.seenAt(cx0, cy0) < SEEN_WALK) return;
     const dist = Math.hypot(cx0 - S.me.x, cy0 - S.me.y);
     const walkable = D.passable(tileAt(tgt.x, tgt.y));
-    let path;
-    if (a && !GROUND[a.l] && !a.info) {
+    let path: Pt[] | null;
+    if (a && !GROUND.has(a.l) && !a.info) {
       // objekt: dôjdi k nemu a urob akciu
       path = findPath((x, y) => Math.hypot(x + 0.5 - cx0, y + 0.5 - cy0) <= 1.45 && (x !== tgt.x || y !== tgt.y || walkable));
       if (path) S.pendingAct = { x: tgt.x, y: tgt.y };
@@ -690,23 +724,24 @@
       path = (walkable && findPath((x, y) => x === tgt.x && y === tgt.y)) || findPath((x, y) => Math.hypot(x + 0.5 - cx0, y + 0.5 - cy0) <= 1.45);
     }
     if (!path || (dark && path.length > 2 * dist + 3)) return;
-    if (path.length > 1 && Math.hypot(path[0].x - S.me.x, path[0].y - S.me.y) < 0.6) path.shift();
+    const p0 = path[0];
+    if (path.length > 1 && p0 && Math.hypot(p0.x - S.me.x, p0.y - S.me.y) < 0.6) path.shift();
     S.path = path; S.stuckT = 0;
   }
 
-  function face(dx, dy) {
+  function face(dx: number, dy: number): void {
     if (Math.abs(dx) > Math.abs(dy)) S.me.dir = dx < 0 ? 1 : 2; else S.me.dir = dy < 0 ? 3 : 0;
   }
 
   // ---------- Hotbar ----------
-  function hotbarIds() {
-    const order = id => id === 'hoe' ? 0 : id === 'can' ? 1 : id === 'pick' ? 1.5 : id === 'lamp' ? 1.6 : id === 'compost' ? 2 : id.startsWith('seed_') || D.isWild(id) ? 3 : id.startsWith('fl_') ? 4 : id === 'wilted' ? 4.5 : id === 'silk' ? 4.6 : id === 'blanket' ? 4.7 : 5;
-    const spOrder = Object.keys(D.SPECIES);
-    const rank = id => { const k = id.replace(/^(seed_|fl_|po_)/, ''); const i = spOrder.indexOf(k); return i < 0 ? 99 : i; };
-    return Object.keys(S.inv).filter(id => S.inv[id] > 0).sort((a, b) => order(a) - order(b) || rank(a) - rank(b));
+  function hotbarIds(): ItemId[] {
+    const order = (id: string): number => id === 'hoe' ? 0 : id === 'can' ? 1 : id === 'pick' ? 1.5 : id === 'lamp' ? 1.6 : id === 'compost' ? 2 : id.startsWith('seed_') || D.isWild(id) ? 3 : id.startsWith('fl_') ? 4 : id === 'wilted' ? 4.5 : id === 'silk' ? 4.6 : id === 'blanket' ? 4.7 : 5;
+    const spOrder: string[] = keys(D.SPECIES);
+    const rank = (id: string): number => { const k = id.replace(/^(seed_|fl_|po_)/, ''); const i = spOrder.indexOf(k); return i < 0 ? 99 : i; };
+    return keys(S.inv).filter(id => (S.inv[id] ?? 0) > 0).sort((a, b) => order(a) - order(b) || rank(a) - rank(b));
   }
-  function selectItem(id) { if (id == null) return; S.sel = id; renderHotbar(); }
-  function renderHotbar() {
+  function selectItem(id: ItemId | '' | undefined): void { if (id == null) return; S.sel = id; renderHotbar(); }
+  function renderHotbar(): void {
     const bar = $('hotbar');
     const ids = hotbarIds();
     bar.innerHTML = '';
@@ -714,34 +749,36 @@
       const d = document.createElement('div');
       d.className = 'slot' + (id === S.sel ? ' on' : '');
       d.innerHTML = `<img src="${Art.icon(id)}">` + (i < 9 ? `<span class="k">${i + 1}</span>` : '');
+      const n = S.inv[id] ?? 0;
       if (id === 'can') d.innerHTML += `<div class="wbar"><i style="width:${S.water / S.canCap * 100}%"></i></div>`;
       else if (id.startsWith('fl_') || id === 'ice') { // čerstvosť najstaršieho kusu (ľad: kým sa neroztopí)
         const o = oldestBatch(id);
-        if (o) d.innerHTML += `<span class="n">${S.inv[id]}</span><div class="wbar fresh"><i style="width:${o.rem * 100}%;background:${freshColor(o.rem)}"></i></div>`;
-        else d.innerHTML += `<span class="n">${S.inv[id]}</span>`;
+        if (o) d.innerHTML += `<span class="n">${n}</span><div class="wbar fresh"><i style="width:${o.rem * 100}%;background:${freshColor(o.rem)}"></i></div>`;
+        else d.innerHTML += `<span class="n">${n}</span>`;
       }
-      else if (id !== 'hoe' && id !== 'pick' && id !== 'lamp') d.innerHTML += `<span class="n">${S.inv[id]}</span>`;
-      d.onclick = () => selectItem(id);
+      else if (id !== 'hoe' && id !== 'pick' && id !== 'lamp') d.innerHTML += `<span class="n">${n}</span>`;
+      d.onclick = () => { selectItem(id); };
       bar.appendChild(d);
     }
     // doplní rad (mobil 6, počítač 9 miest); prvé prázdne miesto je vždy vidieť – jeho výberom máš prázdnu ruku
     for (let i = ids.length; i < Math.max(9, ids.length + 1); i++) {
       const d = Object.assign(document.createElement('div'), { className: 'slot empty' + (i === ids.length ? ' keep' + (S.sel === '' ? ' on' : '') : '') });
-      d.onclick = () => selectItem('');
+      d.onclick = () => { selectItem(''); };
       bar.appendChild(d);
     }
     const sel = bar.querySelector('.on');
-    if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    if (sel) sel.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     let txt = D.itemName(S.sel);
     if (!S.sel) txt = 'Prázdna ruka · hľadaj v tráve divé semienka 🔍';
     if (S.sel === 'can') txt += ` · ${S.water}/${S.canCap} 💧`;
     if (S.sel === 'hoe') txt += ` · pole záhrady ${S.plotsUsed}/${S.plotLimit}`;
-    if (S.sel.startsWith('seed_')) {
-      const sp = D.SPECIES[S.sel.slice(5)];
+    const seedSp = S.sel.startsWith('seed_') ? speciesOf(S.sel.slice(5)) : undefined;
+    if (seedSp) {
+      const sp = seedSp;
       txt += ' · ' + sp.seasons.map(s => D.SEASON_ICONS[s]).join('') + ' · ' + ({ sun: '☀️', shade: '🌳', any: '⛅' })[sp.light] + (sp.soil ? ' · ' + ({ sand: 'piesok', rich: 'kompost', rock: 'skalka' })[sp.soil] : '');
     }
     if (S.sel.startsWith('fl_')) txt += ' · ' + freshText(S.sel);
-    if (D.isWild(S.sel)) txt += ' · ' + D.SEASON_ICONS[+S.sel.slice(5)] + ' · nevedno, čo z neho vyrastie';
+    if (D.isWild(S.sel)) txt += ' · ' + (D.SEASON_ICONS[+S.sel.slice(5)] ?? '') + ' · nevedno, čo z neho vyrastie';
     if (S.sel === 'wilted') txt += ` · ${D.WILTED_PER_COMPOST} ks = 1 kompost (v sklade)`;
     if (S.sel === 'pick') txt += ' · ľad na ľadovci v horách, v zime aj na jazierku';
     if (S.sel === 'lamp') txt += ' · v ruke svieti, keď je tma';
@@ -751,15 +788,16 @@
       const o = oldestBatch('ice');
       txt += ` ${S.inv.ice || 0}/${D.ICE_CARRY} · ťažký` + (o ? ` · roztopí sa o ${fmtLeft(o.left)}` : '');
     }
-    if (S.sel.startsWith('po_')) txt += ' · ' + D.POTIONS[S.sel.slice(3)].desc;
+    const selPotion = S.sel.startsWith('po_') ? potionOf(S.sel.slice(3)) : undefined;
+    if (selPotion) txt += ' · ' + selPotion.desc;
     $('selName').textContent = txt;
   }
 
-  function updateHud() {
+  function updateHud(): void {
     const m = curMin(), h = Math.floor(m / 60), mm = Math.floor(m % 60 / 10) * 10;
     const se = season();
     const dayInSeason = (S.day - 1) % D.DAYS_PER_SEASON + 1;
-    $('hDate').textContent = (S.area !== 'garden' ? (D.AREA_FX[S.area] || {}).icon + ' ' : '') + `${D.SEASON_ICONS[se]} ${D.SEASONS[se]} · deň ${dayInSeason}/${D.DAYS_PER_SEASON}`;
+    $('hDate').textContent = (S.area !== 'garden' ? D.AREA_FX[S.area].icon + ' ' : '') + `${D.SEASON_ICONS[se] ?? ''} ${D.SEASONS[se] ?? ''} · deň ${dayInSeason}/${D.DAYS_PER_SEASON}`;
     $('hClock').textContent = String(h).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
     $('hSky').textContent = (h >= 20 || h < 5) ? '🌙' : '☀️';
     $('hWeather').textContent = { rain: '🌧️', snow: '🌨️', sun: '' }[S.weather] + (S.eternal ? '🌸' : '') + (S.vily ? '🧚' : '');
@@ -772,68 +810,76 @@
     if (S.skyTaps.length >= 7) {
       S.skyTaps = [];
       const h = curMin() / 60;
-      if (h >= 20 || h < 5) { toast(SECRETS[Math.floor(Math.random() * SECRETS.length)], 'magic'); sfx('magic'); }
+      if (h >= 20 || h < 5) { toast(must(SECRETS[Math.floor(Math.random() * SECRETS.length)]), 'magic'); sfx('magic'); }
+
       else toast('😎 Slnko ťa oslepilo. Skús to radšej v noci…');
     }
   });
 
   // ---------- Modálne okná ----------
-  function openModal(title, render) {
+  function openModal(title: string, render: (body: HTMLElement) => void): void {
     $('mTitle').textContent = title;
     S.modal = { refresh: () => { $('mBody').innerHTML = ''; render($('mBody')); } };
     S.modal.refresh();
     $('modal').classList.remove('hidden');
   }
-  function closeModal() { $('modal').classList.add('hidden'); S.modal = null; S.brewed = null; }
+  function closeModal(): void { $('modal').classList.add('hidden'); S.modal = null; S.brewed = null; }
   $('mClose').onclick = closeModal;
   $('modal').addEventListener('click', e => { if (e.target === $('modal')) closeModal(); });
-  $('bBook').onclick = () => openUI('book');
-  $('bMenu').onclick = () => openUI('menu');
+  $('bBook').onclick = () => { openUI('book'); };
+  $('bMenu').onclick = () => { openUI('menu'); };
 
-  function h(tag, attrs, ...kids) {
+  // Prvok stránky: atribúty (onclick = obsluha kliknutia, html = obsah ako HTML, ostatné ako atribúty) a deti
+  type Attrs = { onclick?: () => void; html?: string; [attr: string]: string | number | (() => void) | null | undefined };
+  function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs?: Attrs | null, ...kids: (Node | string | null | undefined)[]): HTMLElementTagNameMap[K] {
     const el = document.createElement(tag);
-    for (const k in attrs || {}) { if (k === 'onclick') el.onclick = attrs[k]; else if (k === 'html') el.innerHTML = attrs[k]; else el.setAttribute(k, attrs[k]); }
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v == null) continue;
+      if (typeof v === 'function') { if (k === 'onclick') el.onclick = v; }
+      else if (k === 'html') el.innerHTML = String(v);
+      else el.setAttribute(k, String(v));
+    }
     for (const k of kids) if (k != null) el.appendChild(typeof k === 'string' ? document.createTextNode(k) : k);
     return el;
   }
-  const img = id => h('img', { src: Art.icon(id) });
-  const seasonBadges = sp => {
+  const img = (id: string): HTMLImageElement => h('img', { src: Art.icon(id) });
+  const seasonBadges = (sp: Species): HTMLElement => {
     const box = h('span');
     sp.seasons.forEach(s => box.appendChild(h('span', { class: 'badge' + (s === season() ? ' now' : '') }, D.SEASON_ICONS[s] + ' ' + D.SEASONS[s])));
     return box;
   };
 
-  function openUI(kind) {
+  function openUI(kind: UiKind): void {
     sfx('pop');
-    if (kind === 'shop') return openShop('buy');
-    if (kind === 'cauldron') { S.brewed = null; return openModal('⚗️ Čarovný kotlík', renderCauldron); }
-    if (kind === 'babka') { S.tipIdx = (S.tipIdx + 1) % D.TIPS.length; return openModal('👵 Babka bylinkárka', renderBabka); }
-    if (kind === 'book') return openBook('flowers');
-    if (kind === 'menu') return openModal('☰ Menu', renderMenu);
-    if (kind === 'help') return openModal('❓ Ako hrať', renderHelp);
-    if (kind === 'storage') return openModal('📦 Spoločný sklad', renderStorage);
-    if (kind === 'house') return openModal('🏠 Domček', renderHouse);
-    if (kind === 'wish') return openModal('✨ Papraďový kvet', renderWish);
-    if (kind === 'icehouse') return openModal('🧊 Ľadovňa', renderIcehouse);
-    if (kind === 'dielna') return openModal('🪚 Dielňa', renderDielna);
-    if (kind === 'majster') return openModal('🧵 ' + D.MASTER.name, renderMaster);
+    if (kind === 'shop') { openShop('buy'); return; }
+    if (kind === 'cauldron') { S.brewed = null; openModal('⚗️ Čarovný kotlík', renderCauldron); return; }
+    if (kind === 'babka') { S.tipIdx = (S.tipIdx + 1) % D.TIPS.length; openModal('👵 Babka bylinkárka', renderBabka); return; }
+    if (kind === 'book') { openBook('flowers'); return; }
+    if (kind === 'menu') { openModal('☰ Menu', renderMenu); return; }
+    if (kind === 'help') { openModal('❓ Ako hrať', renderHelp); return; }
+    if (kind === 'storage') { openModal('📦 Spoločný sklad', renderStorage); return; }
+    if (kind === 'house') { openModal('🏠 Domček', renderHouse); return; }
+    if (kind === 'wish') { openModal('✨ Papraďový kvet', renderWish); return; }
+    if (kind === 'icehouse') { openModal('🧊 Ľadovňa', renderIcehouse); return; }
+    if (kind === 'dielna') { openModal('🪚 Dielňa', renderDielna); return; }
+    openModal('🧵 ' + D.MASTER.name, renderMaster); // majster
   }
 
   // ---- Pomocné pre ekonomiku ----
   const TPD = D.TICKS_PER_DAY;
-  function fmtLeft(ticks) {
+  function fmtLeft(ticks: number): string {
     if (ticks <= 0) return 'teraz';
     const hTotal = Math.round(ticks * D.MIN_PER_TICK / 60);
     const d = Math.floor(hTotal / 24), hh = hTotal % 24;
     return (d ? d + ' d ' : '') + (hh || !d ? hh + ' h' : '');
   }
-  function fmtTick(t) { const m = Math.floor(D.minOfTick(t)); return `deň ${D.dayOfTick(t)}, ${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; }
+  function fmtTick(t: number): string { const m = Math.floor(D.minOfTick(t)); return `deň ${D.dayOfTick(t)}, ${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; }
   // Trend ceny za posledný deň ako ikonka: vždy 3 šípky natesno nad sebou, farebné sú
   // 1 (malá zmena), 2 (veľká) alebo 3 (veľmi veľká), zvyšok je sivý. Bez zmeny = všetky sivé.
   // upIsGood: pri predaji je rast ceny dobrý (zelený), pri nákupe zlý (červený).
-  function priceTrend(hist, cur, upIsGood) {
+  function priceTrend(hist: readonly number[] | undefined, cur: number, upIsGood: boolean): HTMLElement {
     const hh = hist || [];
-    const prev = hh.length >= 2 ? hh[hh.length - 2] : hh.length ? hh[0] : cur;
+    const prev = (hh.length >= 2 ? hh[hh.length - 2] : hh[0]) ?? cur;
     const pct = prev ? (cur - prev) / prev : 0;
     const a = Math.abs(pct), up = pct > 0;
     const n = a < 0.03 ? 0 : a < 0.15 ? 1 : a < 0.35 ? 2 : 3;
@@ -845,7 +891,7 @@
       const y = 2 + i * 6;
       const lit = n && (up ? i >= 3 - n : i < n);
       const d = (up || !n) ? `M2 ${y + 5}L8 ${y}L14 ${y + 5}` : `M2 ${y}L8 ${y + 5}L14 ${y}`;
-      paths += `<path d="${d}" fill="none" stroke="${lit ? col : GRAY}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>`;
+      paths += `<path d="${d}" fill="none" stroke="${lit && col ? col : GRAY}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>`;
     }
     const el = document.createElement('span');
     el.className = 'tr';
@@ -853,42 +899,45 @@
     el.innerHTML = `<svg width="16" height="21" viewBox="0 0 16 21">${paths}</svg>`;
     return el;
   }
-  function marketSellPrice(id) {
+  function marketSellPrice(id: string): number {
     const M = S.market;
     if (!M) return D.sellPrice(id);
-    if (id.startsWith('fl_') && M.flowers[id.slice(3)]) return M.flowers[id.slice(3)].p;
-    if (id.startsWith('seed_') && M.seeds[id.slice(5)]) return Math.max(1, Math.round(M.seeds[id.slice(5)].p * 0.4));
+    const fl = id.startsWith('fl_') ? lookup(M.flowers, id.slice(3)) : undefined, seed = id.startsWith('seed_') ? lookup(M.seeds, id.slice(5)) : undefined;
+    if (fl) return fl.p;
+    if (seed) return Math.max(1, Math.round(seed.p * 0.4));
     if (id === 'compost') return Math.max(1, Math.round(M.compost.p * 0.5));
-    if (id === 'ice') return D.ICE_PRICE[D.seasonOf(S.day)];
+    if (id === 'ice') return D.ICE_PRICE[D.seasonOf(S.day)] ?? 0;
     return D.sellPrice(id);
   }
-  function festivalBanner(body) {
+  function festivalBanner(body: HTMLElement): void {
     const M = S.market;
     if (!M) return;
-    const list = mult => Object.entries(mult).map(([sp, x]) => `${D.SPECIES[sp].name} ×${String(x).replace('.', ',')}`).join(', ');
+    const list = (mult: Partial<Record<SpeciesId, number>>): string => entries(mult).map(([sp, x]) => `${D.SPECIES[sp].name} ×${String(x).replace('.', ',')}`).join(', ');
     if (M.festival) body.appendChild(h('div', { class: 'row', style: 'background:#fff1d6;border-color:#e08a1e' }, h('div', { class: 'info' }, h('b', null, `${M.festival.icon} Práve je ${M.festival.name}!`), h('small', null, 'Vyšší výkup: ' + list(M.festival.mult)))));
     else if (M.upcoming) body.appendChild(h('div', { class: 'row' }, h('div', { class: 'info' }, h('b', null, `📅 ${M.upcoming.icon} ${M.upcoming.name} o ${fmtLeft(M.upcoming.start - S.tick)}`), h('small', null, 'Vyšší výkup: ' + list(M.upcoming.mult)))));
   }
 
-  function openShop(tab) {
+  function openShop(tab: 'buy' | 'sell' | 'up' | 'news'): void {
     openModal('🛒 Trh', body => {
       const M = S.market;
       body.appendChild(h('div', { class: 'tabs' },
-        h('button', { class: tab === 'buy' ? 'on' : '', onclick: () => openShop('buy') }, 'Kúpiť'),
-        h('button', { class: tab === 'sell' ? 'on' : '', onclick: () => openShop('sell') }, 'Predať'),
-        h('button', { class: tab === 'up' ? 'on' : '', onclick: () => openShop('up') }, 'Vylepšiť'),
-        h('button', { class: tab === 'news' ? 'on' : '', onclick: () => openShop('news') }, 'Správy')));
+        h('button', { class: tab === 'buy' ? 'on' : '', onclick: () => { openShop('buy'); } }, 'Kúpiť'),
+        h('button', { class: tab === 'sell' ? 'on' : '', onclick: () => { openShop('sell'); } }, 'Predať'),
+        h('button', { class: tab === 'up' ? 'on' : '', onclick: () => { openShop('up'); } }, 'Vylepšiť'),
+        h('button', { class: tab === 'news' ? 'on' : '', onclick: () => { openShop('news'); } }, 'Správy')));
       body.appendChild(h('div', { style: 'text-align:center;font-weight:700;margin-bottom:8px' }, `Máš 🪙 ${S.coins} · ⭐ reputácia ${S.rep} (úroveň ${D.repLevel(S.rep)})`));
-      if (!M) return body.appendChild(h('p', null, 'Načítavam trh…'));
+      if (!M) { body.appendChild(h('p', null, 'Načítavam trh…')); return; }
       if (tab === 'buy') {
         festivalBanner(body);
         const se = season();
-        const rank = sp => D.SPECIES[sp].seasons.includes(se) ? 0 : D.SPECIES[sp].seasons.includes((se + 1) % 4) ? 1 : 2;
-        const ids = ['compost'].concat(Object.keys(M.seeds).sort((a, b) => rank(a) - rank(b)).map(sp => 'seed_' + sp));
+        const rank = (sp: SpeciesId): number => D.SPECIES[sp].seasons.some(s => s === se) ? 0 : D.SPECIES[sp].seasons.some(s => s === (se + 1) % 4) ? 1 : 2;
+        const ids: ItemId[] = ['compost', ...keys(M.seeds).sort((a, b) => rank(a) - rank(b)).map(sp => `seed_${sp}` as const)];
         for (const id of ids) {
-          const q = id === 'compost' ? M.compost : M.seeds[id.slice(5)];
-          const sp = id.startsWith('seed_') ? D.SPECIES[id.slice(5)] : null;
-          const lockedRep = sp && D.MIN_SEED_REP[id.slice(5)];
+          const spId = id.startsWith('seed_') ? id.slice(5) : '';
+          const q = id === 'compost' ? M.compost : lookup(M.seeds, spId);
+          if (!q) continue;
+          const sp = speciesOf(spId) ?? null;
+          const lockedRep = sp && lookup(D.MIN_SEED_REP, spId);
           const info = h('div', { class: 'info' }, h('b', null, sp ? sp.name : 'Kompost'),
             sp ? seasonBadges(sp) : h('small', null, 'Výživná pôda: rýchlejší rast a +1 kvet pri zbere'));
           const st = q.st > 0 ? `na sklade ${q.st}` : 'VYPREDANÉ';
@@ -897,8 +946,8 @@
           info.appendChild(line);
           if (sp) info.appendChild(h('small', null, `${sp.days} dní · ${'💧'.repeat(sp.water)} · ${({ sun: '☀️', shade: '🌳', any: '⛅' })[sp.light]}${sp.soil ? ' · ' + ({ sand: 'piesok', rich: 'kompost', rock: 'len skalka' })[sp.soil] : ''}`));
           if (lockedRep && D.repLevel(S.rep) < lockedRep) info.appendChild(h('small', { style: 'color:#b0432a' }, `🔒 od reputácie ${lockedRep}`));
-          const b1 = h('button', { class: 'btn', onclick: () => send({ t: 'buy', id, n: 1 }) }, q.p + '🪙');
-          const b5 = h('button', { class: 'btn alt', onclick: () => send({ t: 'buy', id, n: 5 }) }, '×5');
+          const b1 = h('button', { class: 'btn', onclick: () => { send({ t: 'buy', id, n: 1 }); } }, q.p + '🪙');
+          const b5 = h('button', { class: 'btn alt', onclick: () => { send({ t: 'buy', id, n: 5 }); } }, '×5');
           if (!q.st || S.coins < q.p) { b1.disabled = true; b5.disabled = true; }
           body.appendChild(h('div', { class: 'row', style: q.st ? '' : 'opacity:.6' }, img(id), info, h('div', { class: 'btns' }, b1, b5)));
         }
@@ -908,7 +957,7 @@
         const ids = hotbarIds().filter(id => !D.isTool(id) && marketSellPrice(id) > 0);
         if (!ids.length) body.appendChild(h('p', null, 'Nemáš nič na predaj. Vypestuj nejaké kvety! 🌷'));
         for (const id of ids) {
-          const n = S.inv[id], f = id.startsWith('fl_') && M.flowers[id.slice(3)];
+          const n = S.inv[id] ?? 0, f = id.startsWith('fl_') && lookup(M.flowers, id.slice(3));
           const o = f && oldestBatch(id);
           const p = o ? Math.max(1, Math.round(marketSellPrice(id) * o.fresh)) : marketSellPrice(id);
           const line = h('small', null, `${n} ks · ${p} 🪙/ks `);
@@ -921,41 +970,41 @@
               h('button', { class: 'btn alt', onclick: () => { send({ t: 'sell', id, n }); sfx('coin'); } }, 'Všetko'))));
         }
       } else if (tab === 'up') {
-        const lvl = D.repLevel(S.rep), next = D.REP_LEVELS[lvl + 1];
+        const lvl = D.repLevel(S.rep), next = D.REP_LEVELS[lvl + 1], cur = D.REP_LEVELS[lvl] ?? 0;
         body.appendChild(h('div', { class: 'row', style: 'flex-direction:column;align-items:stretch' },
           h('b', null, `⭐ Reputácia: ${S.rep} · úroveň ${lvl}`),
-          h('div', { style: 'height:8px;background:#eee;border-radius:4px;overflow:hidden' }, h('div', { style: `height:100%;width:${next ? Math.min(100, (S.rep - D.REP_LEVELS[lvl]) / (next - D.REP_LEVELS[lvl]) * 100) : 100}%;background:#e8a21c` })),
+          h('div', { style: 'height:8px;background:#eee;border-radius:4px;overflow:hidden' }, h('div', { style: `height:100%;width:${next ? Math.min(100, (S.rep - cur) / (next - cur) * 100) : 100}%;background:#e8a21c` })),
           h('small', null, next ? `Do úrovne ${lvl + 1} chýba ${next - S.rep}. Reputáciu získaš za splnené zákazky na nástenke pri babke.` : 'Najvyššia úroveň!'),
           h('small', null, `Naraz môžeš mať ${S.maxActive} ${S.maxActive === 1 ? 'zákazku' : 'zákazky'}. Veľké zákazky sa objavujú od úrovne 2, plesnivec od úrovne 2.`)));
-        for (const kind in D.UPGRADES) {
-          const u = D.UPGRADES[kind], cur = (S.up && S.up[kind]) || 0, nx = u.levels[cur + 1];
-          const info = h('div', { class: 'info' }, h('b', null, `${u.icon} ${u.name}`), h('small', null, `teraz: ${u.levels[cur].v} ${u.unit}` + (u.shared ? ` pre celú záhradu (obrobené ${S.plotsUsed})` : '')));
-          let btn;
+        for (const kind of keys<UpgradeId>(D.UPGRADES)) {
+          const u = D.UPGRADES[kind], cur = S.up[kind] || 0, nx = u.levels[cur + 1];
+          const info = h('div', { class: 'info' }, h('b', null, `${u.icon} ${u.name}`), h('small', null, `teraz: ${u.levels[cur]?.v ?? ''} ${u.unit}` + (u.shared ? ` pre celú záhradu (obrobené ${S.plotsUsed})` : '')));
+          let btn: HTMLButtonElement;
           if (!nx) btn = h('button', { class: 'btn gray', disabled: 'disabled' }, 'Max');
           else {
             info.appendChild(h('small', null, `ďalej: ${nx.v} ${u.unit}` + (u.shared ? ' pre všetkých' : '') + (nx.rep ? ` · treba ⭐${nx.rep}` : '')));
-            btn = h('button', { class: 'btn', onclick: () => send({ t: 'upgrade', kind }) }, nx.price + '🪙');
-            if (S.coins < nx.price || lvl < nx.rep) btn.disabled = true;
+            btn = h('button', { class: 'btn', onclick: () => { send({ t: 'upgrade', kind }); } }, String(nx.price) + '🪙');
+            if (S.coins < (nx.price ?? 0) || lvl < (nx.rep ?? 0)) btn.disabled = true;
           }
           body.appendChild(h('div', { class: 'row' }, h('div', { style: 'font-size:30px;width:40px;text-align:center' }, u.icon), info, h('div', { class: 'btns' }, btn)));
         }
         // Náradie (raz na hráča) a spoločná stavba – ľadovňa
-        const buyRow = (icon, name, desc, have, price, rep, onclick) => {
+        const buyRow = (icon: string, name: string, desc: string, have: string | null, price: number, rep: number, onclick: () => void): void => {
           const btn = have ? h('button', { class: 'btn gray', disabled: 'disabled' }, have) : h('button', { class: 'btn', onclick }, price + '🪙');
           if (!have && (S.coins < price || lvl < rep)) btn.disabled = true;
           body.appendChild(h('div', { class: 'row' }, h('div', { style: 'font-size:30px;width:40px;text-align:center' }, icon),
             h('div', { class: 'info' }, h('b', null, `${icon} ${name}`), h('small', null, desc + (rep ? ` · treba ⭐${rep}` : ''))), h('div', { class: 'btns' }, btn)));
         };
-        for (const id in D.TOOLS) {
+        for (const id of keys(D.TOOLS)) {
           const T = D.TOOLS[id];
-          buyRow(T.icon, T.name, T.desc, S.inv[id] ? 'Máš' : null, T.price, T.rep, () => send({ t: 'buyTool', id }));
+          buyRow(T.icon, T.name, T.desc, S.inv[id] ? 'Máš' : null, T.price, T.rep, () => { send({ t: 'buyTool', id }); });
         }
         const B = D.ICEHOUSE;
         buyRow(B.icon, B.name, `Spoločná stavba pri domčeku pre ${B.cap} blokov ľadu. Kým je v nej ľad, kvety v sklade vädnú 4× pomalšie (inak 2×). Ľad sa topí, v zime nie.`,
-          S.icehouse.built ? 'Stojí' : null, B.price, B.rep, () => send({ t: 'build', id: 'icehouse' }));
+          S.icehouse.built ? 'Stojí' : null, B.price, B.rep, () => { send({ t: 'build', id: 'icehouse' }); });
         const DL = D.DIELNA;
         buyRow(DL.icon, DL.name, `Spoločná stavba vedľa trhu. Kúpiš do nej krosná (${DL.loom.price} 🪙), ktoré zo ${D.BLANKET_SILK} hodvábu utkajú prikrývku na izoláciu ľadovne – bez platenia majstrovi.`,
-          S.dielna.built ? 'Stojí' : null, DL.price, DL.rep, () => send({ t: 'build', id: 'dielna' }));
+          S.dielna.built ? 'Stojí' : null, DL.price, DL.rep, () => { send({ t: 'build', id: 'dielna' }); });
       } else {
         festivalBanner(body);
         if (!M.news.length) body.appendChild(h('p', null, 'Zatiaľ žiadne správy.'));
@@ -964,11 +1013,12 @@
     });
   }
 
-  function renderCauldron(body) {
+  const refreshModal = (): void => { if (S.modal) S.modal.refresh(); };
+  function renderCauldron(body: HTMLElement): void {
     const slots = h('div', { class: 'cauldron-slots' });
     for (let i = 0; i < 3; i++) {
       const id = S.cauldron[i];
-      slots.appendChild(h('div', { class: 'cslot', onclick: () => { S.cauldron.splice(i, 1); S.modal.refresh(); } }, id ? img(id) : null));
+      slots.appendChild(h('div', { class: 'cslot', onclick: () => { S.cauldron.splice(i, 1); refreshModal(); } }, id ? img(id) : null));
     }
     if (S.brewed) {
       const p = D.POTIONS[S.brewed];
@@ -982,16 +1032,17 @@
     const flowers = hotbarIds().filter(id => id.startsWith('fl_'));
     if (!flowers.length) body.appendChild(h('p', null, 'Nemáš žiadne kvety. Najprv nejaké vypestuj. 🌱'));
     for (const id of flowers) {
-      const left = S.inv[id] - S.cauldron.filter(x => x === id).length;
-      grid.appendChild(h('div', { class: 'gcell', style: left ? '' : 'opacity:.35', onclick: () => { if (left > 0 && S.cauldron.length < 3) { S.cauldron.push(id); S.brewed = null; S.modal.refresh(); } } }, img(id), h('span', { class: 'n' }, String(left))));
+      const left = (S.inv[id] ?? 0) - S.cauldron.filter(x => x === id).length;
+      grid.appendChild(h('div', { class: 'gcell', style: left ? '' : 'opacity:.35', onclick: () => { if (left > 0 && S.cauldron.length < 3) { S.cauldron.push(id); S.brewed = null; refreshModal(); } } }, img(id), h('span', { class: 'n' }, String(left))));
     }
     body.appendChild(grid);
     body.appendChild(h('h3', { style: 'margin:14px 0 6px' }, `📜 Objavené recepty (${S.recipes.length}/${Object.keys(D.RECIPES).length})`));
     if (!S.recipes.length) body.appendChild(h('small', null, 'Zatiaľ žiadne. Babka a studňa vraj poznajú pár tajomstiev.'));
     for (const key of S.recipes) {
-      const k = D.RECIPES[key];
+      const k = lookup(D.RECIPES, key);
+      if (!k) continue;
       const row = h('div', { class: 'row' });
-      key.split('+').forEach(sp => row.appendChild(img('fl_' + sp)));
+      key.split('+').forEach(sp => { row.appendChild(img('fl_' + sp)); });
       row.appendChild(h('span', null, '→'));
       row.appendChild(img('po_' + k));
       row.appendChild(h('div', { class: 'info' }, h('b', null, D.POTIONS[k].name)));
@@ -999,17 +1050,17 @@
     }
   }
 
-  function renderBabka(body) {
+  function renderBabka(body: HTMLElement): void {
     const pc = h('canvas', { width: 80, height: 90 });
-    Art.char(pc.getContext('2d'), 40, 86, 80, { shirt: '#7b4a9e', hair: '#eee' }, 0, 0, { babka: true });
+    Art.char(ctx2d(pc), 40, 86, 80, { shirt: '#7b4a9e', hair: '#eee' }, 0, 0, { babka: true });
     const hr = curMin() / 60;
     const hello = hr < 10 ? 'Dobré ránko' : hr < 18 ? 'Dobrý deň' : 'Dobrý večer';
     body.appendChild(h('div', { class: 'dlg' }, pc, h('div', { class: 'bubble' }, `${hello}, ${S.name}! Na nástenke pri mojej chalúpke nechávajú ľudia zákazky. Zober si, čo stihneš – termín sa musí dodržať. 💡 ${D.TIPS[S.tipIdx]}`)));
     const me = S.name.toLowerCase();
-    const list = (S.board || []);
+    const list = S.board;
     const mine = list.filter(c => c.takenBy === me);
     const kindLbl = { short: 'krátka', long: 'na budúce obdobie', big: 'veľká' };
-    const card = (c, actions) => {
+    const card = (c: Contract, actions: Node[]): HTMLElement => {
       const sp = D.SPECIES[c.sp];
       const info = h('div', { class: 'info' },
         h('b', null, `${c.n}× ${sp.name}`),
@@ -1023,8 +1074,8 @@
     if (!mine.length) body.appendChild(h('small', null, 'Zatiaľ nemáš žiadnu. Zarezervuj si nejakú z nástenky.'));
     for (const c of mine) {
       // odovzdá sa len toľko, koľko zákazke ešte chýba
-      const k = Math.min(S.inv['fl_' + c.sp] || 0, c.n - c.got);
-      const b = h('button', { class: 'btn alt', onclick: () => send({ t: 'cdeliver', id: c.id }) }, `Odovzdať (${k})`);
+      const k = Math.min(S.inv[`fl_${c.sp}`] || 0, c.n - c.got);
+      const b = h('button', { class: 'btn alt', onclick: () => { send({ t: 'cdeliver', id: c.id }); } }, `Odovzdať (${k})`);
       if (k <= 0) b.disabled = true;
       body.appendChild(card(c, [b]));
     }
@@ -1032,7 +1083,7 @@
     const open = list.filter(c => !c.takenBy);
     if (!open.length) body.appendChild(h('small', null, 'Nástenka je prázdna. Ráno pribudnú nové zákazky.'));
     for (const c of open) {
-      const b = h('button', { class: 'btn', onclick: () => send({ t: 'ctake', id: c.id }) }, 'Zarezervovať');
+      const b = h('button', { class: 'btn', onclick: () => { send({ t: 'ctake', id: c.id }); } }, 'Zarezervovať');
       if (mine.length >= S.maxActive) b.disabled = true;
       body.appendChild(card(c, [b]));
     }
@@ -1041,16 +1092,16 @@
       body.appendChild(h('h3', { style: 'margin:14px 0 6px' }, '👥 Zákazky ostatných'));
       for (const c of others) body.appendChild(card(c, [h('small', null, c.takenBy)]));
     }
-    body.appendChild(h('button', { class: 'btn gray', style: 'margin-top:10px;width:100%', onclick: () => { S.tipIdx = (S.tipIdx + 1) % D.TIPS.length; S.modal.refresh(); } }, 'Ďalšia rada'));
+    body.appendChild(h('button', { class: 'btn gray', style: 'margin-top:10px;width:100%', onclick: () => { S.tipIdx = (S.tipIdx + 1) % D.TIPS.length; refreshModal(); } }, 'Ďalšia rada'));
   }
 
-  function openBook(tab) {
+  function openBook(tab: 'flowers' | 'potions'): void {
     openModal('📖 Herbár', body => {
       body.appendChild(h('div', { class: 'tabs' },
-        h('button', { class: tab === 'flowers' ? 'on' : '', onclick: () => openBook('flowers') }, '🌼 Kvety'),
-        h('button', { class: tab === 'potions' ? 'on' : '', onclick: () => openBook('potions') }, '🧪 Elixíry')));
+        h('button', { class: tab === 'flowers' ? 'on' : '', onclick: () => { openBook('flowers'); } }, '🌼 Kvety'),
+        h('button', { class: tab === 'potions' ? 'on' : '', onclick: () => { openBook('potions'); } }, '🧪 Elixíry')));
       if (tab === 'flowers') {
-        for (const k in D.SPECIES) {
+        for (const k of keys(D.SPECIES)) {
           const sp = D.SPECIES[k];
           const known = !sp.magic || S.seen.includes(k);
           const card = h('div', { class: 'card' + (sp.magic ? ' magic' : '') + (known ? '' : ' locked') });
@@ -1066,26 +1117,26 @@
           body.appendChild(card);
         }
       } else {
-        for (const k in D.POTIONS) {
+        for (const k of keys(D.POTIONS)) {
           if (k === 'sliz') continue;
-          const key = Object.keys(D.RECIPES).find(r => D.RECIPES[r] === k);
+          const key = Object.keys(D.RECIPES).find(r => D.RECIPES[r] === k) ?? '';
           const known = S.recipes.includes(key);
           const card = h('div', { class: 'card' + (known ? ' magic' : ' locked') }, img('po_' + k),
-            h('div', null, h('b', null, known ? D.POTIONS[k].name : '??? elixír'), h('p', null, known ? D.POTIONS[k].desc + ' Recept: ' + key.split('+').map(s => D.SPECIES[s].name).join(' + ') : 'Recept zatiaľ nepoznáš. Experimentuj v kotlíku alebo sa pýtaj babky.')));
+            h('div', null, h('b', null, known ? D.POTIONS[k].name : '??? elixír'), h('p', null, known ? D.POTIONS[k].desc + ' Recept: ' + key.split('+').map(s => speciesOf(s)?.name ?? s).join(' + ') : 'Recept zatiaľ nepoznáš. Experimentuj v kotlíku alebo sa pýtaj babky.')));
           body.appendChild(card);
         }
       }
     });
   }
 
-  function renderMenu(body) {
+  function renderMenu(body: HTMLElement): void {
     const link = location.origin + location.pathname + '?room=' + S.room;
     body.appendChild(h('div', { class: 'row' }, h('div', { class: 'info' }, h('b', null, 'Záhrada: ' + S.room), h('small', null, 'Hráči: ' + S.names.join(', ')))));
     body.appendChild(h('div', { class: 'row' }, h('div', { class: 'info' }, h('b', null, 'Pozvi kamaráta'), h('small', { style: 'word-break:break-all' }, link)),
-      h('button', { class: 'btn', onclick: () => { (navigator.share ? navigator.share({ title: 'Čarovná záhrada', url: link }) : navigator.clipboard.writeText(link).then(() => toast('Odkaz skopírovaný 📋'))).catch(() => { }); } }, 'Zdieľať')));
+      h('button', { class: 'btn', onclick: () => { const nav: { share?: Navigator['share'] } = navigator; (nav.share ? nav.share({ title: 'Čarovná záhrada', url: link }) : navigator.clipboard.writeText(link).then(() => { toast('Odkaz skopírovaný 📋'); })).catch(() => { /* zdieľanie zrušené */ }); } }, 'Zdieľať')));
     // Nastavenia sveta – platia pre všetkých hráčov v tejto záhrade
     body.appendChild(h('h3', { style: 'margin:12px 0 6px' }, '⚙️ Nastavenia sveta'));
-    const setBtn = (label, on, patch) => h('button', { class: 'btn' + (on ? '' : ' gray'), style: 'flex:1', onclick: () => send(Object.assign({ t: 'settings', mode: S.mode }, patch)) }, label);
+    const setBtn = (label: string, on: boolean, patch: { mode: WorldMode }): HTMLButtonElement => h('button', { class: 'btn' + (on ? '' : ' gray'), style: 'flex:1', onclick: () => { send({ t: 'settings', mode: patch.mode }); } }, label);
     body.appendChild(h('div', { class: 'row', style: 'flex-direction:column;align-items:stretch' },
       h('b', null, 'Keď nikto nehrá'),
       h('div', { style: 'display:flex;gap:6px' },
@@ -1098,23 +1149,24 @@
     // Nastavenie tohto zariadenia (3D): odrazy na vode – náročnosť podľa výkonu telefónu/počítača
     if (R3) {
       body.appendChild(h('h3', { style: 'margin:12px 0 6px' }, '📱 Toto zariadenie'));
-      const opts = [['none', 'žiadne'], ['medium', 'stredné'], ['real', 'skutočné']];
-      const btns = opts.map(([q, l]) => h('button', { class: 'btn' + (R3.waterQuality === q ? '' : ' gray'), style: 'flex:1', onclick: () => {
-        R3.setWaterQuality(q); btns.forEach((b, i) => b.classList.toggle('gray', opts[i][0] !== q));
+      const r3 = R3;
+      const opts = [['none', 'žiadne'], ['medium', 'stredné'], ['real', 'skutočné']] as const;
+      const btns = opts.map(([q, l]) => h('button', { class: 'btn' + (r3.waterQuality === q ? '' : ' gray'), style: 'flex:1', onclick: () => {
+        r3.setWaterQuality(q); btns.forEach((b, i) => b.classList.toggle('gray', opts[i]?.[0] !== q));
       } }, l));
       body.appendChild(h('div', { class: 'row', style: 'flex-direction:column;align-items:stretch' },
         h('b', null, '🌊 Odrazy vody'), h('div', { style: 'display:flex;gap:6px' }, ...btns),
         h('small', null, 'Platí len na tomto zariadení. Skutočné odrazy ukážu vo vode aj hráčov a kvety, ale viac zaťažia telefón.')));
-      const popts = [['low', 'menej'], ['high', 'viac']];
-      const pbtns = popts.map(([q, l]) => h('button', { class: 'btn' + (R3.particleQuality === q ? '' : ' gray'), style: 'flex:1', onclick: () => {
-        R3.setParticleQuality(q); pbtns.forEach((b, i) => b.classList.toggle('gray', popts[i][0] !== q));
+      const popts = [['low', 'menej'], ['high', 'viac']] as const;
+      const pbtns = popts.map(([q, l]) => h('button', { class: 'btn' + (r3.particleQuality === q ? '' : ' gray'), style: 'flex:1', onclick: () => {
+        r3.setParticleQuality(q); pbtns.forEach((b, i) => b.classList.toggle('gray', popts[i]?.[0] !== q));
       } }, l));
       body.appendChild(h('div', { class: 'row', style: 'flex-direction:column;align-items:stretch' },
         h('b', null, '✨ Častice (dážď, oheň, lístie, víly)'), h('div', { style: 'display:flex;gap:6px' }, ...pbtns),
         h('small', null, 'Platí len na tomto zariadení. Na slabšom telefóne zvoľ menej.')));
-      const fopts = [[false, 'vypnuté'], [true, 'zapnuté']];
+      const fopts = [[false, 'vypnuté'], [true, 'zapnuté']] as const;
       const fbtns = fopts.map(([v, l]) => h('button', { class: 'btn' + (Fps.on === v ? '' : ' gray'), style: 'flex:1', onclick: () => {
-        Fps.set(v); fbtns.forEach((b, i) => b.classList.toggle('gray', fopts[i][0] !== v));
+        Fps.set(v); fbtns.forEach((b, i) => b.classList.toggle('gray', fopts[i]?.[0] !== v));
       } }, l));
       body.appendChild(h('div', { class: 'row', style: 'flex-direction:column;align-items:stretch' },
         h('b', null, '📊 Počítadlo snímok (FPS)'), h('div', { style: 'display:flex;gap:6px' }, ...fbtns),
@@ -1122,7 +1174,7 @@
     }
     // Projekt na GitHube: zdrojový kód a hlásenie chýb / nápadov
     const REPO = 'https://github.com/marekvasko/magic-flowers';
-    const extLink = (label, href) => h('a', { class: 'btn gray', style: 'flex:1;text-align:center;text-decoration:none', href, target: '_blank', rel: 'noopener' }, label);
+    const extLink = (label: string, href: string): HTMLAnchorElement => h('a', { class: 'btn gray', style: 'flex:1;text-align:center;text-decoration:none', href, target: '_blank', rel: 'noopener' }, label);
     body.appendChild(h('div', { class: 'row', style: 'flex-direction:column;align-items:stretch' },
       h('b', null, '🐙 Projekt na GitHube'),
       h('div', { style: 'display:flex;gap:6px' }, extLink('💻 GitHub', REPO)),
@@ -1130,12 +1182,12 @@
         extLink('🐞 Nahlásiť chybu', REPO + '/issues/new?template=bug.yml'),
         extLink('💡 Navrhnúť nápad', REPO + '/issues/new?template=feature.yml')),
       h('small', null, 'Našiel si chybu alebo máš nápad? Daj nám vedieť.')));
-    body.appendChild(h('button', { class: 'big', style: 'margin:6px 0', onclick: () => openUI('help') }, '❓ Ako hrať'));
-    body.appendChild(h('button', { class: 'btn gray', style: 'width:100%;padding:12px', onclick: () => { S.joined = false; S.ws && S.ws.close(); location.reload(); } }, 'Odísť zo záhrady'));
+    body.appendChild(h('button', { class: 'big', style: 'margin:6px 0', onclick: () => { openUI('help'); } }, '❓ Ako hrať'));
+    body.appendChild(h('button', { class: 'btn gray', style: 'width:100%;padding:12px', onclick: () => { S.joined = false; S.ws?.close(); location.reload(); } }, 'Odísť zo záhrady'));
   }
 
   // Domček: posteľ (spánok) a spoločný sklad
-  function renderHouse(body) {
+  function renderHouse(body: HTMLElement): void {
     const ok = D.canSleep(realMin());
     const b = h('button', { class: 'btn', onclick: () => { send({ t: 'sleep', on: true }); closeModal(); } }, '🛏️ Ísť spať');
     if (!ok) b.disabled = true;
@@ -1147,9 +1199,10 @@
   }
 
   // Ľadovňa: na čo je, koľko ľadu v nej je, ako rýchlo sa topí, vloženie ľadu z batohu a izolácia prikrývkami
-  function renderIcehouse(body) {
+  function renderIcehouse(body: HTMLElement): void {
     const B = D.ICEHOUSE, ice = S.icehouse.ice || 0, se = season(), bl = S.icehouse.bl || 0, lvl = D.insulLevel(bl);
-    const melt = B.melt[se] * B.insul[lvl], full = Math.ceil(ice);
+    const insul = (l: number): number => B.insul[l] ?? 1;
+    const melt = (B.melt[se] ?? 0) * insul(lvl), full = Math.ceil(ice);
     body.appendChild(h('p', { style: 'margin:4px 0 10px;font-size:14px' }, 'Do ľadovne sa dáva len ľad. Kvety ulož do skladu v domčeku – ľad v ľadovni ho chladí, takže v ňom vädnú 4× pomalšie.'));
     body.appendChild(h('div', { class: 'row', style: 'flex-direction:column;align-items:stretch' },
       h('b', null, `🧊 Ľad: ${full}/${B.cap}`),
@@ -1157,25 +1210,25 @@
       h('small', null, ice <= 0 ? 'Ľadovňa je prázdna – sklad chladí len trochu (kvety vädnú 2× pomalšie).'
         : `Sklad je vychladený – kvety v ňom vädnú 4× pomalšie. ` + (melt ? `Ľad sa roztopí asi o ${fmtLeft(ice / melt * D.TICKS_PER_HOUR)}.` : 'V zime sa ľad netopí. ❄️'))));
     const n = S.inv.ice || 0;
-    const b = h('button', { class: 'btn', onclick: () => send({ t: 'icehouse', n }) }, n ? `Vložiť ľad (${n})` : 'Nemáš ľad');
+    const b = h('button', { class: 'btn', onclick: () => { send({ t: 'icehouse', n }); } }, n ? `Vložiť ľad (${n})` : 'Nemáš ľad');
     if (!n || full >= B.cap) b.disabled = true;
     body.appendChild(h('div', { class: 'row' }, img('ice'), h('div', { class: 'info' }, h('b', null, 'Doplniť ľad'),
       h('small', null, 'Ľad vysekáš krompáčom na ľadovci v horách (chodník na severovýchode záhrady), v zime aj na zamrznutom jazierku.')), h('div', { class: 'btns' }, b)));
     // izolácia z hodvábnych prikrývok
-    const max = B.blankets[B.blankets.length - 1], next = B.blankets[lvl + 1];
+    const max = B.blankets[B.blankets.length - 1] ?? 0, next = B.blankets[lvl + 1];
     body.appendChild(h('div', { class: 'row' }, img('blanket'), h('div', { class: 'info' },
       h('b', null, `🧶 Izolácia: úroveň ${lvl}/${B.blankets.length - 1}`),
-      h('small', null, (lvl ? `Ľad sa topí len na ${Math.round(B.insul[lvl] * 100)} %. ` : 'Bez izolácie sa ľad topí naplno. ')
-        + (next ? `Prikrývky: ${bl}/${next} – pri ${next} sa bude ľad topiť len na ${Math.round(B.insul[lvl + 1] * 100)} %. Ťukni na ľadovňu s prikrývkou v ruke.` : `Všetkých ${max} prikrývok je vnútri – lepšie sa izolovať nedá.`)),
+      h('small', null, (lvl ? `Ľad sa topí len na ${Math.round(insul(lvl) * 100)} %. ` : 'Bez izolácie sa ľad topí naplno. ')
+        + (next ? `Prikrývky: ${bl}/${next} – pri ${next} sa bude ľad topiť len na ${Math.round(insul(lvl + 1) * 100)} %. Ťukni na ľadovňu s prikrývkou v ruke.` : `Všetkých ${max} prikrývok je vnútri – lepšie sa izolovať nedá.`)),
       h('small', null, `Prikrývku zo ${D.BLANKET_SILK} hodvábu utká majster hodvábu pri trhu – chodí na jar a na jeseň (+${D.MASTER.price} 🪙) – alebo krosná v Dielni.`))));
   }
 
   // Dielňa: krosná (kúpa, tkanie prikrývky, vyzdvihnutie hotovej)
-  function renderDielna(body) {
-    const L = D.DIELNA.loom, lm = S.loom || {}, silk = S.inv.silk || 0;
+  function renderDielna(body: HTMLElement): void {
+    const L = D.DIELNA.loom, lm = S.loom, silk = S.inv.silk || 0;
     body.appendChild(h('p', { style: 'margin:4px 0 10px;font-size:14px' }, 'Spoločná dielňa celej záhrady. Čo sa do nej kúpi, slúži všetkým.'));
     if (!S.dielna.loom) {
-      const lvl = D.repLevel(S.rep), btn = h('button', { class: 'btn', onclick: () => send({ t: 'buyLoom' }) }, L.price + '🪙');
+      const lvl = D.repLevel(S.rep), btn = h('button', { class: 'btn', onclick: () => { send({ t: 'buyLoom' }); } }, L.price + '🪙');
       if (S.coins < L.price || lvl < L.rep) btn.disabled = true;
       body.appendChild(h('div', { class: 'row' }, h('div', { style: 'font-size:30px;width:40px;text-align:center' }, L.icon),
         h('div', { class: 'info' }, h('b', null, `${L.icon} ${L.name}`), h('small', null, `Utkajú prikrývku zo ${D.BLANKET_SILK} hodvábu bez platenia, len to trvá 2–4 herné hodiny. Pre celú záhradu.` + (L.rep ? ` · treba ⭐${L.rep}` : ''))),
@@ -1184,14 +1237,14 @@
     }
     if (lm.ready) {
       body.appendChild(h('div', { class: 'row' }, img('blanket'), h('div', { class: 'info' }, h('b', null, `Hotové: ${lm.ready}× prikrývka`), h('small', null, 'Krosná ju pre teba dotkali.')),
-        h('div', { class: 'btns' }, h('button', { class: 'btn', onclick: () => send({ t: 'loomTake' }) }, 'Vziať'))));
+        h('div', { class: 'btns' }, h('button', { class: 'btn', onclick: () => { send({ t: 'loomTake' }); } }, 'Vziať'))));
     }
-    let note, btn = null;
+    let note: string, btn: HTMLButtonElement | null = null;
     if (lm.mine != null) note = `Tká sa tvoja prikrývka – hotová bude asi o ${fmtLeft(lm.mine - S.tick)}.`;
     else if (lm.busy) note = 'Krosná práve tkajú prikrývku pre niekoho iného. Skús to neskôr.';
     else {
       note = `Založ ${D.BLANKET_SILK}× hodváb (máš ${silk}). Prikrývka bude hotová o 2–4 herné hodiny a počká tu na teba.`;
-      btn = h('button', { class: 'btn', onclick: () => send({ t: 'loomStart' }) }, 'Tkať');
+      btn = h('button', { class: 'btn', onclick: () => { send({ t: 'loomStart' }); } }, 'Tkať');
       if (silk < D.BLANKET_SILK) btn.disabled = true;
     }
     body.appendChild(h('div', { class: 'row' }, h('div', { style: 'font-size:30px;width:40px;text-align:center' }, L.icon),
@@ -1200,56 +1253,56 @@
 
   // Majster hodvábu: prikrývka hneď, za hodváb a mince (vzhľad zdieľa 3D postavička, render3d.mjs)
   const MASTER_LOOK = D.MASTER_LOOK;
-  function renderMaster(body) {
+  function renderMaster(body: HTMLElement): void {
     const pc = h('canvas', { width: 80, height: 90 }), silk = S.inv.silk || 0;
-    Art.char(pc.getContext('2d'), 40, 86, 80, MASTER_LOOK, 0, 0, {});
+    Art.char(ctx2d(pc), 40, 86, 80, MASTER_LOOK, 0, 0, {});
     body.appendChild(h('div', { class: 'dlg' }, pc, h('div', { class: 'bubble' },
-      `${masterNow() && masterNow().where === 'hut' ? 'Dobrý večer' : 'Dobrý deň'}, ${S.name}! Prines mi ${D.BLANKET_SILK}× pavúčí hodváb z Lesa divov a za ${D.MASTER.price} 🪙 ti z neho hneď utkám hodvábnu prikrývku. S ňou bude ľadovňa držať ľad oveľa dlhšie. 🧵`)));
-    const btn = h('button', { class: 'btn', onclick: () => send({ t: 'masterWeave' }) }, `${D.MASTER.price}🪙`);
+      `${masterNow()?.where === 'hut' ? 'Dobrý večer' : 'Dobrý deň'}, ${S.name}! Prines mi ${D.BLANKET_SILK}× pavúčí hodváb z Lesa divov a za ${D.MASTER.price} 🪙 ti z neho hneď utkám hodvábnu prikrývku. S ňou bude ľadovňa držať ľad oveľa dlhšie. 🧵`)));
+    const btn = h('button', { class: 'btn', onclick: () => { send({ t: 'masterWeave' }); } }, `${D.MASTER.price}🪙`);
     if (silk < D.BLANKET_SILK || S.coins < D.MASTER.price) btn.disabled = true;
     body.appendChild(h('div', { class: 'row' }, img('blanket'), h('div', { class: 'info' }, h('b', null, D.itemName('blanket')),
       h('small', null, `${D.BLANKET_SILK}× hodváb (máš ${silk}) + ${D.MASTER.price} 🪙 · hneď`)), h('div', { class: 'btns' }, btn)));
   }
 
   // Prekrytie počas spánku: čakanie na ostatných, potom zrýchlená noc
-  function renderSleep() {
+  function renderSleep(): void {
     const el = $('sleep');
     el.classList.toggle('hidden', !S.asleep);
     if (!S.asleep) return;
     if (S.modal) closeModal();
-    $('slTxt').textContent = S.ff ? 'Spíš… noc ubieha 🌙' : `Čakáš, kým pôjdu spať aj ostatní (${S.sleepN}/${S.sleepTotal}).`;
+    $('slTxt').textContent = S.ff ? 'Spíš… noc ubieha 🌙' : `Čakáš, kým pôjdu spať aj ostatní (${S.sleepN ?? 0}/${S.sleepTotal ?? 0}).`;
     $('slWake').classList.toggle('hidden', !!S.ff);
   }
-  $('slWake').onclick = () => send({ t: 'sleep', on: false });
+  $('slWake').onclick = () => { send({ t: 'sleep', on: false }); };
 
-  function renderStorage(body) {
+  function renderStorage(body: HTMLElement): void {
     body.appendChild(h('p', { style: 'margin:4px 0 10px;font-size:14px' }, 'Sklad je spoločný pre všetkých v záhrade. Peniaze má každý svoje. ' +
       (S.storageRate < D.STORAGE_AGE_RATE ? '🧊 Ľadovňa sklad chladí – kvety v ňom vädnú 4× pomalšie.' : '❄️ V chlade skladu kvety vädnú 2× pomalšie.' + (S.icehouse.built ? ' Doplň ľad do ľadovne a budú vädnúť 4× pomalšie.' : ''))));
     const wl = S.inv.wilted || 0;
     if (wl) {
       const k = Math.floor(wl / D.WILTED_PER_COMPOST);
-      const b = h('button', { class: 'btn alt', onclick: () => send({ t: 'compostWilted' }) }, k ? `Skompostovať → ${k}× kompost` : `treba ${D.WILTED_PER_COMPOST}`);
+      const b = h('button', { class: 'btn alt', onclick: () => { send({ t: 'compostWilted' }); } }, k ? `Skompostovať → ${k}× kompost` : `treba ${D.WILTED_PER_COMPOST}`);
       if (!k) b.disabled = true;
       body.appendChild(h('div', { class: 'row' }, img('wilted'), h('div', { class: 'info' }, h('b', null, `Zvädnuté kvety: ${wl}`), h('small', null, `${D.WILTED_PER_COMPOST} zvädnuté = 1 kompost`)), h('div', { class: 'btns' }, b)));
     }
-    const section = (title, items, from) => {
+    const section = (title: string, items: Partial<Record<ItemId, number>>, from: 'inv' | 'storage'): void => {
       body.appendChild(h('h3', { style: 'margin:10px 0 6px' }, title));
-      const ids = Object.keys(items).filter(id => items[id] > 0 && !D.isTool(id) && id !== 'ice'); // ľad patrí do ľadovne
+      const ids = keys(items).filter(id => (items[id] ?? 0) > 0 && !D.isTool(id) && id !== 'ice'); // ľad patrí do ľadovne
       if (!ids.length) body.appendChild(h('small', null, from === 'inv' ? 'Nemáš nič, čo by sa dalo uložiť.' : 'Sklad je prázdny.'));
       for (const id of ids) {
-        const n = items[id], t = from === 'inv' ? 'store' : 'unstore';
+        const n = items[id] ?? 0, t = from === 'inv' ? 'store' : 'unstore';
         const ft = id.startsWith('fl_') ? freshText(id, from !== 'inv') : '';
         body.appendChild(h('div', { class: 'row' }, h('img', { src: Art.icon(id) }), h('div', { class: 'info' }, h('b', null, D.itemName(id)), h('small', null, n + ' ks'), ft ? h('small', null, '🌷 ' + ft) : null),
           h('div', { class: 'btns' },
-            h('button', { class: 'btn', onclick: () => send({ t, id, n: 1 }) }, from === 'inv' ? 'Uložiť 1' : 'Vziať 1'),
-            h('button', { class: 'btn alt', onclick: () => send({ t, id, n }) }, 'Všetko'))));
+            h('button', { class: 'btn', onclick: () => { send({ t, id, n: 1 }); } }, from === 'inv' ? 'Uložiť 1' : 'Vziať 1'),
+            h('button', { class: 'btn alt', onclick: () => { send({ t, id, n }); } }, 'Všetko'))));
       }
     };
     section('📦 V sklade', S.storage, 'storage');
     section('🎒 V batohu', S.inv, 'inv');
   }
 
-  function renderHelp(body) {
+  function renderHelp(body: HTMLElement): void {
     body.appendChild(h('div', { class: 'help', html: `
       <p>🕹️ <b>Pohyb:</b> polož prst kdekoľvek na obrazovku a potiahni – v mieste dotyku sa objaví joystick. Alebo ťukni na miesto, kam chceš ísť. Na počítači šípky/WASD (E alebo Enter = akcia na políčku pred tebou) alebo ťahanie myšou.</p>
       <p>🦘 <b>Skok a plazenie:</b> medzerník = skok, držaný Shift = plazenie. Na mobile tlačidlá ⤴ a 🐛 vpravo dole; počas riadenia joystickom stačí ťuknúť druhým prstom kamkoľvek a skočíš.</p>
@@ -1274,9 +1327,9 @@
       <p>✨ A v lese… v lese sa vraj dejú čary. Ale to si musíte objaviť sami.</p>` }));
   }
 
-  function renderWish(body) {
+  function renderWish(body: HTMLElement): void {
     body.appendChild(h('p', { style: 'text-align:center' }, 'Kvet papradia sa rozžiaril v tvojich dlaniach. Máš jedno želanie…'));
-    const opts = [
+    const opts: readonly (readonly [WishKind, string, string])[] = [
       ['zlato', '💰 Zlatý dážď', 'Každý hráč v záhrade dostane 400 mincí.'],
       ['jar', '🌸 Večná jar', 'Záhrada sa navždy polieva sama a kvetom nevadí ročné obdobie.'],
       ['poklad', '🎁 Poklad víl', 'Dúhové semienka, plesnivce a nové papraďové semienko.']
@@ -1285,14 +1338,14 @@
   }
 
   // Chat
-  const closeChat = () => { $('chatbox').classList.remove('open'); $('chatIn').blur(); chatWheel(); };
-  function openChat() { $('chatbox').classList.add('open'); $('chathist').scrollTop = $('chathist').scrollHeight; chatWheel(); $('chatIn').focus(); }
+  const closeChat = (): void => { $('chatbox').classList.remove('open'); $('chatIn').blur(); chatWheel(); };
+  function openChat(): void { $('chatbox').classList.add('open'); $('chathist').scrollTop = $('chathist').scrollHeight; chatWheel(); $('chatIn').focus(); }
   $('bChat').onclick = () => { if ($('chatbox').classList.contains('open')) closeChat(); else openChat(); };
-  const sendChat = () => { const v = $('chatIn').value.trim(); if (v) send({ t: 'chat', text: v }); $('chatIn').value = ''; chatCount(); closeChat(); };
+  const sendChat = (): void => { const v = $in('chatIn').value.trim(); if (v) send({ t: 'chat', text: v }); $in('chatIn').value = ''; chatCount(); closeChat(); };
   $('chatSend').onclick = sendChat;
   // Limit správy (rovnaký ako na serveri); počítadlo sa ukáže 20 znakov pred koncom
-  $('chatIn').maxLength = D.CHAT_MAX;
-  const chatCount = () => { const n = $('chatIn').value.length; $('chatCount').textContent = n >= D.CHAT_MAX - 20 ? `${n}/${D.CHAT_MAX}` : ''; $('chatCount').classList.toggle('full', n >= D.CHAT_MAX); };
+  $in('chatIn').maxLength = D.CHAT_MAX;
+  const chatCount = (): void => { const n = $in('chatIn').value.length; $('chatCount').textContent = n >= D.CHAT_MAX - 20 ? `${n}/${D.CHAT_MAX}` : ''; $('chatCount').classList.toggle('full', n >= D.CHAT_MAX); };
   $('chatIn').addEventListener('input', chatCount);
   // Enter/Escape patria len chatu – sendChat/closeChat zruší fokus, takže by ich inak zachytila hra (Enter = akcia)
   $('chatIn').addEventListener('keydown', e => {
@@ -1301,9 +1354,11 @@
   });
 
   // ---------- Efekty ----------
-  function spawnFx(m) {
-    const P = (o) => S.fx.push(Object.assign({ life: 0, max: 1, vx: 0, vy: 0, g: 0, size: 0.06 }, o));
-    const R = (a) => (Math.random() - 0.5) * a;
+  function spawnFx(fm: MsgOf<'fx'>): void {
+    const m = { ...fm, x: fm.x ?? 0, y: fm.y ?? 0 };
+    const P = (o: Partial<FxParticle> & Pick<FxParticle, 'x' | 'y'>): void => { S.fx.push({ life: 0, max: 1, vx: 0, vy: 0, g: 0, size: 0.06, ...o }); };
+    const F = (o: { cx: number; cy: number; a: number; rad: number; max: number; color: string }): void => { S.fx.push({ fairy: true, life: 0, ...o }); };
+    const R = (a: number): number => (Math.random() - 0.5) * a;
     switch (m.k) {
       case 'pop': case 'sparkle':
         for (let i = 0; i < (m.k === 'sparkle' ? 30 : 12); i++) P({ x: m.x, y: m.y - 0.3, vx: R(3), vy: -Math.random() * 2.5, g: 3, color: i % 3 ? m.c || '#ffd54f' : '#fff', max: 0.9 + Math.random() * 0.5, star: m.k === 'sparkle' });
@@ -1320,7 +1375,7 @@
       case 'brew': for (let i = 0; i < 20; i++) P({ x: m.x + R(0.5), y: m.y - 0.6, vx: R(0.6), vy: -1 - Math.random() * 1.5, color: m.c, max: 1.4, size: 0.09 }); break;
       case 'glimmer': for (let i = 0; i < 16; i++) P({ x: m.x + R(4), y: m.y + R(4), vy: -0.3, color: '#b9ffdf', max: 1.5, star: true }); break;
       case 'fairies':
-        for (let i = 0; i < 9; i++) P({ fairy: true, cx: m.x, cy: m.y, a: i * 0.7, rad: 1 + Math.random() * 1.5, max: 9, color: ['#ff9cf0', '#9cf0ff', '#fff59c'][i % 3] });
+        for (let i = 0; i < 9; i++) F({ cx: m.x, cy: m.y, a: i * 0.7, rad: 1 + Math.random() * 1.5, max: 9, color: must(['#ff9cf0', '#9cf0ff', '#fff59c'][i % 3]) });
         for (let i = 0; i < 40; i++) P({ x: m.x + R(5), y: m.y + R(5), vy: -0.4, color: '#fff8b0', max: 2 + Math.random() * 3, star: true });
         break;
       case 'rainbow': S.screenFx.push({ k: 'rainbow', life: 0, max: 10 }); break;
@@ -1330,7 +1385,7 @@
 
   // ---------- Herná slučka ----------
   // Hra zaberá celú obrazovku; prekrytie #cv má rozlíšenie displeja, výrez sveta (D.VIEW_DIAG) nastaví 3D kamera.
-  function resize() {
+  function resize(): void {
     const dpr = Math.min(2.5, window.devicePixelRatio || 1);
     const r = cv.getBoundingClientRect();
     cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
@@ -1338,12 +1393,12 @@
   }
   addEventListener('resize', resize);
   // Chat aj tlačidlá skoku a plazenia sa držia nad lištou nástrojov, nech je akokoľvek vysoká (mobil / počítač)
-  function barH() { const app = $('app'), r = $('bottom').getBoundingClientRect(); app.style.setProperty('--bar-h', Math.max(0, Math.round(app.getBoundingClientRect().bottom - r.top)) + 'px'); }
+  function barH(): void { const app = $('app'), r = $('bottom').getBoundingClientRect(); app.style.setProperty('--bar-h', Math.max(0, Math.round(app.getBoundingClientRect().bottom - r.top)) + 'px'); }
   new ResizeObserver(barH).observe($('bottom'));
   addEventListener('resize', barH);
-  addEventListener('resize', () => chatWheel());
+  addEventListener('resize', () => { chatWheel(); });
 
-  function update(dt) {
+  function update(dt: number): void {
     const me = S.me;
     let vx = S.stick.x, vy = S.stick.y;
     if (S.asleep || S.areaFx) { vx = vy = 0; S.keys = {}; S.path = null; }
@@ -1355,7 +1410,7 @@
       if (pa && !pa.onTile && inReach(pa.x, pa.y) && S.path.length <= 1) {
         stopWalk(); face(pa.x + 0.5 - me.x, pa.y + 0.5 - me.y); doAction(pa.x, pa.y);
       } else {
-        const wp = S.path[0], dx = wp.x - me.x, dy = wp.y - me.y, d = Math.hypot(dx, dy);
+        const wp = must(S.path[0]), dx = wp.x - me.x, dy = wp.y - me.y, d = Math.hypot(dx, dy);
         if (d < 0.1) {
           S.path.shift();
           if (!S.path.length) {
@@ -1372,15 +1427,15 @@
     if (me.jz > 0 || me.jv > 0) { me.jz += me.jv * dt; me.jv -= JUMP_G * dt; if (me.jz <= 0) me.jz = me.jv = 0; }
     if (me.moving) {
       // ťažký ľad v náručí spomaľuje
-      // lepkavá pavučina a pavúk na chrbte spomaľujú (server pošle 'slow')
+      // lepkavá pavučina spomaľuje (slowK / slowUntil – správu 'slow' server už neposiela, spomalenie je vo 'webbed')
       const slowK = (performance.now() < S.slowUntil ? S.slowK : 1) * webSpeed(performance.now()) * webDrag();
       const sp = 3.8 * dt * (me.crawl ? CRAWL_SPEED : 1) * Math.max(0.4, 1 - D.ICE_SLOW * (S.inv.ice || 0)) * slowK;
       const ox = me.x, oy = me.y;
       const { rx, ry } = D.BODY;
       // hráč stojí na najvyššom políčku pod sebou – kým celkom nezíde z ľadu, nezasekne sa o jeho hranu
-      const corners = (x, y) => [[x - rx, y - ry], [x + rx, y - ry], [x - rx, y + ry], [x + rx, y + ry]];
+      const corners = (x: number, y: number): [number, number][] => [[x - rx, y - ry], [x + rx, y - ry], [x - rx, y + ry], [x + rx, y + ry]];
       let here = tileAt(Math.floor(me.x), Math.floor(me.y));
-      const overlap = new Set();
+      const overlap = new Set<number>();
       for (const [cx, cy] of corners(me.x, me.y)) {
         const t = tileAt(Math.floor(cx), Math.floor(cy));
         overlap.add(Math.floor(cy) * S.W + Math.floor(cx));
@@ -1390,7 +1445,7 @@
       // plazenie: meria sa od políčka pod stredom postavy a stred nesmie prejsť na inú výšku
       // (inak by sa dalo vyliezť, keď sa už rohom dotýka vyššieho ľadu)
       const mid = tileAt(Math.floor(me.x), Math.floor(me.y)), from = me.crawl ? mid : here;
-      const free = (x, y) => corners(x, y).every(([cx, cy]) => !solid(cx, cy, from, lift, me.crawl, overlap))
+      const free = (x: number, y: number): boolean => corners(x, y).every(([cx, cy]) => !solid(cx, cy, from, lift, me.crawl, overlap))
         && (!me.crawl || D.level(tileAt(Math.floor(x), Math.floor(y))) === D.level(mid));
       const nx = me.x + vx * sp;
       if (free(nx, me.y)) me.x = nx;
@@ -1422,7 +1477,7 @@
       o.x += (o.tx - o.x) * k; o.y += (o.ty - o.y) * k;
       o.z = o.n ? z0 + (o.tz - z0) * k : 0;
       // nohy podľa prejdenej dráhy (aj po kmeni), aby nekĺzali
-      o.phase = o.m ? o.phase + window.SpiderModel.stepPhase(o.k, Math.hypot(o.x - x0, o.y - y0, o.z - z0), dt) : 0;
+      o.phase = o.m ? o.phase + SpiderModel.stepPhase(o.k, Math.hypot(o.x - x0, o.y - y0, (o.z || 0) - z0), dt) : 0;
     }
     // efekty
     for (const p of S.fx) {
@@ -1437,7 +1492,8 @@
   }
 
   let last = performance.now();
-  function loop(now) {
+  function loop(now: number): void {
+
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
     if (S.joined) {
       update(dt);

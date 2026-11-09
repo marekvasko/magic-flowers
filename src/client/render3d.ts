@@ -15,7 +15,7 @@ import { Art } from './art.ts';
 import type { CharOpts } from './art.ts';
 import { createParticles } from './particles3d.ts';
 import { createSpiders3d } from './spiders3d.ts';
-import type { ClientState, CtxAction, Pt } from './state.ts';
+import type { CtxAction, Pt, ViewState } from './state.ts';
 
 type V3 = [number, number, number];
 const uni = <T>(value: T): THREE.IUniform<T> => ({ value });
@@ -380,7 +380,7 @@ THREE.ColorManagement.enabled = false;
 
 // Čo 3D pohľad dostane od hry (game.ts) alebo od ladiacej stránky (/debug → World)
 export interface Render3DApi {
-  S: ClientState; glCanvas: HTMLCanvasElement; ov: HTMLCanvasElement; ovCtx: CanvasRenderingContext2D;
+  S: ViewState; glCanvas: HTMLCanvasElement; ov: HTMLCanvasElement; ovCtx: CanvasRenderingContext2D;
   EMOJI: Readonly<Partial<Record<string, string>>>;
   curMin: () => number; season: () => number;
   searching: (o: { si?: number | undefined } | null | undefined) => boolean;
@@ -1735,7 +1735,7 @@ void main() {
   function pxPerBlock(): number { return api.ov.width / viewW; }
 
   // stav budov, ktorý nie je v políčkach (izolácia ľadovne, krosná v Dielni) – keď sa zmení, svet sa prestavia
-  const buildingState = (): { ins: number; loom: boolean } => ({ ins: D.insulLevel(S.icehouse.bl), loom: S.dielna.loom });
+  const buildingState = (): { ins: number; loom: boolean } => ({ ins: D.insulLevel(S.icehouse?.bl), loom: S.dielna?.loom ?? false });
   const stateSig = (): string => { const b = buildingState(); return b.ins + '|' + (b.loom ? 1 : 0); };
   let builtState: string | null = null;
   let babka: CharObj | null = null, master: CharObj | null = null, last = performance.now(), lastGround = 0;
@@ -1809,7 +1809,7 @@ void main() {
     else { babka.alive = true; if (Math.floor(t) !== babka.lastT) { babka.lastT = Math.floor(t); drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, Math.sin(t) * 0.3, { babka: true }, 1); } }
     // majster hodvábu (len na jar a na jeseň): cez deň stojí pri trhu, na noc ide k babke do chalúpky (D.masterAt – ako na serveri);
     // keď kráča, kreslí sa každý snímok, keď stojí, len občas (prekreslenie postavičky nie je zadarmo)
-    const ma = S.area === 'garden' ? D.masterAt(S.day, min, S.dielna.loom) : null; // po kúpe krosien už nechodí
+    const ma = S.area === 'garden' ? D.masterAt(S.day, min, S.dielna?.loom) : null; // po kúpe krosien už nechodí
     if (!ma) master = null;
     else if (!master || !ma.still || master.wasWalking || Math.floor(t * 0.7) !== master.lastT) {
       master = drawChar('master', ma.x, ma.y + (ma.still ? 0.1 : 0), D.MASTER_LOOK, ma.a, ma.still ? Math.sin(t * 0.7) * 0.25 : t * 9, {}, dt || 1);

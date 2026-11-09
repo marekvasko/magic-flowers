@@ -1,7 +1,6 @@
 // Zdieľané herné dáta – používa server (Node) aj klient (prehliadač).
 // ES modul v TypeScripte (#122): server a testy ho načítajú priamo (Node 24), prehliadaču ho zbalí `npm run build`
 // do build/shared/data.js ako globálnu premennú GameData (scripts/build.mjs).
-import type { Plant } from './save.ts';
 import { lookup, mapValues, must } from './util.ts';
 
 // ---- Pomocné typy a funkcie ----
@@ -874,7 +873,7 @@ export function canStep(from: GroundTile | null | undefined, to: GroundTile | nu
 export type TillKind = 'normal' | 'forest' | 'sand' | 'rock';
 export const TILLABLE: Readonly<Partial<Record<Ground, TillKind>>> = { grass: 'normal', forest: 'forest', sand: 'sand', rock: 'rock' };
 // Prázdne obrobené políčko môže motykou zarovnať ktokoľvek zo záhrady, nielen ten, kto ho prekopal (spoločné pole)
-export const canLevel = (t: { readonly s?: { readonly p: Plant | null } | null } | null | undefined): boolean => !!(t && t.s && !t.s.p);
+export const canLevel = (t: { readonly s?: { readonly p: unknown } | null | undefined } | null | undefined): boolean => !!(t && t.s && !t.s.p);
 
 export function isShade(tiles: readonly (GroundTile | null | undefined)[], x: number, y: number): boolean {
   const t = tiles[y * W + x];

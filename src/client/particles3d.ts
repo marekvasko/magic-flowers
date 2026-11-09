@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import * as W from '../shared/world3d.ts';
 import type { FineInfo, Grid } from '../shared/world3d.ts';
 import { must } from '../shared/util.ts';
-import type { ClientState, FxFairy } from './state.ts';
+import type { FxFairy, ViewState } from './state.ts';
 
 export type RGB = readonly [number, number, number];
 const rnd = (a: number, b: number): number => a + Math.random() * (b - a);
@@ -91,7 +91,7 @@ export interface ParticleCtx {
   grid: Grid | null; fine: FineInfo[] | null; fineBox: (i: number) => THREE.Box3 | undefined; target: THREE.Vector3; viewW: number; viewH: number;
   se: number; min: number; lit: RGB; cauldron: { x: number; y: number; z: number } | null; lantern: { x: number; y: number; z: number } | null;
 }
-export interface ParticlesInit { scene: THREE.Scene; camera: THREE.OrthographicCamera; renderer: THREE.WebGLRenderer; S: ClientState; ripple: (x: number, z: number, k: number) => void }
+export interface ParticlesInit { scene: THREE.Scene; camera: THREE.OrthographicCamera; renderer: THREE.WebGLRenderer; S: ViewState; ripple: (x: number, z: number, k: number) => void }
 export interface Particles {
   update: (dt: number, t: number, ctx: ParticleCtx) => void;
   fairyLights: (grid: Grid | null, t: number, add: (x: number, y: number, z: number, r: number) => void) => void;

@@ -12,7 +12,7 @@ import type { CornerOpts, CornerWeb, LayoutOpts, Threads, Vec3, WebParams } from
 import type { FineInfo } from '../shared/world3d.ts';
 import type { CornerView, SpiderKind, WebView } from '../shared/protocol.ts';
 import { must } from '../shared/util.ts';
-import type { ClientState, Spider } from './state.ts';
+import type { Spider, ViewState } from './state.ts';
 
 type Three = typeof THREE;
 // Uniformy svetla sveta (render3d.ts – rovnaké objekty ako v shaderi sveta), ktoré číta aj hodváb
@@ -309,7 +309,7 @@ function linesMesh(THREE: Three, world: SilkWorld, view: ViewUniform, P: WebPara
 
 // Čo spiders3d potrebuje od 3D pohľadu (render3d.ts)
 export interface Spiders3dInit {
-  THREE: Three; scene: THREE.Scene; S: ClientState;
+  THREE: Three; scene: THREE.Scene; S: ViewState;
   groundY: (x: number, y: number) => number;
   // svetlo v bode (r, g, b) z okolia, slnka a lámp; out.seen = viditeľnosť v tme (0–1)
   lightAt: (x: number, y: number, z: number, lights: readonly THREE.Vector4[], n: number, out: { seen: number }) => [number, number, number];

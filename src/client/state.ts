@@ -62,6 +62,10 @@ export interface ClientState {
   r3: Render3D | null; // 3D pohľad (pre ladenie v konzole: MF.r3.pick(x, y))
 }
 
+// Stav, ktorý kreslí 3D pohľad: hra mu dá celé S, ladiaca stránka /debug (záložka World, do fázy 5c – #137) len časť –
+// stav budov (icehouse, dielna) jej chýba
+export type ViewState = Omit<ClientState, 'icehouse' | 'dielna'> & Partial<Pick<ClientState, 'icehouse' | 'dielna'>>;
+
 // Ladiace prepínače z konzoly (README): čítajú sa za behu, hra ich sama nenastavuje
 declare global {
   interface Window {
