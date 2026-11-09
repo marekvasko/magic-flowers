@@ -308,7 +308,7 @@ export const RECIPES: Readonly<Record<string, PotionId>> = {
 
 // Babkine rady, ktoré prezrádzajú recept (kľúč = recept). Dva recepty miešajú kvety dvoch období – rada pripomenie sklad.
 export const RECIPE_TIPS = {
-  'harmancek+levandula+slnecnica': 'V kotlíku miešaj vždy tri kvety. Harmanček, levanduľa a slnečnica vraj urýchlia rast…',
+  'harmancek+levandula+slnecnica': 'V kotlíku miešaj vždy tri kvety. Rumanček, levanduľa a slnečnica vraj urýchlia rast…',
   'narcis+safran+tulipan': 'Tulipán, narcis a šafran… jarná trojica, ktorá zastaví čas.',
   'ruza+ruza+tulipan': 'Dve ruže a tulipán – to je recept na lásku. Tulipán kvitne na jar, ruža v lete: uschovaj si jarné kvety v sklade, v chlade ľadovne vydržia dlhšie.',
   'astra+chryzantema+jesienka': 'Astra, chryzantéma a jesienka – jesenný odvar ti otvorí oči pre víly.',
@@ -341,12 +341,22 @@ export const TIPS: readonly string[] = [
 export const RECIPE_TIP_IDX: readonly number[] = TIPS.flatMap((t, i) =>
   Object.entries(RECIPE_TIPS).some(([k, v]) => v === t && !k.startsWith('duhova')) ? [i] : []);
 
+// Ďalšia babkina rada pri príchode (i = doterajšia); kým hráč nepozná žiadny recept, vždy niektorá s receptom
+export function nextTipIdx(i: number, knowsRecipe: boolean): number {
+  const n = (i + 1) % TIPS.length;
+  if (knowsRecipe || RECIPE_TIP_IDX.includes(n)) return n;
+  return RECIPE_TIP_IDX.find(j => j > i) ?? must(RECIPE_TIP_IDX[0]);
+}
+
 // ---- Rada kotlíka, keď sa uvarí sliz ----
 // Najbližší recept k trom kvetom: koľko kvetov sedí (prienik multimnožín, ruža+ruža+X → 2), ktoré to sú (hit, v poradí
-// vložených) a ktorý kvet receptu chýba (miss, len pri fit 2). Pri zhode viacerých receptov vyhrá ten, ktorý hráč ešte
-// nepozná (known = objavené recepty), potom poradie v RECIPES. known v odpovedi = vybraný recept už hráč pozná.
-export interface BrewHint { readonly fit: 0 | 1 | 2; readonly hit: readonly SpeciesId[]; readonly miss: SpeciesId | null; readonly recipe: PotionId | null; readonly known: boolean }
-export function brewHint(flowers: readonly SpeciesId[], known: readonly string[]): BrewHint {
+// vložených), čo z vložených ostalo (rest) a ktorý kvet receptu chýba (miss, len pri fit 2). Pri zhode viacerých receptov
+// vyhrá ten, ktorý hráč ešte nepozná (known = objavené recepty), potom poradie v RECIPES.
+export interface RecipeMatch {
+  readonly fit: 0 | 1 | 2; readonly hit: readonly SpeciesId[]; readonly rest: readonly SpeciesId[]; readonly miss: SpeciesId | null;
+  readonly recipe: PotionId | null; readonly known: boolean;
+}
+export function bestRecipe(flowers: readonly SpeciesId[], known: readonly string[]): RecipeMatch {
   let best: { n: number; hit: SpeciesId[]; left: SpeciesId[]; key: string; known: boolean } | null = null;
   for (const key of Object.keys(RECIPES)) {
     const left = key.split('+').filter(isSpeciesId), hit: SpeciesId[] = [];
@@ -354,9 +364,24 @@ export function brewHint(flowers: readonly SpeciesId[], known: readonly string[]
     const k = known.includes(key);
     if (!best || hit.length > best.n || (hit.length === best.n && best.known && !k)) best = { n: hit.length, hit, left, key, known: k };
   }
-  const fit = best ? Math.min(2, best.n) : 0;
-  if (!best || fit === 0) return { fit: 0, hit: [], miss: null, recipe: null, known: false };
-  return { fit: fit === 2 ? 2 : 1, hit: best.hit.slice(0, fit), miss: fit === 2 ? best.left[0] ?? null : null, recipe: lookup(RECIPES, best.key) ?? null, known: best.known };
+  const n = best ? Math.min(2, best.n) : 0;
+  if (!best || n === 0) return { fit: 0, hit: [], rest: flowers.slice(), miss: null, recipe: null, known: false };
+  const hit = best.hit.slice(0, n), rest = flowers.slice();
+  for (const f of hit) rest.splice(rest.indexOf(f), 1);
+  return { fit: n === 2 ? 2 : 1, hit, rest, miss: n === 2 ? best.left[0] ?? null : null, recipe: lookup(RECIPES, best.key) ?? null, known: best.known };
+}
+// Čo kotlík povie (posiela server v správe brewed – len to, čo sa zobrazí, chýbajúci kvet nie):
+// fit, kvety, ktoré sedia (hit); pri fit 2 buď známy recept (known), alebo nápoveda o chýbajúcom kvete (clue) = jeho
+// obdobia, či je čarovný a či zvyšný vložený kvet má to isté obdobie („niečo iné letné“).
+export interface BrewClue { readonly seasons: readonly Season[]; readonly magic: boolean; readonly other: boolean }
+export interface BrewHint { readonly fit: 0 | 1 | 2; readonly hit: readonly SpeciesId[]; readonly clue: BrewClue | null; readonly known: PotionId | null }
+export function brewHint(flowers: readonly SpeciesId[], known: readonly string[]): BrewHint {
+  const m = bestRecipe(flowers, known);
+  if (m.fit !== 2 || !m.miss) return { fit: m.fit, hit: m.hit, clue: null, known: null };
+  if (m.known && m.recipe) return { fit: 2, hit: m.hit, clue: null, known: m.recipe };
+  const miss = SPECIES[m.miss], magic = !!miss.magic;
+  const other = m.rest.some(r => magic ? !!SPECIES[r].magic : SPECIES[r].seasons.some(x => miss.seasons.includes(x)));
+  return { fit: 2, hit: m.hit, clue: { seasons: magic ? [] : miss.seasons, magic, other }, known: null };
 }
 // Krátke meno kvetu do vety („Ruža šípová“ → „ruža“, čarovné kvety celým menom); big = s veľkým písmenom
 export function shortName(sp: SpeciesId, big = false): string {
@@ -364,16 +389,16 @@ export function shortName(sp: SpeciesId, big = false): string {
   return big ? n : n.charAt(0).toLowerCase() + n.slice(1);
 }
 const SEASON_ADJ: readonly string[] = ['jarné', 'letné', 'jesenné', 'zimné'];
-// Text rady pod výsledkom. Pri fit 2 nápoveda o chýbajúcom kvete = jeho obdobie (čarovný kvet: „niečo čarovné“).
+// Text rady pod výsledkom (slovesá v prítomnom čase – nezávisia od rodu kvetu)
 export function brewHintText(h: BrewHint): string {
-  if (h.fit === 0) return 'Fuj! Tieto kvety sa spolu vôbec neznesú. 🤢';
   const [a, b] = h.hit;
-  if (h.fit === 1 || !a || !b) return `${shortName(must(a), true)} sem možno patrí, ale tie ďalšie dva nie.`;
+  if (h.fit === 0 || !a) return 'Fuj! Tieto kvety sa spolu vôbec neznesú. 🤢';
+  if (h.fit === 1 || !b) return `${shortName(a, true)} sa do nejakého receptu možno hodí, ale tieto tri spolu nie.`;
   const pair = a === b ? `Dvakrát ${shortName(a)} – to sa k sebe hodí` : `${shortName(a, true)} a ${shortName(b)} sa k sebe hodia`;
-  if (h.known && h.recipe) return `${pair} – veď sú v recepte na ${POTIONS[h.recipe].name}, ktorý už poznáš! 📜`;
-  const m = h.miss ? SPECIES[h.miss] : null;
-  const clue = !m || m.magic ? 'čarovné' : m.seasons.map(x => must(SEASON_ADJ[x])).join(' alebo ');
-  return `${pair}, ale niečo tomu chýba… možno niečo ${clue}?`;
+  if (h.known) return `${pair} – veď sú v recepte na ${POTIONS[h.known].name}, ktorý už poznáš! 📜`;
+  const c = h.clue;
+  const what = !c || c.magic || !c.seasons.length ? 'čarovné' : c.seasons.map(x => must(SEASON_ADJ[x])).join(' alebo ');
+  return `${pair}, ale niečo tomu chýba… možno niečo ${c && c.other ? 'iné ' : ''}${what}?`;
 }
 
 

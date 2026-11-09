@@ -825,13 +825,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     S.modal.refresh();
     $('modal').classList.remove('hidden');
   }
-  // Ďalšia babkina rada pri príchode; kým hráč nepozná žiadny recept, babka vždy povie niektorý recept
-  function nextTip(i: number): number {
-    const n = (i + 1) % D.TIPS.length;
-    if (S.recipes.length || D.RECIPE_TIP_IDX.includes(n)) return n;
-    return D.RECIPE_TIP_IDX.find(j => j > i) ?? must(D.RECIPE_TIP_IDX[0]);
-  }
-  function closeModal(): void { $('modal').classList.add('hidden'); S.modal = null; S.brewed = null; }
+  function closeModal(): void { $('modal').classList.add('hidden'); S.modal = null; S.brewed = null; S.brewHint = null; }
   $('mClose').onclick = closeModal;
   $('modal').addEventListener('click', e => { if (e.target === $('modal')) closeModal(); });
   $('bBook').onclick = () => { openUI('book'); };
@@ -861,7 +855,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     sfx('pop');
     if (kind === 'shop') { openShop('buy'); return; }
     if (kind === 'cauldron') { S.brewed = null; openModal('⚗️ Čarovný kotlík', renderCauldron); return; }
-    if (kind === 'babka') { S.tipIdx = nextTip(S.tipIdx); openModal('👵 Babka bylinkárka', renderBabka); return; }
+    if (kind === 'babka') { S.tipIdx = D.nextTipIdx(S.tipIdx, S.recipes.length > 0); openModal('👵 Babka bylinkárka', renderBabka); return; }
     if (kind === 'book') { openBook('flowers'); return; }
     if (kind === 'menu') { openModal('☰ Menu', renderMenu); return; }
     if (kind === 'help') { openModal('❓ Ako hrať', renderHelp); return; }
@@ -1047,7 +1041,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     }
     body.appendChild(grid);
     body.appendChild(h('h3', { style: 'margin:14px 0 6px' }, `📜 Objavené recepty (${S.recipes.length}/${Object.keys(D.RECIPES).length})`));
-    if (!S.recipes.length) body.appendChild(h('small', null, 'Zatiaľ žiadne. Babka pozná recepty – vypočuj si jej rady (aj viackrát). 👵'));
+    if (!S.recipes.length) body.appendChild(h('small', null, 'Zatiaľ žiadne. Babka pozná recepty – vypočuj si jej rady (aj viackrát). Vraj aj studňa niečo našepká. 👵'));
     for (const key of S.recipes) {
       const k = lookup(D.RECIPES, key);
       if (!k) continue;

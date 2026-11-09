@@ -440,7 +440,7 @@ test('ľadovňa a sklad: stavba, naplnenie ľadom pri ľadovni, vylepšenia (spo
   r = E.commitBatch(w, [act('brew', 'ana', { items: slime })], SPEC);
   assert.strictEqual(save(w, 'ana').inv.po_sliz, 1);
   const brewed = r.outbox.find(m => m.t === 'brewed');
-  assert.deepStrictEqual(brewed && 'hint' in brewed ? brewed.hint : null, { fit: 2, hit: ['levandula', 'mak'], miss: 'plesnivec', recipe: 'hojnost', known: false });
+  assert.deepStrictEqual(brewed && 'hint' in brewed ? brewed.hint : null, { fit: 2, hit: ['levandula', 'mak'], clue: { seasons: [1], magic: false, other: true }, known: null });
   assert.deepStrictEqual(E.commitBatch(w, [act('brew', 'ana', { items: fls })], SPEC).rejected.map(x => x.reject), ['Tieto kvety nemáš.']);
 });
 
