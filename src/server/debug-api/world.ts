@@ -2,11 +2,11 @@
 // (základ z generátora + uložená pôda, rastliny, ľad a ľadovňa), a hráči na ploche. Len číta kópiu sveta.
 //   GET /api/debug/world?room=<id>&area=<plocha>  – svet zo zoznamu
 //   GET /api/debug/world?seed=<n>&area=<plocha>   – čerstvý svet len zo semienka (bez hráčov a bez uloženia)
-const D = require('../../src/shared/data.ts');
-const Ice = require('../../src/server/ice.ts');
-const Areas = require('../../src/server/areas.ts');
-const Scav = require('../../src/server/scavenge.ts');
-const { keyId } = require('../../src/server/debug.ts');
+const D = require('../../shared/data.ts');
+const Ice = require('../ice.ts');
+const Areas = require('../areas.ts');
+const Scav = require('../scavenge.ts');
+const { keyId } = require('../debug.ts');
 
 // Políčka plochy zo (skopírovaného) stavu sveta – rovnako ako getRoom + tilesView v server.ts
 function areaTiles(state, area) {
