@@ -357,10 +357,12 @@ const prices: Partial<Record<ItemId, number>> = { compost: 15 };
 for (const k of SPECIES_IDS) if (!SPECIES[k].magic) prices[`seed_${k}`] = SPECIES[k].seed;
 export const PRICES: Readonly<Partial<Record<ItemId, number>>> = prices;
 
+// Čarovné semienka nie sú na trhu (cena sa nenasycuje), preto ich výkup je len symbolický – oplatí sa ich zasadiť (#100)
+export const MAGIC_SEED_SELL = 10;
 export function sellPrice(id: string): number {
   if (id.startsWith('fl_')) return lookup(SPECIES, id.slice(3))?.sell || 0;
   if (id.startsWith('po_')) return lookup(POTIONS, id.slice(3))?.sell || 0;
-  if (id.startsWith('seed_')) { const s = lookup(SPECIES, id.slice(5)); return s ? Math.floor((s.magic ? 60 : s.seed) / 2) : 0; }
+  if (id.startsWith('seed_')) { const s = lookup(SPECIES, id.slice(5)); return s ? (s.magic ? MAGIC_SEED_SELL : Math.floor(s.seed / 2)) : 0; }
   if (id === 'compost') return 7;
   if (id === 'wilted') return 1;
   return 0;
