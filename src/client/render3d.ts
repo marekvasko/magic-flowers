@@ -271,6 +271,9 @@ void main() {
   // prechod svetla vodou: plytčina pri brehu → hĺbka, po pásoch
   float sd = shoreDist(p), depth = clamp(sd / 1.8, 0.0, 1.0);
   float dq = floor(depth * 3.0 + 0.5) / 3.0;
+  // zóny po políčkach (#38): breh je vždy plytčina, hĺbka vždy tmavá – hráč vidí, kam ktorý vodný kvet patrí
+  float deep = step(0.8, texture2D(waterMask, (floor(p) + 0.5) / mapSize).r);
+  dq = mix(min(dq, 1.0 / 3.0), max(dq, 2.0 / 3.0), deep);
   vec3 body;
   if (ice < 0.5) {
     body = mix(vec3(0.33, 0.66, 0.80), vec3(0.12, 0.34, 0.54), dq);
@@ -937,7 +940,7 @@ void main() {
     waterMesh = lilyMesh = null;
     const quads = W.waterQuads(S.tiles, S.W), y = W.WATER_Y;
     const mask = sizeMask();
-    must(mask.image.data ?? undefined).set(W.waterMask(S.tiles)); mask.needsUpdate = true;
+    must(mask.image.data ?? undefined).set(W.waterMask(S.tiles, S.W)); mask.needsUpdate = true;
     if (!quads.length) return;
     const P: number[] = [], I: number[] = [];
     for (const q of quads) {

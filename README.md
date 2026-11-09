@@ -79,7 +79,7 @@ The game always fills the whole screen, on a phone and on a computer, in portrai
 - **Ground actions** (dig, water, plant, pick): tap a tile next to you; what happens depends on the item selected in the toolbar.
 - **Time and seasons:** a new day starts at 6:00, and plants grow at that moment. Each season lasts 4 days. In winter, frost kills everything except winter flowers. When the season changes, out-of-season plants get 2 days of grace (growing at half speed), and flowers that are already blooming survive.
 - **Sleeping:** from 18:00 you can go to bed in the house (tap the house → 🛏️). When every player in the garden is asleep, the server fast-forwards the night (5 steps per 100 ms, ~3 s) up to 6:00, so dawn, growth and all scheduled events run normally; the skipped time is not caught up afterwards. While someone is waiting for the others they can get up again; the others see 💤 above them. Night-only magic (fern flower, fairies) is skipped.
-- **Weather:** rain waters the whole garden.
+- **Weather:** rain waters the whole garden. Water flowers in the pond and the tarn never need watering.
 - **Coming back:** after an absence of at least one game day you get a toast saying how many days passed. A quick reconnect (a dropped connection, or the same name opened again within 10 s) counts as staying: no "while you were away" toast and no "left / arrived" messages for the others.
 - **What each flower needs:** season, light (sun / shade near the forest), soil (normal, **sand** by the pond, **rock garden** in the south-east, **compost** = rich soil) and water. A happy plant gives 3 flowers, and compost adds one more.
 - **Scavenging wild seeds** (a way back when you have nothing): tap an untilled grass tile with an empty hand (select an empty toolbar slot; one is always shown) or while holding anything that does nothing there (seeds, flowers, compost, the watering can…). The hoe still digs and potions are still used as usual. The character first walks onto that tile (the server also requires standing on it), then crouches and digs through the grass with both hands with 🔍 above the head, and a few bits of soil and grass fly subtly from the centre of the tile, right to left (world-space particles in `particles3d.ts` that land on the ground and follow the ✨ particle setting). After 5 game minutes (about 4 s) the server answers, but only if you are still searching then (moving or any other action stops it). The search is **spatial**: every game hour the server secretly picks which grass tiles hold a seed (about 7 % of them; more at the forest edge, fewer next to paths and buildings, most in the morning dew 6:00–10:00, almost none at night, more in summer and autumn, few in winter). You have to walk from tile to tile; on the right tile you find it with a 75 % chance, and a searched tile stays empty until the next hour. The client knows nothing about where the seeds are. One search per 5 game minutes lets you try about 12 tiles per game hour, so steady searching in daylight gives about 8–10 seeds per game day in spring (about 5 % per search in an open field), and more at the forest edge, in the morning and in summer/autumn. You find a *Divé semienko* (wild seed) of the current season. It can only be planted in that season and can't be sold, but it can be gifted. What grows from it is decided at planting time. Any in-season flower can come up (not edelweiss, and no magic flowers), and the higher a flower's market price is at that moment, the more likely it is (weight = price²). You only see what it is once it sprouts at dawn (`scavenge.ts`, `D.SCAVENGE`).
@@ -138,7 +138,7 @@ All the rules live in `ice.ts` (pure functions over the room, tested in `test/ic
 - **Carrying ice:** at most 6 per player (`D.ICE_CARRY`, also for gifts), each block slows you down by 6 %, and carried ice melts away 12 game hours after it was dug (oldest first, checked every game hour). Ice can't go into the shared storage – only into the icehouse. The market buys ice: 12 coins in summer, 5 in spring and autumn, 1 in winter.
 - **Frozen pond (winter):** with the pickaxe you can dig ice from any water tile (the garden pond and the mountain tarn), once per tile per day. The hole (`cut`) refreezes overnight. While the water is frozen, the watering can only fills through a hole (any number of times until it refreezes); on a tile without one you get a toast instead (*Jazierko / Pleso je zamrznuté…*, `D.frozenWaterText`). The well never freezes.
 - **Icehouse (*Ľadovňa*):** a shared building bought at the market by any player for the whole garden. It stands on the lot next to the house (2 × 2 tiles at x 0–1, y 30–31; the lot can't be tilled, and a plot dug there before this version must be levelled before you can build). It holds 12 ice blocks; put ice in by tapping it. Ice melts every game hour: 2 blocks a day in spring and autumn, 4 in summer, none in winter. While it has ice, flowers in the shared storage wilt 4× slower instead of 2×. Only ice and silk blankets go in: tapping it with a flower or another item shows a toast that flowers belong in the house storage, which the ice cools (#63), and the icehouse dialog says the same.
-- Save format v3 stores the mountain tiles (`hory`: ice layers left, holes) and `icehouse` (`built`, `ice`). Older saves migrate with a full glacier and no icehouse.
+- Save format v3 stores the mountain tiles (`hory`: ice layers left, holes) and `icehouse` (`built`, `ice`). Older saves migrate with a full glacier and no icehouse. Since #38 a tarn tile can also carry `s` (a water flower, the same soil record as a garden tile with `k: 'water'`); older saves simply have none, so the save version stays 11.
 
 ## Flowers (real species from Slovakia, Czechia and Europe)
 
@@ -158,6 +158,27 @@ All the rules live in `ice.ts` (pure functions over the room, tested in `test/ic
 | Edelweiss (*Leontopodium*) | summer | **rock garden only** (like in the Belianske Tatry) |
 
 Every flower has a short real-world fact in the 📖 **Herbár** (the in-game plant book).
+
+### Water flowers (#38)
+
+Seeds of water flowers go **straight into a water tile**: no hoe, no watering (water flowers are always watered). Each one takes a plot of the shared permit while something grows there; an annual frees it when picked, a perennial keeps it until it dies (frost) and is cleared with the hoe. The watering can still fills and the pickaxe still digs winter ice on planted water tiles. Season, frost, perennials and vase life work as for land flowers.
+
+Every water tile belongs to a **water body** and a **zone** (`D.waterSpot`): the garden pond is *jazierko*, the mountain tarn *pleso*. **Breh** (shore) is a water tile with land on at least one of its 4 sides (diagonals don't count), otherwise it's **hĺbka** (deep): pond 12 shore + 9 deep, tarn 10 shore + 6 deep. The 3D water shows the zones: shore tiles are always light shallow water, deep tiles always dark. Each water species lists its water bodies and one zone (`aqua` in `SPECIES`); planting elsewhere gives a Slovak toast saying where it grows. *Potok* (stream) and *rameno* (oxbow, reached by boat later) exist only in the data for now: their seeds are on the market at normal prices and the Herbár hints where they grow („… Kam sa k nim dostaneš?“). Jano, contracts, wild seeds, the well and a new player's starting seeds never pick water species.
+
+| Flower | Season | Zone | Water bodies |
+|---|---|---|---|
+| White water lily (*Nymphaea alba*) | summer | deep | pond, oxbow |
+| Yellow water lily (*Nuphar lutea*) | summer | deep | pond, oxbow, stream |
+| Thread-leaved water crowfoot (*Ranunculus trichophyllus*) | spring, summer | deep | **tarn**, pond |
+| Water chestnut (*Trapa natans*) | summer | deep | oxbow |
+| Fringed water lily (*Nymphoides peltata*) | summer, autumn | deep | oxbow |
+| River water crowfoot (*Ranunculus fluitans*) | summer | deep | stream |
+| Yellow iris (*Iris pseudacorus*) | spring | shore | pond, oxbow, stream |
+| Marsh marigold (*Caltha palustris*) | spring | shore | pond, **tarn**, stream |
+| Flowering rush (*Butomus umbellatus*) | summer | shore | pond, oxbow |
+| Creeping spearwort (*Ranunculus reptans*) | summer | shore | **tarn** only |
+| Watercress (*Nasturtium officinale*) | summer | shore | stream |
+| Brooklime (*Veronica beccabunga*) | spring, summer | shore | stream |
 
 ## ✨ Magic (spoilers!)
 

@@ -1003,10 +1003,12 @@ export function sunHours(g: Grid, tx: number, ty: number, season: number): numbe
 export const WATER_Y = groundHeight('grass') / R - 1 / 8;  // hladina je 1/8 bloku pod okolitou zemou (podkocky vody sú dno)
 // w = šírka plochy v políčkach (predvolene záhrada); výška = tiles.length / w
 const isWater = (tiles: readonly GroundTile[], x: number, y: number, w: number): boolean => x >= 0 && y >= 0 && x < w && y < tiles.length / w && tiles[y * w + x]?.g === 'water';
-// Maska vody pre shader (1 = voda) – z nej sa v každom pixeli hladiny počíta vzdialenosť k brehu
-export function waterMask(tiles: readonly GroundTile[]): Uint8Array {
+// Maska vody pre shader – z nej sa v každom pixeli hladiny počíta vzdialenosť k brehu. 0 = súš, WATER_SHORE = breh
+// (voda so súšou z niektorej zo 4 strán, #38: tam rastú brehové vodné kvety), 255 = hĺbka; w = šírka plochy
+export const WATER_SHORE = 160;
+export function waterMask(tiles: readonly GroundTile[], w?: number): Uint8Array {
   const m = new Uint8Array(tiles.length);
-  for (let i = 0; i < tiles.length; i++) m[i] = must(tiles[i]).g === 'water' ? 255 : 0;
+  for (let i = 0; i < tiles.length; i++) { const z = D.waterZone(tiles, i, w || D.W); m[i] = z === 'deep' ? 255 : z ? WATER_SHORE : 0; }
   return m;
 }
 // Štvorce hladiny: jeden na každé políčko vody

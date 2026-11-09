@@ -129,6 +129,14 @@ export const Art = (() => {
         for (let i = 0; i < 10; i++) { const a = i * TAU / 10; circ(c, x + Math.cos(a) * r * 0.28, y + Math.sin(a) * r * 0.28, r * 0.08, cen); }
         circ(c, x, y, r * 0.15, '#9ccc65');
         break;
+      case 'lily': { // vodný kvet ležiaci na hladine (#38): dva rady špicatých lupeňov, zboku sploštené
+        c.save(); c.translate(x, y); c.scale(1, 0.62);
+        petals(c, 0, 0, 8, r * 1.15, r * 0.3, shade(col, -0.12), 0.39, true);
+        petals(c, 0, 0, 8, r * 0.85, r * 0.26, col, 0, true);
+        c.restore();
+        circ(c, x, y, r * 0.3, cen); circ(c, x - r * 0.08, y - r * 0.06, r * 0.1, shade(cen, 0.4));
+        break;
+      }
       case 'fern': {
         const glow = night ? 1 : 0.35;
         const g = c.createRadialGradient(x, y, 0, x, y, r * 2.2);
@@ -150,6 +158,7 @@ export const Art = (() => {
     const sp = D.SPECIES[key];
     const sway = Math.sin(t * 2 + x * 0.05) * 0.06;
     const green = o.dead ? '#8a6a3a' : '#3f8f2f', leafC = o.dead ? '#9b7b45' : '#56a83a';
+    if (sp.shape === 'lily') { lilyPlant(c, key, stage, x, y, s, t, o); return; }
     if (stage === 0) {
       ell(c, x, y - s * 0.12, s * 0.16, s * 0.07, 0, o.dead ? '#6b4a2a' : '#5b3a1a');
       circ(c, x - s * 0.05, y - s * 0.14, s * 0.025, '#e8d29a'); circ(c, x + s * 0.05, y - s * 0.12, s * 0.025, '#e8d29a');
@@ -197,6 +206,29 @@ export const Art = (() => {
       if (o.wilting) { c.globalAlpha = 0.6; bloom(c, key, tx + s * 0.04, ty + s * 0.07, r * 0.85, t, o.night); c.globalAlpha = 1; } // odkvitá: bledne a ovisne
       else bloom(c, key, tx, ty, r, t, o.night);
       if (o.ready && !o.wilting) { const a = 0.5 + 0.5 * Math.sin(t * 4); circ(c, tx + r, ty - r, s * 0.03 * (1 + a), 'rgba(255,255,220,' + (0.5 + a * 0.5) + ')'); }
+    }
+  }
+
+  // Vodný kvet z hĺbky (#38): plávajúce listy s výrezom na hladine (y), púčik a kvet ležia na nich
+  function lilyPlant(c: C2, key: SpeciesId, stage: number, x: number, y: number, s: number, t: number, o: PlantOpts): void {
+    const pad = (px: number, py: number, rx: number, notch: number, col: string): void => {
+      c.fillStyle = col; c.strokeStyle = 'rgba(20,60,20,0.45)'; c.lineWidth = Math.max(1, s * 0.015);
+      c.beginPath(); c.moveTo(px, py); c.ellipse(px, py, rx, rx * 0.42, 0, notch + 0.3, notch - 0.3 + TAU); c.closePath(); c.fill(); c.stroke();
+    };
+    const padC = o.dead ? '#8a6a3a' : '#3f9a3a', padL = o.dead ? '#9b7b45' : '#5cb84a', bob = Math.sin(t * 1.5 + x * 0.1) * s * 0.008;
+    const wy = y - s * 0.08 + bob;
+    pad(x, wy, s * (stage === 0 ? 0.1 : 0.2), -0.6, padC);
+    if (stage === 0) return;
+    pad(x - s * 0.24, wy - s * 0.04, s * 0.15, 0.4, padL);
+    if (stage >= 2) pad(x + s * 0.22, wy - s * 0.02, s * 0.16, 2.6, padC);
+    if (o.dead) return;
+    const sp = D.SPECIES[key];
+    if (stage === 2) { ell(c, x + s * 0.02, wy - s * 0.07, s * 0.06, s * 0.09, 0.2, '#4f9a32', OUT); ell(c, x + s * 0.03, wy - s * 0.12, s * 0.035, s * 0.05, 0.2, sp.color); }
+    else if (stage === 3) {
+      if (o.wilting) c.globalAlpha = 0.6;
+      bloom(c, key, x + s * 0.02, wy - s * 0.08, s * 0.2, t, o.night);
+      c.globalAlpha = 1;
+      if (o.ready && !o.wilting) { const a = 0.5 + 0.5 * Math.sin(t * 4); circ(c, x + s * 0.24, wy - s * 0.2, s * 0.03 * (1 + a), 'rgba(255,255,220,' + (0.5 + a * 0.5) + ')'); }
     }
   }
 
@@ -489,6 +521,7 @@ export const Art = (() => {
   }
 
   function soil(c: C2, so: Pick<SoilView, 'k' | 'w' | 'r'>, x: number, y: number, s: number, se: number): void {
+    if (so.k === 'water') return; // vodný kvet rastie priamo vo vode – bez záhonu (#38)
     const m = s * 0.06;
     let col = so.k === 'sand' ? '#c9a26a' : so.k === 'rock' ? '#8d7b6a' : '#8b5a2b';
     if (so.w) col = shade(col, -0.35);
@@ -579,9 +612,15 @@ export const Art = (() => {
       bloom(c, k, 32, 36, 12, t, true);
     } else if (id.startsWith('fl_') && D.isSpeciesId(id.slice(3))) {
       const k = id.slice(3) as SpeciesId; // overené riadkom vyššie (isSpeciesId)
-      c.strokeStyle = '#3f8f2f'; c.lineWidth = 3; c.beginPath(); c.moveTo(32, 60); c.lineTo(32, 30); c.stroke();
-      leaf(c, 32, 50, 14, Math.PI + 0.5, '#56a83a'); leaf(c, 32, 46, 14, -0.5, '#56a83a');
-      bloom(c, k, 32, 26, D.SPECIES[k].shape === 'bell' ? 13 : 17, t, true);
+      if (D.SPECIES[k].shape === 'lily') { // vodný kvet na plávajúcom liste (#38)
+        c.fillStyle = '#4caf50'; c.strokeStyle = 'rgba(20,60,20,0.45)'; c.lineWidth = 1.5;
+        c.beginPath(); c.moveTo(32, 44); c.ellipse(32, 44, 26, 12, 0, -1.3, -1.9 + TAU); c.closePath(); c.fill(); c.stroke();
+        bloom(c, k, 32, 38, 18, t, true);
+      } else {
+        c.strokeStyle = '#3f8f2f'; c.lineWidth = 3; c.beginPath(); c.moveTo(32, 60); c.lineTo(32, 30); c.stroke();
+        leaf(c, 32, 50, 14, Math.PI + 0.5, '#56a83a'); leaf(c, 32, 46, 14, -0.5, '#56a83a');
+        bloom(c, k, 32, 26, D.SPECIES[k].shape === 'bell' ? 13 : 17, t, true);
+      }
     } else if (id.startsWith('po_') && D.isPotionId(id.slice(3))) {
       const p = D.POTIONS[id.slice(3) as D.PotionId]; // overené riadkom vyššie (isPotionId)
       c.fillStyle = '#e0f0f8'; c.beginPath(); c.arc(32, 40, 18, 0, TAU); c.fill(); c.fillRect(26, 10, 12, 16);
