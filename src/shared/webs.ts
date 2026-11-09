@@ -4,7 +4,7 @@
 //  - webGeom(tiles, w, h, web, over): kde sa pavučina dotýka opôr – kmeňov stromov, obra (2 × 2), kríka, spadnutého kmeňa –
 //    a aká je vysoká (pri kríku či kmeni na zemi nižšia), aby vlákna začínali na skutočnom kmeni;
 //  - cornerSpots: kúty pre krížiaka.
-// Shader, ktorý z parametrov kreslí vlákna, je v public/spiders3d.mjs (webMaterial).
+// Shader, ktorý z parametrov kreslí vlákna, je v src/client/spiders3d.ts (webMaterial).
 import * as D from './data.ts';
 import type { Ground } from './data.ts';
 import { lookup, mapValues, must } from './util.ts';

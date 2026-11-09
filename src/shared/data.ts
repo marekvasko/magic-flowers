@@ -1,6 +1,6 @@
 // Zdieľané herné dáta – používa server (Node) aj klient (prehliadač).
-// ES modul v TypeScripte (#122): server a testy ho načítajú priamo (Node 24), prehliadaču ho zbalí `npm run build`
-// do build/shared/data.js ako globálnu premennú GameData (scripts/build.mjs).
+// ES modul v TypeScripte (#122): server a testy ho načítajú priamo (Node 24), do prehliadača ho zbalí `npm run build`
+// spolu s klientom hry a ladiacou stránkou (scripts/build.ts).
 import { lookup, mapValues, must } from './util.ts';
 
 // ---- Pomocné typy a funkcie ----

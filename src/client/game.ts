@@ -289,7 +289,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
 
   // ---------- Pomocné ----------
   // ladenie: window.MF_TIME = { season: 0–3, min: 0–1439 } prepíše zobrazený čas (len lokálne vykresľovanie, nie server)
-  // Hráč hrabe v tráve (si = index hľadaného políčka, inak -1) – hlinku a trávu kreslia častice vo svete (particles3d.mjs).
+  // Hráč hrabe v tráve (si = index hľadaného políčka, inak -1) – hlinku a trávu kreslia častice vo svete (particles3d.ts).
   const searching = (o: { si?: number | undefined } | null | undefined): boolean => !!o && o.si != null && o.si >= 0;
   function curMin(): number { if (window.MF_TIME && window.MF_TIME.min != null) return window.MF_TIME.min; return realMin(); }
   // server posiela čas najviac raz za sekundu; medzitým ho dopočítame z tickMs (najviac o 1,5 s dopredu, keby správa meškala)
@@ -1251,7 +1251,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       h('div', { class: 'info' }, h('b', null, `${L.icon} ${L.name}`), h('small', null, note)), btn ? h('div', { class: 'btns' }, btn) : null));
   }
 
-  // Majster hodvábu: prikrývka hneď, za hodváb a mince (vzhľad zdieľa 3D postavička, render3d.mjs)
+  // Majster hodvábu: prikrývka hneď, za hodváb a mince (vzhľad zdieľa 3D postavička, render3d.ts)
   const MASTER_LOOK = D.MASTER_LOOK;
   function renderMaster(body: HTMLElement): void {
     const pc = h('canvas', { width: 80, height: 90 }), silk = S.inv.silk || 0;

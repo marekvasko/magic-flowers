@@ -5,7 +5,7 @@
   "type": "module",
   "main": "src/server/server.ts",
   "scripts": {
-    "build": "node scripts/build.mjs",
+    "build": "node scripts/build.ts",
     "start": "npm run build && node src/server/server.ts",
     "dev": "npm run build && DAY_SECONDS=60 node src/server/server.ts",
     "test": "node --test 'test/*.test.js' 'test/*.test.ts'",
@@ -14,7 +14,6 @@
   },
   "license": "MIT",
   "dependencies": {
-    "three": "^0.187.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
@@ -24,6 +23,7 @@
     "@types/ws": "^8.18.2",
     "esbuild": "^0.28.2",
     "eslint": "^9.39.5",
+    "three": "^0.187.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.1"
   }

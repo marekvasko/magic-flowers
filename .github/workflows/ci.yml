@@ -45,8 +45,6 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Kontrola syntaxe
-        run: shopt -s nullglob; for f in debug/*.js debug/tabs/*.mjs; do node --check "$f"; done
       - name: Kontrola typov (tsc)
         run: npm run typecheck
       - name: Balík pre prehliadač (esbuild)

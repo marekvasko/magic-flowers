@@ -42,7 +42,7 @@ export function matName(W: W3, id: number): string {
 }
 
 // ---------- sieť z minikociek ----------
-// Ako buildFine v render3d.mjs: steny susediace s plnou minikockou sa vynechajú, pod modelom je zem,
+// Ako buildFine v render3d.ts: steny susediace s plnou minikockou sa vynechajú, pod modelom je zem,
 // farba × tieňovanie steny × AO v rohoch. 1 minikocka = 1 jednotka, model je vycentrovaný v x a z.
 export function meshModel(W: W3, f: FineModel, season: number): { geo: THREE.BufferGeometry; bounds: THREE.Box3; faces: number } {
   const { sx, sy, sz, data } = f;
