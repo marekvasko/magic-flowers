@@ -5,6 +5,7 @@ import type { WebOverrides } from '../shared/webs.ts';
 import type { Other } from '../shared/players.ts';
 import type { BatchesView, CornerView, PlayerView, ServerMessage, SpiderKind, TileView, WebView } from '../shared/protocol.ts';
 import type { Contract, Icehouse, Weather, WorldMode } from '../shared/save.ts';
+import type { TrackMark } from '../shared/tracks.ts';
 import type { FadeConfig, FadeOverrides, Render3D } from './render3d.ts';
 
 export type MsgOf<T extends ServerMessage['t']> = Extract<ServerMessage, { t: T }>;
@@ -60,6 +61,8 @@ export interface ClientState {
   spiders: Map<string, Spider>; slowK: number; slowUntil: number; web: { start: number; stuck: number; end: number; k: number } | null;
   webLeft?: () => number; // koľko pavučiny je ešte na mne (1 → 0); na ladiacej stránke chýba
   r3: Render3D | null; // 3D pohľad (pre ladenie v konzole: MF.r3.pick(x, y))
+  // stopy v snehu na aktuálnej ploche (#159, zo servera; v poradí vzniku) a ich verzia (3D pohľad ich prestaví pri zmene)
+  tracks?: TrackMark[]; tracksGen?: number;
 }
 
 // Stav, ktorý kreslí 3D pohľad (render3d.ts, spiders3d.ts, particles3d.ts): hra mu dá celé S, ladiaca stránka /debug
@@ -68,6 +71,7 @@ export type ViewOther = Pick<OtherPlayer, 'x' | 'y' | 'name' | 'look' | 'a' | 'd
 export type ViewState = Pick<ClientState, 'W' | 'H' | 'tiles' | 'area' | 'tilesGen' | 'tick' | 'day' | 'weather' | 'me' | 'look' | 'name' | 'id'
   | 'myEmote' | 'sel' | 'anchors' | 'fx' | 'screenFx' | 'bubbles' | 'tapMark' | 'webs' | 'homes' | 'websGen' | 'corner' | 'cornerGen' | 'spiders'>
   & Partial<Pick<ClientState, 'icehouse' | 'dielna' | 'webLeft' | 'kbd' | 'mySi' | 'worldGen'>>
+  & Partial<Pick<ClientState, 'tracks' | 'tracksGen'>>
   & { others: ReadonlyMap<number | string, ViewOther> };
 
 // Ladiace prepínače z konzoly (README): čítajú sa za behu, hra ich sama nenastavuje

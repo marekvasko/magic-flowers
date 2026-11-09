@@ -1,13 +1,13 @@
 // Cheaty z ladiacej stránky (#153): mince, reputácia, predmety (batoh, sklad), ľad v ľadovni, skok v čase a rýchlosť
-// času. Úpravy sveta sú vstupom enginu 'cheat' (bez hráča): idú do denníka, ukáže ich záložka Engine a E.replay ich
+// času; počasie a stopy v snehu (#159). Úpravy sveta sú vstupom enginu 'cheat' (bez hráča): idú do denníka, ukáže ich záložka Engine a E.replay ich
 // zopakuje. Hráčom sa nič neoznámi – zmenu uvidia len v batohu, sklade či na mape.
 // Každá požiadavka (POST /api/debug/cheat) potrebuje tajný kľúč z prostredia (DEBUG_CHEATS_KEY, v nasadení z tajomstva
 // GitHubu); bez nastaveného kľúča cheaty nejdú vôbec. Kľúč sa porovnáva v konštantnom čase a nikdy sa nezapíše do logu.
 import crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as D from '../shared/data.ts';
-import type { ItemId } from '../shared/data.ts';
-import type { PlayerKey, PlayerSave } from '../shared/save.ts';
+import type { AreaId, ItemId } from '../shared/data.ts';
+import type { PlayerKey, PlayerSave, Weather } from '../shared/save.ts';
 import { isRecord } from '../shared/util.ts';
 import type { JsonRecord } from '../shared/util.ts';
 import * as I from './items.ts';
@@ -25,7 +25,10 @@ export type CheatData =
   | ({ op: 'coins'; key: PlayerKey } & Amount)
   | ({ op: 'rep'; key: PlayerKey } & Amount)
   | ({ op: 'item'; key: PlayerKey | null; id: ItemId } & Amount)
-  | ({ op: 'ice' } & Amount);
+  | ({ op: 'ice' } & Amount)
+  | { op: 'weather'; w: Extract<Weather, 'sun' | 'snow'> };   // počasie do rána (#159: sneh zasype stopy); ľadovec sa kŕmi len ráno, dážď záhrady nepoleje – preto len slnko a sneh
+// Stopy v snehu (#159) nie sú stav sveta: vyčistenie a ukážka idú mimo enginu (ako skok a rýchlosť), area null = všetky plochy
+export type TracksCheat = { do: 'clear'; area: AreaId | null } | { do: 'demo'; area: AreaId; x: number; y: number };
 
 // Nová hodnota: celé číslo, nie záporné
 export const target = (have: number, a: Amount): number => Math.max(0, Math.round(a.set ? a.n : have + a.n));
@@ -45,6 +48,7 @@ export const PROPOSERS: { cheat: GameProposer<CheatData> } = {
         case 'rep': return { writes: ['save:*', 'maxRep'] }; // najvyššia reputácia záhrady sa prepočíta zo všetkých hráčov
         case 'item': return d.key === null ? { writes: ['storage'], reads: ['icehouse'] } : { writes: [`save:${d.key}`] };
         case 'ice': return { writes: ['icehouse', 'storage'] };
+        case 'weather': return { writes: ['weather'] };
       }
     },
     run(s, d, ctx) {
@@ -62,6 +66,7 @@ export const PROPOSERS: { cheat: GameProposer<CheatData> } = {
           return;
         }
         case 'ice': Ice.setIce(s.icehouse, s.storage, ctx.tick, target(s.icehouse.ice, d)); return;
+        case 'weather': s.weather = d.w; return;
       }
     }
   }
@@ -91,6 +96,7 @@ export interface CheatHost<R extends CheatRoom> {
   jump: (room: R, until: number | null) => void;                 // null = zastaviť prebiehajúci skok
   speed: (room: R, x: number) => void;
   status: (room: R) => { tick: number; speed: number; jump: number | null };
+  tracks?: (room: R, t: TracksCheat) => void;                    // stopy v snehu (#159)
   keyId: (key: PlayerKey) => string;
 }
 // Chyba v požiadavke: kód odpovede a text
@@ -115,9 +121,27 @@ export function parseCheat(room: CheatRoom, b: JsonRecord, keyId: (k: PlayerKey)
       return { op: 'item', key: b['player'] === 'storage' ? null : playerKey(room, b['player'], keyId), id, ...amount(b) };
     }
     case 'ice': return { op: 'ice', ...amount(b) };
-    case 'jump': case 'jumpStop': case 'speed': case 'status': return null;
+    case 'weather': {
+      const w = b['w'];
+      if (w !== 'sun' && w !== 'snow') throw new Bad(400, 'weather must be sun or snow');
+      return { op: 'weather', w };
+    }
+    case 'jump': case 'jumpStop': case 'speed': case 'status': case 'tracks': return null;
     default: throw new Bad(400, 'unknown op');
   }
+}
+
+// Telo požiadavky na stopy v snehu: { op: 'tracks', do: 'clear', area? } alebo { do: 'demo', area, x, y }
+export function parseTracks(b: JsonRecord): TracksCheat {
+  const a = b['area'], area = D.AREAS.find(x => x === a) ?? null;
+  if (a != null && a !== '' && !area) throw new Bad(400, 'unknown area');
+  if (b['do'] === 'clear') return { do: 'clear', area };
+  if (b['do'] === 'demo') {
+    if (!area) throw new Bad(400, 'missing area');
+    const { w, h } = D.areaSize(area);
+    return { do: 'demo', area, x: Math.max(0, Math.min(w, num(b['x'], 'x'))), y: Math.max(0, Math.min(h, num(b['y'], 'y'))) };
+  }
+  throw new Bad(400, 'tracks: do must be clear or demo');
 }
 
 const BODY_MAX = 16 * 1024;
@@ -168,6 +192,7 @@ function run<R extends CheatRoom>(host: CheatHost<R>, b: JsonRecord): ReturnType
     host.jump(room, until);
   }
   else if (b['op'] === 'jumpStop') host.jump(room, null);
+  else if (b['op'] === 'tracks') { if (!host.tracks) throw new Bad(404, 'no snow tracks on this server'); host.tracks(room, parseTracks(b)); }
   else if (b['op'] === 'speed') {
     const x = num(b['x'], 'speed');
     if (!SPEEDS.includes(x)) throw new Bad(400, 'speed must be one of ' + SPEEDS.join(', '));

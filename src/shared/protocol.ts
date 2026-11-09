@@ -6,6 +6,7 @@
 // typuje ich engine (fáza 3). Správa webbed ide aj klientovi.
 import type { AreaId, BrewHint, Ground, ItemId, Look, PotionId, SpeciesId, UpgradeId } from './data.ts';
 import type { ActiveFestival, Contract, CornerArea, Icehouse, Plant, Soil, Weather, WorldMode } from './save.ts';
+import type { TrackWire } from './tracks.ts';
 
 // ---- Klient → server ----
 export type Emote = 'dance' | 'wave' | 'heart' | 'laugh' | 'flower';
@@ -128,5 +129,6 @@ export type ServerMessage =
   | { t: 'webbed'; stuck: number; ms: number; k: number; sp: SpiderKind }   // pavúk hráča zabalil do pavučiny
   | { t: 'shove'; x: number; y: number }                   // stará pradlena hráča odhodila
   | { t: 'brewed'; k: PotionId; hint?: BrewHint }        // hint len pri slize (rada kotlíka)
-  | { t: 'error'; text: string };
+  | { t: 'error'; text: string }
+  | { t: 'tracks'; area: AreaId; full?: 1; add: TrackWire[] };   // stopy v snehu (#159): full = celý zoznam plochy, inak nové stopy
 export type ServerMessageType = ServerMessage['t'];

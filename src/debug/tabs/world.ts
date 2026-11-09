@@ -10,11 +10,14 @@ import * as World3D from '../../shared/world3d.ts';
 import type { AreaId, Gate, Ground } from '../../shared/data.ts';
 import type { Weather } from '../../shared/save.ts';
 import type { WorldPlayer, WorldView } from '../../server/debug-api/world.ts';
+import type { TracksView } from '../../server/debug-api/tracks.ts';
+import * as Tracks from '../../shared/tracks.ts';
+import type { TrackMark } from '../../shared/tracks.ts';
 import { lookup, must } from '../../shared/util.ts';
 import type { TabCtx, TabInstance } from '../ui.ts';
 import { errText } from '../ui.ts';
 
-type Layer = 'terrain' | 'buildings' | 'trees' | 'rocks' | 'plants' | 'chars' | 'water' | 'glacier' | 'particles' | 'shadows' | 'lights';
+type Layer = 'terrain' | 'buildings' | 'trees' | 'rocks' | 'plants' | 'chars' | 'water' | 'glacier' | 'particles' | 'shadows' | 'lights' | 'tracks';
 type Helper = 'boxes' | 'grid' | 'tap' | 'gates' | 'lights' | 'wire' | 'frustum';
 // online hráč ako postavička: k pohľadu (ViewOther) cieľ pohybu medzi obnoveniami
 type Walker = ViewOther & { id: string; tx: number; ty: number };
@@ -23,7 +26,8 @@ interface Pt { x: number; y: number }
 const PITCH0 = Math.atan(1 / Math.SQRT2); // herný sklon kamery (izometria)
 const LAYERS: readonly (readonly [Layer, string])[] = [
   ['terrain', 'Terrain'], ['buildings', 'Buildings'], ['trees', 'Trees & bushes'], ['rocks', 'Rocks'], ['plants', 'Plants'],
-  ['chars', 'Characters'], ['water', 'Water'], ['glacier', 'Glacier'], ['particles', 'Particles'], ['shadows', 'Shadows'], ['lights', 'Lamp lights']
+  ['chars', 'Characters'], ['water', 'Water'], ['glacier', 'Glacier'], ['particles', 'Particles'], ['shadows', 'Shadows'], ['lights', 'Lamp lights'],
+  ['tracks', 'Snow tracks']
 ];
 const HELPERS: readonly (readonly [Helper, string])[] = [
   ['boxes', 'Bounding boxes'], ['grid', 'Tile grid'], ['tap', 'Tap areas'], ['gates', 'Gates, arrivals'],
@@ -106,7 +110,8 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     me: { x: D.W / 2, y: D.H / 2, dir: 0, phase: 0, moving: false, jz: 0, jv: 0, crawl: false }, look: null, name: '', id: -1, myEmote: null, mySi: -1, sel: '',
     others, anchors: {}, fx: [], screenFx: [], bubbles: {}, tapMark: null, kbd: false,
     // pavúky (#57, #99): render3d ich kreslí vždy, tu zatiaľ prázdne (pavučiny ani pavúky sa sem nenačítavajú)
-    webs: [], homes: [], websGen: 0, corner: [], cornerGen: 0, spiders: new Map()
+    webs: [], homes: [], websGen: 0, corner: [], cornerGen: 0, spiders: new Map(),
+    tracks: [], tracksGen: 0 // stopy v snehu (#159): zo servera (/api/debug/tracks) + ukážka len v tejto záložke
   };
   let world: WorldView | null = null, worldKey = '', tilesSig = '', loadSeq = 0, offline: WorldPlayer[] = [], panelSig = '';
 
@@ -163,6 +168,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
       h('div', { class: 'wv-row' }, 'Season',
         sel([['room', 'Room'], ...SEASON_EN.map((s, i) => [i, s] as const)], P.season, v => { P.season = v === 'room' ? 'room' : +v; saveParams(); }),
         'Weather', sel([['room', 'Room'], ['sun', 'Sun'], ['rain', 'Rain'], ['snow', 'Snow']], P.weather, v => { P.weather = v === 'sun' || v === 'rain' || v === 'snow' ? v : 'room'; saveParams(); })),
+      tracksBox(),
       h('h4', null, 'Layers'),
       h('div', { class: 'wv-checks' }, LAYERS.map(([k, t]) => check(t, () => L[k], v => { L[k] = v; saveParams(); layersChanged(); }))),
       h('h4', null, 'Debug helpers'),
@@ -170,6 +176,61 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
       h('div', { class: 'wv-hint' }, 'Drag: rotate · right/shift-drag or two fingers: pan · wheel/pinch: zoom · two-finger twist: rotate · double-click: center on tile · keys: WASD/arrows, Q/E, +/−, R'));
     const head = h('div', { class: 'wv-head', onclick: () => { panel.classList.toggle('closed'); } }, h('span', null, '⚙ View'), h('small', { class: 'muted' }, '▾'));
     panel.replaceChildren(head, body);
+  }
+  // ---------- stopy v snehu (#159) ----------
+  // Stopy sú len v pamäti servera: počty na plochách, vyčistenie a ukážka všetkých druhov (aj saní, ktoré sa na stopy
+  // napoja až v #161). Vyčistenie a ukážka na serveri sú cheaty – kľúč je ten istý ako v záložke Cheats (sessionStorage).
+  let tracksView: TracksView | null = null, tracksSig = '', localDemo: TrackMark[] = [], tracksMsg = '';
+  const tracksInfo = h('div', { class: 'wv-hint' });
+  function tracksText(): string {
+    const t = tracksView;
+    if (P.src !== 'room' || !ctx.room) return 'Seed world: no server tracks. ' + (localDemo.length ? `${localDemo.length} local sample marks.` : '');
+    if (!t) return 'Loading…';
+    const per = D.AREAS.map(a => `${D.AREA_NAMES[a] || a} ${t.counts[a]}`).join(' · ');
+    return `${per} (cap ${t.cap} per area, fade ${t.life / D.TICKS_PER_HOUR} h, ${t.snowLife / D.TICKS_PER_HOUR} h while snowing)` +
+      (t.loaded ? '' : ' · room not in server memory') + (localDemo.length ? ` · +${localDemo.length} local sample` : '') + (tracksMsg ? ' · ' + tracksMsg : '');
+  }
+  function setTracks(): void {
+    const server = tracksView ? tracksView.list.map(Tracks.decode).filter((m): m is TrackMark => !!m) : [];
+    const sig = JSON.stringify(tracksView ? tracksView.list : null) + '|' + localDemo.length;
+    tracksInfo.textContent = tracksText();
+    if (sig === tracksSig) return;
+    tracksSig = sig; S.tracks = server.concat(localDemo); S.tracksGen = (S.tracksGen || 0) + 1;
+  }
+  async function loadTracks(): Promise<void> {
+    if (P.src !== 'room' || !ctx.room) { tracksView = null; setTracks(); return; }
+    try { tracksView = await ctx.api<TracksView | null>(`/api/debug/tracks?room=${encodeURIComponent(ctx.room)}&area=${ctx.area}`); }
+    catch (e) { tracksMsg = errText(e); tracksView = null; }
+    if (alive) setTracks();
+  }
+  async function tracksCheat(body: Record<string, string | number | null>, done: string): Promise<void> {
+    let key = '';
+    try { key = sessionStorage.getItem('mf-cheat-key') || ''; } catch { /* súkromné okno */ }
+    if (!ctx.room) return;
+    if (!key) { tracksMsg = 'enter the cheat key in the Cheats tab first'; setTracks(); return; }
+    try {
+      const r = await fetch('/api/debug/cheat', { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json', 'X-Cheat-Key': key }, body: JSON.stringify({ room: ctx.room, op: 'tracks', ...body }) });
+      const j: unknown = await r.json().catch(() => ({}));
+      tracksMsg = r.ok ? done : typeof j === 'object' && j && 'error' in j && typeof j.error === 'string' ? j.error : 'HTTP ' + r.status;
+    } catch (e) { tracksMsg = errText(e); }
+    await loadTracks();
+  }
+  function tracksBox(): HTMLElement {
+    tracksInfo.textContent = tracksText();
+    const room = P.src === 'room' && !!ctx.room;
+    const here = (): { x: number; y: number } => ({ x: +cam.x.toFixed(2), y: +cam.z.toFixed(2) });
+    return h('div', null,
+      h('h4', null, 'Snow tracks'),
+      h('div', { class: 'wv-row' },
+        room ? btn('Clear area', () => { void tracksCheat({ do: 'clear', area: ctx.area }, 'cleared'); }, 'Remove every track in this area (cheat key)') : null,
+        room ? btn('Clear all', () => { void tracksCheat({ do: 'clear', area: null }, 'cleared everywhere'); }, 'Remove the tracks of every area (cheat key)') : null,
+        room ? btn('Sample', () => { const p = here(); void tracksCheat({ do: 'demo', area: ctx.area, x: p.x, y: p.y }, 'sample added'); }, 'Server: a short trail of each kind (foot, spider, runner) at the camera; players see it too (cheat key)') : null,
+        btn(localDemo.length ? 'Local sample ✕' : 'Local sample', () => {
+          const p = here();
+          localDemo = localDemo.length ? [] : Tracks.TRACK_KINDS.flatMap((k, i) => Tracks.demoTrail(k, p.x + (i - 1) * 0.9, p.y, -Math.PI / 2, Math.round(3 / Tracks.TRACKS.stride[k]), S.tick));
+          setTracks(); renderPanel();
+        }, 'Only in this tab: foot, spider and runner (sled) marks at the camera, fading with the room clock')),
+      tracksInfo);
   }
   let timeUi: { range: HTMLInputElement; timeLbl: HTMLElement } | null = null;
   function syncTimeUi(): void {
@@ -322,6 +383,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
       helpersDirty = true;
     }
     syncPlayers(w.players);
+    void loadTracks();
     if (changed) { if (camFromHash) camFromHash = false; else cam.reset = true; }
     if (!r3) start();
     if (cam.reset && r3) { cam.reset = false; resetCam(); }
@@ -391,6 +453,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     if (v.glacierMesh) v.glacierMesh.visible = L.glacier;
     for (const o of v.particleObjs) o.visible = L.particles;
     for (const m of v.materials) m.wireframe = H.wire;
+    if (v.tracksMesh) v.tracksMesh.visible = L.tracks;
   }
   function layersChanged(): void { if (r3) { applyLayers(r3.debugView()); r3.invalidateShadows(); } }
 
@@ -578,7 +641,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     const lines = [
       narrow ? `${f1(fps)} fps · cpu ${f1(cpu)} ms · ${s.calls} calls · ${(s.triangles / 1000).toFixed(1)}k tris`
         : `${f1(fps)} fps · cpu ${f1(cpu)} ms (shadow ${f1(s.shadow)} · refl ${f1(s.refl)} · scene ${f1(s.scene)}) · ${s.calls} calls · ${(s.triangles / 1000).toFixed(1)}k tris · ${s.geometries} geo · ${s.textures} tex · ${s.w}×${s.h} @${s.pr}`,
-      `${D.AREA_NAMES[S.area] || S.area} ${S.W}×${S.H} · ${v.fineMeshes.length} models · ${v.plantSprites.size} plants · ${v.lights.length} lights · ${ctx.fmt.hhmm(Math.floor(curMin()))} ${SEASON_EN[season()] ?? ''} · ${S.weather}` +
+      `${D.AREA_NAMES[S.area] || S.area} ${S.W}×${S.H} · ${v.fineMeshes.length} models · ${v.plantSprites.size} plants · ${v.lights.length} lights · ${v.tracksShown ?? 0} tracks · ${ctx.fmt.hhmm(Math.floor(curMin()))} ${SEASON_EN[season()] ?? ''} · ${S.weather}` +
         (narrow ? '' : ` · cam ${f1(cam.x)},${f1(cam.z)} yaw ${((Math.round(cam.yaw * 180 / Math.PI) % 360) + 360) % 360}° pitch ${Math.round(cam.pitch * 180 / Math.PI)}° view ${f1(cam.zoom)}`)
     ];
     if (tl && hover) lines.push(`tile ${hover.x},${hover.y}: ${tl.g}${tl.ice != null ? ' ice ' + tl.ice : ''}${tl.cut ? ' (cut)' : ''}${tl.s ? ' · soil ' + ctx.fmt.short(tl.s) : ''}`);

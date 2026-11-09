@@ -15,6 +15,7 @@ import { Art } from './art.ts';
 import type { CharOpts } from './art.ts';
 import { createParticles } from './particles3d.ts';
 import { createSpiders3d } from './spiders3d.ts';
+import { createTracks3d } from './tracks3d.ts';
 import type { CtxAction, Pt, ViewState } from './state.ts';
 
 type V3 = [number, number, number];
@@ -434,6 +435,7 @@ export interface DebugView {
   renderer: THREE.WebGLRenderer; grid: Grid | null; mesh: THREE.Mesh | null; fineMeshes: FineMesh[]; waterMesh: THREE.Mesh | null;
   lilyMesh: THREE.Mesh | null; glacierMesh: THREE.Mesh | null; plantSprites: Map<number, TileSprite>; chars: Map<CharId, CharObj>;
   particleObjs: THREE.Object3D[]; lights: THREE.Vector4[]; materials: THREE.ShaderMaterial[]; groundY: (x: number, y: number) => number;
+  tracksMesh?: THREE.Mesh; tracksShown?: number; // stopy v snehu (#159): jedna sieť a koľko stôp kreslí
 }
 export interface Render3D {
   frame: (t: number) => void; resize: () => void; pick: (x: number, y: number) => Pt | null; seenAt: (x: number, z: number) => number;
@@ -1828,6 +1830,7 @@ void main() {
       o.ghost.visible = !dark || id === 'me';
     }
     spiders3d.update(dt, t, lights); // pavučiny, nory a pavúky (#57)
+    tracks3d.update(); // stopy v snehu (#159)
 
     const fading = updateFades(dt, meO ? meO.h ?? 1 : 1);
     const lit = zip3(curAmb, curSun, (a, s) => Math.min(1.2, a + s * 0.7));
@@ -1920,6 +1923,7 @@ void main() {
   const particles = createParticles({ scene, camera, renderer, S, ripple });
   const particleObjs = scene.children.filter(o => !sceneBefore.has(o)); // objekty častíc (ladiaca stránka ich vie skryť)
   const spiders3d = createSpiders3d({ THREE, scene, S, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, renderer, world: worldU, maxLights: MAX_LIGHTS, fine: () => grid && grid.fine });
+  const tracks3d = createTracks3d({ THREE, scene, S, groundY, world: worldU }); // stopy v snehu (#159)
   // stred ohniska pod kotlíkom (model má okraj FM minikociek, ohnisko je v strede políčka nad zemou)
   function fireCenter(): { x: number; y: number; z: number } | null {
 
@@ -1936,11 +1940,13 @@ void main() {
   let lastLights: THREE.Vector4[] = [];
   function debugView(): DebugView {
     return { THREE, scene, camera, camTarget, lightCam, renderer, grid, mesh, fineMeshes, waterMesh, lilyMesh, glacierMesh, plantSprites, chars, particleObjs,
-      lights: lastLights, materials: [material, reflMaterial, waterMaterial, glacierMaterial, ...Object.values(fineMats)], groundY };
+      lights: lastLights, materials: [material, reflMaterial, waterMaterial, glacierMaterial, ...Object.values(fineMats)], groundY,
+      tracksMesh: tracks3d.mesh, tracksShown: tracks3d.count() };
   }
   function invalidateShadows(): void { shadowDirty = true; }
   function dispose(): void {
     spiders3d.dispose();
+    tracks3d.dispose();
     scene.traverse(o => {
       const g: unknown = 'geometry' in o ? o.geometry : null, mat: unknown = 'material' in o ? o.material : null;
       if (g instanceof THREE.BufferGeometry) g.dispose();

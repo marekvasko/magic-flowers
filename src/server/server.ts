@@ -28,6 +28,7 @@ import { DEBUG_APIS } from './debug-api/index.ts';
 import * as Events from './events.ts';
 import * as Actions from './actions.ts';
 import * as Spiders from './spiders.ts';
+import * as Tracks from './tracks.ts';
 import type { Directive, GameWorld, Msg } from './game.ts';
 import type { Presence, Tile } from './world.ts';
 
@@ -412,6 +413,10 @@ const cheatHandle = Cheats.http<Room>(process.env['DEBUG_CHEATS_KEY'], {
   },
   speed(room, x) { room.speed = x; broadcast(room, timeMsg(room)); },
   status: room => ({ tick: room.tick, speed: room.speed || 1, jump: room.ff && room.ff.cheat ? room.ff.until : null }),
+  tracks(room, t) { // stopy v snehu (#159): mimo enginu, hráči na ploche hneď dostanú nový zoznam
+    const out = t.do === 'clear' ? Tracks.clear(room.id, t.area) : Tracks.demo(room, t.area, t.x, t.y);
+    for (const [area, msg] of out) broadcastArea(room, area, msg);
+  },
   keyId: Debug.keyId
 });
 let saveSeq = 0;
@@ -679,6 +684,7 @@ function arrived(pl: Player, from: AreaId, to: AreaId): void {
   pl.emote = null; pl.scav = null;
   send(pl.ws, areaMsg(pl));
   for (const v of Spiders.areaViews(pl.room, to)) send(pl.ws, v);
+  send(pl.ws, Tracks.view(pl.room.id, to)); // stopy v snehu na novej ploche (#159)
   toast(pl, to === 'hory'
     ? '🏔️ Vystúpil(a) si do hôr. Na ľadovci pod skalami vysekáš krompáčom ľad. Chodníkom dole sa vrátiš do záhrady.'
     : to === 'les'
@@ -697,6 +703,7 @@ function joined(pl: Player): void {
   pl.look = must(pl.save).look; // vzhľad ako v uložení (návrh join ho doplnil o predvolené farby)
   send(pl.ws, { t: 'welcome', id: pl.id, room: room.id, w: D.areaSize(pl.area).w, h: D.areaSize(pl.area).h, tiles: tilesView(room, pl.area), area: pl.area, seq: pl.areaSeq, x: pl.x, y: pl.y });
   for (const v of Spiders.areaViews(room, pl.area)) send(pl.ws, v);
+  send(pl.ws, Tracks.view(room.id, pl.area)); // stopy v snehu (#159)
   send(pl.ws, timeMsg(room));
   send(pl.ws, Econ.marketView(must(room.market ?? undefined), room.tick, room.events));
   send(pl.ws, Econ.boardView(must(room.contracts ?? undefined)));
@@ -982,11 +989,15 @@ setInterval(() => {
     });
     P.sendPlayers(room.players.values(), list); // kto sa ešte pripája, polohy nedostane (#125)
     // pavúky a krížiak (stav sveta, mení ho len engine): kým nejaké sú, a raz prázdny zoznam, keď zmiznú
+    // stopy v snehu (#159): hráči (potvrdená poloha) a pavúky na zemi – nie v strome (z) ani na kmeni (n)
+    const movers: Tracks.Mover[] = list.map(p => ({ id: 'p' + String(p.id), k: 'foot', area: p.area, x: p.x, y: p.y }));
     for (const area of D.AREAS) {
       const sp = Spiders.entities(room, area);
       if (sp.length || room.spSent[area]) broadcastArea(room, area, { t: 'sp', list: sp });
       room.spSent[area] = sp.length > 0;
+      for (const s of sp) if (!s.z && !s.n) movers.push({ id: 's' + s.id, k: 'spider', area, x: s.x, y: s.y });
     }
+    for (const [area, msg] of Tracks.frame(room, movers)) broadcastArea(room, area, msg);
   }
 }, 100);
 // Priebežne ukladáme aj „naposledy videný“ (vstup seen) – po páde servera tak dni neprítomnosti sedia (±15 s).

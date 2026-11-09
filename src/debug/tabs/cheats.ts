@@ -4,6 +4,7 @@
 import type * as DT from '../../shared/data.ts';
 import type { PlayerSave } from '../../shared/save.ts';
 import type { RoomSnapshot } from '../../server/debug.ts';
+import type { TracksView } from '../../server/debug-api/tracks.ts';
 import type { TabCtx, TabInstance } from '../ui.ts';
 import { errText } from '../ui.ts';
 
@@ -68,6 +69,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     if (!ctx.room) { snap = null; render(); return; }
     try { snap = await ctx.api<RoomSnapshot>('/api/debug/room?id=' + encodeURIComponent(ctx.room)); } catch (e) { snap = null; say(errText(e), 'err'); }
     if (key) await post({ op: 'status' });
+    await loadTracks();
     render();
   }
   async function act(body: Record<string, string | number | boolean | null>, done: string): Promise<void> {
@@ -162,6 +164,23 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
         h('button', { onclick: () => { void act({ op: 'ice', n: val(ice), set: true }, `Icehouse ice set to ${Math.min(D.ICEHOUSE.cap, val(ice))}.`); } }, 'Set')));
   }
 
+  // Počasie a stopy v snehu (#159): sneh zasype všetky stopy (ako ráno so snehom); stopy sú len v pamäti servera
+  let tracks: TracksView | null = null;
+  async function loadTracks(): Promise<void> {
+    if (!ctx.room) { tracks = null; return; }
+    try { tracks = await ctx.api<TracksView | null>('/api/debug/tracks?room=' + encodeURIComponent(ctx.room)); } catch { tracks = null; }
+  }
+  function weatherBox(w: RoomSnapshot['state']): HTMLElement {
+    const per = tracks ? D.AREAS.map(a => `${D.AREA_NAMES[a] || a} ${tracks?.counts[a] ?? 0}`).join(' · ') : '–';
+    return h('section', null, h('h4', null, 'Weather and snow tracks'),
+      h('div', { class: 'row' }, h('span', { class: 'lbl' }, `Weather: ${w.weather || 'sun'}`),
+        h('button', { onclick: () => { void act({ op: 'weather', w: 'snow' }, 'It snows: every snow track is covered.'); } }, '❄️ Let it snow'),
+        h('button', { onclick: () => { void act({ op: 'weather', w: 'sun' }, 'Sunny until the next dawn.'); } }, '☀️ Sun')),
+      h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Snow tracks'), h('span', { class: 'muted' }, per),
+        h('button', { onclick: () => { void act({ op: 'tracks', do: 'clear', area: null }, 'All snow tracks cleared.'); } }, 'Clear all')),
+      h('div', { class: 'muted' }, 'The weather lasts until the next 6:00 (then the day rolls its own). Snow from here does not feed the glacier; that happens only at dawn. Tracks are only in server memory and fade by themselves; the World tab shows them and adds samples.'));
+  }
+
   function render(): void {
     if (!ctx.room) { root.replaceChildren(h('div', { class: 'empty' }, 'Select a room on the left.')); return; }
     if (disabled) { root.replaceChildren(h('section', null, h('h4', null, 'Cheats are off on this server'), h('div', { class: 'muted' }, 'Set DEBUG_CHEATS_KEY in the server environment (deploy: GitHub secret) to turn them on.'))); return; }
@@ -169,7 +188,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     if (status && snap) {
       const saves = Object.entries(snap.state.saves || {}).filter((e): e is [string, PlayerSave] => !!e[1]);
       const online = new Map(snap.online.map(o => [o.player, o.name]));
-      out.push(playersBox(saves, online), itemsBox(saves, online, snap.state));
+      out.push(playersBox(saves, online), itemsBox(saves, online, snap.state), weatherBox(snap.state));
     }
     root.replaceChildren(...out);
   }

@@ -3,6 +3,8 @@ import * as D from '../shared/data.ts';
 import type { ItemId, Potion, Species, SpeciesId, UpgradeId } from '../shared/data.ts';
 import * as Players from '../shared/players.ts';
 import * as SpiderModel from '../shared/spidermodel.ts';
+import * as Tracks from '../shared/tracks.ts';
+import type { TrackMark } from '../shared/tracks.ts';
 import type { ClientMessage, Emote, ServerMessage, TileView, ToastKind, WebView, WishKind } from '../shared/protocol.ts';
 import type { Contract, WorldMode } from '../shared/save.ts';
 import { entries, isRecord, keys, lookup, must } from '../shared/util.ts';
@@ -195,6 +197,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       case 'shove': S.me.x = m.x; S.me.y = m.y; stopWalk(); break; // stará pradlena odhodila hráča za okraj čistiny
       case 'brewed': S.brewed = m.k; S.brewHint = m.hint ?? null; S.cauldron = []; sfx(m.k === 'sliz' ? 'bad' : 'magic'); if (S.modal) S.modal.refresh(); break;
       case 'error': alert(m.text); S.joined = false; $('conn').classList.add('hidden'); break;
+      case 'tracks': onTracks(m); break; // stopy v snehu (#159)
     }
   }
 
@@ -207,7 +210,15 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     S.W = m.w || D.W; S.H = m.h || D.H; // každá plocha má vlastnú veľkosť
     S.me.x = m.x; S.me.y = m.y; S.others.clear(); stopWalk();
     setWebs([], []); S.corner = []; S.cornerGen++; S.spiders.clear(); S.slowUntil = 0; S.web = null;
+    S.tracks = []; S.tracksGen = (S.tracksGen || 0) + 1; // stopy novej plochy pošle server hneď po prechode
     findAnchors();
+  }
+  // Stopy v snehu (#159): celý zoznam plochy (full) alebo nové stopy; strop a poradie ako na serveri (shared/tracks.ts)
+  function onTracks(m: MsgOf<'tracks'>): void {
+    if (m.area !== S.area) return; // ešte zo starej plochy
+    const add = m.add.map(Tracks.decode).filter((t): t is TrackMark => !!t);
+    if (m.full || !S.tracks) S.tracks = add; else Tracks.addMarks(S.tracks, add);
+    S.tracksGen = (S.tracksGen || 0) + 1;
   }
   function setWebs(webs: WebView[], homes: MsgOf<'webs'>['homes']): void {
     S.webs = webs; S.homes = homes; S.websGen++;
