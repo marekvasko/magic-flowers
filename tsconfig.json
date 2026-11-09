@@ -3,6 +3,7 @@
   // prísne pravidlá platia pre každý nový .ts súbor. Node 24 spúšťa .ts priamo (odstránenie typov),
   // preto len vymazateľná syntax (žiadne enum, namespace ani parameter properties) a prípony .ts v importoch.
   // Balík je ES modul ("type": "module", fáza 5a) – module a moduleResolution "nodenext" ako Node.
+  // Klient (src/client/, prehliadač, DOM) má vlastný src/client/tsconfig.json – zbalí ho esbuild (#136).
   "compilerOptions": {
     "target": "es2024",
     "lib": ["es2024"],
@@ -29,5 +30,5 @@
     "skipLibCheck": true
   },
   "include": ["src/**/*", "test/**/*", "debug/api/**/*", "*.ts"],
-  "exclude": ["node_modules", "data", "public", "debug/tabs", "debug/debug.js"]
+  "exclude": ["node_modules", "data", "public", "debug/tabs", "debug/debug.js", "src/client"]
 }

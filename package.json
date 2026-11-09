@@ -9,7 +9,7 @@
     "start": "npm run build && node src/server/server.ts",
     "dev": "npm run build && DAY_SECONDS=60 node src/server/server.ts",
     "test": "node --test 'test/*.test.js' 'test/*.test.ts'",
-    "typecheck": "tsc",
+    "typecheck": "tsc && tsc -p src/client",
     "lint": "eslint --no-error-on-unmatched-pattern ."
   },
   "license": "MIT",

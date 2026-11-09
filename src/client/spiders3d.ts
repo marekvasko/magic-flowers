@@ -1,7 +1,31 @@
 // 3D pavúky a pavučiny (#57): pavučiny medzi kmeňmi v Lese divov (v tme ich vidno len v dohľade, s lampášom sa lesknú
 // kúsok ďalej), nory vlčiakov, kútové pavučiny krížiaka v záhrade a v horách a samotné pavúky (sprity s krokom nôh).
 // V tme sú z pavúkov za dohľadom vidno len lesknúce sa oči (kreslia sa do prekrytia).
-// render3d.mjs volá update() každú snímku a overlay() pri kreslení prekrytia.
+// render3d.ts volá update() každú snímku a overlay() pri kreslení prekrytia.
+// THREE sa odovzdáva (nie import): ladiaca stránka /debug kreslí pavučiny vlastnou kópiou Three.js (do fázy 5c, #137).
+import type * as THREE from 'three';
+import * as D from '../shared/data.ts';
+import * as SM from '../shared/spidermodel.ts';
+import type { Layout } from '../shared/spidermodel.ts';
+import * as Webs from '../shared/webs.ts';
+import type { CornerOpts, CornerWeb, LayoutOpts, Threads, Vec3, WebParams } from '../shared/webs.ts';
+import type { FineInfo } from '../shared/world3d.ts';
+import type { CornerView, SpiderKind, WebView } from '../shared/protocol.ts';
+import { must } from '../shared/util.ts';
+import type { ClientState, Spider } from './state.ts';
+
+type Three = typeof THREE;
+// Uniformy svetla sveta (render3d.ts – rovnaké objekty ako v shaderi sveta), ktoré číta aj hodváb
+// (typ, nie rozhranie: ShaderMaterial berie uniformy ako tabuľku { [meno]: IUniform })
+export type SilkWorld = {
+  ambient: THREE.IUniform<THREE.Vector3>; sunColor: THREE.IUniform<THREE.Vector3>; sunDir: THREE.IUniform<THREE.Vector3>;
+  lampColor: THREE.IUniform<THREE.Vector3>; lights: THREE.IUniform<THREE.Vector4[]>; lightCount: THREE.IUniform<number>;
+  darkOn: THREE.IUniform<number>; eye: THREE.IUniform<THREE.Vector4>; eyeLit: THREE.IUniform<THREE.Vector2>;
+};
+export type ViewUniform = THREE.IUniform<THREE.Vector3>;
+export interface LineFrame { res: THREE.IUniform<THREE.Vector2>; time: THREE.IUniform<number> }
+// Popis pavučiny pre /debug → Cobwebs (material.userData.info)
+interface WebInfo { hubs: number; moor: [number, number]; fill: number; render: 'shader' | 'lines'; segments?: number; copies?: number; hub?: Vec3 | null | undefined; anchors?: Vec3[] | undefined }
 
 // ---------- Shader pavučiny ----------
 // Pavučina sa nekreslí z obrázka – vlákna sa počítajú v každom pixeli z polohy na ploche pavučiny (v políčkach).
@@ -37,7 +61,7 @@ void main() {
 // Svetlo na hodvábe (spoločné pre shader na rovine aj pre čiary): okolie, slnko, lampáše (guľa okolo zdroja), slabé svetlo
 // pri hráčovi; vlákno, nie plocha – rozptyl aj odlesk podľa smeru vlákna T (Kajiya–Kay), odlesk jemne dúhový.
 // V tme za dohľadom vlákna zmiznú ako svet, lampášom osvetlené ostanú (aj o kúsok ďalej sa lesknú).
-const SILK_GLSL = (MAX) => `
+const SILK_GLSL = (MAX: number): string => `
 uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 sunDir; uniform vec3 lampColor;
 uniform vec4 lights[${MAX}]; uniform int lightCount;
 uniform float darkOn; uniform vec4 eye; uniform vec2 eyeLit;
@@ -70,7 +94,7 @@ vec4 silkShade(vec3 T, vec3 P, float mask, float veil) {
   float a = aT + veil * (1.0 - aT);
   return vec4(min(mix(dust, col, aT / max(a, 1e-3)), vec3(1.6)), a * (1.0 - fogK));
 }`;
-export const WEB_FRAG = (MAX) => `
+export const WEB_FRAG = (MAX: number): string => `
 precision highp float;
 #define TAU 6.28318530718
 uniform vec2 uSize; uniform float uKeep;
@@ -176,14 +200,18 @@ void main() {
 // Veľká pavučina má náhodne veľa stredov (1 … P.hubs, na každý aspoň P.hubSpan políčka šírky) a na každom kmeni
 // náhodne veľa kotviacich vlákien (P.moorMin … P.moor).
 // world = uniformy svetla (svet v hre, vlastné v ladiacej stránke), view = { value: Vector3 } smer ku kamere.
-export function webMaterial(THREE, world, view, P, opts, maxLights) {
-  const { w, h } = opts, L = window.Webs.webLayout(P, opts);
-  const hx = [0, 0, 0, 0], hy = [0, 0, 0, 0];
+export function webMaterial(THREE: Three, world: SilkWorld, view: ViewUniform, P: WebParams, opts: LayoutOpts, maxLights: number): THREE.ShaderMaterial {
+  return webMaterialParts(THREE, world, view, P, opts, maxLights).mat;
+}
+function webMaterialParts(THREE: Three, world: SilkWorld, view: ViewUniform, P: WebParams, opts: LayoutOpts, maxLights: number): { mat: THREE.ShaderMaterial; push: THREE.IUniform<THREE.Vector4> } {
+  const { w, h } = opts, L = Webs.webLayout(P, opts);
+  const hx: [number, number, number, number] = [0, 0, 0, 0], hy: [number, number, number, number] = [0, 0, 0, 0];
   L.hubs.forEach((c, i) => { hx[i] = c.x; hy[i] = c.y; });
+  const silk = silkUniforms(THREE, world, view, P, L.seed);
   const mat = new THREE.ShaderMaterial({
     vertexShader: WEB_VERT, fragmentShader: WEB_FRAG(maxLights), transparent: true, depthWrite: false, side: THREE.DoubleSide,
-    uniforms: Object.assign(silkUniforms(THREE, world, view, P, L.seed), {
-      uSize: { value: new THREE.Vector2(w, h) }, uKeep: { value: opts.keep == null ? 1 : opts.keep },
+    uniforms: Object.assign(silk, {
+      uSize: { value: new THREE.Vector2(w, h) }, uKeep: { value: opts.keep ?? 1 },
       uMode: { value: new THREE.Vector4(L.fill, 0, P.rays, L.pitch) },
       uA: { value: new THREE.Vector4(P.bend, P.bendFreq, P.wobble, P.wobbleFreq) },
       uB: { value: new THREE.Vector4(P.hub, P.free, P.radius, P.edgeNoise) },
@@ -192,10 +220,10 @@ export function webMaterial(THREE, world, view, P, opts, maxLights) {
       uHX: { value: new THREE.Vector4(...hx) }, uHY: { value: new THREE.Vector4(...hy) }
     })
   });
-  mat.userData.info = { hubs: L.nH, moor: L.moor, fill: L.fill, render: 'shader' };
-  return mat;
+  mat.userData['info'] = { hubs: L.nH, moor: L.moor, fill: L.fill, render: 'shader' } satisfies WebInfo;
+  return { mat, push: silk.uPush };
 }
-function silkUniforms(THREE, world, view, P, seed) {
+function silkUniforms(THREE: Three, world: SilkWorld, view: ViewUniform, P: WebParams, seed: number): SilkWorld & { uView: ViewUniform; uSeed: THREE.IUniform<number>; uC: THREE.IUniform<THREE.Vector4>; uPush: THREE.IUniform<THREE.Vector4> } {
   return {
     ambient: world.ambient, sunColor: world.sunColor, sunDir: world.sunDir, lampColor: world.lampColor, lights: world.lights, lightCount: world.lightCount,
     darkOn: world.darkOn, eye: world.eye, eyeLit: world.eyeLit, uView: view, uSeed: { value: seed % 97 },
@@ -236,7 +264,7 @@ void main() {
   gl_Position = projectionMatrix * viewMatrix * wp;
   gl_Position.xy += aOff.xy * 2.0 / uRes * gl_Position.w; // kópia posunutá o pixel na obrazovke
 }`;
-const LINE_FRAG = (MAX) => `
+const LINE_FRAG = (MAX: number): string => `
 precision highp float;
 ${SILK_GLSL(MAX)}
 varying vec3 vPos; varying vec3 vT; varying float vEdge;
@@ -246,73 +274,107 @@ void main() {
   gl_FragColor = c;
 }`;
 // posuny kópií v pixeloch (z = sila kópie): 1 = len vlákno, 2–4 = hrubšie
-const COPIES = [[0, 0, 1], [1, 0, 0.6], [0, 1, 0.6], [1, 1, 0.35]];
-export function webLines(THREE, world, view, P, opts, maxLights, frame) {
-  return linesMesh(THREE, world, view, P, window.Webs.webThreads(P, opts), { w: opts.w, h: opts.h, sway: P.sway }, maxLights, frame);
+const COPIES: readonly (readonly [number, number, number])[] = [[0, 0, 1], [1, 0, 0.6], [0, 1, 0.6], [1, 1, 0.35]];
+export function webLines(THREE: Three, world: SilkWorld, view: ViewUniform, P: WebParams, opts: LayoutOpts, maxLights: number, frame: LineFrame): THREE.LineSegments {
+  return linesMesh(THREE, world, view, P, Webs.webThreads(P, opts), { w: opts.w, h: opts.h, sway: P.sway }, maxLights, frame).m;
 }
-// Kútová pavučina (krížiak): 3D trojuholník v kúte (Webs.cornerThreads) – vždy z čiar; súradnice kúta (pozri webs.js)
-export function cornerLines(THREE, world, view, P, opts, maxLights, frame) {
-  return threadLines(THREE, world, view, P, window.Webs.cornerThreads(P, opts), maxLights, frame);
+// Kútová pavučina (krížiak): 3D trojuholník v kúte (Webs.cornerThreads) – vždy z čiar; súradnice kúta (pozri webs.ts)
+export function cornerLines(THREE: Three, world: SilkWorld, view: ViewUniform, P: WebParams, opts: CornerOpts, maxLights: number, frame: LineFrame): THREE.LineSegments {
+  return threadLines(THREE, world, view, P, must(Webs.cornerThreads(P, opts) ?? undefined), maxLights, frame);
 }
 // hotové vlákna (napr. Webs.voxelWeb) ako čiary bez kývania
-export function threadLines(THREE, world, view, P, th, maxLights, frame) {
-  return linesMesh(THREE, world, view, P, th, { w: 1, h: 1, sway: 0 }, maxLights, frame);
+export function threadLines(THREE: Three, world: SilkWorld, view: ViewUniform, P: WebParams, th: Threads | CornerWeb, maxLights: number, frame: LineFrame): THREE.LineSegments {
+  return linesMesh(THREE, world, view, P, th, { w: 1, h: 1, sway: 0 }, maxLights, frame).m;
 }
-function linesMesh(THREE, world, view, P, th, o, maxLights, frame) {
+function linesMesh(THREE: Three, world: SilkWorld, view: ViewUniform, P: WebParams, th: Threads | CornerWeb, o: { w: number; h: number; sway: number }, maxLights: number, frame: LineFrame): { m: THREE.LineSegments; push: THREE.IUniform<THREE.Vector4> } {
   const L = th.layout, g = new THREE.InstancedBufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(th.pos, 3));
   g.setAttribute('aT', new THREE.BufferAttribute(th.tan, 3));
   const n = P.copies, off = COPIES.slice(0, n), cx = off.reduce((s, q) => s + q[0], 0) / n, cy = off.reduce((s, q) => s + q[1], 0) / n;
   g.setAttribute('aOff', new THREE.InstancedBufferAttribute(new Float32Array(off.flatMap(q => [q[0] - cx, q[1] - cy, q[2]])), 3));
   g.instanceCount = n;
+  const silk = silkUniforms(THREE, world, view, P, L.seed);
   const mat = new THREE.ShaderMaterial({
     vertexShader: LINE_VERT, fragmentShader: LINE_FRAG(maxLights), transparent: true, depthWrite: false,
-    uniforms: Object.assign(silkUniforms(THREE, world, view, P, L.seed), {
+    uniforms: Object.assign(silk, {
       uSize: { value: new THREE.Vector2(o.w, o.h) }, uRes: frame.res, uTime: frame.time, uSway: { value: o.sway }, uPhase: { value: (L.seed % 97) * 0.6 }
     })
   });
-  mat.userData.info = { hubs: L.nH, moor: L.moor, fill: L.fill, render: 'lines', segments: th.count / 2, copies: n, hub: th.hub, anchors: th.anchors };
+  const corner = 'hub' in th ? th : null;
+  mat.userData['info'] = { hubs: L.nH, moor: L.moor, fill: L.fill, render: 'lines', segments: th.count / 2, copies: n, hub: corner?.hub, anchors: corner?.anchors } satisfies WebInfo;
   const m = new THREE.LineSegments(g, mat);
   m.frustumCulled = false; // vydutie a kývanie mení tvar mimo pôvodnej rovinky
-  return m;
+  return { m, push: silk.uPush };
 }
 
-export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, renderer, world, maxLights, fine }) {
+// Čo spiders3d potrebuje od 3D pohľadu (render3d.ts)
+export interface Spiders3dInit {
+  THREE: Three; scene: THREE.Scene; S: ClientState;
+  groundY: (x: number, y: number) => number;
+  // svetlo v bode (r, g, b) z okolia, slnka a lámp; out.seen = viditeľnosť v tme (0–1)
+  lightAt: (x: number, y: number, z: number, lights: readonly THREE.Vector4[], n: number, out: { seen: number }) => [number, number, number];
+  spriteTex: (key: string, w: number, h: number, draw: (c: CanvasRenderingContext2D) => void) => THREE.Texture;
+  makeSprite: (w: number, h: number) => THREE.Sprite;
+  project: (x: number, y: number, z: number) => { x: number; y: number };
+  camera: THREE.Camera; camTarget: THREE.Vector3; renderer: THREE.WebGLRenderer | null; world: SilkWorld; maxLights: number;
+  fine: () => readonly FineInfo[] | null;
+}
+export interface Spiders3d {
+  update: (dt: number, t: number, lights: readonly THREE.Vector4[]) => void;
+  overlay: (c: CanvasRenderingContext2D, ppb: number, t: number) => void;
+  dispose: () => void;
+}
+// Pavučina vo svete: sieť, uniforma naťahovania a kde visí (stred, výška)
+interface WebMesh { m: THREE.Mesh | THREE.LineSegments; push: THREE.IUniform<THREE.Vector4>; wb: WebView; cx: number; cz: number; hgt: number }
+// Krížiak v kútovej pavučine: sprite v strede prvej oblasti, normála pavučiny (strana chrbta) a veľkosť
+interface CornerSpider { sp: SpiderSprite; at: THREE.Vector3; nrm: THREE.Vector3 | null; ks: number }
+// Sprite pavúka: aktuálna snímka (key), miesto očí pre svit v tme, či sa kreslí navrch (pavúk na chrbte hráča)
+interface SpriteEye { L: Layout; f: number; s: number; x: number; y: number; z: number }
+interface SpiderSprite { sp: THREE.Sprite; key: string; eye: SpriteEye | null; top: boolean }
+interface Seen { k: SpiderKind; eye: SpriteEye | null; b: number; hide?: boolean; seen: number; d: number }
+
+export function createSpiders3d({ THREE, scene, S, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, renderer, world, maxLights, fine }: Spiders3dInit): Spiders3d {
   const SPI = D.SPIDERS;
-  const webMeshes = new Map(), cornerMeshes = [], burrowMeshes = [], sprites = new Map();
-  let builtWebs = -1, builtCorner = -1, builtArea = null, builtTiles = -1;
+  const webMeshes = new Map<number, WebMesh>(), cornerMeshes: THREE.LineSegments[] = [], cornerSpiders: CornerSpider[] = [], burrowMeshes: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>[] = [], sprites = new Map<string, SpiderSprite>();
+  let builtWebs = -1, builtCorner = -1, builtArea: string | null = null, builtTiles = -1;
   const holeGeo = new THREE.CircleGeometry(0.26, 18);
 
-  function add(o) { o.layers.set(1); scene.add(o); return o; }
-  function drop(o) { scene.remove(o); if (o.material) o.material.dispose(); if (o.geometry && o.geometry !== holeGeo && !o.isSprite) o.geometry.dispose(); } // geometria spritov je spoločná
+  function add<O extends THREE.Object3D>(o: O): O { o.layers.set(1); scene.add(o); return o; }
+  function drop(o: THREE.Mesh | THREE.LineSegments | THREE.Sprite): void {
+    scene.remove(o);
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of mats) m.dispose();
+    if (o.geometry !== holeGeo && !(o instanceof THREE.Sprite)) o.geometry.dispose(); // geometria spritov je spoločná
+  }
   // Pavučina so shaderom; parametre z Webs.webParams (v hre sa dajú skúsiť cez window.MF_WEB = { rays: 20, … })
-  const view = { value: new THREE.Vector3(0, 1, 0) };
-  const params = () => window.Webs.webParams(window.MF_WEB);
-  const frame = { res: { value: new THREE.Vector2(1, 1) }, time: { value: 0 } }; // pre pavučiny z čiar
-  function webPlane(w, h, seed, keep) {
+  const view: ViewUniform = { value: new THREE.Vector3(0, 1, 0) };
+  const params = (): WebParams => Webs.webParams(window.MF_WEB);
+  const frame: LineFrame = { res: { value: new THREE.Vector2(1, 1) }, time: { value: 0 } }; // pre pavučiny z čiar
+  function webPlane(w: number, h: number, seed: number, keep: number): { m: THREE.Mesh | THREE.LineSegments; push: THREE.IUniform<THREE.Vector4> } {
     const P = params(), opts = { w, h, seed, keep };
-    const m = P.render === 1 ? webLines(THREE, world, view, P, opts, maxLights, frame)
-      : new THREE.Mesh(new THREE.PlaneGeometry(w, h, 32, 16), webMaterial(THREE, world, view, P, opts, maxLights)); // delená, aby sa dala natiahnuť
-    m.renderOrder = 2;
-    return add(m);
+    let r: { m: THREE.Mesh | THREE.LineSegments; push: THREE.IUniform<THREE.Vector4> };
+    if (P.render === 1) r = linesMesh(THREE, world, view, P, Webs.webThreads(P, opts), { w, h, sway: P.sway }, maxLights, frame);
+    else { const wm = webMaterialParts(THREE, world, view, P, opts, maxLights); r = { m: new THREE.Mesh(new THREE.PlaneGeometry(w, h, 32, 16), wm.mat), push: wm.push }; } // delená, aby sa dala natiahnuť
+    r.m.renderOrder = 2;
+    add(r.m);
+    return r;
   }
 
   // ---- pavučiny a nory (Les divov) ----
-  function buildWebs() {
-    for (const m of webMeshes.values()) drop(m);
+  function buildWebs(): void {
+    for (const w of webMeshes.values()) drop(w.m);
     webMeshes.clear();
     for (const m of burrowMeshes) drop(m);
     burrowMeshes.length = 0;
     if (S.area !== 'les') return;
     for (const wb of S.webs) {
       // od kmeňa po kmeň (vlákna začínajú na oporách), pri nízkom kríku či spadnutom kmeni nižšia
-      const g = window.Webs.webGeom(S.tiles, S.W, S.H, wb, window.MF_WEB);
-      const m = webPlane(g.len, g.hgt, wb.id, wb.silk >= 3 ? 1 : wb.silk === 2 ? 0.72 : 0.42);
+      const g = Webs.webGeom(S.tiles, S.W, S.H, wb, window.MF_WEB);
+      const { m, push } = webPlane(g.len, g.hgt, wb.id, wb.silk >= 3 ? 1 : wb.silk === 2 ? 0.72 : 0.42);
       const mid = (g.u0 + g.u1) / 2, cx = wb.ax ? g.line : mid, cz = wb.ax ? mid : g.line;
       m.position.set(cx, groundY(Math.floor(cx), Math.floor(cz)) + g.hgt / 2 + 0.02, cz);
       if (wb.ax) m.rotation.y = Math.PI / 2;
-      m.userData.web = { wb, cx, cz, hgt: g.hgt };
-      webMeshes.set(wb.id, m);
+      webMeshes.set(wb.id, { m, push, wb, cx, cz, hgt: g.hgt });
     }
     for (const h of S.homes) {
       if (h.k !== 'v') continue;
@@ -325,7 +387,7 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
   // ---- kútové pavučiny krížiaka: vejár na hrane steny pri zemi, kolmo na stenu ----
   // Súradnice kúta (Webs.cornerThreads) → svet: počiatok na zemi v kúte, X von zo steny d, Y hore, Z pozdĺž steny
   // (pri konci steny od jej konca dozadu, pri vnútornom kúte von zo steny e)
-  function cornerMatrix(k) {
+  function cornerMatrix(k: CornerView): THREE.Matrix4 {
     const gy = groundY(k.x, k.y);
     const ox = k.x + 0.5 + k.dx * 0.5 + k.ex * 0.5, oz = k.y + 0.5 + k.dy * 0.5 + k.ey * 0.5;
     return new THREE.Matrix4().makeBasis(new THREE.Vector3(-k.dx, 0, -k.dy), new THREE.Vector3(0, 1, 0), new THREE.Vector3(-k.ex, 0, -k.ey)).setPosition(ox, gy + 0.005, oz);
@@ -334,84 +396,83 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
   // políčka, kde krížiak tká – Webs.voxelCorners. Veľkosť po osiach náhodne v rámci voľného miesta (najmenej 2 minikocky),
   // takže pavučiny sú rôzne a nesúmerné (napr. 2 × 6). null = pri stene nie je model (skala) → kút pri zemi.
   const FINE = 8;
-  function voxelCorner(k, seed) {
-    const list = fine ? fine() : null;
+  function voxelCorner(k: CornerView, seed: number): { M: THREE.Matrix4; size: Vec3; faces: 2 | 3; th: CornerWeb } | null {
+    const list = fine();
     if (!list) return null;
     const wx = k.x + k.dx + 0.5, wz = k.y + k.dy + 0.5;
     const f = list.find(m => wx >= m.ox && wx < m.ox + m.sx / FINE && wz >= m.oz && wz < m.oz + m.sz / FINE);
     if (!f) return null;
     // oblasť hľadania: polovica políčka pred stenou (aj pod presahom strechy) a kúsok do steny (výklenky), celá výška
-    const px = k.x + 0.5, pz = k.y + 0.5, pts = [[0, -0.5], [0, 0.5], [0.85, -0.5], [0.85, 0.5]].map(([s, t]) => [px + k.dx * s + k.ex * t, pz + k.dy * s + k.ey * t]);
+    const px = k.x + 0.5, pz = k.y + 0.5, pts = ([[0, -0.5], [0, 0.5], [0.85, -0.5], [0.85, 0.5]] as const).map(([s, t]) => [px + k.dx * s + k.ex * t, pz + k.dy * s + k.ey * t] as const);
     const vx = pts.map(p => (p[0] - f.ox) * FINE), vz = pts.map(p => (p[1] - f.oz) * FINE);
     const box = { x0: Math.floor(Math.min(...vx)), x1: Math.ceil(Math.max(...vx)) - 1, z0: Math.floor(Math.min(...vz)), z1: Math.ceil(Math.max(...vz)) - 1, y0: 0, y1: f.sy - 1 };
     // len kúty otvorené k políčku krížiaka (jedna z osí pavučiny smeruje od steny)
-    const c = window.Webs.voxelCorners(f, box).filter(q => [q.X, q.Y, q.Z].some(a => a[0] === -k.dx && a[1] === 0 && a[2] === -k.dy));
-    const r = window.Webs.voxelWeb(f, c, seed, window.MF_WEB); // kotvy sa musia navzájom vidieť
+    const c = Webs.voxelCorners(f, box).filter(q => [q.X, q.Y, q.Z].some(a => a[0] === -k.dx && a[1] === 0 && a[2] === -k.dy));
+    const r = Webs.voxelWeb(f, c, seed, window.MF_WEB); // kotvy sa musia navzájom vidieť
     if (!r) return null;
     const q = r.q;
     const M = new THREE.Matrix4().makeBasis(new THREE.Vector3(...q.X), new THREE.Vector3(...q.Y), new THREE.Vector3(...q.Z))
       .setPosition(f.ox + q.o[0] / FINE, f.oy + q.o[1] / FINE, f.oz + q.o[2] / FINE);
     return { M, size: q.size, faces: q.faces, th: r.th };
   }
-  function buildCorners() {
+  function buildCorners(): void {
     for (const m of cornerMeshes) drop(m);
-    cornerMeshes.length = 0;
+    for (const c of cornerSpiders) drop(c.sp.sp);
+    cornerMeshes.length = cornerSpiders.length = 0;
     const P = params();
     for (const k of S.corner) {
       const seed = k.x * 31 + k.y * 7 + k.dx * 3 + k.ey;
       const vc = voxelCorner(k, seed);
       const M = vc ? vc.M : cornerMatrix(k);
-      const m = add(vc ? threadLines(THREE, world, view, P, vc.th, maxLights, frame) : cornerLines(THREE, world, view, P, { seed, faces: k.f || 2 }, maxLights, frame));
+      const th = vc ? vc.th : must(Webs.cornerThreads(P, { seed, faces: k.f }) ?? undefined);
+      const m = add(threadLines(THREE, world, view, P, th, maxLights, frame));
       m.renderOrder = 2; m.matrixAutoUpdate = false; m.matrix.copy(M); m.matrixWorldNeedsUpdate = true;
       cornerMeshes.push(m);
       // krížiak visí v strede prvej oblasti pavučiny hlavou dole; chrbtom alebo bruchom ku kamere podľa strany
       // (strana chrbta je daná semienkom); v malej pavučine budovy je menší
-      const info = m.material.userData.info, at = new THREE.Vector3(...info.hub).applyMatrix4(M), ks = vc ? Math.min(1, Math.max(...vc.size) * 1.6) : 1;
-      let nrm = null;
-      if (info.anchors && info.anchors.length >= 3) {
-        const A = info.anchors.slice(0, 3).map(a => new THREE.Vector3(...a).applyMatrix4(M));
-        nrm = A[1].clone().sub(A[0]).cross(A[2].clone().sub(A[0])).normalize();
-        if (seed % 2) nrm.negate();
-      }
+      const at = new THREE.Vector3(...must(th.hub ?? undefined)).applyMatrix4(M), ks = vc ? Math.min(1, Math.max(...vc.size) * 1.6) : 1;
+      let nrm: THREE.Vector3 | null = null;
+      const world3 = (a: Vec3): THREE.Vector3 => new THREE.Vector3(...a).applyMatrix4(M);
+      const A0 = world3(th.anchors[0]), A1 = world3(th.anchors[1]), A2 = world3(th.anchors[2]);
+
+      nrm = A1.clone().sub(A0).cross(A2.clone().sub(A0)).normalize();
+      if (seed % 2) nrm.negate();
       const sp = makeSprite(1, 1); sp.layers.set(1);
-      sp.userData.web = { at, nrm, ks };
-      cornerMeshes.push(sp);
-      cornerMeshes.push(sp);
+      cornerSpiders.push({ sp: { sp, key: '', eye: null, top: false }, at, nrm, ks });
     }
   }
 
   // ---- pavúky ----
-  // Sprity z modelu (shared/spidermodel.js): na zemi 8 pohľadov podľa smeru hlavy voči kamere, na zvislej ploche
+  // Sprity z modelu (shared/spidermodel.ts): na zemi 8 pohľadov podľa smeru hlavy voči kamere, na zvislej ploche
   // (pavučina, chrbát hráča) hlavou hore/dole chrbtom alebo bruchom ku kamere; 4 snímky chôdze. Pravá veľkosť:
   // krížiak 1/4 políčka, vlčiak 1, pradlena 1,5 a výška hráča.
-  const SM = window.SpiderModel;
   const sinP = Math.sin(SM.PITCH);
-  function spriteFor(o) {
+  function spriteFor(o: Spider): SpiderSprite {
     let sp = sprites.get(o.id);
-    if (!sp) { sp = makeSprite(1, 1); sp.userData.k = o.k; sprites.set(o.id, sp); }
+    if (!sp) { sp = { sp: makeSprite(1, 1), key: '', eye: null, top: false }; sprites.set(o.id, sp); }
     return sp;
   }
   // nastaví snímku a umiestni sprite: na zemi je spodok obrázka na zemi bližšie ku kamere (inak by predné nohy
   // zapadli pod zem), na ploche je počiatok modelu presne v bode (x, y, z)
   const toCam = new THREE.Vector3();
-  function pose(sp, k, view, f, x, y, z, ks) {
-    const L = SM.layout(k, view), key = k + view + f;
-    if (sp.userData.key !== key) { sp.material.map = spriteTex(`spider:${k}:${view}:${f}`, L.w, L.h, c => SM.sprite(c, k, view, f)); sp.material.needsUpdate = true; sp.userData.key = key; }
-    const s = ks || 1;
-    sp.userData.eye = { L, f, s, x, y, z }; // pre svit očí v tme (počiatok modelu)
-    sp.scale.set(L.w / L.ppu * s, L.h / L.ppu * s, 1);
+  function pose(s: SpiderSprite, k: SpiderKind, view: string, f: number, x: number, y: number, z: number, ks?: number): void {
+    const sp = s.sp, L = SM.layout(k, view), key = k + view + f;
+    if (s.key !== key) { sp.material.map = spriteTex(`spider:${k}:${view}:${f}`, L.w, L.h, c => SM.sprite(c, k, view, f)); sp.material.needsUpdate = true; s.key = key; }
+    const sc = ks || 1;
+    s.eye = { L, f, s: sc, x, y, z }; // pre svit očí v tme (počiatok modelu)
+    sp.scale.set(L.w / L.ppu * sc, L.h / L.ppu * sc, 1);
     if (SM.isSurface(view)) { sp.center.set(L.ox / L.w, 1 - L.oy / L.h); sp.position.set(x, y, z); return; }
-    const t = (L.h - L.oy) / L.ppu * s / sinP;
+    const t = (L.h - L.oy) / L.ppu * sc / sinP;
     sp.center.set(L.ox / L.w, 0);
     sp.position.set(x + toCam.x * t, y, z + toCam.z * t);
   }
 
-  const lastSeen = new Map(); // id → { k, eye (počiatok a snímka), b (jas), hide, seen, d } pre svit očí v prekrytí
-  function update(dt, t, lights) {
+  const lastSeen = new Map<string, Seen>(); // id → { k, eye (počiatok a snímka), b (jas), hide, seen, d } pre svit očí v prekrytí
+  function update(_dt: number, t: number, lights: readonly THREE.Vector4[]): void {
     if (builtArea !== S.area || builtTiles !== S.tilesGen) { builtArea = S.area; builtTiles = S.tilesGen; builtWebs = builtCorner = -1; } // nová plocha (výška zeme)
     if (builtWebs !== S.websGen) { builtWebs = S.websGen; buildWebs(); }
     if (builtCorner !== S.cornerGen) { builtCorner = S.cornerGen; buildCorners(); }
-    const me = S.me, lo = {};
+    const me = S.me, lo = { seen: 1 };
     // pavučiny: v tme len v dohľade (a v svetle lampášov); s lampášom v ruke sa lesknú ešte kúsok ďalej
     // pavučiny svieti shader (svetlo zo sveta); smer ku kamere pre odlesk
     view.value.copy(camera.position).sub(camTarget).normalize();
@@ -419,30 +480,29 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
     if (renderer) renderer.getDrawingBufferSize(frame.res.value);
     toCam.copy(camera.position).sub(camTarget).setY(0).normalize();
     lastSeen.clear();
-    for (const m of cornerMeshes) if (m.isSprite) {
-      const w = m.userData.web, n = w.nrm;
+    for (const w of cornerSpiders) {
+      const n = w.nrm;
       const view = !n || Math.abs(n.y) > 0.8 ? SM.planarView(0, 1, toCam.x, toCam.z) : n.dot(toCam) >= 0 ? 'down' : 'down-b';
-      pose(m, 'k', view, 0, w.at.x, w.at.y, w.at.z, w.ks);
+      pose(w.sp, 'k', view, 0, w.at.x, w.at.y, w.at.z, w.ks);
       const c = lightAt(w.at.x, w.at.y, w.at.z, lights, lights.length, lo);
-      m.material.color.setRGB(...c);
-      lastSeen.set(m.uuid, { k: 'k', eye: m.userData.eye, b: Math.max(...c), seen: lo.seen, d: Math.hypot(w.at.x - me.x, w.at.z - me.y) });
+      w.sp.sp.material.color.setRGB(...c);
+      lastSeen.set(w.sp.sp.uuid, { k: 'k', eye: w.sp.eye, b: Math.max(...c), seen: lo.seen, d: Math.hypot(w.at.x - me.x, w.at.z - me.y) });
     }
     // pavučiny, do ktorých sa niekto zaboril: vydujú sa k nemu (miestne súradnice: x pozdĺž, z naprieč – pri ax 1 otočená)
-    for (const m of webMeshes.values()) {
-      const u = m.material.uniforms && m.material.uniforms.uPush, w = m.userData.web;
-      if (!u || !w) continue;
+    for (const w of webMeshes.values()) {
+      const u = w.push;
       const keys = w.wb.in ? Object.keys(w.wb.in) : [];
-      let who = null;
-      for (const k of keys) { who = k === (S.name || '').toLowerCase() ? me : [...S.others.values()].find(o => (o.name || '').toLowerCase() === k); if (who) break; }
+      let who: { x: number; y: number } | undefined;
+      for (const k of keys) { who = k === S.name.toLowerCase() ? me : [...S.others.values()].find(o => o.name.toLowerCase() === k); if (who) break; }
       if (!who) { u.value.set(0, 0, 0, 0); continue; }
       const dx = who.x - w.cx, dz = who.y - w.cz, lx = w.wb.ax ? -dz : dx, lz = w.wb.ax ? dx : dz;
       u.value.set(lx, 0.6 - w.hgt / 2 - 0.02, Math.max(-1.1, Math.min(1.1, lz)), 0.45);
     }
     for (const m of burrowMeshes) { const p = m.position; lightAt(p.x, p.y, p.z, lights, lights.length, lo); m.material.opacity = 0.85 * lo.seen; m.visible = lo.seen > 0.02; }
-    const alive = new Set();
+    const alive = new Set<string>();
     for (const o of S.spiders.values()) {
       alive.add(o.id);
-      const sp = spriteFor(o);
+      const s = spriteFor(o), sp = s.sp;
       let x = o.x, z = o.y, lift = 0;
       if (o.c) { // na chrbte hráča
         if (Math.hypot(o.x - me.x, o.y - me.y) < 1.2) { x = me.x; z = me.y; }
@@ -455,24 +515,24 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
       // na chrbte hráča lezie hore (chrbtom ku kamere), inak podľa smeru hlavy
       const tv = o.n ? SM.trunkView(o.n[0], o.n[1], toCam.x, toCam.z, o.u) : null; // na kmeni: podľa strany kmeňa voči kamere
       const view = o.n ? tv || 't0d' : o.c ? 'up' : SM.planarView(Math.cos(o.a || 0), Math.sin(o.a || 0), toCam.x, toCam.z);
-      pose(sp, o.k, view, f, x, o.c ? y + 0.25 : o.n ? y + (o.z || 0) : y, z, o.c ? 0.6 : 1); // na hráčovi menší, nech ho nezakryje celého
+      pose(s, o.k, view, f, x, o.c ? y + 0.25 : o.n ? y + (o.z || 0) : y, z, o.c ? 0.6 : 1); // na hráčovi menší, nech ho nezakryje celého
       const c = lightAt(x, y + 0.2 + (o.n ? o.z || 0 : 0), z, lights, lights.length, lo), bright = Math.max(...c);
-      if (o.c) for (let i = 0; i < 3; i++) c[i] = Math.max(c[i], 0.8); // na sebe ho vidíš aj v tme
+      if (o.c) for (let i = 0; i < 3; i++) c[i] = Math.max(c[i] ?? 0, 0.8); // na sebe ho vidíš aj v tme
       sp.material.color.setRGB(...c);
       // pavúk na chrbte hráča sa kreslí navrch (inak by ho zakryla postavička)
-      if (sp.userData.top !== !!o.c) { const m = sp.material; sp.userData.top = !!o.c; m.depthTest = !o.c; m.transparent = !!o.c; sp.renderOrder = o.c ? 1e6 + 1 : 0; m.needsUpdate = true; } // až po siluete hráča
+      if (s.top !== o.c) { const m = sp.material; s.top = o.c; m.depthTest = !o.c; m.transparent = o.c; sp.renderOrder = o.c ? 1e6 + 1 : 0; m.needsUpdate = true; } // až po siluete hráča
       const inBurrow = o.k === 'v' && o.h;
       sp.visible = lo.seen > 0.02 && !inBurrow && !(o.n && !tv); // za kmeňom ho nevidno
-      lastSeen.set(o.id, { k: o.k, eye: sp.userData.eye, b: bright, hide: !!(o.n && !tv), seen: inBurrow ? 0 : lo.seen, d: Math.hypot(x - me.x, z - me.y) });
+      lastSeen.set(o.id, { k: o.k, eye: s.eye, b: bright, hide: !!(o.n && !tv), seen: inBurrow ? 0 : lo.seen, d: Math.hypot(x - me.x, z - me.y) });
     }
-    for (const [id, sp] of sprites) if (!alive.has(id)) { scene.remove(sp); sp.material.dispose(); sprites.delete(id); }
+    for (const [id, s] of sprites) if (!alive.has(id)) { scene.remove(s.sp); s.sp.material.dispose(); sprites.delete(id); }
   }
 
   // Oči sa v tme lesknú (všetky pavúky): na skutočných miestach očí v snímke (SpiderModel.layout().eyes), tým silnejšie,
   // čím je pri pavúkovi tmavšie. Aj za dohľadom – vlčiak a pradlena do SPI.*.eyes políčok, krížiak do 2,5 –
   // kto si dá pozor, uvidí ich skôr. Občas žmurknú.
   const KEYE = 2.5;
-  function overlay(c, ppb, t) {
+  function overlay(c: CanvasRenderingContext2D, ppb: number, t: number): void {
     for (const [id, e] of lastSeen) {
       const E = e.eye;
       if (e.hide || !E) continue;
@@ -490,10 +550,11 @@ export function createSpiders3d({ THREE, scene, S, D, Art, groundY, lightAt, spr
       SM.glow(c, e.k, eyes, P.x, P.y, ppb * E.s, a);
     }
   }
-  function dispose() {
-    for (const m of webMeshes.values()) drop(m);
+  function dispose(): void {
+    for (const w of webMeshes.values()) drop(w.m);
     for (const m of [...cornerMeshes, ...burrowMeshes]) drop(m);
-    for (const sp of sprites.values()) { scene.remove(sp); sp.material.dispose(); }
+    for (const c of cornerSpiders) drop(c.sp.sp);
+    for (const s of sprites.values()) { scene.remove(s.sp); s.sp.material.dispose(); }
     holeGeo.dispose();
   }
   return { update, overlay, dispose };

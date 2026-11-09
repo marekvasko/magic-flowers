@@ -1,15 +1,21 @@
 // 3D častice: dážď (kvapky s čľapnutím a kruhmi na vode), sneh (vločky dopadnú na konkrétne miesto a roztopia sa), oheň pod kotlíkom (plamene, iskry, dym),
 // víly s trblietavou stopou, padajúce lístie zo stromov a hlinka pri hľadaní semienok v tráve. Všetko je vo svete (nie na obrazovke),
 // takže častice sa hýbu s kamerou, zakrývajú ich budovy a padajú na zem.
-import * as THREE from '/vendor/three/three.module.js';
+import * as THREE from 'three';
+import * as W from '../shared/world3d.ts';
+import type { FineInfo, Grid } from '../shared/world3d.ts';
+import { must } from '../shared/util.ts';
+import type { ClientState, FxFairy } from './state.ts';
 
-const rnd = (a, b) => a + Math.random() * (b - a);
-const pick = a => a[(Math.random() * a.length) | 0];
-const hex = h => { const n = parseInt(h.slice(1), 16); return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; };
-const mixc = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+export type RGB = readonly [number, number, number];
+const rnd = (a: number, b: number): number => a + Math.random() * (b - a);
+const pick = <T>(a: readonly T[]): T => must(a[(Math.random() * a.length) | 0]);
+const hex = (h: string): RGB => { const n = parseInt(h.slice(1), 16); return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; };
+const mixc = (a: RGB, b: RGB, t: number): RGB => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 
 // tvar bodu: 0 = žiara (mäkký kruh), 1 = štvorček (lístok, kvapka), 2 = mäkký disk (dym)
 const GLOW = 0, PIXEL = 1, SOFT = 2;
+type Shape = typeof GLOW | typeof PIXEL | typeof SOFT;
 const PTS_VERT = `
 attribute vec3 color; attribute float size; attribute float alpha; attribute float shape;
 uniform float pxPerUnit;
@@ -40,7 +46,13 @@ varying float vAlpha; varying vec3 vColor;
 void main() { gl_FragColor = vec4(vColor, vAlpha); }`;
 
 // Zásobník bodových častíc s jedným spôsobom miešania (žiara sa sčítava, dym a lístie sa prekrývajú)
-function pointPool(scene, cap, blending) {
+interface PointPool {
+  mat: THREE.ShaderMaterial; cap: number; toCam: THREE.Vector3;
+  begin: () => void;
+  put: (x: number, y: number, z: number, c: RGB, s: number, a: number, sh: Shape, bias?: number) => void;
+  end: () => void;
+}
+function pointPool(scene: THREE.Scene, cap: number, blending: THREE.Blending): PointPool {
   const geo = new THREE.BufferGeometry();
   const pos = new Float32Array(cap * 3), col = new Float32Array(cap * 3), size = new Float32Array(cap), alpha = new Float32Array(cap), shape = new Float32Array(cap);
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
@@ -67,29 +79,52 @@ function pointPool(scene, cap, blending) {
       size[n] = s; alpha[n] = Math.min(1, a); shape[n] = sh; n++;
     },
     end() {
-      for (const k of ['position', 'color', 'size', 'alpha', 'shape']) geo.attributes[k].needsUpdate = true;
+      for (const k of ['position', 'color', 'size', 'alpha', 'shape']) must(geo.attributes[k]).needsUpdate = true;
       geo.setDrawRange(0, n);
     }
   };
 }
 
-export function createParticles({ scene, camera, renderer, W, D, S, api, ripple }) {
+// Častice stoja na zemi (výška z mriežky sveta), poloha a rozmer kamery, cieľ kamery (okolo hráča) a ovzdušie
+export interface ParticleCtx {
+  // fineBox(i) = obal i-teho jemného modelu vo svete (lístie padá z koruny stromu)
+  grid: Grid | null; fine: FineInfo[] | null; fineBox: (i: number) => THREE.Box3 | undefined; target: THREE.Vector3; viewW: number; viewH: number;
+  se: number; min: number; lit: RGB; cauldron: { x: number; y: number; z: number } | null; lantern: { x: number; y: number; z: number } | null;
+}
+export interface ParticlesInit { scene: THREE.Scene; camera: THREE.OrthographicCamera; renderer: THREE.WebGLRenderer; S: ClientState; ripple: (x: number, z: number, k: number) => void }
+export interface Particles {
+  update: (dt: number, t: number, ctx: ParticleCtx) => void;
+  fairyLights: (grid: Grid | null, t: number, add: (x: number, y: number, z: number, r: number) => void) => void;
+  setQuality: (q: string) => void;
+  readonly quality: string;
+}
+interface Flame { x: number; y: number; z: number; vx: number; vz: number; vy: number; life: number; max: number; s: number; ph: number }
+interface Ember { x: number; y: number; z: number; vx: number; vz: number; vy: number; life: number; max: number; ph: number }
+interface Smoke { x: number; y: number; z: number; vy: number; life: number; max: number }
+interface Spark { x: number; y: number; z: number; vy: number; life: number; max: number; c: RGB; ph: number }
+interface Leaf { x: number; y: number; z: number; vy: number; ph: number; sw: number; life: number; rest: number; c: RGB; s: number }
+interface Splash { x: number; y: number; z: number; vx: number; vz: number; vy: number; life: number; max: number }
+interface Dig { x: number; y: number; z: number; vx: number; vz: number; vy: number; life: number; rest: number; c: RGB; s: number }
+interface Fly { x: number; y: number; z: number; r: number; w: RGB; ph: RGB; blink: number; bp: number; a: number; out: boolean }
+interface Drop { x: number; y: number; z: number; v: number }
+interface Flake { x: number; y: number; z: number; v: number; ph: number; sw: number; s: number; rest: number; out: boolean }
+export function createParticles({ scene, camera, renderer, S, ripple }: ParticlesInit): Particles {
   const glow = pointPool(scene, 1400, THREE.AdditiveBlending);
   const soft = pointPool(scene, 900, THREE.NormalBlending);
   const snowPool = pointPool(scene, 700, THREE.NormalBlending);
 
   // ---------- Kvalita (nastavenie zariadenia): na telefóne predvolene menej častíc ----------
   const QUALITY = ['low', 'high'];
-  let quality = matchMedia && matchMedia('(pointer: coarse)').matches ? 'low' : 'high';
-  try { const q = localStorage.getItem('mfParticles'); if (QUALITY.includes(q)) quality = q; } catch (e) { }
-  function setQuality(q) { if (!QUALITY.includes(q)) return; quality = q; try { localStorage.setItem('mfParticles', q); } catch (e) { } }
+  let quality = matchMedia('(pointer: coarse)').matches ? 'low' : 'high';
+  try { const q = localStorage.getItem('mfParticles'); if (q && QUALITY.includes(q)) quality = q; } catch { /* súkromné okno bez úložiska */ }
+  function setQuality(q: string): void { if (!QUALITY.includes(q)) return; quality = q; try { localStorage.setItem('mfParticles', q); } catch { /* súkromné okno bez úložiska */ } }
   const k = () => (quality === 'high' ? 1 : 0.45);
 
   // ---------- Dážď: pásiky orientované ku kamere (čiary vo WebGL majú len 1 px) ----------
   const RAIN_MAX = 800;
   const rainGeo = new THREE.BufferGeometry();
   const rPos = new Float32Array(RAIN_MAX * 4 * 3), rAlpha = new Float32Array(RAIN_MAX * 4), rCol = new Float32Array(RAIN_MAX * 4 * 3);
-  const rIdx = [];
+  const rIdx: number[] = [];
   for (let i = 0; i < RAIN_MAX; i++) { const v = i * 4; rIdx.push(v, v + 1, v + 2, v, v + 2, v + 3); }
   rainGeo.setIndex(rIdx);
   rainGeo.setAttribute('position', new THREE.BufferAttribute(rPos, 3).setUsage(THREE.DynamicDrawUsage));
@@ -98,51 +133,51 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
   const rainMesh = new THREE.Mesh(rainGeo, new THREE.ShaderMaterial({ vertexShader: RAIN_VERT, fragmentShader: RAIN_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide }));
   rainMesh.frustumCulled = false; rainMesh.layers.set(1); rainMesh.renderOrder = 21;
   scene.add(rainMesh);
-  const drops = [];
+  const drops: Drop[] = [];
   const WIND = 1.6, FALL = 13, TOP = 8;
   let lastRipple = 0;
 
   // ---------- Sneh: vločky padajú pomaly, kolíšu sa, dopadnú na zem a chvíľu na nej ležia ----------
   const SNOW_MAX = 520, SNOW_FALL = 1.1, SNOW_WIND = 0.35, SNOW_TOP = 9, SNOW_REST = 2.5;
-  const SNOW_COL = [0.97, 0.98, 1];
-  let flakes = [];
+  const SNOW_COL: RGB = [0.97, 0.98, 1];
+  let flakes: Flake[] = [];
 
   // ---------- Stav častíc ----------
-  let flames = [], embers = [], smoke = [], sparks = [], leaves = [], splashes = [], digs = [];
+  let flames: Flame[] = [], embers: Ember[] = [], smoke: Smoke[] = [], sparks: Spark[] = [], leaves: Leaf[] = [], splashes: Splash[] = [], digs: Dig[] = [];
   const DIG_COLS = ['#7a4a20', '#5b3a1a', '#74b84a', '#9b7b45'].map(hex);
   let fireAcc = 0, emberAcc = 0, smokeAcc = 0;
   // svetlušky: domovy pri stromoch, jazierku a hubovom kruhu (prepočítajú sa, keď sa zmení mapa)
-  let flies = [], homes = [], homesSig = '';
-  const FLY_COL = [0.78, 1, 0.32], FLY_HOME = { tree: 1, water: 1, shroom: 1 };
-  function flyHomes() {
-    const sig = (S.tilesGen || 0) + ':' + S.tiles.length + ':' + S.tiles.reduce((n, t) => n + (FLY_HOME[t.g] ? 1 : 0), 0);
+  let flies: Fly[] = [], homes: { x: number; z: number; water: boolean }[] = [], homesSig = '';
+  const FLY_COL: RGB = [0.78, 1, 0.32], FLY_HOME = new Set(['tree', 'water', 'shroom']);
+  function flyHomes(): void {
+    const sig = (S.tilesGen || 0) + ':' + S.tiles.length + ':' + S.tiles.reduce((n, t) => n + (FLY_HOME.has(t.g) ? 1 : 0), 0);
     if (sig === homesSig) return;
     homesSig = sig; homes = [];
-    S.tiles.forEach((t, i) => { if (FLY_HOME[t.g]) homes.push({ x: i % S.W + 0.5, z: ((i / S.W) | 0) + 0.5, water: t.g === 'water' }); });
+    S.tiles.forEach((t, i) => { if (FLY_HOME.has(t.g)) homes.push({ x: i % S.W + 0.5, z: ((i / S.W) | 0) + 0.5, water: t.g === 'water' }); });
   }
-  const FLAME_HOT = [1, 0.95, 0.62], FLAME_MID = [1, 0.55, 0.14], FLAME_END = [0.75, 0.16, 0.05];
-  const RAIN_COL = [0.72, 0.82, 0.98], SMOKE_COL = [0.55, 0.55, 0.58], SPLASH_COL = [0.75, 0.86, 1];
-  const fairyCol = new Map();
-  const colOf = c => { let v = fairyCol.get(c); if (!v) { v = hex(c); fairyCol.set(c, v); } return v; };
+  const FLAME_HOT: RGB = [1, 0.95, 0.62], FLAME_MID: RGB = [1, 0.55, 0.14], FLAME_END: RGB = [0.75, 0.16, 0.05];
+  const RAIN_COL: RGB = [0.72, 0.82, 0.98], SMOKE_COL: RGB = [0.55, 0.55, 0.58], SPLASH_COL: RGB = [0.75, 0.86, 1];
+  const fairyCol = new Map<string, RGB>();
+  const colOf = (c: string): RGB => { let v = fairyCol.get(c); if (!v) { v = hex(c); fairyCol.set(c, v); } return v; };
 
   // kvapky živice v modeli obrovského stromu (vrch každého pramienka, v blokoch od rohu modelu) – raz pre každý tvar
-  const sapCache = new WeakMap();
-  function sapDrops(f) {
+  const sapCache = new WeakMap<Uint8Array, [number, number, number, number][]>();
+  function sapDrops(f: FineInfo): [number, number, number, number][] {
     let out = sapCache.get(f.data);
     if (out) return out;
     out = [];
-    const { sx, sy, sz, data } = f, SAP = W.M.SAP, F = W.FINE, at = (x, y, z) => data[(z * sy + y) * sx + x];
+    const { sx, sy, sz, data } = f, SAP = W.M.SAP, F = W.FINE, at = (x: number, y: number, z: number): number | undefined => data[(z * sy + y) * sx + x];
     for (let z = 0; z < sz; z++) for (let y = 0; y < sy - 1; y++) for (let x = 0; x < sx; x++)
       if (at(x, y, z) === SAP && at(x, y + 1, z) !== SAP) out.push([(x + 0.5) / F, (y + 0.5) / F, (z + 0.5) / F, (x * 7 + z * 13 + y) % 6.28]);
     sapCache.set(f.data, out);
     return out;
   }
   const camRight = new THREE.Vector3();
-  const tileAt = (x, z) => { const tx = Math.floor(x), tz = Math.floor(z); return tx >= 0 && tz >= 0 && tx < S.W && tz < S.H ? tz * S.W + tx : -1; };
-  const groundAt = (grid, x, z) => { const i = tileAt(x, z); return i < 0 || !grid ? 0 : W.surfaceY(grid, i % S.W, (i / S.W) | 0); };
+  const tileAt = (x: number, z: number): number => { const tx = Math.floor(x), tz = Math.floor(z); return tx >= 0 && tz >= 0 && tx < S.W && tz < S.H ? tz * S.W + tx : -1; };
+  const groundAt = (grid: Grid | null, x: number, z: number): number => { const i = tileAt(x, z); return i < 0 || !grid ? 0 : W.surfaceY(grid, i % S.W, (i / S.W) | 0); };
 
   // poloha víly (obieha okolo stredu z S.fx, len v teréne a s výškou)
-  function fairyPos(grid, p, t) {
+  function fairyPos(grid: Grid | null, p: FxFairy): { x: number; y: number; z: number } {
     const ang = p.a + p.life * 1.6;
     const x = p.cx + Math.cos(ang) * p.rad, z = p.cy + Math.sin(ang * 1.3) * p.rad * 0.8;
     const y = groundAt(grid, p.cx, p.cy) + 0.85 + Math.sin(ang * 2.1 + p.a) * 0.3;
@@ -150,20 +185,21 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
   }
 
   // Víly ako svetlá v noci (volá sa pri skladaní zoznamu svetiel)
-  function fairyLights(grid, t, add) {
-    for (const p of S.fx) if (p.fairy) { const f = fairyPos(grid, p, t); add(f.x, f.y, f.z, 1.5 * Math.min(1, p.life * 2, (p.max - p.life) * 2)); }
+  function fairyLights(grid: Grid | null, _t: number, add: (x: number, y: number, z: number, r: number) => void): void {
+    for (const p of S.fx) if (p.fairy) { const f = fairyPos(grid, p); add(f.x, f.y, f.z, 1.5 * Math.min(1, p.life * 2, (p.max - p.life) * 2)); }
   }
 
   // ctx: { grid, fine, fineMeshes, target, viewW, viewH, se, lit, cauldron }
-  function update(dt, t, ctx) {
+  function update(dt: number, t: number, ctx: ParticleCtx): void {
     const { grid, target, se, lit } = ctx;
     const q = k();
     const span = Math.max(ctx.viewW, ctx.viewH * 1.75) / 2 + 1.5; // polovica štvorca okolo hráča, kde sa častice oplatí počítať
-    const near = (x, z, m = 0) => Math.abs(x - target.x) < span + m && Math.abs(z - target.z) < span + m;
-    const litC = c => [c[0] * lit[0], c[1] * lit[1], c[2] * lit[2]];
+    const near = (x: number, z: number, m = 0): boolean => Math.abs(x - target.x) < span + m && Math.abs(z - target.z) < span + m;
+    const litC = (c: RGB): RGB => [c[0] * lit[0], c[1] * lit[1], c[2] * lit[2]];
     camRight.setFromMatrixColumn(camera.matrixWorld, 0);
     const buf = renderer.getDrawingBufferSize(new THREE.Vector2());
-    glow.mat.uniforms.pxPerUnit.value = soft.mat.uniforms.pxPerUnit.value = snowPool.mat.uniforms.pxPerUnit.value = buf.y / (camera.top - camera.bottom);
+    const px = buf.y / (camera.top - camera.bottom);
+    for (const pool of [glow, soft, snowPool]) must(pool.mat.uniforms['pxPerUnit']).value = px;
     glow.toCam.copy(camera.position).sub(target).normalize(); soft.toCam.copy(glow.toCam);
     glow.begin(); soft.begin(); snowPool.begin();
 
@@ -233,7 +269,7 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
     // ---- víly: žiara, biele jadro, mihajúce sa krídelká a trblietavá stopa ----
     for (const p of S.fx) {
       if (!p.fairy) continue;
-      const f = fairyPos(grid, p, t), c = colOf(p.color);
+      const f = fairyPos(grid, p), c = colOf(p.color);
       const a = Math.min(1, p.life * 2, (p.max - p.life) * 2);
       glow.put(f.x, f.y, f.z, c, 0.6, 0.6 * a, GLOW);
       glow.put(f.x, f.y, f.z, [1, 1, 1], 0.16, a, GLOW);
@@ -262,11 +298,12 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
     if (se !== 3 && ctx.fine) {
       ctx.fine.forEach((f, i) => {
         if (f.type !== 'tree') return;
-        const mats = W.leafMats(f.kind, se), m = ctx.fineMeshes[i];
-        if (!mats || !m || !near(f.ox + 1, f.oz + 1, 1)) return;
+        const mats = W.leafMats(String(f.kind), se), b = ctx.fineBox(i);
+        if (!mats || !b || !near(f.ox + 1, f.oz + 1, 1)) return;
         const rate = (se === 2 ? 0.9 : se === 0 && f.kind === 'jablon' ? 0.4 : 0.06) * q;
         if (Math.random() >= dt * rate) return;
-        const b = m.userData.box, w = b.max.x - b.min.x, d = b.max.z - b.min.z, h = b.max.y - b.min.y;
+        const w = b.max.x - b.min.x, d = b.max.z - b.min.z, h = b.max.y - b.min.y;
+
         const mat = pick(mats);
         leaves.push({
           x: rnd(b.min.x + w * 0.2, b.max.x - w * 0.2), y: rnd(b.min.y + h * 0.5, b.max.y - h * 0.15), z: rnd(b.min.z + d * 0.2, b.max.z - d * 0.2),
@@ -287,7 +324,7 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
       // lístok sa pri páde preklápa – striedavo svieti a tmavne jeho plocha
       const flip = p.rest < 0 ? 0.7 + 0.3 * Math.sin(p.life * 6 + p.ph) : 0.8;
       const a = p.rest < 0 ? Math.min(1, p.life * 3) : Math.min(1, 4 - p.rest);
-      soft.put(p.x, p.y, p.z, litC(p.c).map(v => v * flip), p.s * (p.rest < 0 ? 0.7 + 0.3 * Math.abs(Math.sin(p.life * 3 + p.ph)) : 1), a, PIXEL);
+      soft.put(p.x, p.y, p.z, mixc([0, 0, 0], litC(p.c), flip), p.s * (p.rest < 0 ? 0.7 + 0.3 * Math.abs(Math.sin(p.life * 3 + p.ph)) : 1), a, PIXEL);
       return true;
     });
 
@@ -302,7 +339,7 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
         flies.push({ x, z, y: (h.water ? W.WATER_Y : groundAt(grid, x, z)) + rnd(0.3, 1.3), r: rnd(0.3, 0.8), w: [rnd(0.2, 0.5), rnd(0.3, 0.7), rnd(0.2, 0.5)], ph: [rnd(0, 9), rnd(0, 9), rnd(0, 9)], blink: rnd(1.3, 2.6), bp: rnd(0, 9), a: 0, out: false });
       }
     }
-    if (flies.length > flyWant) for (let i = flyWant; i < flies.length; i++) flies[i].out = true;
+    for (const f of flies.slice(flyWant)) f.out = true;
     flies = flies.filter(f => {
       f.a = Math.max(0, Math.min(1, f.a + (f.out || !near(f.x, f.z, 1) ? -dt : dt * 0.5)));
       if (f.out && f.a <= 0) return false;
@@ -331,7 +368,7 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
       const g = groundAt(grid, p.x, p.z);
       if (p.y <= g) {
         const ti = tileAt(p.x, p.z);
-        if (ti >= 0 && S.tiles[ti].g === 'water') {
+        if (ti >= 0 && S.tiles[ti]?.g === 'water') {
           if (now - lastRipple > 280) { lastRipple = now; ripple(p.x, p.z, 0.3); }
         } else if (Math.random() < 0.35 * q) {
           for (let j = 0; j < 2; j++) splashes.push({ x: p.x, y: g + 0.02, z: p.z, vx: rnd(-0.5, 0.5), vz: rnd(-0.5, 0.5), vy: rnd(0.7, 1.2), life: 0, max: 0.28 });
@@ -344,10 +381,10 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
       rPos[o + 3] = p.x + ox; rPos[o + 4] = p.y; rPos[o + 5] = p.z + oz;
       rPos[o + 6] = tx + ox; rPos[o + 7] = ty; rPos[o + 8] = p.z + oz;
       rPos[o + 9] = tx - ox; rPos[o + 10] = ty; rPos[o + 11] = p.z - oz;
-      for (let j = 0; j < 4; j++) { rAlpha[n * 4 + j] = j < 2 ? 0.55 : 0.05; rCol[(n * 4 + j) * 3] = rc[0]; rCol[(n * 4 + j) * 3 + 1] = rc[1]; rCol[(n * 4 + j) * 3 + 2] = rc[2]; }
+      for (let j = 0; j < 4; j++) { rAlpha[n * 4 + j] = j < 2 ? 0.55 : 0.05; rCol.set(rc, (n * 4 + j) * 3); }
       n++;
     }
-    for (const k2 of ['position', 'alpha', 'color']) rainGeo.attributes[k2].needsUpdate = true;
+    for (const k2 of ['position', 'alpha', 'color']) must(rainGeo.attributes[k2]).needsUpdate = true;
     rainGeo.setDrawRange(0, n * 6);
     rainMesh.visible = n > 0;
     splashes = splashes.filter(p => {
@@ -362,12 +399,12 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
     const snowWant = snowing ? Math.round(SNOW_MAX * q) : 0;
     // nové vločky sa objavia v rôznej výške, aby sneženie nezačalo naraz celou vrstvou
     while (flakes.length < snowWant) flakes.push(newFlake(rnd(0, SNOW_TOP)));
-    function newFlake(h) {
+    function newFlake(h: number): Flake {
       const x = target.x + rnd(-span, span), z = target.z + rnd(-span, span);
       return { x, z, y: groundAt(grid, x, z) + h, v: rnd(0.7, 1.3), ph: Math.random() * 9, sw: rnd(0.15, 0.4), s: rnd(0.09, 0.14), rest: -1, out: false };
     }
     // keď prestane snežiť, vločky dopadajú ďalej, len sa už nevracajú hore
-    for (let i = snowWant; i < flakes.length; i++) flakes[i].out = true;
+    for (const f of flakes.slice(snowWant)) f.out = true;
     const sc = litC(SNOW_COL);
     flakes = flakes.filter(p => {
       if (p.rest < 0) {
@@ -377,7 +414,7 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
         // vločka mimo štvorca okolo hráča sa objaví na druhej strane
         if (p.x - target.x > span) p.x -= 2 * span; else if (p.x - target.x < -span) p.x += 2 * span;
         if (p.z - target.z > span) p.z -= 2 * span; else if (p.z - target.z < -span) p.z += 2 * span;
-        const ti = tileAt(p.x, p.z), water = ti >= 0 && S.tiles[ti].g === 'water';
+        const ti = tileAt(p.x, p.z), water = ti >= 0 && S.tiles[ti]?.g === 'water';
         const g = water ? W.WATER_Y : groundAt(grid, p.x, p.z);
         // za okrajom ostrova niet kam dopadnúť – vločka padá ďalej dolu a potom sa vráti hore
         if (ti < 0) { if (p.y < target.y - 8) p.rest = SNOW_REST; }
@@ -396,7 +433,8 @@ export function createParticles({ scene, camera, renderer, W, D, S, api, ripple 
     });
 
     // ---- hľadanie semienok: zo stredu hľadaného políčka jemne odletuje hlinka a tráva sprava doľava (na obrazovke) ----
-    const diggers = [S.mySi].concat([...S.others.values()].map(o => o.si)).filter(si => si != null && si >= 0);
+    const diggers = [S.mySi, ...[...S.others.values()].map(o => o.si)].filter((si): si is number => si != null && si >= 0);
+
     for (const si of diggers) {
       const x = si % S.W + 0.5, z = ((si / S.W) | 0) + 0.5;
       if (!near(x, z) || Math.random() >= dt * 12 * q) continue;
