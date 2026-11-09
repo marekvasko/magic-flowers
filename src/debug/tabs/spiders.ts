@@ -1,7 +1,12 @@
-// Sprity pavúkov v /debug → Generators → Spiders (#57): pre každý druh 3D model (Three.js zo shared/spidermodel.js)
+// Sprity pavúkov v /debug → Generators → Spiders (#57): pre každý druh 3D model (Three.js zo shared/spidermodel.ts)
 // a 2D sprite z jednoduchých tvarov (ten istý model premietnutý do elíps a úsečiek, ako v hre) vedľa seba
 // vo všetkých 16 pohľadoch (8 na zemi, 8 na zvislej ploche chrbtom/bruchom), zhoda obrysov (IoU) a fotky predlôh.
-import * as THREE from '/vendor/three/three.module.js';
+import * as THREE from 'three';
+import * as SM from '../../shared/spidermodel.ts';
+import type { Layout } from '../../shared/spidermodel.ts';
+import { lookup, must } from '../../shared/util.ts';
+import type { TabCtx, h as H } from '../ui.ts';
+import type { seg as Seg } from './assets.ts';
 
 export const CSS = `
 .spd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin-top: 10px; }
@@ -13,33 +18,36 @@ export const CSS = `
 .spd-refs figure { margin: 0; width: 200px; font-size: 11px; color: var(--muted); }
 .spd-refs img { width: 200px; height: 150px; object-fit: cover; border-radius: 6px; }
 `;
-const REFS = {
+const REFS: Readonly<Partial<Record<string, readonly (readonly [string, string])[]>>> = {
   k: [['Araneus diadematus (dorsal).jpg', 'dorsal'], ['Araneus diadematus (ventral).jpg', 'ventral, in web']],
   v: [['Hogna radiata (AF)-top 01.png', 'dorsal'], ['Female Hogna radiata from izmir.jpg', 'front'], ['Hogna radiata female preserved specimen 2.png', 'ventral']],
   p: [['Araneus angulatus female preserved specimen 1.png', 'dorsal'], ['Araneus angulatus female preserved specimen 2.png', 'ventral'], ['Araneus angulatus (Araneidae) - (female subadult), Bergherbosch (Montferland), the Netherlands.jpg', 'live']]
 };
-const thumb = f => 'https://commons.wikimedia.org/wiki/Special:FilePath/' + encodeURIComponent(f) + '?width=400';
-const page = f => 'https://commons.wikimedia.org/wiki/File:' + encodeURIComponent(f.replace(/ /g, '_'));
+const thumb = (f: string): string => 'https://commons.wikimedia.org/wiki/Special:FilePath/' + encodeURIComponent(f) + '?width=400';
+const page = (f: string): string => 'https://commons.wikimedia.org/wiki/File:' + encodeURIComponent(f.replace(/ /g, '_'));
 const BG = { ground: '#6f7d5e', dark: '#141a16' };
 
-export function spiderView({ h, ctx, mainEl, save, seg }) {
-  const SM = window.SpiderModel;
-  const KINDS = Object.keys(SM.SPECIES);
+type Kind = keyof typeof SM.SPECIES;
+// Pohľad pavúkov v Generators: h, kontext (parametre v adrese), plocha, uloženie stavu a prepínač
+export interface SpiderViewInit { h: typeof H; ctx: Pick<TabCtx, 'param' | 'setParam' | 'D'>; mainEl: HTMLElement; save: () => void; seg: typeof Seg }
+export function spiderView({ h, ctx, mainEl, save, seg }: SpiderViewInit): { dispose: () => void } {
+  const KINDS = Object.keys(SM.SPECIES).filter((k): k is Kind => k in SM.SPECIES);
+  const sk = ctx.param('sk');
   const st = {
-    kind: KINDS.includes(ctx.param('sk')) ? ctx.param('sk') : 'v',
-    frame: Math.max(0, Math.min(SM.FRAMES - 1, parseInt(ctx.param('sf'), 10) || 0)),
-    zoom: Math.max(1, Math.min(4, parseInt(ctx.param('sz'), 10) || 2)),
-    bg: ctx.param('sb') === 'dark' ? 'dark' : 'ground',
+    kind: KINDS.find(k => k === sk) ?? 'v',
+    frame: Math.max(0, Math.min(SM.FRAMES - 1, parseInt(ctx.param('sf') ?? '', 10) || 0)),
+    zoom: Math.max(1, Math.min(4, parseInt(ctx.param('sz') ?? '', 10) || 2)),
+    bg: ctx.param('sb') === 'dark' ? 'dark' as const : 'ground' as const,
     speed: 0 // index v SPEEDS: 0 = stojí, inak prehráva chôdzu rýchlosťou ako v hre
   };
   // rýchlosti z hry (D.SPIDERS), políčka/s
   const SP = ctx.D.SPIDERS;
-  const SPEEDS = {
+  const SPEEDS: Readonly<Record<Kind, readonly (readonly [string, number])[]>> = {
     k: [['stand', 0], ['run', SP.kriziak.run], ['flee', SP.kriziak.flee], ['climb', SP.kriziak.climb]],
     v: [['stand', 0], ['walk', SP.vlciak.walk], ['run', SP.vlciak.run], ['climb', SP.vlciak.climb]],
     p: [['stand', 0], ['walk', SP.pradlena.walk], ['climb', SP.pradlena.climb]]
   };
-  const sprites = []; // { c, view } – 2D sprity v mriežke, prekresľujú sa pri prehrávaní
+  const sprites: { c: HTMLCanvasElement; view: string }[] = []; // 2D sprity v mriežke, prekresľujú sa pri prehrávaní
   const bar = h('div', { class: 'as-bar' });
   const speedInfo = h('span', { class: 'muted' });
   const info = h('div', { class: 'muted' });
@@ -53,25 +61,27 @@ export function spiderView({ h, ctx, mainEl, save, seg }) {
   scene.add(new THREE.HemisphereLight(0xffffff, 0x404040, 1.6));
   const sun = new THREE.DirectionalLight(0xffffff, 1.8); sun.position.set(-0.35, 1, 0.45); scene.add(sun);
   const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 100);
-  cam.up.set(...SM.CAM.u); cam.position.set(...SM.CAM.c.map(v => v * 20)); cam.lookAt(0, 0, 0);
+  cam.up.set(...SM.CAM.u); cam.position.set(SM.CAM.c[0] * 20, SM.CAM.c[1] * 20, SM.CAM.c[2] * 20); cam.lookAt(0, 0, 0);
   const VIEWS = SM.VIEWS.concat(SM.TRUNK, ['dorsal', 'ventral']);
   let raf = 0, last = 0;
+  const speeds = (): readonly (readonly [string, number])[] => SPEEDS[st.kind];
 
-  function renderBar() {
+  function renderBar(): void {
     bar.replaceChildren(
-      seg(h, KINDS.map(k => SM.SPECIES[k].name), KINDS.indexOf(st.kind), i => { st.kind = KINDS[i]; saveSt(); renderBar(); rebuild(); }),
+      seg(h, KINDS.map(k => SM.SPECIES[k].name), KINDS.indexOf(st.kind), i => { st.kind = must(KINDS[i]); saveSt(); renderBar(); rebuild(); }),
       seg(h, Array.from({ length: SM.FRAMES }, (_, i) => i ? String(i) : 'frame 0'), st.frame, i => { st.frame = i; saveSt(); renderBar(); rebuild(); }),
-      seg(h, SPEEDS[st.kind].map(([n, v]) => v ? `${n} ${v}` : n), Math.min(st.speed, SPEEDS[st.kind].length - 1), i => { st.speed = i; renderBar(); if (i) { last = 0; loop(performance.now()); } }),
+      seg(h, speeds().map(([n, v]) => v ? `${n} ${v}` : n), Math.min(st.speed, speeds().length - 1), i => { st.speed = i; renderBar(); if (i) { last = 0; loop(performance.now()); } }),
       seg(h, ['1×', '2×', '3×', '4×'], st.zoom - 1, i => { st.zoom = i + 1; saveSt(); renderBar(); rebuild(); }),
       seg(h, ['ground', 'dark'], st.bg === 'dark' ? 1 : 0, i => { st.bg = i ? 'dark' : 'ground'; saveSt(); renderBar(); rebuild(); }),
       speedInfo);
-    if (!SPEEDS[st.kind][st.speed]) st.speed = 0;
+    if (!speeds()[st.speed]) st.speed = 0;
   }
-  function saveSt() { ctx.setParam && (ctx.setParam('sk', st.kind), ctx.setParam('sf', st.frame), ctx.setParam('sz', st.zoom), ctx.setParam('sb', st.bg)); save(); }
+  function saveSt(): void { ctx.setParam('sk', st.kind); ctx.setParam('sf', st.frame); ctx.setParam('sz', st.zoom); ctx.setParam('sb', st.bg); save(); }
+  const ctx2 = (cv: HTMLCanvasElement): CanvasRenderingContext2D => must(cv.getContext('2d') ?? undefined);
 
   // 2D sprite ako v hre; na tmavom pozadí stmavený (ako v Lese divov) a so svitom očí
-  function paint(cv, view, f) {
-    const g = cv.getContext('2d'), L = SM.layout(st.kind, view);
+  function paint(cv: HTMLCanvasElement, view: string, f: number): void {
+    const g = ctx2(cv), L = SM.layout(st.kind, view);
     g.clearRect(0, 0, cv.width, cv.height);
     SM.sprite(g, st.kind, view, f);
     if (st.bg !== 'dark') return;
@@ -79,10 +89,10 @@ export function spiderView({ h, ctx, mainEl, save, seg }) {
     SM.glow(g, st.kind, L.eyes[f], L.ox, L.oy, L.ppu, 1);
   }
   // obrys z alfa kanála
-  const mask = cv => { const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data, m = new Uint8Array(cv.width * cv.height); for (let i = 0; i < m.length; i++) m[i] = d[i * 4 + 3] > 100 ? 1 : 0; return m; };
-  function iou(a, b) { let i = 0, u = 0; for (let k = 0; k < a.length; k++) { i += a[k] & b[k]; u += a[k] | b[k]; } return u ? i / u : 1; }
+  const mask = (cv: HTMLCanvasElement): Uint8Array => { const d = ctx2(cv).getImageData(0, 0, cv.width, cv.height).data, m = new Uint8Array(cv.width * cv.height); for (let i = 0; i < m.length; i++) m[i] = (d[i * 4 + 3] ?? 0) > 100 ? 1 : 0; return m; };
+  function iou(a: Uint8Array, b: Uint8Array): number { let i = 0, u = 0; for (let k = 0; k < a.length; k++) { const x = a[k] ?? 0, y = b[k] ?? 0; i += x & y; u += x | y; } return u ? i / u : 1; }
 
-  function cell(view, phase) {
+  function cell(view: string): { c2: HTMLCanvasElement; c3: HTMLCanvasElement; score: number; L: Layout } {
     const L = SM.layout(st.kind, view), z = st.zoom;
     // 2D sprite (rovnaký kód ako v hre)
     const c2 = document.createElement('canvas'); c2.width = L.w; c2.height = L.h;
@@ -93,14 +103,14 @@ export function spiderView({ h, ctx, mainEl, save, seg }) {
     cam.left = -L.ox / L.ppu; cam.right = (L.w - L.ox) / L.ppu; cam.top = L.oy / L.ppu; cam.bottom = -(L.h - L.oy) / L.ppu; cam.updateProjectionMatrix();
     const g = SM.buildMesh(THREE, st.kind, st.frame * 2 * Math.PI / SM.FRAMES, view);
     scene.add(g); renderer.render(scene, cam); scene.remove(g);
-    g.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
-    const c3 = document.createElement('canvas'); c3.width = L.w; c3.height = L.h; c3.getContext('2d').drawImage(renderer.domElement, 0, 0);
+    g.traverse(o => { if (o instanceof THREE.Mesh) { const m: unknown = o.material, geo: unknown = o.geometry; if (geo instanceof THREE.BufferGeometry) geo.dispose(); if (m instanceof THREE.Material) m.dispose(); } });
+    const c3 = document.createElement('canvas'); c3.width = L.w; c3.height = L.h; ctx2(c3).drawImage(renderer.domElement, 0, 0);
     const score = iou(mask(c2), mask(c3));
     for (const cv of [c3, c2]) { cv.style.width = cv.width * z / 2 + 'px'; cv.style.background = BG[st.bg]; }
     return { c2, c3, score, L };
   }
-  function rebuild() {
-    const out = [];
+  function rebuild(): void {
+    const out: string[] = [];
     let sum = 0;
     sprites.length = 0;
     grid.replaceChildren(...VIEWS.map(v => {
@@ -112,14 +122,15 @@ export function spiderView({ h, ctx, mainEl, save, seg }) {
     }));
     const K = SM.SPECIES[st.kind];
     info.textContent = `${K.name} (${K.ref}) – span ${K.span} tiles${K.top ? ', height ' + K.top : ''} · ${K.ppu} px/tile · mean silhouette IoU ${(sum / VIEWS.length).toFixed(3)}`;
-    refs.replaceChildren(...(REFS[st.kind] || []).map(([f, label]) => h('figure', null, h('a', { href: page(f), target: '_blank' }, h('img', { src: thumb(f), alt: f, loading: 'lazy' })), h('figcaption', null, label + ' – ' + f))));
+    refs.replaceChildren(...(lookup(REFS, st.kind) || []).map(([f, label]) => h('figure', null, h('a', { href: page(f), target: '_blank' }, h('img', { src: thumb(f), alt: f, loading: 'lazy' })), h('figcaption', null, label + ' – ' + f))));
   }
   // Prehrávanie ako v hre: fáza podľa prejdenej dráhy (SpiderModel.stepPhase), snímka SpiderModel.frameOf; prekresľujú
   // sa len 2D sprity (3D model ostane na zvolenej snímke).
   let phase = 0;
-  function loop(t) {
+  function loop(t: number): void {
     cancelAnimationFrame(raf);
-    const sp = SPEEDS[st.kind][st.speed];
+    const sp = speeds()[st.speed];
+
     if (!sp || !sp[1]) { speedInfo.textContent = ''; return; }
     raf = requestAnimationFrame(loop);
     const dt = last ? Math.min(0.1, (t - last) / 1000) : 0;

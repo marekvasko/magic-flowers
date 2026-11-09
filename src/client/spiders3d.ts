@@ -15,6 +15,9 @@ import { must } from '../shared/util.ts';
 import type { Spider, ViewState } from './state.ts';
 
 type Three = typeof THREE;
+const INFO = new WeakMap<THREE.Material, WebInfo>();
+// Popis pavučiny (stredy, kotvenie, výplň, vykreslenie…) podľa jej materiálu
+export function webInfo(o: { material: THREE.Material | THREE.Material[] }): WebInfo | undefined { return Array.isArray(o.material) ? undefined : INFO.get(o.material); }
 // Uniformy svetla sveta (render3d.ts – rovnaké objekty ako v shaderi sveta), ktoré číta aj hodváb
 // (typ, nie rozhranie: ShaderMaterial berie uniformy ako tabuľku { [meno]: IUniform })
 export type SilkWorld = {
@@ -24,8 +27,8 @@ export type SilkWorld = {
 };
 export type ViewUniform = THREE.IUniform<THREE.Vector3>;
 export interface LineFrame { res: THREE.IUniform<THREE.Vector2>; time: THREE.IUniform<number> }
-// Popis pavučiny pre /debug → Cobwebs (material.userData.info)
-interface WebInfo { hubs: number; moor: [number, number]; fill: number; render: 'shader' | 'lines'; segments?: number; copies?: number; hub?: Vec3 | null | undefined; anchors?: Vec3[] | undefined }
+// Popis pavučiny pre /debug → Cobwebs: webInfo(sieť)
+export interface WebInfo { hubs: number; moor: [number, number]; fill: number; render: 'shader' | 'lines'; segments?: number; copies?: number; hub?: Vec3 | null | undefined; anchors?: Vec3[] | undefined }
 
 // ---------- Shader pavučiny ----------
 // Pavučina sa nekreslí z obrázka – vlákna sa počítajú v každom pixeli z polohy na ploche pavučiny (v políčkach).
@@ -220,7 +223,7 @@ function webMaterialParts(THREE: Three, world: SilkWorld, view: ViewUniform, P: 
       uHX: { value: new THREE.Vector4(...hx) }, uHY: { value: new THREE.Vector4(...hy) }
     })
   });
-  mat.userData['info'] = { hubs: L.nH, moor: L.moor, fill: L.fill, render: 'shader' } satisfies WebInfo;
+  INFO.set(mat, { hubs: L.nH, moor: L.moor, fill: L.fill, render: 'shader' });
   return { mat, push: silk.uPush };
 }
 function silkUniforms(THREE: Three, world: SilkWorld, view: ViewUniform, P: WebParams, seed: number): SilkWorld & { uView: ViewUniform; uSeed: THREE.IUniform<number>; uC: THREE.IUniform<THREE.Vector4>; uPush: THREE.IUniform<THREE.Vector4> } {
@@ -301,7 +304,7 @@ function linesMesh(THREE: Three, world: SilkWorld, view: ViewUniform, P: WebPara
     })
   });
   const corner = 'hub' in th ? th : null;
-  mat.userData['info'] = { hubs: L.nH, moor: L.moor, fill: L.fill, render: 'lines', segments: th.count / 2, copies: n, hub: corner?.hub, anchors: corner?.anchors } satisfies WebInfo;
+  INFO.set(mat, { hubs: L.nH, moor: L.moor, fill: L.fill, render: 'lines', segments: th.count / 2, copies: n, hub: corner?.hub, anchors: corner?.anchors });
   const m = new THREE.LineSegments(g, mat);
   m.frustumCulled = false; // vydutie a kývanie mení tvar mimo pôvodnej rovinky
   return { m, push: silk.uPush };
