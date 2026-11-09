@@ -371,6 +371,37 @@ test('elixíry a studňa: dážď mení počasie, polieva a kŕmi ľadovec raz z
   assert.deepStrictEqual(E.commitBatch(poor, [act('well', 'ana', {})], SPEC).rejected.map(x => x.reject), ['Na prianie potrebuješ hodiť do studne 5 🪙.']);
 });
 
+test('krhla v zime (#87): zamrznuté jazierko a pleso len cez vysekaný otvor, studňa vždy, v lete ako doteraz', () => {
+  const dayOf = (se: number): number => se * D.DAYS_PER_SEASON + 1; // prvý deň obdobia se
+  const draw = (se: number, area: 'garden' | 'hory', g: 'water' | 'well', cut: boolean): { water: number; reject: string | null | undefined; splash: boolean } => {
+    const w = makeWorld(87, (dayOf(se) - 1) * TPD + D.DAWN_TICK + 6);
+    assert.strictEqual(D.seasonOf(D.dayOfTick(w.tick)), se);
+    const list = area === 'garden' ? w.tiles : w.hory, i = list.findIndex(t => t.g === g);
+    assert.ok(i >= 0, `${area} má políčko ${g}`);
+    if (cut) must(list[i]).cut = 1;
+    save(w, 'ana').water = 0;
+    let r = E.commitBatch(w, [act('drawWater', 'ana', { area, i })], SPEC);
+    if (cut && !r.rejected.length) { save(w, 'ana').water = 0; r = E.commitBatch(w, [act('drawWater', 'ana', { area, i })], SPEC); } // z jedného otvoru aj opakovane
+    return { water: save(w, 'ana').water, reject: r.rejected[0]?.reject, splash: r.outbox.some(m => json(m).includes('splash')) };
+  };
+  const cap = Econ.canCap(save(makeWorld(87), 'ana'));
+  // zima bez otvoru: žiadna voda, žiadne špliechnutie, hláška podľa plochy
+  assert.deepStrictEqual(draw(3, 'garden', 'water', false), { water: 0, reject: D.frozenWaterText('garden'), splash: false });
+  assert.deepStrictEqual(draw(3, 'hory', 'water', false), { water: 0, reject: D.frozenWaterText('hory'), splash: false });
+  assert.match(D.frozenWaterText('garden'), /^Jazierko je zamrznuté/);
+  assert.match(D.frozenWaterText('hory'), /^Pleso je zamrznuté/);
+  // zima s otvorom: naberie ako vždy
+  assert.deepStrictEqual(draw(3, 'garden', 'water', true), { water: cap, reject: undefined, splash: true });
+  assert.deepStrictEqual(draw(3, 'hory', 'water', true), { water: cap, reject: undefined, splash: true });
+  // studňa nezamŕza
+  assert.deepStrictEqual(draw(3, 'garden', 'well', false), { water: cap, reject: undefined, splash: true });
+  // ostatné obdobia bez zmeny
+  for (const se of [0, 1, 2]) {
+    assert.deepStrictEqual(draw(se, 'garden', 'water', false), { water: cap, reject: undefined, splash: true });
+    assert.deepStrictEqual(draw(se, 'hory', 'water', false), { water: cap, reject: undefined, splash: true });
+  }
+});
+
 test('ľadovňa a sklad: stavba, naplnenie ľadom pri ľadovni, vylepšenia (spoločné povolenie mení up), kotlík', () => {
   const w = makeWorld(14);
   w.icehouse = partial<Icehouse>({ built: false, ice: 0 }); Ice.applyIcehouse(w.icehouse, w.tiles);
