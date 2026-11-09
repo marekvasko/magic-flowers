@@ -398,11 +398,11 @@ export interface FadeBase {
 export type FadeConfig = FadeBase & { dark: Partial<FadeBase>; les: Partial<FadeBase> };
 export type FadeOverrides = Partial<FadeBase> & { dark?: Partial<FadeBase>; les?: Partial<FadeBase> };
 // Sieť alebo sprite, na ktorý sa dá ťuknúť: políčko, ku ktorému patrí (kmeň obra, rastlina, postavička)
-class TileMesh extends THREE.Mesh<THREE.BufferGeometry, THREE.Material> {
+export class TileMesh extends THREE.Mesh<THREE.BufferGeometry, THREE.Material> {
   tile: Pt | null = null;
 }
 // Jemný model (minikocky) vo svete: zoslabenie (fade 0–1, kam smeruje a do kedy), obal vo svete, hĺbkové dvojča a plný kmeň obra
-class FineMesh extends TileMesh {
+export class FineMesh extends TileMesh {
   fineType = ''; // druh modelu (tree, giant, house…)
   fade = 1; want = 1; wantUntil = 0;
   box = new THREE.Box3();
@@ -410,20 +410,20 @@ class FineMesh extends TileMesh {
   solidPart: TileMesh | null = null;
 }
 // Sprite (rastlina, postavička, pavúk): políčko, kľúč aktuálnej kresby a naposledy spočítané svetlo
-class TileSprite extends THREE.Sprite {
+export class TileSprite extends THREE.Sprite {
   tile: Pt | null = null;
   key = '';
   lit: V3 | null = null; litAt = 0;
 }
 // Postavička: plátno s kresbou, sprite, „duch“ (vidno ju aj za stenou) a tieň; výška pri chôdzi po schodoch (h, vh),
 // viditeľnosť pri príchode a odchode (vis) a v tme (seen)
-interface CharObj {
+export interface CharObj {
   c: HTMLCanvasElement; ctx: CanvasRenderingContext2D; tex: THREE.CanvasTexture; sp: TileSprite; ghost: THREE.Sprite;
   shadow: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
   h: number | null; vh: number; vis: number; seenArea: string; alive?: boolean; seen?: number;
   lastT?: number; wasWalking?: boolean; wx?: number; wz?: number; rippleAt?: number;
 }
-type CharId = number | 'me' | 'babka' | 'master';
+type CharId = number | string; // id hráča (na ladiacej stránke odtlačok kľúča) alebo 'me', 'babka', 'master'
 // Lúč slnka nad čistinou: sieť, jej jas a kde stojí (k = sila)
 interface Shaft { m: THREE.Mesh<THREE.CylinderGeometry, THREE.ShaderMaterial>; op: THREE.IUniform<number>; base: { x: number; z: number; k: number } }
 export interface Stats { calls: number; triangles: number; geometries: number; textures: number; w: number; h: number; pr: number; shadow: number; refl: number; scene: number }
@@ -431,9 +431,9 @@ export type WaterQuality = 'none' | 'medium' | 'real';
 // Vnútro 3D pohľadu pre ladiacu stránku (/debug → World)
 export interface DebugView {
   THREE: typeof THREE; scene: THREE.Scene; camera: THREE.OrthographicCamera; camTarget: THREE.Vector3; lightCam: THREE.OrthographicCamera;
-  renderer: THREE.WebGLRenderer; grid: Grid | null; mesh: THREE.Mesh | null; fineMeshes: THREE.Mesh[]; waterMesh: THREE.Mesh | null;
-  lilyMesh: THREE.Mesh | null; glacierMesh: THREE.Mesh | null; plantSprites: Map<number, THREE.Sprite>; chars: Map<CharId, CharObj>;
-  particleObjs: THREE.Object3D[]; lights: THREE.Vector4[]; materials: THREE.Material[]; groundY: (x: number, y: number) => number;
+  renderer: THREE.WebGLRenderer; grid: Grid | null; mesh: THREE.Mesh | null; fineMeshes: FineMesh[]; waterMesh: THREE.Mesh | null;
+  lilyMesh: THREE.Mesh | null; glacierMesh: THREE.Mesh | null; plantSprites: Map<number, TileSprite>; chars: Map<CharId, CharObj>;
+  particleObjs: THREE.Object3D[]; lights: THREE.Vector4[]; materials: THREE.ShaderMaterial[]; groundY: (x: number, y: number) => number;
 }
 export interface Render3D {
   frame: (t: number) => void; resize: () => void; pick: (x: number, y: number) => Pt | null; seenAt: (x: number, z: number) => number;
@@ -1892,7 +1892,7 @@ void main() {
       c.globalAlpha = 1;
     };
     spiders3d.overlay(c, ppb, t); // oči pavúkov v tme
-    for (const o of S.others.values()) { const co = chars.get(o.id); if (co) label(co, o.name, o.e, S.bubbles[o.id]); }
+    for (const o of S.others.values()) { const co = chars.get(o.id); if (co) label(co, o.name, o.e, typeof o.id === 'number' ? S.bubbles[o.id] : undefined); }
     const mo = chars.get('me'); if (mo) label(mo, S.name, S.myEmote, S.bubbles[S.id]);
     if (babka) label(babka, 'Babka', null, null);
     if (master) label(master, 'Majster hodvábu', null, null);

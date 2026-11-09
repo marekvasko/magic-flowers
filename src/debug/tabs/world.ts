@@ -1,18 +1,35 @@
-// Ladiaca stránka /debug, záložka World (#78): celý svet vykreslený herným 3D kódom (render3d.mjs) bez hráča –
+// Ladiaca stránka /debug, záložka World (#78): celý svet vykreslený herným 3D kódom (render3d.ts) bez hráča –
 // voľná kamera, čas dňa a obdobie nezávislé od hodín sveta, vrstvy a ladiace pomôcky (obaly modelov, mriežka,
 // miesta ťuknutia, prechody, svetlá, drôtený model, kamera tieňov). Údaje len číta cez /api/debug/world.
 // Texty sú po anglicky (nástroj pre správcu); mená hráčov idú do stránky len cez textContent.
+import * as THREE from 'three';
+import { create as createRender3D } from '../../client/render3d.ts';
+import type { DebugView, Render3D } from '../../client/render3d.ts';
+import type { ViewOther, ViewState } from '../../client/state.ts';
+import * as World3D from '../../shared/world3d.ts';
+import type { AreaId, Gate, Ground } from '../../shared/data.ts';
+import type { Weather } from '../../shared/save.ts';
+import type { WorldPlayer, WorldView } from '../../server/debug-api/world.ts';
+import { lookup, must } from '../../shared/util.ts';
+import type { TabCtx, TabInstance } from '../ui.ts';
+import { errText } from '../ui.ts';
+
+type Layer = 'terrain' | 'buildings' | 'trees' | 'rocks' | 'plants' | 'chars' | 'water' | 'glacier' | 'particles' | 'shadows' | 'lights';
+type Helper = 'boxes' | 'grid' | 'tap' | 'gates' | 'lights' | 'wire' | 'frustum';
+// online hráč ako postavička: k pohľadu (ViewOther) cieľ pohybu medzi obnoveniami
+type Walker = ViewOther & { id: string; tx: number; ty: number };
+interface Pt { x: number; y: number }
 
 const PITCH0 = Math.atan(1 / Math.SQRT2); // herný sklon kamery (izometria)
-const LAYERS = [
+const LAYERS: readonly (readonly [Layer, string])[] = [
   ['terrain', 'Terrain'], ['buildings', 'Buildings'], ['trees', 'Trees & bushes'], ['rocks', 'Rocks'], ['plants', 'Plants'],
   ['chars', 'Characters'], ['water', 'Water'], ['glacier', 'Glacier'], ['particles', 'Particles'], ['shadows', 'Shadows'], ['lights', 'Lamp lights']
 ];
-const HELPERS = [
+const HELPERS: readonly (readonly [Helper, string])[] = [
   ['boxes', 'Bounding boxes'], ['grid', 'Tile grid'], ['tap', 'Tap areas'], ['gates', 'Gates, arrivals'],
   ['lights', 'Lights & sun'], ['wire', 'Wireframe'], ['frustum', 'Shadow camera']
 ];
-const BOX_COL = { tree: 0x3fbf4a, bush: 0x9be05a, rock: 0xa0a0a0, sprite: 0xff6fb5, other: 0xff9a2e };
+const BOX_COL: Readonly<Record<string, number>> & { sprite: number; other: number } = { tree: 0x3fbf4a, bush: 0x9be05a, rock: 0xa0a0a0, sprite: 0xff6fb5, other: 0xff9a2e };
 
 const CSS = `
 .wv { position: relative; height: 100%; min-height: 360px; overflow: hidden; background: #000; }
@@ -42,58 +59,37 @@ const CSS = `
 @media (max-width: 700px) { .wv-panel { width: 240px; } }
 `;
 
-function loadScript(src) {
-  return new Promise((ok, fail) => {
-    const s = document.createElement('script');
-    s.src = src; s.onload = ok; s.onerror = () => fail(new Error('cannot load ' + src));
-    document.head.appendChild(s);
-  });
-}
-// Herné moduly: world3d.js, mesher.js, art.js, webs.js a spidermodel.js sú klasické skripty (globály), render3d.mjs a three sú moduly
-let depsP = null;
-function loadDeps() {
-  if (!depsP) depsP = (async () => {
-    if (!window.World3D) await loadScript('/shared/world3d.js');
-    if (!window.Mesher) await loadScript('/shared/mesher.js');
-    if (!window.Art) await loadScript('/art.js');
-    // pavúky a pavučiny v render3d.mjs (spiders3d.mjs, #99) čítajú globály Webs a SpiderModel
-    if (!window.Webs) await loadScript('/shared/webs.js');
-    if (!window.SpiderModel) await loadScript('/shared/spidermodel.js');
-    const THREE = await import('/vendor/three/three.module.js');
-    await import('/render3d.mjs');
-    return THREE;
-  })();
-  depsP.catch(() => { depsP = null; });
-  return depsP;
-}
+// Herné moduly (3D pohľad, Three.js, svet z kociek…) sú v balíku ladiacej stránky (#137) – záložka World je jeho kúsok
 
-export function mount(el, ctx0) {
+export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
   let ctx = ctx0;
   const { h, D } = ctx;
   const SEASON_EN = ctx.fmt.SEASON_EN;
-  let alive = true, raf = 0, poll = 0, r3 = null, THREE = null;
-  const cleanups = [];
-  const on = (t, ev, fn, o) => { t.addEventListener(ev, fn, o); cleanups.push(() => t.removeEventListener(ev, fn, o)); };
+  let alive = true, raf = 0, r3: Render3D | null = null;
+  const cleanups: (() => void)[] = [];
+  const on = <K extends keyof HTMLElementEventMap>(t: HTMLElement, ev: K, fn: (e: HTMLElementEventMap[K]) => void, o?: AddEventListenerOptions): void => { t.addEventListener(ev, fn, o); cleanups.push(() => { t.removeEventListener(ev, fn, o); }); };
+  const onWin = (ev: 'keydown', fn: (e: KeyboardEvent) => void): void => { window.addEventListener(ev, fn); cleanups.push(() => { window.removeEventListener(ev, fn); }); };
 
   if (!document.getElementById('tab-world-css')) document.head.appendChild(h('style', { id: 'tab-world-css' }, CSS));
   const oldPad = el.style.padding, oldOverflow = el.style.overflow;
   el.style.padding = '0'; el.style.overflow = 'hidden'; // pohľad cez celú plochu záložky
-  const oldNoFade = window.MF_NOFADE;
+  const oldNoFade = window.MF_NOFADE ?? false;
   window.MF_NOFADE = true; // bez hráča nie je čo odkrývať
 
   // ---------- nastavenia (časť v adrese, nech sa dá pohľad poslať) ----------
-  const listParam = k => new Set((ctx.param(k) || '').split(',').filter(Boolean));
+  const listParam = (k: string): Set<string> => new Set((ctx.param(k) || '').split(',').filter(Boolean));
   const offLayers = listParam('wl'), onHelpers = listParam('wh');
-  const L = Object.fromEntries(LAYERS.map(([k]) => [k, !offLayers.has(k)]));
-  const H = Object.fromEntries(HELPERS.map(([k]) => [k, onHelpers.has(k)]));
-  const P = {
+  const L = Object.fromEntries(LAYERS.map(([k]) => [k, !offLayers.has(k)])) as Record<Layer, boolean>; // každá vrstva z LAYERS
+  const H = Object.fromEntries(HELPERS.map(([k]) => [k, onHelpers.has(k)])) as Record<Helper, boolean>; // každá pomôcka z HELPERS
+  const wse = ctx.param('wse'), wwx = ctx.param('wwx');
+  const P: { src: 'seed' | 'room'; seed: number; clock: boolean; min: number; play: boolean; season: number | 'room'; weather: Weather | 'room'; follow: string; drag: string } = {
     src: ctx.param('wsrc') === 'seed' || !ctx.room ? 'seed' : 'room',
-    seed: (parseInt(ctx.param('wseed'), 10) || 12345) >>> 0,
-    clock: ctx.param('wmin') == null, min: +ctx.param('wmin') || 600, play: false,
-    season: ctx.param('wse') == null ? 'room' : +ctx.param('wse'),
-    weather: ctx.param('wwx') || 'room', follow: '', drag: 'rotate'
+    seed: (parseInt(ctx.param('wseed') ?? '', 10) || 12345) >>> 0,
+    clock: ctx.param('wmin') == null, min: +(ctx.param('wmin') ?? 0) || 600, play: false,
+    season: wse == null ? 'room' : +wse,
+    weather: wwx === 'sun' || wwx === 'rain' || wwx === 'snow' ? wwx : 'room', follow: '', drag: 'rotate'
   };
-  const saveParams = () => {
+  const saveParams = (): void => {
     ctx.setParam('wl', LAYERS.filter(([k]) => !L[k]).map(([k]) => k).join(','));
     ctx.setParam('wh', HELPERS.filter(([k]) => H[k]).map(([k]) => k).join(','));
     ctx.setParam('wsrc', P.src === 'seed' ? 'seed' : null);
@@ -104,14 +100,15 @@ export function mount(el, ctx0) {
   };
 
   // ---------- stav sveta pre render3d (rovnaké polia ako S v game.js) ----------
-  const S = {
+  const others = new Map<string, Walker>();
+  const S: Omit<ViewState, 'others'> & { others: Map<string, Walker> } = {
     W: D.W, H: D.H, tiles: [], area: 'garden', tilesGen: 0, worldGen: 0, tick: 0, day: 1, weather: 'sun',
-    me: { x: D.W / 2, y: D.H / 2, dir: 0, phase: 0 }, look: null, name: '', id: -1, myEmote: null, mySi: -1, sel: null,
-    others: new Map(), anchors: {}, fx: [], screenFx: [], bubbles: {}, tapMark: null, kbd: false,
+    me: { x: D.W / 2, y: D.H / 2, dir: 0, phase: 0, moving: false, jz: 0, jv: 0, crawl: false }, look: null, name: '', id: -1, myEmote: null, mySi: -1, sel: '',
+    others, anchors: {}, fx: [], screenFx: [], bubbles: {}, tapMark: null, kbd: false,
     // pavúky (#57, #99): render3d ich kreslí vždy, tu zatiaľ prázdne (pavučiny ani pavúky sa sem nenačítavajú)
-    webs: [], webTile: new Map(), homes: [], websGen: 0, corner: [], cornerGen: 0, spiders: new Map(), slowK: 1, slowUntil: 0, web: null
+    webs: [], homes: [], websGen: 0, corner: [], cornerGen: 0, spiders: new Map()
   };
-  let world = null, worldKey = '', tilesSig = '', loadSeq = 0, offline = [], panelSig = '';
+  let world: WorldView | null = null, worldKey = '', tilesSig = '', loadSeq = 0, offline: WorldPlayer[] = [], panelSig = '';
 
   // ---------- DOM ----------
   const gl = h('canvas', { class: 'gl' }), ov = h('canvas', { class: 'ov' });
@@ -119,22 +116,22 @@ export function mount(el, ctx0) {
   const panel = h('div', { class: 'wv-panel' + (innerWidth < 700 ? ' closed' : '') });
   const wrap = h('div', { class: 'wv' }, gl, ov, msg, stats, panel);
   el.replaceChildren(wrap);
-  const ovCtx = ov.getContext('2d');
+  const ovCtx = must(ov.getContext('2d') ?? undefined);
 
-  const btn = (label, fn, title, isOn) => h('button', { title, class: isOn ? 'on' : null, onclick: fn }, label);
-  const check = (label, get, set) => {
+  const btn = (label: string, fn: () => void, title?: string | null, isOn?: boolean): HTMLElement => h('button', { title, class: isOn ? 'on' : null, onclick: fn }, label);
+  const check = (label: string, get: () => boolean, set: (v: boolean) => void): HTMLElement => {
     const i = h('input', { type: 'checkbox' }); i.checked = get();
-    i.onchange = () => set(i.checked);
+    i.onchange = () => { set(i.checked); };
     return h('label', null, i, label);
   };
-  function renderPanel() {
-    const sel = (opts, value, fn) => {
+  function renderPanel(): void {
+    const sel = (opts: readonly (readonly [string | number, string])[], value: string | number, fn: (v: string) => void): HTMLElement => {
       const s = h('select', null, opts.map(([v, t]) => h('option', { value: v, selected: String(v) === String(value) ? 'selected' : null }, t)));
-      s.onchange = () => fn(s.value);
+      s.onchange = () => { fn(s.value); };
       return s;
     };
     const seedIn = h('input', { type: 'number', min: 0, value: P.seed, title: 'Seed of the generated areas (Les na pomedzí, Les divov)' });
-    seedIn.onchange = () => { P.seed = (parseInt(seedIn.value, 10) || 0) >>> 0; saveParams(); loadWorld(true); };
+    seedIn.onchange = () => { P.seed = (parseInt(seedIn.value, 10) || 0) >>> 0; saveParams(); void loadWorld(true); };
     const timeLbl = h('span', { class: 'val' }, ctx.fmt.hhmm(Math.floor(curMin())));
     const range = h('input', { type: 'range', min: 0, max: 1439, step: 5, value: Math.round(curMin()) });
     range.oninput = () => { P.clock = false; P.min = +range.value; timeLbl.textContent = ctx.fmt.hhmm(P.min); saveParams(); syncTimeUi(); };
@@ -143,19 +140,19 @@ export function mount(el, ctx0) {
     const body = h('div', { class: 'wv-body' },
       h('h4', null, 'World'),
       h('div', { class: 'wv-row' },
-        btn('Room', () => { if (!ctx.room) return; P.src = 'room'; saveParams(); loadWorld(true); renderPanel(); }, ctx.room ? `Room ${ctx.room}` : 'No room selected', P.src === 'room'),
-        btn('Seed', () => { P.src = 'seed'; saveParams(); loadWorld(true); renderPanel(); }, 'A fresh world from a seed, no saved state', P.src === 'seed'),
+        btn('Room', () => { if (!ctx.room) return; P.src = 'room'; saveParams(); void loadWorld(true); renderPanel(); }, ctx.room ? `Room ${ctx.room}` : 'No room selected', P.src === 'room'),
+        btn('Seed', () => { P.src = 'seed'; saveParams(); void loadWorld(true); renderPanel(); }, 'A fresh world from a seed, no saved state', P.src === 'seed'),
         P.src === 'seed' ? seedIn : h('span', { class: 'muted' }, ctx.room || '–'),
-        P.src === 'seed' ? btn('🎲', () => { P.seed = (Math.random() * 2 ** 32) >>> 0; saveParams(); loadWorld(true); renderPanel(); }, 'Random seed') : null),
-      h('div', { class: 'wv-row' }, D.AREAS.map(a => btn(D.AREA_NAMES[a] || a, () => ctx.setArea(a), null, a === ctx.area))),
+        P.src === 'seed' ? btn('🎲', () => { P.seed = (Math.random() * 2 ** 32) >>> 0; saveParams(); void loadWorld(true); renderPanel(); }, 'Random seed') : null),
+      h('div', { class: 'wv-row' }, D.AREAS.map(a => btn(D.AREA_NAMES[a] || a, () => { ctx.setArea(a); }, null, a === ctx.area))),
       h('h4', null, 'Camera'),
       h('div', { class: 'wv-row' },
-        btn('Reset', () => resetCam(), 'Whole area, game angle (R)'),
+        btn('Reset', () => { resetCam(); }, 'Whole area, game angle (R)'),
         btn('⟲', () => { cam.yaw -= Math.PI / 2; }, 'Rotate 90° (Q)'), btn('⟳', () => { cam.yaw += Math.PI / 2; }, 'Rotate 90° (E)'),
         btn('Top', () => { cam.pitch = 1.55; }, 'Top-down view'), btn('Iso', () => { cam.pitch = PITCH0; }, 'Game pitch'),
         btn('Game', () => { cam.zoom = D.viewSize(gl.clientWidth || 1, gl.clientHeight || 1).h; cam.pitch = PITCH0; }, 'Game zoom (what a player sees)')),
       h('div', { class: 'wv-row' }, 'Follow',
-        sel([['', online.length ? '– nobody –' : '– nobody online here –'], ...online.map(o => [o.id, o.name])], P.follow, v => { P.follow = v; })),
+        sel([['', online.length ? '– nobody –' : '– nobody online here –'], ...online.map(o => [o.id, o.name] as const)], P.follow, v => { P.follow = v; })),
       h('div', { class: 'wv-row' }, '1 finger / left drag',
         sel([['rotate', 'rotates'], ['pan', 'pans']], P.drag, v => { P.drag = v; })),
       h('h4', null, 'Time'),
@@ -164,57 +161,58 @@ export function mount(el, ctx0) {
         check('room clock', () => P.clock, v => { P.clock = v; saveParams(); syncTimeUi(); }),
         btn(P.play ? '⏸' : '▶', () => { P.play = !P.play; if (P.play) { P.min = curMin(); P.clock = false; } saveParams(); renderPanel(); }, 'Play time: 1 game hour per second')),
       h('div', { class: 'wv-row' }, 'Season',
-        sel([['room', 'Room'], ...SEASON_EN.map((s, i) => [i, s])], P.season, v => { P.season = v === 'room' ? 'room' : +v; saveParams(); }),
-        'Weather', sel([['room', 'Room'], ['sun', 'Sun'], ['rain', 'Rain'], ['snow', 'Snow']], P.weather, v => { P.weather = v; saveParams(); })),
+        sel([['room', 'Room'], ...SEASON_EN.map((s, i) => [i, s] as const)], P.season, v => { P.season = v === 'room' ? 'room' : +v; saveParams(); }),
+        'Weather', sel([['room', 'Room'], ['sun', 'Sun'], ['rain', 'Rain'], ['snow', 'Snow']], P.weather, v => { P.weather = v === 'sun' || v === 'rain' || v === 'snow' ? v : 'room'; saveParams(); })),
       h('h4', null, 'Layers'),
       h('div', { class: 'wv-checks' }, LAYERS.map(([k, t]) => check(t, () => L[k], v => { L[k] = v; saveParams(); layersChanged(); }))),
       h('h4', null, 'Debug helpers'),
       h('div', { class: 'wv-checks' }, HELPERS.map(([k, t]) => check(t, () => H[k], v => { H[k] = v; saveParams(); helpersDirty = true; }))),
       h('div', { class: 'wv-hint' }, 'Drag: rotate · right/shift-drag or two fingers: pan · wheel/pinch: zoom · two-finger twist: rotate · double-click: center on tile · keys: WASD/arrows, Q/E, +/−, R'));
-    const head = h('div', { class: 'wv-head', onclick: () => panel.classList.toggle('closed') }, h('span', null, '⚙ View'), h('small', { class: 'muted' }, '▾'));
+    const head = h('div', { class: 'wv-head', onclick: () => { panel.classList.toggle('closed'); } }, h('span', null, '⚙ View'), h('small', { class: 'muted' }, '▾'));
     panel.replaceChildren(head, body);
   }
-  let timeUi = null;
-  function syncTimeUi() {
+  let timeUi: { range: HTMLInputElement; timeLbl: HTMLElement } | null = null;
+  function syncTimeUi(): void {
     if (!timeUi) return;
     const m = Math.floor(curMin());
-    if (document.activeElement !== timeUi.range) timeUi.range.value = m;
+    if (document.activeElement !== timeUi.range) timeUi.range.value = String(m);
     timeUi.timeLbl.textContent = ctx.fmt.hhmm(m) + (P.clock ? ' ⏱' : '');
   }
 
   // ---------- čas, obdobie, počasie (nezávislé od hodín sveta) ----------
-  function roomMin() { return D.minOfTick(S.tick); }
+  function roomMin(): number { return D.minOfTick(S.tick); }
   // svet len zo semienka nemá hodiny: „room“ tam znamená 10:00 v lete
-  const hasClock = () => !!(world && world.room);
-  function curMin() { return P.clock && hasClock() ? roomMin() : P.clock ? 600 : ((P.min % 1440) + 1440) % 1440; }
-  function season() { return P.season !== 'room' ? P.season : hasClock() ? D.seasonOf(D.dayOfTick(S.tick)) : 1; }
+  const hasClock = (): boolean => !!(world && world.room);
+  function curMin(): number { return P.clock && hasClock() ? roomMin() : P.clock ? 600 : ((P.min % 1440) + 1440) % 1440; }
+  function season(): number { return P.season !== 'room' ? P.season : hasClock() ? D.seasonOf(D.dayOfTick(S.tick)) : 1; }
 
   // ---------- kamera ----------
   let camFromHash = false; // kamera z adresy platí pri prvom načítaní, potom sa pri zmene plochy vráti na celú plochu
-  const cam = { x: D.W / 2, z: D.H / 2, y: 1, yaw: Math.PI / 4, pitch: PITCH0, zoom: 30 };
-  function resetCam() {
+  const cam = { x: D.W / 2, z: D.H / 2, y: 1, yaw: Math.PI / 4, pitch: PITCH0, zoom: 30, reset: false };
+  function resetCam(): void {
     cam.x = S.W / 2; cam.z = S.H / 2; cam.yaw = Math.PI / 4; cam.pitch = PITCH0;
     cam.zoom = Math.max(S.W, S.H) * 1.15 * Math.max(1, (gl.clientHeight || 1) / (gl.clientWidth || 1));
     P.follow = '';
   }
   (function loadCam() {
     const c = (ctx.param('wcam') || '').split(',').map(Number);
-    if (c.length === 5 && c.every(Number.isFinite)) { [cam.x, cam.z, cam.yaw, cam.pitch, cam.zoom] = c; camFromHash = true; }
+    const [x, z, yaw, pitch, zoom] = c;
+    if (c.length === 5 && x != null && z != null && yaw != null && pitch != null && zoom != null && c.every(Number.isFinite)) { Object.assign(cam, { x, z, yaw, pitch, zoom }); camFromHash = true; }
   })();
   let camSaved = '', camSaveAt = 0;
-  function saveCam(now) {
+  function saveCam(now: number): void {
     if (now - camSaveAt < 500) return;
     camSaveAt = now;
     const s = [cam.x, cam.z, cam.yaw, cam.pitch, cam.zoom].map(v => +v.toFixed(2)).join(',');
     if (s !== camSaved) { camSaved = s; ctx.setParam('wcam', s); }
   }
-  function placeCamera(camera, target, dt) {
+  function placeCamera(camera: THREE.OrthographicCamera, target: THREE.Vector3, dt: number): void {
     if (P.follow) {
       const o = S.others.get(P.follow);
       if (o) { const k = Math.min(1, dt * 6); cam.x += (o.x - cam.x) * k; cam.z += (o.y - cam.z) * k; }
     }
     cam.x = Math.max(-5, Math.min(S.W + 5, cam.x)); cam.z = Math.max(-5, Math.min(S.H + 5, cam.z));
-    const v = r3.debugView(), gy = v.grid ? v.groundY(cam.x, cam.z) : 1;
+    const v = must(r3 ?? undefined).debugView(), gy = v.grid ? v.groundY(cam.x, cam.z) : 1;
     cam.y += (gy - cam.y) * Math.min(1, dt * 6);
     target.set(cam.x, cam.y, cam.z);
     const dist = 100, cp = Math.cos(cam.pitch);
@@ -226,29 +224,29 @@ export function mount(el, ctx0) {
     camera.updateProjectionMatrix();
   }
   // posun po zemi o (dx, dy) CSS px – svet ide s prstom
-  function pan(dx, dy) {
+  function pan(dx: number, dy: number): void {
     const u = cam.zoom / (gl.clientHeight || 1), sy = Math.max(0.25, Math.sin(cam.pitch));
     const rx = Math.cos(cam.yaw), rz = -Math.sin(cam.yaw), fx = -Math.sin(cam.yaw), fz = -Math.cos(cam.yaw);
     cam.x += -rx * dx * u + fx * dy * u / sy;
     cam.z += -rz * dx * u + fz * dy * u / sy;
     P.follow = '';
   }
-  function orbit(dx, dy) {
+  function orbit(dx: number, dy: number): void {
     cam.yaw -= dx * 0.008;
     cam.pitch = Math.max(0.06, Math.min(1.55, cam.pitch + dy * 0.006));
   }
-  const zoomBy = k => { cam.zoom = Math.max(3, Math.min(150, cam.zoom * k)); };
+  const zoomBy = (k: number): void => { cam.zoom = Math.max(3, Math.min(150, cam.zoom * k)); };
 
   // ---------- myš a dotyk ----------
-  const ptrs = new Map();
-  let gesture = null, moved = 0, hover = null, hoverAt = 0, lastHoverXY = null;
-  const ptrList = () => [...ptrs.values()];
-  function twoInfo() {
-    const [a, b] = ptrList();
+  const ptrs = new Map<number, { x: number; y: number; btn: number; shift: boolean; type: string }>();
+  let gesture: { mx: number; my: number; d: number; ang: number } | null = null, moved = 0, hover: Pt | null = null, hoverAt = 0, lastHoverXY: [number, number] | null = null;
+  const ptrList = (): { x: number; y: number }[] => [...ptrs.values()];
+  function twoInfo(): { mx: number; my: number; d: number; ang: number } {
+    const [a = { x: 0, y: 0 }, b = { x: 0, y: 0 }] = ptrList();
     return { mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) || 1, ang: Math.atan2(b.y - a.y, b.x - a.x) };
   }
   on(ov, 'pointerdown', e => {
-    try { ov.setPointerCapture(e.pointerId); } catch (err) { /* syntetická udalosť */ }
+    try { ov.setPointerCapture(e.pointerId); } catch { /* syntetická udalosť */ }
     ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, btn: e.button, shift: e.shiftKey, type: e.pointerType });
     moved = 0; gesture = ptrs.size === 2 ? twoInfo() : null;
     ov.classList.add('drag');
@@ -270,7 +268,7 @@ export function mount(el, ctx0) {
       gesture = g;
     }
   });
-  const up = e => {
+  const up = (e: PointerEvent): void => {
     const p = ptrs.get(e.pointerId);
     ptrs.delete(e.pointerId);
     gesture = ptrs.size === 2 ? twoInfo() : null;
@@ -280,13 +278,13 @@ export function mount(el, ctx0) {
   on(ov, 'pointerup', up); on(ov, 'pointercancel', up);
   on(ov, 'pointerleave', () => { if (!ptrs.size) { lastHoverXY = null; hover = null; } });
   on(ov, 'wheel', e => { e.preventDefault(); zoomBy(Math.exp(e.deltaY * (e.deltaMode ? 0.05 : 0.0015))); }, { passive: false });
-  on(ov, 'contextmenu', e => e.preventDefault());
+  on(ov, 'contextmenu', e => { e.preventDefault(); });
   on(ov, 'dblclick', e => {
     const t = r3 && r3.pick(e.clientX, e.clientY);
     if (t) { cam.x = t.x + 0.5; cam.z = t.y + 0.5; P.follow = ''; }
   });
-  on(window, 'keydown', e => {
-    if (!r3 || e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|SELECT|TEXTAREA)$/.test((e.target || {}).tagName || '')) return;
+  onWin('keydown', e => {
+    if (!r3 || e.ctrlKey || e.metaKey || e.altKey || (e.target instanceof HTMLElement && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName))) return;
     const k = e.key.toLowerCase(), step = 40;
     if (k === 'w' || k === 'arrowup') pan(0, step);
     else if (k === 's' || k === 'arrowdown') pan(0, -step);
@@ -302,14 +300,15 @@ export function mount(el, ctx0) {
   });
 
   // ---------- svet zo servera ----------
-  async function loadWorld(force) {
+  async function loadWorld(force: boolean): Promise<void> {
     const src = P.src === 'room' && ctx.room ? 'room' : 'seed';
     const key = src === 'room' ? `room=${encodeURIComponent(ctx.room)}&area=${ctx.area}` : `seed=${P.seed}&area=${ctx.area}`;
     const changed = key !== worldKey, seq = ++loadSeq;
     if (changed || force) { if (!r3) msg.textContent = 'Loading world…'; }
-    let w;
-    try { w = await ctx.api('/api/debug/world?' + key); }
-    catch (e) { if (seq === loadSeq && alive) { msg.textContent = 'World: ' + e.message; } return; }
+    let w: WorldView | null;
+    try { w = await ctx.api<WorldView | null>('/api/debug/world?' + key); }
+    catch (e) { if (seq === loadSeq && alive) { msg.textContent = 'World: ' + errText(e); } return; }
+    if (!w) return;
     if (!alive || seq !== loadSeq) return;
     world = w; worldKey = key;
     const sig = JSON.stringify(w.tiles);
@@ -318,13 +317,13 @@ export function mount(el, ctx0) {
       tilesSig = sig;
       S.area = w.area; S.W = w.w; S.H = w.h; S.tiles = w.tiles; S.tilesGen++;
       S.anchors = {};
-      S.tiles.forEach((t, i) => { if (['hut', 'house', 'stall', 'well', 'cauldron', 'icehouse'].includes(t.g) && !S.anchors[t.g]) S.anchors[t.g] = { x: i % S.W, y: (i / S.W) | 0 }; });
+      const ANCHORS: readonly Ground[] = ['hut', 'house', 'stall', 'well', 'cauldron', 'icehouse'];
+      S.tiles.forEach((t, i) => { if (ANCHORS.includes(t.g) && !S.anchors[t.g]) S.anchors[t.g] = { x: i % S.W, y: (i / S.W) | 0 }; });
       helpersDirty = true;
     }
     syncPlayers(w.players);
     if (changed) { if (camFromHash) camFromHash = false; else cam.reset = true; }
-    if (!r3) await start();
-    if (!alive) return;
+    if (!r3) start();
     if (cam.reset && r3) { cam.reset = false; resetCam(); }
     msg.textContent = '';
     // panel sa prekreslí len pri zmene (inak by sa pri obnovení zavrel otvorený výber)
@@ -332,20 +331,20 @@ export function mount(el, ctx0) {
     if (ps !== panelSig) { panelSig = ps; renderPanel(); }
   }
   // online hráči sú postavičky (pohyb sa medzi obnoveniami plynulo dobehne), ostatní len značka na poslednom mieste
-  function syncPlayers(list) {
-    const seen = new Set();
+  function syncPlayers(list: readonly WorldPlayer[]): void {
+    const seen = new Set<string>();
     offline = [];
-    for (const p of list || []) {
+    for (const p of list) {
       if (!p.online) { offline.push(p); continue; }
       seen.add(p.id);
       let o = S.others.get(p.id);
-      if (!o) { o = { id: p.id, name: p.name || p.id, x: p.x, y: p.y, dir: 0, phase: 0 }; S.others.set(p.id, o); }
+      if (!o) { o = { id: p.id, name: p.name || p.id, x: p.x, y: p.y, dir: 0, phase: 0, tx: p.x, ty: p.y, look: null, a: undefined, e: null, jz: 0, cr: false, lp: false, si: -1, wb: 0 }; S.others.set(p.id, o); }
       o.tx = p.x; o.ty = p.y; o.look = p.look; o.name = p.name || p.id;
     }
     for (const id of [...S.others.keys()]) if (!seen.has(id)) S.others.delete(id);
     if (P.follow && !S.others.has(P.follow)) P.follow = '';
   }
-  function movePlayers(dt) {
+  function movePlayers(dt: number): void {
     for (const o of S.others.values()) {
       const dx = o.tx - o.x, dy = o.ty - o.y, d = Math.hypot(dx, dy);
       if (d > 6) { o.x = o.tx; o.y = o.ty; continue; } // skok (prechod, dlhá pauza)
@@ -356,20 +355,20 @@ export function mount(el, ctx0) {
   }
 
   // ---------- 3D ----------
-  async function start() {
-    try { THREE = await loadDeps(); }
-    catch (e) { msg.textContent = '3D: ' + e.message; return; }
+  function start(): void {
     if (!alive || r3) return;
-    r3 = window.Render3D.create({
-      S, glCanvas: gl, ov, ovCtx, EMOJI: {}, curMin, season,
-      searching: o => o && o.si != null && o.si >= 0, ctxAction: () => null, frontTile: () => ({ x: -1, y: -1 }),
-      placeCamera, noPlayer: true, layers: L, beforeRender
-    });
+    try {
+      r3 = createRender3D({
+        S, glCanvas: gl, ov, ovCtx, EMOJI: {}, curMin, season,
+        searching: o => !!o && o.si != null && o.si >= 0, ctxAction: () => null, frontTile: () => ({ x: -1, y: -1 }),
+        placeCamera, noPlayer: true, layers: L, beforeRender
+      });
+    } catch (e) { msg.textContent = '3D: ' + errText(e); return; }
     r3.setStats(true);
     resize();
     raf = requestAnimationFrame(loop);
   }
-  function resize() {
+  function resize(): void {
     if (!alive) return;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     ov.width = Math.max(1, Math.round(ov.clientWidth * dpr)); ov.height = Math.max(1, Math.round(ov.clientHeight * dpr));
@@ -379,10 +378,10 @@ export function mount(el, ctx0) {
   ro.observe(wrap);
 
   // ---------- vrstvy ----------
-  function applyLayers(v) {
+  function applyLayers(v: DebugView): void {
     if (v.mesh) v.mesh.visible = L.terrain;
     v.fineMeshes.forEach((m, i) => {
-      const t = v.grid.fine[i] && v.grid.fine[i].type;
+      const t = v.grid?.fine[i]?.type;
       m.visible = t === 'tree' || t === 'bush' ? L.trees : t === 'rock' ? L.rocks : L.buildings;
     });
     for (const sp of v.plantSprites.values()) sp.visible = L.plants;
@@ -393,88 +392,96 @@ export function mount(el, ctx0) {
     for (const o of v.particleObjs) o.visible = L.particles;
     for (const m of v.materials) m.wireframe = H.wire;
   }
-  function layersChanged() { if (r3) { applyLayers(r3.debugView()); r3.invalidateShadows(); } }
+  function layersChanged(): void { if (r3) { applyLayers(r3.debugView()); r3.invalidateShadows(); } }
 
   // ---------- ladiace pomôcky (vrstva 1: vidí ich len hlavná kamera, nie tiene ani zrkadlo vody) ----------
-  let helpers = null, dyn = null, frustumHelper = null, sunArrow = null, hoverBox = null, helpersDirty = true, builtGrid = null, builtPlants = -1;
-  const lightPool = [];
-  function onLayer1(o) { o.traverse(c => c.layers.set(1)); return o; }
-  function disposeGroup(g) {
-    g.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); });
+  let helpers: THREE.Group | null = null, dyn: THREE.Group | null = null, frustumHelper: THREE.CameraHelper | null = null, sunArrow: THREE.ArrowHelper | null = null,
+    hoverBox: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial> | null = null, helpersDirty = true, builtGrid: DebugView['grid'] | undefined, builtPlants = -1;
+  const lightPool: { g: THREE.Group; ring: THREE.LineLoop; ring2: THREE.LineLoop }[] = [];
+  function onLayer1<O extends THREE.Object3D>(o: O): O { o.traverse(c => { c.layers.set(1); }); return o; }
+  function disposeGroup(g: THREE.Group): void {
+    g.traverse(c => {
+      const geo: unknown = 'geometry' in c ? c.geometry : null, mat: unknown = 'material' in c ? c.material : null;
+      if (geo instanceof THREE.BufferGeometry) geo.dispose();
+      for (const m of [mat].flat()) if (m instanceof THREE.Material) m.dispose();
+    });
     g.clear();
   }
-  function lineMat(color, opacity) { return new THREE.LineBasicMaterial({ color, transparent: opacity < 1, opacity, depthTest: true }); }
+  function lineMat(color: number, opacity: number): THREE.LineBasicMaterial { return new THREE.LineBasicMaterial({ color, transparent: opacity < 1, opacity, depthTest: true }); }
   // štvorec políčka tesne nad zemou
-  function tileQuad(P3, v, x, y, inset, lift) {
+  function tileQuad(P3: number[], v: DebugView, x: number, y: number, inset?: number, lift?: number): void {
     const gy = v.groundY(x + 0.5, y + 0.5) + (lift || 0.03), a = inset || 0;
-    const c = [[x + a, y + a], [x + 1 - a, y + a], [x + 1 - a, y + 1 - a], [x + a, y + 1 - a]];
-    for (let i = 0; i < 4; i++) { const p = c[i], q = c[(i + 1) % 4]; P3.push(p[0], gy, p[1], q[0], gy, q[1]); }
+    const c = [[x + a, y + a], [x + 1 - a, y + a], [x + 1 - a, y + 1 - a], [x + a, y + 1 - a]] as const;
+    for (let i = 0; i < 4; i++) { const p = c[i] ?? c[0], q = c[(i + 1) % 4] ?? c[0]; P3.push(p[0], gy, p[1], q[0], gy, q[1]); }
   }
-  function segs(P3, color, opacity) {
+  function segs(P3: number[], color: number, opacity?: number): THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial> {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(P3, 3));
     return new THREE.LineSegments(g, lineMat(color, opacity == null ? 1 : opacity));
   }
-  function buildHelpers(v) {
-    if (!helpers) { helpers = new THREE.Group(); dyn = new THREE.Group(); v.scene.add(helpers, dyn); }
-    disposeGroup(helpers);
+  function buildHelpers(v: DebugView): void {
+    if (!helpers || !dyn) { helpers = new THREE.Group(); dyn = new THREE.Group(); v.scene.add(helpers, dyn); }
+    const hp = helpers;
+    disposeGroup(hp);
     builtGrid = v.grid; builtPlants = v.plantSprites.size; helpersDirty = false;
     if (!v.grid) return;
     if (H.boxes) {
       v.fineMeshes.forEach((m, i) => {
-        const t = v.grid.fine[i] ? v.grid.fine[i].type : 'other';
-        helpers.add(new THREE.Box3Helper(m.userData.box, BOX_COL[t] || BOX_COL.other));
+        const t = v.grid?.fine[i]?.type ?? 'other';
+        hp.add(new THREE.Box3Helper(m.box, lookup(BOX_COL, t) || BOX_COL.other));
       });
       for (const sp of v.plantSprites.values()) {
         const p = sp.position, b = new THREE.Box3(new THREE.Vector3(p.x - 0.5 * sp.scale.x, p.y, p.z - 0.05), new THREE.Vector3(p.x + 0.5 * sp.scale.x, p.y + sp.scale.y, p.z + 0.05));
-        helpers.add(new THREE.Box3Helper(b, BOX_COL.sprite));
+        hp.add(new THREE.Box3Helper(b, BOX_COL.sprite));
       }
     }
     if (H.grid) {
-      const P3 = [];
+      const P3: number[] = [];
       for (let y = 0; y < S.H; y++) for (let x = 0; x < S.W; x++) tileQuad(P3, v, x, y, 0, 0.02);
-      helpers.add(segs(P3, 0xffffff, 0.35));
+      hp.add(segs(P3, 0xffffff, 0.35));
     }
     if (H.tap) {
       // ťuknutie na model vyberie jeho políčko (napr. dvere budovy): žltý štvorec a čiara z modelu
-      const P3 = [], L3 = [], c = new THREE.Vector3();
+      const P3: number[] = [], L3: number[] = [], c = new THREE.Vector3();
       v.fineMeshes.forEach(m => {
-        const t = m.userData.tile; if (!t) return;
+        const t = m.tile; if (!t) return;
         tileQuad(P3, v, t.x, t.y, 0.08, 0.05);
-        m.userData.box.getCenter(c);
-        L3.push(c.x, m.userData.box.max.y, c.z, t.x + 0.5, v.groundY(t.x + 0.5, t.y + 0.5) + 0.05, t.y + 0.5);
+        m.box.getCenter(c);
+        L3.push(c.x, m.box.max.y, c.z, t.x + 0.5, v.groundY(t.x + 0.5, t.y + 0.5) + 0.05, t.y + 0.5);
       });
-      for (const sp of v.plantSprites.values()) { const t = sp.userData.tile; if (t) tileQuad(P3, v, t.x, t.y, 0.2, 0.05); }
-      helpers.add(segs(P3, 0xffe14a, 0.95), segs(L3, 0xffe14a, 0.6));
+      for (const sp of v.plantSprites.values()) { const t = sp.tile; if (t) tileQuad(P3, v, t.x, t.y, 0.2, 0.05); }
+      hp.add(segs(P3, 0xffe14a, 0.95), segs(L3, 0xffe14a, 0.6));
     }
     if (H.gates) {
-      const P3 = [], A3 = [];
-      for (const g of D.GATES[S.area] || []) tileQuad(P3, v, g.x, g.y, 0.05, 0.06);
+      const P3: number[] = [], A3: number[] = [];
+      for (const g of D.GATES[S.area]) tileQuad(P3, v, g.x, g.y, 0.05, 0.06);
       for (const a of arrivals()) {
         const gy = v.groundY(a.x, a.y) + 0.06, r = 0.3;
         A3.push(a.x - r, gy, a.y - r, a.x + r, gy, a.y + r, a.x - r, gy, a.y + r, a.x + r, gy, a.y - r, a.x, gy, a.y, a.x, gy + 1.2, a.y);
       }
-      helpers.add(segs(P3, 0xff4fd8), segs(A3, 0x4fe3ff));
+      hp.add(segs(P3, 0xff4fd8), segs(A3, 0x4fe3ff));
     }
-    if (H.frustum) { frustumHelper = new THREE.CameraHelper(v.lightCam); helpers.add(frustumHelper); } else frustumHelper = null;
+    if (H.frustum) { frustumHelper = new THREE.CameraHelper(v.lightCam); hp.add(frustumHelper); } else frustumHelper = null;
     if (H.lights) {
       sunArrow = new THREE.ArrowHelper(new THREE.Vector3(0, -1, 0), new THREE.Vector3(S.W / 2, 8, S.H / 2), 5, 0xffd23a, 1, 0.5);
-      helpers.add(sunArrow);
+      hp.add(sunArrow);
     } else sunArrow = null;
-    onLayer1(helpers);
+    onLayer1(hp);
   }
   // príchodové miesta na tejto ploche (+ začiatok hry a babka v záhrade)
-  function arrivals() {
-    const out = [];
-    for (const k in D.ARRIVE) { const [from, to] = k.split('>'); if (to === S.area) out.push({ x: D.ARRIVE[k].x, y: D.ARRIVE[k].y, label: 'arrive from ' + (D.AREA_NAMES[from] || from) }); }
+  function arrivals(): { x: number; y: number; label: string }[] {
+    const out: { x: number; y: number; label: string }[] = [];
+    for (const [k, a] of Object.entries(D.ARRIVE)) { const [from = '', to] = k.split('>'); if (to === S.area) out.push({ x: a.x, y: a.y, label: 'arrive from ' + (lookup(D.AREA_NAMES, from) || from) }); }
     if (S.area === 'garden') { out.push({ x: D.SPAWN.x, y: D.SPAWN.y, label: 'spawn' }); }
     return out;
   }
   // pomôcky, ktoré sa menia každú snímku: svetlá lámp, slnko, kamera tieňov, políčko pod kurzorom
-  function updateDynamic(v, min, se) {
+  function updateDynamic(v: DebugView, min: number, se: number): void {
+    const dy = dyn;
+    if (!dy) return;
     if (frustumHelper) frustumHelper.update();
     if (sunArrow) {
-      const d = W3().sunDir(min, se);
+      const d = World3D.sunDir(min, se);
       sunArrow.visible = !!d;
       if (d) { sunArrow.setDirection(new THREE.Vector3(-d.x, -d.y, -d.z)); sunArrow.position.set(S.W / 2 + d.x * 6, 2 + d.y * 6, S.H / 2 + d.z * 6); }
     }
@@ -486,7 +493,7 @@ export function mount(el, ctx0) {
       const ring2 = ring.clone(); ring2.rotation.x = Math.PI / 2;
       const dot = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffe08a }));
       g.add(ring, ring2, dot);
-      dyn.add(onLayer1(g));
+      dy.add(onLayer1(g));
       lightPool.push({ g, ring, ring2 });
     }
     lightPool.forEach((p, i) => {
@@ -497,28 +504,29 @@ export function mount(el, ctx0) {
       p.ring.scale.setScalar(l.w); p.ring2.scale.setScalar(l.w);
     });
     // políčko pod kurzorom / po ťuknutí (výber hrou – r3.pick)
-    if (!hoverBox) { hoverBox = segs(new Array(24).fill(0), 0x4ff0ff); hoverBox.geometry.attributes.position.setUsage(THREE.DynamicDrawUsage); dyn.add(onLayer1(hoverBox)); }
-    hoverBox.visible = !!hover && H.tap;
+    const hb = hoverBox ??= segs(new Array<number>(24).fill(0), 0x4ff0ff);
+    const pos = must(hb.geometry.attributes['position']);
+    if (!hb.parent) { if (pos instanceof THREE.BufferAttribute) pos.setUsage(THREE.DynamicDrawUsage); dy.add(onLayer1(hb)); }
+    hb.visible = !!hover && H.tap;
     if (hover && H.tap) {
-      const P3 = []; tileQuad(P3, v, hover.x, hover.y, 0.02, 0.08);
-      hoverBox.geometry.attributes.position.array.set(P3); hoverBox.geometry.attributes.position.needsUpdate = true;
-      hoverBox.geometry.computeBoundingSphere();
+      const P3: number[] = []; tileQuad(P3, v, hover.x, hover.y, 0.02, 0.08);
+      pos.array.set(P3); pos.needsUpdate = true;
+      hb.geometry.computeBoundingSphere();
     }
   }
-  const W3 = () => window.World3D;
-  function beforeRender() {
-    const v = r3.debugView();
-    if (v.grid !== builtGrid) r3.invalidateShadows(); // nový svet: mapa tieňov ešte bola so všetkými vrstvami
+  function beforeRender(): void {
+    const R = must(r3 ?? undefined), v = R.debugView();
+    if (v.grid !== builtGrid) R.invalidateShadows(); // nový svet: mapa tieňov ešte bola so všetkými vrstvami
     applyLayers(v);
     if (helpersDirty || v.grid !== builtGrid || (H.boxes && v.plantSprites.size !== builtPlants)) buildHelpers(v);
     updateDynamic(v, curMin(), season());
   }
 
   // ---------- prekrytie: popisy prechodov, súradnice mriežky, offline hráči ----------
-  function drawLabels() {
-    const v = r3.debugView(), c = ovCtx, dpr = ov.width / (ov.clientWidth || 1), vec = new THREE.Vector3();
-    const proj = (x, y, z) => { vec.set(x, y, z).project(v.camera); return { x: (vec.x + 1) / 2 * ov.width, y: (1 - vec.y) / 2 * ov.height, in: vec.z < 1 && Math.abs(vec.x) < 1.1 && Math.abs(vec.y) < 1.1 }; };
-    const tag = (x, y, z, text, color) => {
+  function drawLabels(): void {
+    const v = must(r3 ?? undefined).debugView(), c = ovCtx, dpr = ov.width / (ov.clientWidth || 1), vec = new THREE.Vector3();
+    const proj = (x: number, y: number, z: number): { x: number; y: number; in: boolean } => { vec.set(x, y, z).project(v.camera); return { x: (vec.x + 1) / 2 * ov.width, y: (1 - vec.y) / 2 * ov.height, in: vec.z < 1 && Math.abs(vec.x) < 1.1 && Math.abs(vec.y) < 1.1 }; };
+    const tag = (x: number, y: number, z: number, text: string, color?: string): void => {
       const p = proj(x, y, z); if (!p.in) return;
       c.font = `${Math.round(11 * dpr)}px system-ui, sans-serif`; c.textAlign = 'center';
       const w = c.measureText(text).width + 8 * dpr;
@@ -528,10 +536,10 @@ export function mount(el, ctx0) {
     if (!v.grid) return;
     if (H.gates) {
       // jeden popis pre každý prechod (políčka s rovnakým cieľom), v ich strede
-      const by = {};
-      for (const g of D.GATES[S.area] || []) (by[g.to] = by[g.to] || []).push(g);
-      for (const to in by) {
-        const gs = by[to], x = gs.reduce((n, g) => n + g.x, 0) / gs.length + 0.5, y = gs.reduce((n, g) => n + g.y, 0) / gs.length + 0.5;
+      const by = new Map<AreaId, Gate[]>();
+      for (const g of D.GATES[S.area]) { const l = by.get(g.to) ?? []; l.push(g); by.set(g.to, l); }
+      for (const [to, gs] of by) {
+        const x = gs.reduce((n, g) => n + g.x, 0) / gs.length + 0.5, y = gs.reduce((n, g) => n + g.y, 0) / gs.length + 0.5;
         tag(x, v.groundY(x, y) + 0.6, y, '→ ' + (D.AREA_NAMES[to] || to), '#ff9ef0');
       }
       for (const a of arrivals()) tag(a.x, v.groundY(a.x, a.y) + 1.4, a.y, a.label, '#9ef3ff');
@@ -544,12 +552,12 @@ export function mount(el, ctx0) {
 
   // ---------- slučka ----------
   let last = performance.now(), fpsN = 0, fpsT = last, fps = 0, statAt = 0, cpu = 0;
-  function loop(now) {
+  function loop(now: number): void {
     raf = requestAnimationFrame(loop);
     if (!r3) return;
     const dt = Math.min(0.1, (now - last) / 1000); last = now;
     if (P.play) P.min = (P.min + dt * 60) % 1440;
-    S.weather = P.weather === 'room' ? (world && world.weather) || 'sun' : P.weather;
+    S.weather = P.weather === 'room' ? world?.weather || 'sun' : P.weather;
     S.me.x = cam.x; S.me.y = cam.z; // podľa tohto bodu sa ráta šero v lese (obloha, lampáše)
     movePlayers(dt);
     if (lastHoverXY && now - hoverAt > 120) { hoverAt = now; hover = r3.pick(lastHoverXY[0], lastHoverXY[1]); }
@@ -563,23 +571,23 @@ export function mount(el, ctx0) {
     saveCam(now);
     if (now - statAt > 250) { statAt = now; showStats(); if (P.play || P.clock) syncTimeUi(); }
   }
-  function showStats() {
-    const s = r3.stats(), v = r3.debugView(), f1 = x => x.toFixed(1);
+  function showStats(): void {
+    const R = must(r3 ?? undefined), s = R.stats(), v = R.debugView(), f1 = (x: number): string => x.toFixed(1);
     const tl = hover && S.tiles[hover.y * S.W + hover.x];
     const narrow = wrap.clientWidth < 600;
     const lines = [
       narrow ? `${f1(fps)} fps · cpu ${f1(cpu)} ms · ${s.calls} calls · ${(s.triangles / 1000).toFixed(1)}k tris`
         : `${f1(fps)} fps · cpu ${f1(cpu)} ms (shadow ${f1(s.shadow)} · refl ${f1(s.refl)} · scene ${f1(s.scene)}) · ${s.calls} calls · ${(s.triangles / 1000).toFixed(1)}k tris · ${s.geometries} geo · ${s.textures} tex · ${s.w}×${s.h} @${s.pr}`,
-      `${D.AREA_NAMES[S.area] || S.area} ${S.W}×${S.H} · ${v.fineMeshes.length} models · ${v.plantSprites.size} plants · ${v.lights.length} lights · ${ctx.fmt.hhmm(Math.floor(curMin()))} ${SEASON_EN[season()]} · ${S.weather}` +
+      `${D.AREA_NAMES[S.area] || S.area} ${S.W}×${S.H} · ${v.fineMeshes.length} models · ${v.plantSprites.size} plants · ${v.lights.length} lights · ${ctx.fmt.hhmm(Math.floor(curMin()))} ${SEASON_EN[season()] ?? ''} · ${S.weather}` +
         (narrow ? '' : ` · cam ${f1(cam.x)},${f1(cam.z)} yaw ${((Math.round(cam.yaw * 180 / Math.PI) % 360) + 360) % 360}° pitch ${Math.round(cam.pitch * 180 / Math.PI)}° view ${f1(cam.zoom)}`)
     ];
-    if (tl) lines.push(`tile ${hover.x},${hover.y}: ${tl.g}${tl.ice != null ? ' ice ' + tl.ice : ''}${tl.cut ? ' (cut)' : ''}${tl.s ? ' · soil ' + ctx.fmt.short(tl.s) : ''}`);
+    if (tl && hover) lines.push(`tile ${hover.x},${hover.y}: ${tl.g}${tl.ice != null ? ' ice ' + tl.ice : ''}${tl.cut ? ' (cut)' : ''}${tl.s ? ' · soil ' + ctx.fmt.short(tl.s) : ''}`);
     stats.textContent = lines.join('\n');
   }
 
   renderPanel();
-  loadWorld(true);
-  poll = setInterval(() => { if (P.src === 'room' && ctx.room && !document.hidden) loadWorld(false); }, 2500);
+  void loadWorld(true);
+  const poll = setInterval(() => { if (P.src === 'room' && ctx.room && !document.hidden) void loadWorld(false); }, 2500);
 
   return {
     update(c) {
@@ -587,13 +595,14 @@ export function mount(el, ctx0) {
       ctx = c;
       if (roomChanged && c.room && P.src === 'seed' && !ctx.param('wsrc')) P.src = 'room';
       if (!c.room) P.src = 'seed';
-      loadWorld(false);
+      void loadWorld(false);
     },
     unmount() {
       alive = false;
       cancelAnimationFrame(raf); clearInterval(poll); ro.disconnect();
       for (const f of cleanups) f();
       if (r3) { try { r3.dispose(); } catch (e) { console.error(e); } r3 = null; }
+
       window.MF_NOFADE = oldNoFade;
       const st = document.getElementById('tab-world-css'); if (st) st.remove();
       el.style.padding = oldPad; el.style.overflow = oldOverflow;

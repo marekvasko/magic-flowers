@@ -5,6 +5,7 @@
 import * as D from '../../shared/data.ts';
 import type { AreaId, Look } from '../../shared/data.ts';
 import type { TileView } from '../../shared/protocol.ts';
+import type { Weather } from '../../shared/save.ts';
 import * as Ice from '../ice.ts';
 import * as Areas from '../areas.ts';
 import * as Scav from '../scavenge.ts';
@@ -32,9 +33,9 @@ function areaTiles(state: TileSource, area: AreaId): TileView[] {
   return room.tiles.map(t => Scav.tileView(t)); // druh divej rastliny ostane skrytý ako v hre
 }
 
-interface WorldPlayer { id: string; name: string | null; online: boolean; x: number; y: number; look: Look | null }
+export interface WorldPlayer { id: string; name: string | null; online: boolean; x: number; y: number; look: Look | null }
 export interface WorldView {
-  room: string | null; source?: 'memory' | 'file'; seed: number | undefined; area: AreaId; w: number; h: number; tick: number; weather: string;
+  room: string | null; source?: 'memory' | 'file'; seed: number | undefined; area: AreaId; w: number; h: number; tick: number; weather: Weather;
   tiles: TileView[]; players: WorldPlayer[];
 }
 
