@@ -1,9 +1,9 @@
 // Záložka Mapa na ladiacej stránke (#77): políčka a štatistiky musia sedieť s hrou (shared/data.js, ice.js, areas.js)
-const test = require('node:test');
-const assert = require('node:assert');
-const D = require('../src/shared/data.ts');
-const Ice = require('../src/server/ice.ts');
-const Areas = require('../src/server/areas.ts');
+import test from 'node:test';
+import assert from 'node:assert';
+import * as D from '../src/shared/data.ts';
+import * as Ice from '../src/server/ice.ts';
+import * as Areas from '../src/server/areas.ts';
 
 const load = () => import('../debug/tabs/map-core.mjs');
 const SEEDS = [0, 1, 7, 12345, 4294967295, 2654435761];
