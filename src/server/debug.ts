@@ -139,6 +139,14 @@ export interface Tools {
 export type DebugApi = (query: URLSearchParams, tools: Tools) => unknown;
 // Zo špecifikácie simulácie stačia návrhy a periodické udalosti (stav reconcilera); server ju má nad svojím typom sveta
 export type DebugSim = Pick<GameSpec, 'proposers' | 'periodic'>;
+// Stav reconcilera pre záložku Room: periodické udalosti (naplánovaná / chýba a kedy by bola) a čo by zahodil
+export interface ReconcilerView {
+  declared: number; proposers: number; counts: { periodic: number; unique: number; plain: number };
+  periodic: { key: string; type: string; status: 'scheduled' | 'missing'; at: number | null }[];
+  drop: { key: string | null; type: string; at: number; why: string }[];
+}
+// Odpoveď /api/debug/room?id=… (kľúče hráčov nahradené odtlačkom, bez tajomstiev sveta)
+export type RoomSnapshot = Loaded & { reconciler: ReconcilerView | null };
 export interface RoomInfo { id: string; size: number | null; saved: number | null; loaded: boolean; online: Loaded['online']; tick?: number }
 // ctx: { dataDir, debugDir (stránka), rooms (Map id → svet v pamäti), serialize(room) → JSON, migrate(stav) → stav,
 //        sim() → špecifikácia simulácie { proposers, periodic } pre stav reconcilera, apis: meno → rozšírenie API }
@@ -187,14 +195,14 @@ export function create<R extends DebugRoom>(ctx: DebugCtx<R>): (req: Pick<Incomi
   // reconciler a plán dostanú ako svet hry (jediné pretypovanie; tvar sveta sa tu nemení ani nekontroluje).
   const asWorld = (state: DebugState): GameWorld => state as unknown as GameWorld;
   const WHY: Readonly<Partial<Record<string, string>>> = { 'neznámy typ': 'unknown type (no proposer)', 'nedeklarovaná periodická': 'periodic, no longer declared', 'duplicita': 'duplicate' };
-  function reconcilerView(state: DebugState): unknown {
+  function reconcilerView(state: DebugState): ReconcilerView | null {
     const sim = ctx.sim && ctx.sim();
     if (!sim) return null;
     const plan = E.reconcilePlan(asWorld({ tick: state.tick, events: state.events || [] }), sim);
     const wouldAt = (def: PeriodicDef<GameWorld>): number | null => { try { return E.planAt(asWorld({ ...state }), def, state.tick + 1); } catch { return null; } };
     const evs = state.events || [];
-    const periodic = [...plan.ok.map(o => ({ key: o.def.key, type: o.def.type, status: 'scheduled', at: o.ev.at })),
-      ...plan.missing.map(d => ({ key: d.key, type: d.type, status: 'missing', at: wouldAt(d) }))];
+    const periodic: ReconcilerView['periodic'] = [...plan.ok.map(o => ({ key: o.def.key, type: o.def.type, status: 'scheduled' as const, at: o.ev.at })),
+      ...plan.missing.map(d => ({ key: d.key, type: d.type, status: 'missing' as const, at: wouldAt(d) }))];
     return {
       declared: (sim.periodic || []).length, proposers: Object.keys(sim.proposers || {}).length,
       counts: { periodic: evs.filter(e => e.periodic).length, unique: evs.filter(e => e.key != null && !e.periodic).length, plain: evs.filter(e => e.key == null).length },

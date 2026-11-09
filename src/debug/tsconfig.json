@@ -1,0 +1,10 @@
+{
+  // Ladiaca stránka /debug (#137): beží v prehliadači (DOM), zbalí ju esbuild ako klienta hry. Typy odpovedí /api/debug/*
+  // berie priamo zo servera (import type z src/server/debug-api/) – preto aj typy Node; do balíka sa nič zo servera nedostane.
+  "extends": "../client/tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["./**/*", "../client/**/*", "../shared/**/*"],
+  "exclude": []
+}

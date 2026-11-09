@@ -1,9 +1,9 @@
 {
-  // Prepis do TypeScriptu (#122): JS súbory sa ešte nekontrolujú (checkJs vypnuté),
-  // prísne pravidlá platia pre každý nový .ts súbor. Node 24 spúšťa .ts priamo (odstránenie typov),
+  // Celý kód je v TypeScripte (#122) a prísne kontrolovaný. Node 24 spúšťa .ts priamo (odstránenie typov),
   // preto len vymazateľná syntax (žiadne enum, namespace ani parameter properties) a prípony .ts v importoch.
   // Balík je ES modul ("type": "module", fáza 5a) – module a moduleResolution "nodenext" ako Node.
-  // Klient (src/client/, prehliadač, DOM) má vlastný src/client/tsconfig.json – zbalí ho esbuild (#136).
+  // Prehliadač (DOM) má vlastné projekty: klient hry src/client/tsconfig.json (#136) a ladiaca stránka
+  // src/debug/tsconfig.json (#137); oba zbalí esbuild.
   "compilerOptions": {
     "target": "es2024",
     "lib": ["es2024"],
@@ -11,8 +11,6 @@
     "moduleResolution": "nodenext",
     "types": ["node"],
     "noEmit": true,
-    "allowJs": true,
-    "checkJs": false,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "erasableSyntaxOnly": true,
@@ -29,6 +27,6 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*", "test/**/*", "debug/api/**/*", "*.ts"],
-  "exclude": ["node_modules", "data", "public", "debug/tabs", "debug/debug.js", "src/client"]
+  "include": ["src/**/*", "test/**/*", "*.ts"],
+  "exclude": ["node_modules", "data", "public", "debug", "src/client", "src/debug"]
 }
