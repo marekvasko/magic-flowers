@@ -6,6 +6,11 @@ import { rmSync } from 'node:fs';
 
 const SHARED = [
   { entry: 'src/shared/data.ts', out: 'build/shared/data.js', global: 'GameData' },
+  { entry: 'src/shared/world3d.ts', out: 'build/shared/world3d.js', global: 'World3D' },
+  { entry: 'src/shared/webs.ts', out: 'build/shared/webs.js', global: 'Webs' },
+  { entry: 'src/shared/spidermodel.ts', out: 'build/shared/spidermodel.js', global: 'SpiderModel' },
+  { entry: 'src/shared/mesher.ts', out: 'build/shared/mesher.js', global: 'Mesher' },
+  { entry: 'src/shared/players.ts', out: 'build/shared/players.js', global: 'Players' },
 ];
 
 rmSync('build', { recursive: true, force: true });

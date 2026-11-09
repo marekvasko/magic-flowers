@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const crypto = require('crypto');
-const W = require('../src/shared/world3d.js');
+const W = require('../src/shared/world3d.ts');
 
 // Odtlačky modelov stromov pred zavedením parametrov (druh: [jar×4 otočenia, leto×4, jeseň×4, zima×4]).
 // Predvolené parametre musia dať presne tie isté minikocky – stromy v hre sa nesmú zmeniť.

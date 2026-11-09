@@ -12,7 +12,7 @@ const net = require('net');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
 
-const Players = require('../src/shared/players.js');
+const Players = require('../src/shared/players.ts');
 const P = require('../src/server/presence.ts');
 
 // ---------- Klient: ostatní hráči podľa pl ----------

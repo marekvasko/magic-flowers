@@ -9,7 +9,7 @@ const D = require('../src/shared/data.ts');
 const E = require('../src/server/engine.ts');
 const Actions = require('../src/server/actions.ts');
 const Sp = require('../src/server/spiders.ts');
-const Webs = require('../src/shared/webs.js');
+const Webs = require('../src/shared/webs.ts');
 
 const TPD = D.TICKS_PER_DAY, LW = D.LES_W, LH = D.LES_H;
 const SEASON_TICK = se => se * D.DAYS_PER_SEASON * TPD + D.DAWN_TICK; // prvé ráno obdobia se
@@ -668,7 +668,7 @@ test('kúty v budovách z minikociek: hrana steny so zemou a pod presahom strech
 });
 
 test('pavučina v budove: kotvy (aj zlom) sa navzájom vidia – medzi nimi nie je plná minikocka', () => {
-  const W3 = require('../src/shared/world3d.js');
+  const W3 = require('../src/shared/world3d.ts');
   let webs = 0;
   for (const id of ['house', 'hut', 'stall', 'icehouse', 'well']) {
     const f = W3.FINE_MODELS.find(m => m.id === id).build(1, 0);
