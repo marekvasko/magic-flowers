@@ -14,12 +14,6 @@ import type { Presence, StorageSlice, Tile } from './world.ts';
 export const LEVELS: readonly number[] = D.glacierLevels(D.buildMountains());
 const levelAt = (i: number): number => must(LEVELS[i]);
 
-// Vodný kvet v plese (#38): pôda druhu 'water' s rastlinou známeho druhu (uloženie je neoverený JSON)
-function isWaterSoil(v: unknown): v is Soil {
-  if (!isRecord(v) || v['k'] !== 'water' || typeof v['o'] !== 'string') return false;
-  const p = v['p'];
-  return isRecord(p) && typeof p['sp'] === 'string' && D.isSpeciesId(p['sp']) && typeof p['prog'] === 'number' && typeof p['q'] === 'number';
-}
 // Políčka hôr: typy zeme z generátora, z uloženia len zásoba ľadu, otvory vo vode a vodné kvety v plese.
 export function loadHory(saved: unknown): Tile[] {
   const base = D.buildMountains();
@@ -28,7 +22,7 @@ export function loadHory(saved: unknown): Tile[] {
     const t: Tile = { g }, v = ok ? saved[i] : undefined, s = isRecord(v) ? v : {};
     if (g === 'glacier') t.ice = s['ice'] == null ? levelAt(i) : Math.max(0, Math.min(levelAt(i), Number(s['ice']) | 0));
     if (g === 'water' && s['cut']) t.cut = 1;
-    if (g === 'water' && isWaterSoil(s['s'])) t.s = s['s'];
+    if (g === 'water' && D.isWaterSoil(s['s'])) t.s = s['s']; // vodný kvet v plese (#38)
     return t;
   });
 }

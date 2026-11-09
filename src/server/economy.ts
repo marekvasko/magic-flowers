@@ -199,16 +199,17 @@ export function sell(m: MarketPart, tick: number, sv: PlayerSave, id: string, n:
 // Založí trh a nástenku v novom (alebo starom) svete. ctx: kontext nad živým svetom (E.liveCtx), pre náhodu zákaziek.
 export function initEconomy(world: GameWorld, ctx?: GameCtx): void {
   const live = ctx || E.liveCtx(world, 'ekonomika');
+  const se = season(world.tick);
+  const stock = (sp: SpeciesId): number => { const ph = phase(sp, se); return D.SPECIES[sp].strict ? 0 : ph === 'now' ? 10 : ph === 'next' ? 6 : 2; };
   if (!world.market) {
-    const se = season(world.tick);
     const m: Market = { seeds: {}, flowers: {}, compost: { stock: 15 }, hist: {}, news: [], festival: null, npcs: { jano: { coins: 300 }, fero: { coins: 400, hold: {} } } };
-    for (const sp of PLANTABLE) {
-      const ph = phase(sp, se);
-      m.seeds[sp] = { stock: D.SPECIES[sp].strict ? 0 : ph === 'now' ? 10 : ph === 'next' ? 6 : 2 };
-      m.flowers[sp] = { stock: 0 };
-    }
+    for (const sp of PLANTABLE) { m.seeds[sp] = { stock: stock(sp) }; m.flowers[sp] = { stock: 0 }; }
     world.market = m;
     recordHistory(m, world.tick);
+  } else {
+    // druhy pridané po založení sveta (vodné kvety, #38): uložený trh ich ešte nemá – dostanú zásobu ako na novom trhu
+    const m = world.market;
+    for (const sp of PLANTABLE) { m.seeds[sp] ??= { stock: stock(sp) }; m.flowers[sp] ??= { stock: 0 }; }
   }
   if (!world.contracts) { world.contracts = { list: [], nextId: 1 }; fillBoard(world.contracts, world.tick, maxRepOf(savesOf(world)), live); }
 }

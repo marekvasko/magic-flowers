@@ -15,6 +15,7 @@ import * as Scav from '../src/server/scavenge.ts';
 import type { GameWorld, Msg } from '../src/server/game.ts';
 import type { Presence } from '../src/server/world.ts';
 import { isRecord } from '../src/shared/util.ts';
+import { SAVE_V11 } from './save-v11.fixture.ts';
 import { must, parseJson, partial, rethrow, testWorld } from './helpers.ts';
 const TPD = D.TICKS_PER_DAY;
 
@@ -203,4 +204,20 @@ test('vodné druhy si nevyberie Jano, zákazky, divé semienka, studňa ani šta
   E.advanceTo(w, w.tick + 4 * D.DAYS_PER_SEASON * TPD, spy);
   assert.ok(contracts.size > 3 && jano.size > 1, `zákazky ${String(contracts.size)}, Jano ${String(jano.size)}`);
   assert.deepStrictEqual([...contracts, ...jano].filter(D.isAqua), []);
+});
+
+test('uložený trh spred vodných kvetov (v11): pri načítaní dostane ich položky, takže dodávka, NPC, ráno aj nákup a predaj fungujú', () => {
+  const w = makeWorld(1), old = parseJson<NonNullable<GameWorld['market']>>(JSON.stringify(SAVE_V11.market));
+  assert.strictEqual(old.seeds.lekno, undefined, 'fixture je spred #38');
+  w.market = old;
+  Econ.initEconomy(w); // ako getRoom v server.ts pri načítaní
+  for (const sp of Object.keys(D.SPECIES) as SpeciesId[]) if (D.isAqua(sp)) assert.ok(w.market.seeds[sp] && w.market.flowers[sp], sp);
+  assert.strictEqual(w.market.seeds.mak?.stock, SAVE_V11.market.seeds.mak.stock, 'staré položky ostanú');
+  const ev = (type: string): E.Input => ({ type, data: null, id: 'e#' + (++seq) });
+  E.commitBatch(w, [ev('delivery'), ev('npc_jano'), ev('npc_fero'), ev('npc_zuzka')], SPEC);
+  dawn(w);
+  I.addItems(I.playerC(ana(w)), 'fl_lekno', 2, w.tick);
+  const r = E.commitBatch(w, [act('buy', { id: 'seed_lekno', n: 1 }), act('sell', { id: 'fl_lekno', n: 2 })], SPEC);
+  assert.deepStrictEqual(r.rejected, []);
+  assert.deepStrictEqual([ana(w).inv.seed_lekno, ana(w).inv.fl_lekno ?? 0], [1, 0]);
 });

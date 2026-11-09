@@ -1,7 +1,8 @@
 // Zdieľané herné dáta – používa server (Node) aj klient (prehliadač).
 // ES modul v TypeScripte (#122): server a testy ho načítajú priamo (Node 24), do prehliadača ho zbalí `npm run build`
 // spolu s klientom hry a ladiacou stránkou (scripts/build.ts).
-import { lookup, mapValues, must } from './util.ts';
+import { isRecord, lookup, mapValues, must } from './util.ts';
+import type { Soil as SoilRecord } from './save.ts';
 
 // ---- Pomocné typy a funkcie ----
 // Ročné obdobie: 0 jar, 1 leto, 2 jeseň, 3 zima
@@ -271,6 +272,12 @@ export function waterSpot(area: string, i: number): { body: WaterBody; zone: Wat
   if (!z) { const g = buildArea(area, 0).map(g => ({ g })), w = areaSize(area).w; z = g.map((t, j) => waterZone(g, j, w)); ZONES.set(body, z); }
   const zone = z[i];
   return zone ? { body, zone } : null;
+}
+// Vodný kvet v plese z uloženia (neoverený JSON): pôda druhu 'water' s rastlinou známeho druhu – server aj ladiaca mapa
+export function isWaterSoil(v: unknown): v is SoilRecord {
+  if (!isRecord(v) || v['k'] !== 'water' || typeof v['o'] !== 'string') return false;
+  const p = v['p'];
+  return isRecord(p) && typeof p['sp'] === 'string' && isSpeciesId(p['sp']) && typeof p['prog'] === 'number' && typeof p['q'] === 'number';
 }
 export const isAqua = (sp: SpeciesId): boolean => !!SPECIES[sp].aqua;
 // dá sa vodný druh už niekde v hre zasadiť? (potok a mŕtve rameno zatiaľ nie)

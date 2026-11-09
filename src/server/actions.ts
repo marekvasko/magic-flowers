@@ -123,6 +123,7 @@ function waterAct(t: Tile, area: AreaId, key: PlayerKey, i: number, item: string
   const p = t.s && t.s.p, a = area === 'garden' ? {} : { area };
   if (p && !p.d && p.prog >= D.SPECIES[p.sp].days) return input('pick', { key, i, ...a });
   if (item === 'hoe' && p && p.d) return input('clear', { key, i, ...a });
+  if (item === 'hoe' && t.s) return null; // motyka pri rastúcom vodnom kvete nič nerobí (ako na záhone)
   if (item.startsWith('seed_')) return input('plant', { key, i, item, ...a });
   if (D.isWild(item)) return { toast: 'Divé semienko vo vode nevyrastie – sadí sa do prekopanej zeme. 🌱' };
   if (item === 'compost') return { toast: 'Vodné kvety kompost nepotrebujú – živí ich bahno na dne. 🌊' };
