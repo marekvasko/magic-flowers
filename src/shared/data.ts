@@ -230,6 +230,11 @@ export function masterRoadText(m: Pick<MasterPos, 'to'>): string {
   return m.to === 'hut' ? 'Majster hodvábu sa už pobral na noc k babke do chalúpky. Dobehni ho tam, alebo príď ráno na trh. 🧵'
     : 'Majster hodvábu sa ráno vracia na trh – o chvíľu tu bude. 🧵';
 }
+// Krhla v zime na zamrznutej vode bez otvoru (#87): jazierko v záhrade, pleso v horách. Studňa nezamŕza.
+export function frozenWaterText(area: AreaId): string {
+  return area === 'hory' ? 'Pleso je zamrznuté. Vysekaj krompáčom dieru do ľadu, alebo načri vodu zo studne v záhrade. 🧊'
+    : 'Jazierko je zamrznuté. Vysekaj krompáčom dieru do ľadu, alebo načri vodu zo studne. 🧊';
+}
 export function reservedName(name: unknown): boolean {
   const n = plainName(name);
   return !!n && RESERVED_NAMES.some(r => r === n || (n.length >= 14 && r.startsWith(n)));

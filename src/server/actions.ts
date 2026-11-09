@@ -512,12 +512,13 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
       ctx.emit(fx$('garden', 'ice', B.lot.x0 + 1, B.lot.y0 + 1));
     }
   },
-  // krhla do vody (jazierko, studňa)
+  // krhla do vody (jazierko, pleso, studňa); v zime voda zamrzne – načrieť sa dá len cez vysekaný otvor (#87)
   drawWater: {
     keys: d => ({ writes: [`save:${d.key}`], reads: [`tile:${d.area}:${d.i}`] }),
     run(s, d, ctx) {
       const t = sl(s, `tile:${d.area}:${d.i}`), sv = saveOf(s, d.key, ctx);
-      if (!t || (t.g !== 'water' && t.g !== 'well')) ctx.reject(null);
+      if (!t || (t.g !== 'water' && t.g !== 'well')) { ctx.reject(null); return; }
+      if (t.g === 'water' && !t.cut && season(ctx.tick) === 3) ctx.reject(D.frozenWaterText(d.area));
       sv.water = Econ.canCap(sv);
       const w = D.areaSize(d.area).w;
       ctx.emit(fx$(d.area, 'splash', d.i % w + 0.5, Math.floor(d.i / w) + 0.5));

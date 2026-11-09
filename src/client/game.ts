@@ -395,7 +395,8 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       case 'well': return sel === 'can' ? { i: '💧', l: 'Načrieť' } : { i: '🪙', l: 'Prianie' };
       case 'water':
         if (sel === 'pick' && season() === 3) return t.cut ? { i: '🕳️', l: 'Otvor v ľade', info: true } : { i: '🧊', l: 'Vysekať ľad' };
-        return sel === 'can' ? { i: '💧', l: 'Načrieť' } : null;
+        if (sel === 'can') return season() === 3 && !t.cut ? { i: '🧊', l: 'Zamrznuté', info: true } : { i: '💧', l: 'Načrieť' };
+        return null;
       case 'glacier':
         if (sel === 'pick') return t.ice ? { i: '🧊', l: 'Vysekať ľad' } : { i: '🧊', l: 'Ľadovec', info: true };
         return S.inv.pick ? null : { i: '🧊', l: 'Ľadovec', info: true }; // bez krompáča v ruke sa po ľadovci len chodí
@@ -486,7 +487,8 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
         const state = ` Ľadovec má ${Math.round(have / max * 100)} % ľadu – dorastie len v daždi alebo snehu.`;
         toast((!S.inv.pick ? 'Na ľad potrebuješ krompáč – kúpiš ho na trhu (záložka Vylepšiť). ⛏️'
           : t?.ice ? `Tu ešte vysekáš ${t.ice}× ľad. Vyber v lište krompáč. ⛏️` : 'Tu je ľad vysekaný až po dno. 🧊') + state);
-      } else if (a.l === 'Otvor v ľade') toast('Tu už je otvor v ľade. Cez noc zamrzne – skús iné miesto. 🧊');
+      } else if (a.l === 'Zamrznuté') toast(D.frozenWaterText(S.area));
+      else if (a.l === 'Otvor v ľade') toast('Tu už je otvor v ľade. Cez noc zamrzne – skús iné miesto. 🧊');
       else if (a.l === 'Pavučina') toast('S lampášom v ruke hodváb neutrhneš – potrebuješ voľnú ruku. Vyber si v lište niečo iné alebo prázdnu ruku. 🕸️');
       else if (a.l === 'Majster na ceste' && a.ma) toast(D.masterRoadText(a.ma));
       else if (a.l === 'Miesto majstra') toast(masterNow() ? 'Majster hodvábu je na noc u babky v chalúpke. Ráno o 6:00 sa vráti na trh. 🧵' : 'Tu predáva majster hodvábu – do dedinky chodí len na jar a na jeseň. 🧵');
@@ -1318,7 +1320,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       <p>📋 <b>Zákazky</b> nájdeš na nástenke pri 👵 babke. Zarezervuj si ich, termín platí; odovzdávať môžeš aj po častiach. Za splnenie dostaneš peniaze a ⭐ reputáciu, za nesplnenie reputáciu stratíš. ⚗️ V babkinom <b>kotlíku</b> sa z troch kvetov varia elixíry.</p>
       <p>🥀 <b>Kvety vädnú:</b> odrezaný kvet vydrží len pár dní (mak 2, tulipán 4, chryzantéma 7…) a s vekom klesá jeho výkupná cena. Rozkvitnutá rastlina na poli po čase odkvitne. V chladnom sklade vädnú kvety 2× pomalšie, zvädnuté sa dajú skompostovať.</p>
       <p>📦 V <b>domčeku</b> je spoločný sklad pre celú záhradu – peniaze má každý svoje.</p>
-      <p>🏔️ <b>Hory:</b> chodník na severovýchodnom okraji záhrady (za babkinou chalúpkou) vedie do hôr. Na ľadovci pod skalami vysekáš <b>krompáčom</b> ⛏️ ľad – každé ťuknutie zoberie vrchnú vrstvu. Po ľadovci sa dá chodiť: vyjdeš o pol bloku, so skokom o celý blok, a kde stojíš, tam ľad nedorastie. Plazením cez žiadny schod (ľad, skalka…) nezídeš ani nevyjdeš – nespadneš z hrany. Ľadu je málo: ľadovec sám nedorastá, len keď prší alebo sneží, a v teple sa topí od okrajov. Kto ho vykope priveľa, nechá ostatných bez ľadu. V zime vysekáš ľad aj na zamrznutom jazierku (z každého políčka raz za deň).</p>
+      <p>🏔️ <b>Hory:</b> chodník na severovýchodnom okraji záhrady (za babkinou chalúpkou) vedie do hôr. Na ľadovci pod skalami vysekáš <b>krompáčom</b> ⛏️ ľad – každé ťuknutie zoberie vrchnú vrstvu. Po ľadovci sa dá chodiť: vyjdeš o pol bloku, so skokom o celý blok, a kde stojíš, tam ľad nedorastie. Plazením cez žiadny schod (ľad, skalka…) nezídeš ani nevyjdeš – nespadneš z hrany. Ľadu je málo: ľadovec sám nedorastá, len keď prší alebo sneží, a v teple sa topí od okrajov. Kto ho vykope priveľa, nechá ostatných bez ľadu. V zime vysekáš ľad aj na zamrznutom jazierku (z každého políčka raz za deň). Krhlou vtedy načrieš vodu len cez vysekaný otvor v ľade (do rána zamrzne) – alebo zo studne, tá nezamŕza.</p>
       <p>🧊 Uneseš najviac ${D.ICE_CARRY} kusov ľadu, ťahá ťa dolu (chodíš pomalšie) a do pol dňa sa ti v batohu roztopí – ponáhľaj sa s ním do ľadovne. V lete ho trh dobre vykúpi, v zime takmer vôbec.</p>
       <p>🧊 <b>Ľadovňa</b> pri domčeku (kúpi ju ktokoľvek na trhu v záložke Vylepšiť) drží ${D.ICEHOUSE.cap} blokov ľadu – nič iné sa do nej nedáva, kvety patria do skladu v domčeku. Kým je v nej ľad, kvety v sklade vädnú 4× pomalšie. Ľad sa topí – v lete rýchlo, v zime vôbec – tak ho dopĺňaj.</p>
       <p>🧶 <b>Izolácia ľadovne:</b> zo ${D.BLANKET_SILK} pavúčieho hodvábu sa dá utkať hodvábna prikrývka – u 🧵 majstra hodvábu hneď za ${D.MASTER.price} 🪙 (chodí len na jar a na jeseň: cez deň stojí pri trhu, na noc ide k babke do chalúpky; keď sú v Dielni krosná, už nepríde), alebo zadarmo na krosnách v 🪚 Dielni (stavba vedľa trhu, kúpi ju ktokoľvek na trhu v záložke Vylepšiť), kde sa tká 2–4 herné hodiny. Ťukni s prikrývkou na ľadovňu: po ${D.ICEHOUSE.blankets.slice(1).join(', ').replace(/, (\d+)$/, ' a $1')} prikrývkach sa ľad topí už len na ${D.ICEHOUSE.insul.slice(1).map(v => Math.round(v * 100) + ' %').join(', ')}.</p>
