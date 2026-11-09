@@ -30,7 +30,7 @@ export function clampPos(area: string, x: number, y: number): { x: number; y: nu
 }
 
 // Na ktorom prechode stojí hráč: vráti cieľovú plochu, alebo null.
-export function gateTarget(tiles: readonly Tile[], area: string, x: number, y: number): AreaId | null {
+export function gateTarget(tiles: readonly Pick<Tile, 'g'>[], area: string, x: number, y: number): AreaId | null {
   const tx = Math.floor(x), ty = Math.floor(y);
   if (!inside(area, tx, ty)) return null;
   if (must(tiles[ty * D.areaSize(area).w + tx]).g !== 'gate') return null;
