@@ -4,7 +4,7 @@ import type { AreaId, Ground, ItemId, Look, MasterPos, PotionId, SpeciesId } fro
 import type { WebOverrides } from '../shared/webs.ts';
 import type { Other } from '../shared/players.ts';
 import type { BatchesView, CornerView, PlayerView, ServerMessage, SpiderKind, TileView, WebView } from '../shared/protocol.ts';
-import type { Contract, Icehouse, Weather, WorldMode } from '../shared/save.ts';
+import type { MarketOrder, Contract, Icehouse, Weather, WorldMode } from '../shared/save.ts';
 import type { FadeConfig, FadeOverrides, Render3D } from './render3d.ts';
 
 export type MsgOf<T extends ServerMessage['t']> = Extract<ServerMessage, { t: T }>;
@@ -39,6 +39,7 @@ export interface CtxAction { i: string; l: string; ui?: UiKind; info?: boolean; 
 export type Dir = 'u' | 'd' | 'l' | 'r';
 
 export interface ClientState {
+  orders?: MarketOrder[];
   ws: WebSocket | null; id: number; room: string; name: string; look: Look | null;
   tiles: TileView[]; tick: number; market: MsgOf<'market'> | null; board: Contract[]; rep: number; up: Partial<MsgOf<'me'>['up']>;
   canCap: number; plotLimit: number; plotsUsed: number; maxActive: number; day: number; min: number; weather: Weather;

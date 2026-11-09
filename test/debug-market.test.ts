@@ -62,8 +62,8 @@ test('debug trh: štruktúra a ceny zhodné s hrou, stav sa nezmení', () => {
   }
   assert.strictEqual(must(r.compost).price, Econ.compostPrice(state.market));
   assert.strictEqual(must(r.compost).sellBack, Econ.sellQuote(state.market, state.tick, 'compost'));
-  assert.strictEqual(must(r.npcs).jano.coins, state.market.npcs.jano.coins);
-  assert.strictEqual(must(r.npcs).fero.coins, state.market.npcs.fero.coins);
+  assert.strictEqual(must(r.npcs).jano.coins, state.market.book?.accounts.jano.coins ?? state.market.npcs.jano.coins);
+  assert.strictEqual(must(r.npcs).fero.coins, state.market.book?.accounts.fero.coins ?? state.market.npcs.fero.coins);
   assert.ok((r.nextDelivery ?? -1) > r.tick);
   const up = r.upcoming;
   assert.ok(up && up.start > r.tick && up.end > up.start);

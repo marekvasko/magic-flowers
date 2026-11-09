@@ -5,6 +5,7 @@ import type { Contracts, Market, PlayerSave } from '../src/shared/save.ts';
 import { isRecord } from '../src/shared/util.ts';
 import * as E from '../src/server/engine.ts';
 import * as Econ from '../src/server/economy.ts';
+import * as Book from '../src/server/orderbook.ts';
 import * as I from '../src/server/items.ts';
 import type { GameCtx, GameProposer, GameSpec, GameWorld, Msg } from '../src/server/game.ts';
 import type { Presence } from '../src/server/world.ts';
@@ -43,7 +44,7 @@ test('64 dní simulácie bez hráčov: zásoby, ceny a fronta udalostí zostáva
       assert.ok(p >= 2 && p < 1000 && q >= 1 && q < 2000, `ceny ${sp}: ${p}/${q}`);
     }
   }
-  assert.ok(maxEvents < 60, 'fronta udalostí: ' + maxEvents);
+  assert.ok(maxEvents < 180, 'fronta udalostí: ' + maxEvents);
   assert.ok(room.contracts.list.filter(c => !c.takenBy).length >= 1, 'nástenka nie je prázdna');
   assert.ok(room.market.news.length > 0);
 });
@@ -78,13 +79,14 @@ test('nákup zvyšuje cenu, predaj kvetov ju znižuje; vypredané sa kúpiť ned
   const r = Econ.buy(m, tick, sv, 'seed_' + sp, 5);
   assert.strictEqual(r.n, 5);
   assert.ok(Econ.seedPrice(m, tick, sp) > p0);
-  Econ.buy(m, tick, sv, 'seed_' + sp, 999);
+  Econ.buy(m, tick, sv, 'seed_' + sp, must(m.seeds[sp]).stock);
   assert.strictEqual(must(room.market.seeds[sp]).stock, 0);
   assert.strictEqual(Econ.buy(m, tick, sv, 'seed_' + sp, 1).n, 0);
   sv.inv[`fl_${sp}`] = 10;
   const f0 = Econ.flowerPrice(m, tick, sp);
-  const s = Econ.sell(m, tick, sv, 'fl_' + sp, 10);
-  assert.ok(must(s.earned) < f0 * 10 && Econ.flowerPrice(m, tick, sp) < f0);
+  const n = Book.levels(m, tick).filter(o => o.item === `fl_${sp}` && o.side === 'buy').reduce((n, o) => n + o.remaining, 0);
+  const s = Econ.sell(m, tick, sv, 'fl_' + sp, n);
+  assert.strictEqual(s.earned, f0 * n); assert.ok(Econ.flowerPrice(m, tick, sp) < f0);
   assert.strictEqual(Econ.buy(m, tick, partial<PlayerSave>({ coins: 9999, inv: {}, rep: 0 }), 'seed_plesnivec', 1).n, 0, 'plesnivec len od reputácie 2');
 });
 
@@ -135,17 +137,16 @@ test('krátke zákazky sú len na kvety, ktoré sa dajú vypestovať v aktuálno
   }
 });
 
-test('predaj starších kvetov vynesie menej než čerstvých', () => {
-  const { room } = makeWorld(5);
-  const fresh = partial<PlayerSave>({ coins: 0, inv: {} }), old = partial<PlayerSave>({ coins: 0, inv: {} });
-  I.addItems(I.playerC(fresh), 'fl_tulipan', 3, room.tick);
-  I.addItems(I.playerC(old), 'fl_tulipan', 3, room.tick - 3 * TPD);
-  const tulipan = must(room.market.flowers.tulipan), stock = tulipan.stock;
-  Econ.sell(room.market, room.tick, fresh, 'fl_tulipan', 3);
-  tulipan.stock = stock;
-  const r = Econ.sell(room.market, room.tick, old, 'fl_tulipan', 3);
-  assert.ok(old.coins < fresh.coins * 0.8, `${old.coins} vs ${fresh.coins}`);
-  assert.match(r.msg, /čerstvosť/);
+test('predaj prenesie skutočný vek kvetu; plní za zverejnenú limitnú cenu', () => {
+  for (const age of [0, 3 * TPD]) {
+    const { room } = makeWorld(5), sv = partial<PlayerSave>({ coins: 0, inv: {} });
+    I.addItems(I.playerC(sv), 'fl_tulipan', 1, room.tick - age);
+    const quote = must(Book.levels(room.market, room.tick).find(o => o.item === 'fl_tulipan' && o.side === 'buy'));
+    const r = Econ.sell(room.market, room.tick, sv, 'fl_tulipan', 1);
+    assert.strictEqual(r.earned, quote.price);
+    const offered = must(Object.values(must(room.market.book).orders).find(o => o?.item === 'fl_tulipan' && o.side === 'sell'));
+    assert.strictEqual(D.batchAge(must(offered.fb.fl_tulipan?.[0]), room.tick, 1), age);
+  }
 });
 
 test('štartovný kapitál: chudobný začiatok, v testovacích prostrediach viac', () => {

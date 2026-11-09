@@ -292,3 +292,13 @@ A new message type needs: the type in the server's `MESSAGES` set, a case in `to
 | `weave:0` … `weave:6` | a spider weaves again the webs torn a day ago: planned from the earliest due time in `webs.pend[o]` (a week ahead when there is none); tearing a web cancels it so reconcile re-plans it | `spiders.ts` |
 | `webDawn` | every day at 6:00: the number of webs per spider by season | `spiders.ts` |
 | `kriziakTrip` | at a random time, on average twice a day (twice as often in autumn): a krížiak sets out to a free corner | `spiders.ts` |
+
+## Same-cycle reconciliation (market orders, #112)
+
+A proposer can expose a pure `settle(world) → Input[]`. After a committed round the engine calls the distinct coordinators of the **applied** proposers, then executes their derived inputs before held original inputs. Derived inputs are recomputed after conflicts; they are recorded as proposals in the original journal entry, and replay derives them again from the original inputs. `onBatch` and client notification happen only after settlement. An empty `commitBatch` explicitly reconciles the book at initialisation.
+
+Order insertion writes `save:<owner>` and a new `market:order:<id>`. IDs combine tick, the original batch's step and server input identity, so a conflict round cannot change the ID. Sequence `(committed step, input ordinal)` determines maker/FIFO order. A fill declares its two orders, both owner accounts, a `market:match:<item>` coordination key, and `market:trades:<item>` before `run()`. Separate items and separate owners can fill in the same round. No settlement mutates an undeclared counterparty save.
+
+The market's v12 book is `market.book`: ID-addressed `orders`, NPC `accounts`, and per-item `trades`. `market:order:<id>`, `market:account:<npc>` and `market:trades:<item>` map to those collections; player accounts remain `save:<key>`. Sell escrow is an inventory plus age-preserving batches; buy escrow is coins at the actual limit. Price improvement returns immediately. IOC buys reserve their exact quoted total, and IOC remainders return in the same batch. Each resting order has one unique `marketExpire:<id>` event. Inactive claims are retained separately from the player's active-order count.
+
+Wholesale stock fields are derived analytics. Quote maintenance coalesces affected items into one proposal over the wholesaler account and the affected order/price slices. It replaces quotes only when price or quantity changes; pure stock projection and overnight quantity reductions retain FIFO. Daily NPC strategy proposers may declare the whole market, but fills still run as narrow settlement proposals afterwards. Hourly maintenance checks aging escrow and capacity released by melting carried ice.

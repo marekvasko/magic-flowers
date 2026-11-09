@@ -57,12 +57,20 @@ function view(market: Market, w: { events?: EngineEvent[]; contracts?: Parameter
   // NPC: Jano (mince, čo pestuje), Fero (mince a zásoba semienok v dnešných cenách)
   const npcs: Partial<Market['npcs']> = m.npcs || {}, jano: Partial<Market['npcs']['jano']> = npcs.jano || {}, fero: Partial<Market['npcs']['fero']> = npcs.fero || {};
   const nextOf = (type: string): number | null => { const e = events.find(x => x.type === type); return e ? e.at : null; };
+  const held: Market['npcs']['fero']['hold'] = {};
+  if (m.book) {
+    for (const sp of Econ.PLANTABLE) {
+      const id = `seed_${sp}` as const;
+      const n = (m.book.accounts.fero.inv[id] || 0) + Object.values(m.book.orders).filter(o => o?.owner.kind === 'npc' && o.owner.key === 'fero' && o.side === 'sell' && o.item === id).reduce((n, o) => n + (o?.remaining || 0), 0);
+      if (n) held[sp] = n;
+    }
+  }
   const npcView = {
-    jano: { coins: jano.coins, next: nextOf('npc_jano'), growing: events.filter(e => e.type === 'jano_sell').map(e => ({ at: e.at, sp: dataOf(e)['sp'], name: nameOf(dataOf(e)['sp']), n: dataOf(e)['n'] })) },
+    jano: { coins: m.book?.accounts.jano.coins ?? jano.coins, next: nextOf('npc_jano'), growing: events.filter(e => e.type === 'jano_sell').map(e => ({ at: e.at, sp: dataOf(e)['sp'], name: nameOf(dataOf(e)['sp']), n: dataOf(e)['n'] })) },
     fero: {
-      coins: fero.coins, next: nextOf('npc_fero'),
+      coins: m.book?.accounts.fero.coins ?? fero.coins, next: nextOf('npc_fero'),
       // zásoba podľa druhu (neznámy druh v starom uložení sa preskočí – v JS by výpočet ceny spadol)
-      hold: Object.entries(fero.hold || {}).flatMap(([sp, n]) => {
+      hold: Object.entries(m.book ? held : fero.hold || {}).flatMap(([sp, n]) => {
         if (!D.isSpeciesId(sp) || n === undefined) return [];
         const p = m.seeds[sp] ? Econ.seedPrice(m, tick, sp) : null;
         return [{ sp, name: spName(sp), n, price: p, value: p == null ? null : p * n, sellsAt: D.SPECIES[sp].seed * 1.5 }];

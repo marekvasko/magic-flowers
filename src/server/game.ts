@@ -2,7 +2,7 @@
 // Engine (engine.ts) je všeobecný; tu sa dosadí, čo je herný svet, prítomnosť a správa.
 import type { AreaId } from '../shared/data.ts';
 import type { ServerMessage } from '../shared/protocol.ts';
-import type { Contracts, Dielna, Icehouse, Inventory, Market, PlayerKey, PlayerSave, SaveFile, Weather, Webs, WorldMode } from '../shared/save.ts';
+import type { Contracts, Dielna, Icehouse, Inventory, Market, MarketAccount, MarketOrder, PlayerKey, PlayerSave, SaveFile, Weather, Webs, WorldMode } from '../shared/save.ts';
 import type { Ctx, EngineWorld, Keys, PeriodicDef, Proposer, Slices, Spec } from './engine.ts';
 import type { Scav } from './scavenge.ts';
 import type { AreaTilesWorld, Presence, StorageSlice, Tile } from './world.ts';
@@ -139,9 +139,17 @@ export type KeyedSlice<K extends string> =
   : K extends `pos:${string}` ? PosSlice | undefined
   : K extends `tile:${string}:*` ? Tile[]
   : K extends `tile:${string}:${number}` ? Tile | undefined   // index mimo plochy → výrez bez hodnoty
+  : K extends 'market:order:*' ? NonNullable<Market['book']>['orders']
+  : K extends 'market:account:*' ? NonNullable<Market['book']>['accounts']
+  : K extends 'market:trades:*' ? NonNullable<Market['book']>['trades']
+  : K extends `market:order:${string}` ? MarketOrder | undefined
+  : K extends `market:account:${string}` ? MarketAccount
+  : K extends `market:trades:${string}` ? { tick: number; text: string }[] | undefined
   : K extends 'market:*' ? Market
   : K extends 'market:seed_*' ? Market['seeds']
   : K extends 'market:fl_*' ? Market['flowers']
+  : K extends 'market:festival' ? Market['festival']
+  : K extends 'market:news' ? Market['news']
   : K extends 'market:compost' ? Market['compost']
   : K extends `market:seed_${string}` ? NonNullable<Market['seeds'][keyof Market['seeds']]> | undefined
   : K extends `market:fl_${string}` ? NonNullable<Market['flowers'][keyof Market['flowers']]> | undefined

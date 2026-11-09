@@ -13,6 +13,7 @@ import type { PlayerKey, PlayerSave } from '../shared/save.ts';
 import { keys, lookup, must } from '../shared/util.ts';
 import * as E from './engine.ts';
 import * as Econ from './economy.ts';
+import * as Book from './orderbook.ts';
 import * as I from './items.ts';
 import * as Ice from './ice.ts';
 import * as Scav from './scavenge.ts';
@@ -61,6 +62,8 @@ export interface ActionInputs {
   wave: { key: PlayerKey; to: PlayerKey };
   buy: { key: PlayerKey; id: string; n: number };
   sell: { key: PlayerKey; id: string; n: number };
+  marketOrder: Book.Place;
+  marketCancel: { key: PlayerKey; id: string };
   upgrade: { key: PlayerKey; kind: string };
   buyTool: { key: PlayerKey; id: string };
   build: { key: PlayerKey; id: 'icehouse' | 'dielna' };
@@ -300,6 +303,12 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- staršie záznamy denníka štartový kapitál nemajú
       if (fresh || !sv) { sv = newSave(ctx.tick, d.start || { coins: 30, rep: 0 }); put(s, `save:${d.key}`, sv); s.maxRep = Math.max(s.maxRep || 0, sv.rep); }
       else migrateSave(sv, ctx.tick);
+      sv.name = d.name;
+      if (sv.marketOffline) {
+        const n = sv.marketOffline;
+        ctx.emit(toast$(d.key, `Kým si bol(a) preč: kúpené ${n.bought} ks za ${n.spent} 🪙, predané ${n.sold} ks za ${n.earned} 🪙.`, 'gift'));
+        delete sv.marketOffline;
+      }
       sv.look = d.look && typeof d.look === 'object' ? { shirt: (d.look.shirt || '#4a90d9').slice(0, 9), hair: (d.look.hair || '#5b3a1a').slice(0, 9), hat: d.look.hat } : sv.look;
       const pos = sl(s, `pos:${d.key}`), area = pos && pos.area && D.AREAS.includes(pos.area) ? pos.area : 'garden';
       ctx.emit({ to: d.key, t: 'joined' });
@@ -472,6 +481,7 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
   },
   // Ľadovňa: hráč do nej vloží ľad z batohu (najviac toľko, koľko sa zmestí). d: { key, n }
   fillIce: {
+    settle: Book.settle,
     keys: d => ({ writes: ['icehouse', 'storage', `save:${d.key}`] }),
     run(s, d, ctx) {
       const me = who(ctx), sv = saveOf(s, d.key, ctx);
@@ -597,6 +607,7 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
 
   // --- iný hráč (d: { key, to, item? }) ---
   gift: {
+    settle: Book.settle,
     keys: d => ({ writes: [`save:${d.key}`, `save:${d.to}`] }),
     run(s, d, ctx) {
       const me = who(ctx), other = byKey(ctx.presence, d.to), sv = saveOf(s, d.key, ctx), osv = saveOf(s, d.to, ctx), item = d.item;
@@ -628,24 +639,10 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
   },
 
   // --- trh (d: { key, id, n }): len položka tovaru a batoh hráča ---
-  buy: {
-    keys: d => ({ writes: [Econ.marketKey(d.id), `save:${d.key}`].filter((k): k is string => !!k) }),
-    run(s, d, ctx) {
-      const id = d.id, sv = saveOf(s, d.key, ctx);
-      const r = Econ.buy(Econ.marketSlice(s, id), ctx.tick, sv, id, d.n);
-      if (!r.n) ctx.reject(r.msg);
-      ctx.emit(toast$(d.key, r.msg));
-    }
-  },
-  sell: {
-    keys: d => ({ writes: [Econ.marketKey(d.id), `save:${d.key}`].filter((k): k is string => !!k) }),
-    run(s, d, ctx) {
-      const id = d.id, sv = saveOf(s, d.key, ctx);
-      const r = Econ.sell(Econ.marketSlice(s, id), ctx.tick, sv, id, d.n);
-      if (!r.n) ctx.reject(r.msg);
-      ctx.emit(toast$(d.key, r.msg));
-    }
-  },
+  buy: Book.placement('buy'),
+  sell: Book.placement('sell'),
+  marketOrder: Book.placement(),
+  marketCancel: Book.PROPOSERS.marketCancel,
   // vylepšenie (d: { key, kind }); spoločné (povolenie na pole) patrí záhrade – kľúč 'up'
   upgrade: {
     keys: d => { const u = lookup(D.UPGRADES, d.kind); return { writes: u && u.shared ? [`save:${d.key}`, 'up'] : [`save:${d.key}`] }; },
@@ -738,6 +735,7 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
     }
   },
   cdeliver: {
+    settle: Book.settle,
     keys: d => ({ writes: ['contracts', `save:${d.key}`, 'maxRep'] }),
     run(s, d, ctx) {
       const r = Econ.deliverContract(s.contracts, ctx.tick, saveOf(s, d.key, ctx), d.key, d.id | 0, s.maxRep, ctx);
@@ -798,6 +796,7 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
 
   // --- sklad v domčeku (d: { key, id, n }); kvety si pri presune nesú svoj vek, v sklade starnú pomalšie ---
   store: {
+    settle: Book.settle,
     keys: d => ({ writes: ['storage', `save:${d.key}`], reads: ['icehouse'] }),
     run(s, d, ctx) {
       const sv = saveOf(s, d.key, ctx), id = d.id, n = d.n | 0;

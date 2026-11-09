@@ -15,6 +15,7 @@ import type { JsonRecord } from '../shared/util.ts';
 import * as E from './engine.ts';
 import type { BatchOut, EngineEvent, Input, JournalLoad } from './engine.ts';
 import * as Econ from './economy.ts';
+import * as Book from './orderbook.ts';
 import * as I from './items.ts';
 import * as Scav from './scavenge.ts';
 import * as Ice from './ice.ts';
@@ -164,7 +165,7 @@ const server = http.createServer((req, res) => {
 // ---------- Svety (miestnosti) ----------
 // Čas je diskrétny: svet má celé počítadlo `tick` (D.TICKS_PER_DAY krokov na deň), deň a minúta sa z neho
 // len odvodzujú. Všetko, čo sa má stať v budúcnosti, je udalosť v plánovači (room.events) a ukladá sa so svetom.
-const SAVE_VERSION = 11; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov; 8: semienko sveta a počítadlo kôl namiesto rng; 9: 11 520 krokov za deň (×40); 10: pavúky a pavučiny; 11: Dielňa, majster hodvábu a izolácia ľadovne
+const SAVE_VERSION = 12; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov; 8: semienko sveta a počítadlo kôl namiesto rng; 9: 11 520 krokov za deň (×40); 10: pavúky a pavučiny; 11: Dielňa, majster hodvábu a izolácia ľadovne; 12: kniha objednávok a rezervácie
 const OLD_TPD = 288, OLD_MPT = 5, TICK_SCALE = D.TICKS_PER_DAY / OLD_TPD; // mriežka času do verzie 8
 const TPD = D.TICKS_PER_DAY;
 const DEFAULT_MODE: WorldMode = process.env['DEFAULT_MODE'] === 'paused' ? 'paused' : 'running';
@@ -243,6 +244,7 @@ function migrate(saved: JsonRecord): LoadedState {
     out.redeem = Dielna.clearForDielna(out.tiles);
     if (out.icehouse) out.icehouse.bl = 0;
   }
+  if (from < 12 && out.market) Book.init(out.market, out.tick); // v12: hráčske účty sa nemenia, staré NPC zásoby prejdú práve raz
   out.v = SAVE_VERSION; out.migratedFrom = Number(saved['migratedFrom']) || from;
   return out;
 }
@@ -410,6 +412,7 @@ function upView(room: Room, sv: PlayerSave): { can: number; composter: number; p
 function sendMe(pl: Player): void {
   const room = pl.room, sv = must(pl.save);
   send(pl.ws, {
+    orders: [...(sv.marketOrders || []), ...(sv.marketClaims || [])].flatMap(id => { const order = room.market?.book?.orders[id]; return order ? [order] : []; }),
     t: 'me', coins: sv.coins, water: sv.water, inv: sv.inv, recipes: sv.recipes, seen: sv.seen, vily: sv.vily > room.tick,
     rep: sv.rep, up: upView(room, sv), canCap: Econ.canCap(sv), plotLimit: Econ.plotLimit(room.up), plotsUsed: room.plotsUsed, maxActive: Econ.maxActive(sv),
     fb: I.batchesView(I.playerC(sv), room.tick), tick: room.tick, loom: loomView(room, pl.key)
@@ -600,7 +603,7 @@ function timeMsg(room: Room): ServerMessage {
 // Udalosti a akcie nie sú nikdy v jednej dávke: dávka akcií sa vykoná v kroku, v ktorom správy prišli (svet sa medzi
 // rámcami nehýbe, takže to je práve aktuálny krok), až potom rámec posunie čas.
 const INBOX_MAX = 2000, PLAYER_INBOX_MAX = 100, DEFER_MAX = 3; // ochrana pred zaplavením: čo sa nezmestí (na svet, na hráča, odložené akcie), sa zahodí
-const MESSAGES = new Set(['move', 'act', 'jump', 'sleep', 'emote', 'buy', 'sell', 'upgrade', 'ctake', 'cdeliver', 'brew', 'wish', 'settings', 'store', 'unstore', 'compostWilted', 'buyTool', 'build', 'icehouse', 'buyLoom', 'masterWeave', 'loomStart', 'loomTake', 'chat']);
+const MESSAGES = new Set(['move', 'act', 'jump', 'sleep', 'emote', 'buy', 'sell', 'marketOrder', 'marketCancel', 'upgrade', 'ctake', 'cdeliver', 'brew', 'wish', 'settings', 'store', 'unstore', 'compostWilted', 'buyTool', 'build', 'icehouse', 'buyLoom', 'masterWeave', 'loomStart', 'loomTake', 'chat']);
 const EMOTES: readonly Emote[] = ['dance', 'wave', 'heart', 'laugh', 'flower'];
 const WISHES: readonly WishKind[] = ['zlato', 'jar', 'poklad'];
 // Správa servera samému sebe do schránky (odchod, „naposledy videný“) – nie od klienta
@@ -705,7 +708,9 @@ function toInput(room: Room, pl: Player, e: InboxEntry, presence: Presence[], in
       }
       return mk(r.type, r.data);
     }
-    case 'buy': return mk('buy', { id: String(m['id']), n: count(1, 20) });
+    case 'buy': return mk('buy', { id: String(m['id']), n: count(1, 999) });
+    case 'marketOrder': return m['side'] === 'buy' || m['side'] === 'sell' ? mk('marketOrder', { id: String(m['id']), n: count(1, 999), side: m['side'], price: Number(m['price']) }) : no('invalid market side');
+    case 'marketCancel': return mk('marketCancel', { id: String(m['id']) });
     case 'sell': return mk('sell', { id: String(m['id']), n: count(1, 999) });
     case 'upgrade': return mk('upgrade', { kind: String(m['kind']) });
     case 'ctake': return mk('ctake', { id: Number(m['id']) | 0 });

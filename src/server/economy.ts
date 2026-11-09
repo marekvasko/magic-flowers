@@ -3,196 +3,27 @@
 // Funkcie nedostávajú svet, ale výrezy (slices), s ktorými pracujú: m = trh (world.market alebo jeho kópia z návrhu),
 // c = nástenka zákaziek (world.contracts), sv = uloženie hráča, tick = herný čas; náhoda a plánovanie cez ctx (engine.js).
 import * as D from '../shared/data.ts';
-import type { Festival, FestivalId, GiverId, ItemId, Season, SpeciesId, UpgradeId } from '../shared/data.ts';
+import type { Festival, FestivalId, GiverId, ItemId, SpeciesId, UpgradeId } from '../shared/data.ts';
 import type { MarketItemView, ServerMessage, UpcomingFestival } from '../shared/protocol.ts';
-import type { ActiveFestival, Contract, ContractKind, Contracts, Market, PlayerKey, PlayerSave } from '../shared/save.ts';
+import type { Contract, ContractKind, Contracts, Market, PlayerKey, PlayerSave } from '../shared/save.ts';
 import { entries, isRecord, keys, must } from '../shared/util.ts';
 import * as E from './engine.ts';
-import type { EngineEvent, Slices } from './engine.ts';
+import type { EngineEvent } from './engine.ts';
 import { maybe, savesOf, sl } from './game.ts';
 import type { GameCtx, GamePeriodic, GameProposer, GameSlices, GameWorld } from './game.ts';
 import * as I from './items.ts';
+import * as Book from './orderbook.ts';
 import type { Rng, Tile } from './world.ts';
 
+import { news, PLANTABLE, SEED_CAP, COMPOST_CAP, HIST_LEN, PRICING, YEAR_DAYS, phase, seedOf, flowerOf, seedPrice, compostPrice, flowerPrice, setFestival, season, nextSeason, dayInSeason, seasonStartTick } from './pricing.ts';
+export * from './pricing.ts';
 const TPD = D.TICKS_PER_DAY, DPS = D.DAYS_PER_SEASON;
-export const YEAR_DAYS = 4 * DPS;
-export const PLANTABLE: readonly SpeciesId[] = keys(D.SPECIES).filter(k => !D.SPECIES[k].magic);
-export const SEED_TARGET = 10, COMPOST_TARGET = 15, HIST_LEN = 16;
-export const SEED_CAP = 40, COMPOST_CAP = 30;
-// Koeficienty cien (exportované aj pre ladiacu stránku, aby vysvetlenie sedelo s hrou)
-export const PRICING = {
-  seedDemand: { now: 1.35, next: 1.0, off: 0.8 }, // dopyt po semienkach podľa toho, kedy sa druh sadí
-  seedScarcity: [0.75, 3], seedMin: 2,              // vzácnosť sqrt(SEED_TARGET / zásoba) v medziach, najnižšia cena
-  seedSellBack: 0.4,                                // výkup semienok = 40 % predajnej ceny
-  compostBase: 15, compostScarcity: [0.7, 3], compostMin: 5, compostSellBack: 0.5,
-  flowerOffSeason: 1.6,                             // kvet mimo svojej sezóny je vzácnejší
-  flowerSat: { start: 1.3, perUnit: 0.06, min: 0.35 }, // nasýtenie trhu: 1,3 − 0,06 × zásoba, najmenej 0,35
-  flowerMin: 1, flowerCap: 99,
-  flowerOvernight: 0.6, seedOffSeasonDecay: 0.9     // každé ráno: zostane 60 % kvetov, 90 % semienok mimo sezóny
-} as const;
-
-// Trh, s ktorým pracujú ceny, nákup a predaj: celý trh, alebo čiastočný z výrezov návrhu (marketSlice – bez kompostu,
-// sviatku a histórie, ak ich tovar nepotrebuje)
-export interface MarketPart {
-  seeds: Market['seeds'];
-  flowers: Market['flowers'];
-  compost: Market['compost'] | null;
-  festival?: ActiveFestival | null;
+// Priame rozhranie pre simulácie a ladenie používa ten istý návrh a vyrovnanie ako hráčske akcie.
+export function buy(m: Market, tick: number, sv: PlayerSave, id: string, n: number): { n: number; cost: number; msg: string } {
+  const r = Book.trade(m, tick, sv, id, n, 'buy'); return { n: r.n, cost: r.coins, msg: r.msg };
 }
-export type Phase = 'now' | 'next' | 'off';
-
-const clamp = (v: number, a: number, b: number): number => Math.max(a, Math.min(b, v));
-const day = (tick: number): number => D.dayOfTick(tick);
-const season = (tick: number): Season => D.seasonOf(day(tick));
-const dayInSeason = (tick: number): number => (day(tick) - 1) % DPS + 1;
-const nextSeason = (se: Season, k: number): Season => ((se + k) % 4) as Season;
-const seedOf = (m: MarketPart, sp: SpeciesId): { stock: number } => must(m.seeds[sp]);
-const flowerOf = (m: Pick<MarketPart, 'flowers'>, sp: SpeciesId): { stock: number; fest?: number } => must(m.flowers[sp]);
-const compostOf = (m: MarketPart): { stock: number } => must(m.compost ?? undefined);
-// Kedy sa druh sadí vzhľadom na aktuálne obdobie: teraz / v ďalšom období / mimo
-export function phase(sp: SpeciesId, se: Season): Phase {
-  const s = D.SPECIES[sp].seasons;
-  if (s.includes(se)) return 'now';
-  if (s.includes(nextSeason(se, 1))) return 'next';
-  return 'off';
-}
-// Krok, ktorým začína obdobie posunuté o `offset` období od aktuálneho
-function seasonStartTick(tick: number, offset: number): number { return (Math.floor((day(tick) - 1) / DPS) + offset) * DPS * TPD; }
-
-// Správa na trhovisku (najnovšia prvá, najviac 14)
-export function news(m: Pick<Market, 'news'>, tick: number, text: string): void {
-  m.news.unshift({ tick, text });
-  if (m.news.length > 14) m.news.length = 14;
-}
-
-// ---------- Ceny ----------
-// Každá cena sa skladá z činiteľov; *PriceParts vrátia všetky (pre ladiacu stránku) aj výslednú cenu,
-// takže vysvetlenie sa nemôže rozísť s hrou. Funkcie len čítajú stav, nič nemenia.
-export function seedPriceParts(m: MarketPart, tick: number, sp: SpeciesId): {
-  base: number; stock: number; season: Season; phase: Phase; demand: number; scarcityRaw: number; scarcity: number; raw: number; min: number; price: number;
-} {
-  const P = PRICING, base = D.SPECIES[sp].seed, stock = seedOf(m, sp).stock;
-  const se = season(tick), ph = phase(sp, se);
-  const demand = P.seedDemand[ph];
-  const scarcityRaw = Math.sqrt(SEED_TARGET / Math.max(1, stock));
-  const scarcity = clamp(scarcityRaw, P.seedScarcity[0], P.seedScarcity[1]);
-  const raw = base * demand * scarcity;
-  return { base, stock, season: se, phase: ph, demand, scarcityRaw, scarcity, raw, min: P.seedMin, price: Math.max(P.seedMin, Math.round(raw)) };
-}
-export function seedPrice(m: MarketPart, tick: number, sp: SpeciesId): number { return seedPriceParts(m, tick, sp).price; }
-export function compostPriceParts(m: MarketPart): { base: number; stock: number; scarcityRaw: number; scarcity: number; raw: number; min: number; price: number } {
-  const P = PRICING, base = P.compostBase, stock = compostOf(m).stock;
-  const scarcityRaw = Math.sqrt(COMPOST_TARGET / Math.max(1, stock));
-  const scarcity = clamp(scarcityRaw, P.compostScarcity[0], P.compostScarcity[1]);
-  const raw = base * scarcity;
-  return { base, stock, scarcityRaw, scarcity, raw, min: P.compostMin, price: Math.max(P.compostMin, Math.round(raw)) };
-}
-export function compostPrice(m: MarketPart): number { return compostPriceParts(m).price; }
-// Výkupná cena kvetu: mimo sezóny vzácnejší, počas sviatku vyšší dopyt, plný trh cenu tlačí dole.
-// Sviatočný násobok je v položke kvetu (m.flowers[sp].fest, píšu ho festStart/festEnd), takže predaj kvetu
-// potrebuje len výrez 'market:fl_<sp>'; m.festival je iba súhrn pre klienta (id, meno, ikona, násobky, dokedy).
-export function flowerPriceParts(m: Pick<MarketPart, 'flowers' | 'festival'>, tick: number, sp: SpeciesId): {
-  base: number; stock: number; season: Season; inSeason: boolean; rare: number; fest: number; festival: FestivalId | null;
-  satRaw: number; sat: number; raw: number; min: number; price: number;
-} {
-  const P = PRICING, s = D.SPECIES[sp], base = s.sell, f = flowerOf(m, sp), stock = f.stock, se = season(tick);
-  const inSeason = s.seasons.includes(se);
-  const rare = inSeason ? 1 : P.flowerOffSeason;
-  const fest = f.fest || 1;
-  const satRaw = P.flowerSat.start - P.flowerSat.perUnit * stock;
-  const sat = Math.max(P.flowerSat.min, satRaw);
-  const raw = base * rare * fest * sat;
-  return { base, stock, season: se, inSeason, rare, fest, festival: fest !== 1 && m.festival ? m.festival.id : null, satRaw, sat, raw, min: P.flowerMin, price: Math.max(P.flowerMin, Math.round(raw)) };
-}
-// Sviatok v položkách kvetov: zmaže staré násobky a zapíše násobky sviatku f (null = žiadny sviatok).
-export function setFestival(m: Pick<MarketPart, 'flowers'>, f: Pick<Festival, 'mult'> | null | undefined): void {
-  for (const sp of keys(m.flowers)) delete flowerOf(m, sp).fest;
-  if (f) for (const [sp, x] of entries(f.mult)) { const it = m.flowers[sp]; if (it) it.fest = x; }
-}
-// Pri načítaní: násobky v položkách kvetov sa odvodia zo súhrnu (staršie uloženia ich nemajú; bez zmeny verzie uloženia).
-export function syncFestival(m: Pick<MarketPart, 'flowers' | 'festival'> | null | undefined): void { if (m) setFestival(m, m.festival); }
-export function flowerPrice(m: Pick<MarketPart, 'flowers' | 'festival'>, tick: number, sp: SpeciesId): number { return flowerPriceParts(m, tick, sp).price; }
-// Cena, za ktorú trh od hráča vykúpi 1 kus (null = nevykupuje)
-export function sellQuote(m: MarketPart, tick: number, id: string): number | null {
-  if (id.startsWith('fl_')) { const sp = id.slice(3); return D.isSpeciesId(sp) && m.flowers[sp] ? flowerPrice(m, tick, sp) : null; }
-  if (id.startsWith('seed_')) { const sp = id.slice(5); return D.isSpeciesId(sp) && m.seeds[sp] ? Math.max(1, Math.round(seedPrice(m, tick, sp) * PRICING.seedSellBack)) : D.sellPrice(id); }
-  if (id === 'compost') return Math.max(1, Math.round(compostPrice(m) * PRICING.compostSellBack));
-  if (id.startsWith('po_') || id === 'wilted') return D.sellPrice(id);
-  if (id === 'ice') return must(D.ICE_PRICE[season(tick)]); // v lete drahý, v zime takmer zadarmo
-  return null;
-}
-export function buyQuote(m: MarketPart, tick: number, id: string): { price: number; stock: number } | null {
-  if (id === 'compost') return { price: compostPrice(m), stock: compostOf(m).stock };
-  const sp = id.startsWith('seed_') ? id.slice(5) : '';
-  if (D.isSpeciesId(sp) && m.seeds[sp]) return { price: seedPrice(m, tick, sp), stock: seedOf(m, sp).stock };
-  return null;
-}
-function stockOf(m: MarketPart, id: string): { stock: number } | null | undefined {
-  if (id === 'compost') return m.compost;
-  const sp = D.speciesOfItem(id);
-  if (id.startsWith('seed_')) return sp ? m.seeds[sp] : undefined;
-  if (id.startsWith('fl_')) return sp ? m.flowers[sp] : undefined;
-  return null;
-}
-// Kľúč výrezu trhu, ktorý nákup či predaj tovaru id potrebuje ('market:seed_mak', 'market:fl_mak', 'market:compost'),
-// alebo null – elixíry, zvädnuté kvety a ľad majú pevné ceny a trh sa nemení.
-export type MarketKey = 'market:compost' | `market:seed_${SpeciesId}` | `market:fl_${SpeciesId}`;
-export function marketKey(id: string): MarketKey | null {
-  if (id === 'compost') return 'market:compost';
-  const sp = D.speciesOfItem(id);
-  if (sp && id.startsWith('seed_') && PLANTABLE.includes(sp)) return `market:seed_${sp}`;
-  if (sp && id.startsWith('fl_') && PLANTABLE.includes(sp)) return `market:fl_${sp}`;
-  return null;
-}
-// Čiastočný trh z výrezov návrhu: len položka tovaru id (buy/sell/sellQuote sa jej držia), ostatné kolekcie prázdne.
-export function marketSlice(slices: Slices, id: string): MarketPart {
-  const m: MarketPart = { seeds: {}, flowers: {}, compost: null }, key = marketKey(id), sp = D.speciesOfItem(id);
-  if (key) {
-    if (id === 'compost') m.compost = sl(slices, 'market:compost');
-    else if (sp && id.startsWith('seed_')) { const v = sl(slices, `market:seed_${sp}`); if (v) m.seeds[sp] = v; }
-    else if (sp) { const v = sl(slices, `market:fl_${sp}`); if (v) m.flowers[sp] = v; }
-  }
-  return m;
-}
-
-// Nákup po kusoch – každý kus zvýši cenu ďalšieho (ubúda zásoba).
-export function buy(m: MarketPart, tick: number, sv: PlayerSave, id: string, n: number): { n: number; cost?: number; msg: string } {
-  const q = buyQuote(m, tick, id);
-  if (!q) return { n: 0, msg: 'Toto sa na trhu nepredáva.' };
-  const sp = id.startsWith('seed_') ? D.speciesOfItem(id) : null;
-  const minRep = sp ? D.MIN_SEED_REP[sp] : undefined;
-  if (sp && minRep && D.repLevel(sv.rep || 0) < minRep) return { n: 0, msg: `Veľkoobchodník predáva ${D.SPECIES[sp].name} len záhradníkom s reputáciou ${String(minRep)}.` };
-  let got = 0, cost = 0;
-  while (got < n) {
-    const cur = buyQuote(m, tick, id), st = stockOf(m, id);
-    if (!cur || !st || cur.stock <= 0) break;
-    if (sv.coins < cur.price) break;
-    sv.coins -= cur.price; cost += cur.price; st.stock--; got++;
-  }
-  if (got && D.isItemId(id)) I.addItems(I.playerC(sv), id, got, tick);
-  const msg = got ? `Kúpené: ${String(got)}× ${D.itemName(id)} za ${String(cost)} 🪙` : (q.stock <= 0 ? 'Vypredané. Veľkoobchodník príde o pár dní.' : 'Nemáš dosť mincí. 🪙');
-  return { n: got, cost, msg };
-}
-
-// Predaj po kusoch – každý predaný kus zníži cenu ďalšieho (trh sa nasycuje).
-// Kvety sa predávajú od najstarších a cena sa násobí ich čerstvosťou.
-export function sell(m: MarketPart, tick: number, sv: PlayerSave, id: string, n: number): { n: number; earned?: number; msg: string } {
-  if (sellQuote(m, tick, id) == null || D.isTool(id)) return { n: 0, msg: 'Toto trh nevykupuje.' };
-  if (!D.isItemId(id)) return { n: 0, msg: 'Nemáš čo predať.' };
-  n = Math.min(n, sv.inv[id] || 0);
-  if (!n) return { n: 0, msg: 'Nemáš čo predať.' };
-  const batches = I.removeItems(I.playerC(sv), id, n, tick) || [];
-  const sp = I.isFlower(id) ? D.speciesOfItem(id) : null;
-  let earned = 0, fresh = 0;
-  for (const b of batches) for (let i = 0; i < b.n; i++) {
-    const f = sp ? D.freshness(sp, b.age) : 1;
-    earned += Math.max(1, Math.round((sellQuote(m, tick, id) ?? 0) * f)); fresh += f;
-    const st = stockOf(m, id);
-    if (st) st.stock = Math.min(sp ? PRICING.flowerCap : SEED_CAP, st.stock + 1);
-  }
-  sv.coins += earned;
-  const fr = sp && fresh / n < 0.97 ? ` (čerstvosť ${String(Math.round(fresh / n * 100))} %)` : '';
-  return { n, earned, msg: `Predané: ${String(n)}× ${D.itemName(id)} za ${String(earned)} 🪙${fr}` };
+export function sell(m: Market, tick: number, sv: PlayerSave, id: string, n: number): { n: number; earned: number; msg: string } {
+  const r = Book.trade(m, tick, sv, id, n, 'sell'); return { n: r.n, earned: r.coins, msg: r.msg };
 }
 
 // ---------- Inicializácia ----------
@@ -210,6 +41,8 @@ export function initEconomy(world: GameWorld, ctx?: GameCtx): void {
     world.market = m;
     recordHistory(m, world.tick);
   }
+  Book.init(world.market, world.tick);
+  Book.bootstrap(world);
   if (!world.contracts) { world.contracts = { list: [], nextId: 1 }; fillBoard(world.contracts, world.tick, maxRepOf(savesOf(world)), live); }
 }
 
@@ -242,9 +75,22 @@ export function composters(saves: Partial<Record<PlayerKey, PlayerSave>>, tick: 
 }
 // Ranná časť ekonomiky ako samostatný návrh (server ju volá zo svojho rána, testy a ladenie priamo).
 export const DAWN: Required<GameProposer<unknown>> = {
+  settle: Book.settle,
   keys: () => ({ writes: ['market:*', 'save:*', 'contracts'], reads: ['maxRep'] }),
   run(s, d, ctx) {
-    dawnMarket(sl(s, 'market:*'), ctx.tick);
+    const m = sl(s, 'market:*');
+    const a = m.book?.accounts.wholesale;
+    dawnMarket(m, ctx.tick);
+    if (a) for (const sp of PLANTABLE) {
+      const flower = `fl_${sp}` as const, seed = `seed_${sp}` as const;
+      const c = { inv: a.inv, fb: a.fb, rate: 1 };
+      const flowers = Book.owned(m, flower), seeds = Book.owned(m, seed);
+      const consumed = flowers - Math.floor(flowers * PRICING.flowerOvernight);
+      if (consumed) Book.consume(m, flower, consumed, ctx);
+      if (phase(sp, season(ctx.tick)) === 'off') { const spoiled = seeds - Math.floor(seeds * PRICING.seedOffSeasonDecay); if (spoiled) Book.consume(m, seed, spoiled, ctx); }
+      I.wiltSweep(c, ctx.tick); I.meltSweep(c, ctx.tick);
+    }
+    Book.fund(m);
     composters(sl(s, 'save:*'), ctx.tick);
     fillBoard(s.contracts, ctx.tick, s.maxRep || 0, ctx);
   }
@@ -285,8 +131,9 @@ const festival = (id: FestivalId): Festival => must(D.FESTIVALS.find(x => x.id =
 // Návrhy udalostí ekonomiky: { keys, run } (pozri engine.js). Udalosti trhu deklarujú celý trh ('market:*'):
 // sú to jednotky za deň; akcie hráčov (actions.js) deklarujú len položku tovaru (marketKey: market:seed_mak…).
 // Správy hráčom idú cez ctx.emit – server ich pošle až po vykonaní návrhu; obnovu trhu a nástenky odvodí zo zapísaných kľúčov.
-const market = { keys: () => ({ writes: ['market:*'] }) };
-export const PROPOSERS: { [T in keyof EconInputs]: GameProposer<EconInputs[T]> } = {
+const market = { settle: Book.settle, keys: () => ({ writes: ['market:*'] }) };
+export const PROPOSERS: { [T in keyof EconInputs]: GameProposer<EconInputs[T]> } & typeof Book.PROPOSERS = {
+  ...Book.PROPOSERS,
   delivery: {
     ...market,
     run(s, d, ctx) {
@@ -299,11 +146,10 @@ export const PROPOSERS: { [T in keyof EconInputs]: GameProposer<EconInputs[T]> }
         else if (ph === 'next') q = dis >= DPS - 1 ? 8 + g.int(6) : 4 + g.int(4);
         else if (ph === 'now') q = dis <= 1 ? 4 + g.int(4) : g.int(3);
         else q = g.int(2);
-        const it = seedOf(m, sp);
-        it.stock = Math.min(SEED_CAP, it.stock + q);
+        Book.deliver(m, `seed_${sp}`, Math.max(0, Math.min(q, SEED_CAP - Book.owned(m, `seed_${sp}`))), tick);
         total += q;
       }
-      m.compost.stock = Math.min(COMPOST_CAP, m.compost.stock + 6 + g.int(5));
+      Book.deliver(m, 'compost', Math.max(0, Math.min(6 + g.int(5), COMPOST_CAP - Book.owned(m, 'compost'))), tick);
       news(m, tick, `🚚 Veľkoobchodník priviezol ${String(total)} vrecúšok semienok – hlavne na ďalšie obdobie.`);
     }
   },
@@ -312,29 +158,24 @@ export const PROPOSERS: { [T in keyof EconInputs]: GameProposer<EconInputs[T]> }
   npc_jano: {
     ...market,
     run(s, d, ctx) {
-      const m = sl(s, 'market:*'), tick = ctx.tick, se = season(tick), jano = m.npcs.jano, g = ctx.rng;
-      const cands = PLANTABLE.filter(sp => !D.SPECIES[sp].strict && seedOf(m, sp).stock >= 3 && phase(sp, se) !== 'off')
-        .map(sp => { const sc = D.SPECIES[sp], p = seedPrice(m, tick, sp); return { sp, p, score: (sc.sell * 2 - p) / sc.days, cheap: p <= sc.seed * 1.25 }; })
-        .filter(c => c.cheap && c.score > 0).sort((a, b) => b.score - a.score);
+      const m = sl(s, 'market:*'), tick = ctx.tick, se = season(tick);
+      Book.cancelNpc(m, 'jano', ctx);
+      const cands = PLANTABLE.filter(sp => !D.SPECIES[sp].strict && phase(sp, se) !== 'off')
+        .map(sp => { const sc = D.SPECIES[sp], p = Math.min(seedPrice(m, tick, sp), Math.floor(sc.seed * 1.25)); return { sp, p, score: (sc.sell * 2 - p) / sc.days }; })
+        .filter(c => c.p <= D.SPECIES[c.sp].seed * 1.25 && c.score > 0).sort((a, b) => b.score - a.score);
       const c = cands[0];
-      if (c) {
-        const k = Math.min(seedOf(m, c.sp).stock - 1, 2 + g.int(5), Math.floor(jano.coins / c.p));
-        if (k > 0) {
-          seedOf(m, c.sp).stock -= k; jano.coins -= k * c.p;
-          const start = phase(c.sp, se) === 'now' ? tick : seasonStartTick(tick, 1);
-          ctx.schedule(start + D.SPECIES[c.sp].days * TPD + g.int(TPD / 2), 'jano_sell', { sp: c.sp, n: k * 2 });
-          news(m, tick, `🧑‍🌾 Záhradník Jano nakúpil ${String(k)}× semienka ${D.SPECIES[c.sp].name}.`);
-        }
-      }
+      if (c) Book.npcOrder(m, 'jano', `seed_${c.sp}`, 'buy', c.p, 2 + ctx.rng.int(5), ctx);
+      for (const sp of PLANTABLE) { const n = m.book?.accounts.jano.inv[`fl_${sp}`] || 0; if (n) Book.npcOrder(m, 'jano', `fl_${sp}`, 'sell', Math.max(1, Math.round(flowerPrice(m, tick, sp) * 0.8)), n, ctx, 20 + PLANTABLE.indexOf(sp)); }
+
     }
   },
   jano_sell: {
     ...market,
     run(s, d, ctx) {
-      const m = sl(s, 'market:*');
-      const price = flowerPrice(m, ctx.tick, d.sp);
-      flowerOf(m, d.sp).stock += d.n; m.npcs.jano.coins += Math.round(d.n * price * 0.8);
-      news(m, ctx.tick, `🧑‍🌾 Jano priniesol na trh ${String(d.n)}× ${D.SPECIES[d.sp].name} – výkupná cena klesla.`);
+      const m = sl(s, 'market:*'), a = must(m.book).accounts.jano, id = `fl_${d.sp}` as const;
+      I.addItems({ inv: a.inv, fb: a.fb, rate: 1 }, id, d.n, ctx.tick);
+      Book.npcOrder(m, 'jano', id, 'sell', Math.max(1, Math.round(flowerPrice(m, ctx.tick, d.sp) * 0.8)), d.n, ctx);
+      news(m, ctx.tick, `🧑‍🌾 Jano ponúka ${d.n}× ${D.SPECIES[d.sp].name}.`);
     }
   },
 
@@ -342,26 +183,18 @@ export const PROPOSERS: { [T in keyof EconInputs]: GameProposer<EconInputs[T]> }
   npc_fero: {
     ...market,
     run(s, d, ctx) {
-      const m = sl(s, 'market:*'), tick = ctx.tick, se = season(tick), fero = m.npcs.fero, g = ctx.rng;
-      for (const sp of keys(fero.hold)) {
-        const base = D.SPECIES[sp].seed, p = seedPrice(m, tick, sp);
-        if (p >= base * 1.5 || phase(sp, se) === 'off') {
-          const n = fero.hold[sp] ?? 0, it = seedOf(m, sp);
-          it.stock = Math.min(SEED_CAP, it.stock + n); fero.coins += n * p; delete fero.hold[sp];
-          news(m, tick, `🎩 Špekulant Fero predal ${String(n)}× semienka ${D.SPECIES[sp].name} – keď boli najdrahšie.`);
-        }
+      const m = sl(s, 'market:*'), tick = ctx.tick, se = season(tick);
+      Book.cancelNpc(m, 'fero', ctx);
+      const a = must(m.book).accounts.fero;
+      for (const sp of PLANTABLE) {
+        const n = a.inv[`seed_${sp}`] || 0, p = seedPrice(m, tick, sp);
+        if (n && (p >= D.SPECIES[sp].seed * 1.5 || phase(sp, se) === 'off')) Book.npcOrder(m, 'fero', `seed_${sp}`, 'sell', p, n, ctx, PLANTABLE.indexOf(sp));
       }
-      const held = entries(fero.hold).reduce((a, [, b]) => a + b, 0);
+      const held = Object.values(a.inv).reduce((n, k) => n + (k || 0), 0);
       if (held < 20) {
-        const c = PLANTABLE.filter(sp => !D.SPECIES[sp].strict && phase(sp, se) === 'next' && seedOf(m, sp).stock >= 8 && seedPrice(m, tick, sp) <= D.SPECIES[sp].seed * 1.05);
-        if (c.length) {
-          const sp = must(g.pick(c)), p = seedPrice(m, tick, sp);
-          const k = Math.min(3 + g.int(4), seedOf(m, sp).stock - 3, Math.floor(fero.coins / p));
-          if (k > 0) {
-            seedOf(m, sp).stock -= k; fero.coins -= k * p; fero.hold[sp] = (fero.hold[sp] || 0) + k;
-            news(m, tick, `🎩 Špekulant Fero skúpil ${String(k)}× semienka ${D.SPECIES[sp].name}. Tuší, že budú drahé…`);
-          }
-        }
+        const c = PLANTABLE.filter(sp => !D.SPECIES[sp].strict && phase(sp, se) === 'next' && seedPrice(m, tick, sp) <= D.SPECIES[sp].seed * 1.05);
+        const sp = ctx.rng.pick(c);
+        if (sp) Book.npcOrder(m, 'fero', `seed_${sp}`, 'buy', seedPrice(m, tick, sp), Math.min(20 - held, 3 + ctx.rng.int(4)), ctx, 30);
       }
     }
   },
@@ -371,16 +204,12 @@ export const PROPOSERS: { [T in keyof EconInputs]: GameProposer<EconInputs[T]> }
     ...market,
     run(s, d, ctx) {
       const m = sl(s, 'market:*');
-      let best: { sp: SpeciesId; k: number } | null = null, bought = 0;
-      for (const sp of PLANTABLE) {
-        const f = flowerOf(m, sp), st = f.stock;
-        if (!st) continue;
-        const fest = f.fest ? 3 : 0;
-        const k = Math.min(st, Math.ceil(st * 0.3) + fest);
-        f.stock -= k; bought += k;
-        if (!best || k > best.k) best = { sp, k };
+      Book.cancelNpc(m, 'zuzka', ctx);
+      const demand = zuzkaDemand(m, ctx.tick);
+      for (const [i, { sp, stock, fest }] of demand.entries()) {
+        const n = Math.max(1, Math.ceil(stock * 0.3)) + (fest ? 3 : 0);
+        Book.npcOrder(m, 'zuzka', `fl_${sp}`, 'buy', Math.ceil(flowerPrice(m, ctx.tick, sp) * 1.25), n, ctx, i);
       }
-      if (best && best.k >= 3) news(m, ctx.tick, `💐 Kvetinárka Zuzka vykúpila z trhu ${String(bought)} kvetov (najviac ${D.SPECIES[best.sp].name}).`);
     }
   },
 
@@ -442,6 +271,12 @@ export const PROPOSERS: { [T in keyof EconInputs]: GameProposer<EconInputs[T]> }
 // Uloženia v návrhu cDue: deklaruje ich, len keď zákazku niekto mal (inak výrez v slices nie je)
 function takenSaves(s: GameSlices, c: Contract): Partial<Record<PlayerKey, PlayerSave>> | undefined {
   return c.takenBy ? maybe(s, 'save:*') : undefined;
+}
+
+function zuzkaDemand(m: Market, tick: number): { sp: SpeciesId; stock: number; fest: number }[] {
+  const book = Book.levels(m, tick);
+  return PLANTABLE.map(sp => ({ sp, stock: book.filter(o => o.item === `fl_${sp}` && o.side === 'sell').reduce((n, o) => n + o.remaining, 0), fest: m.flowers[sp]?.fest || 0 }))
+    .sort((a, b) => b.fest - a.fest || b.stock - a.stock || PLANTABLE.indexOf(a.sp) - PLANTABLE.indexOf(b.sp));
 }
 
 // ---------- Zákazky ----------
@@ -588,8 +423,8 @@ export function marketView(m: Market, tick: number, events: readonly EngineEvent
     flowers[sp] = { p: flowerPrice(m, tick, sp), st: flowerOf(m, sp).stock, h: m.hist[`fl_${sp}`] || [] };
   }
   return {
-    t: 'market', seeds, flowers, compost: { p: compostPrice(m), st: m.compost.stock, h: m.hist.compost || [] },
-    festival: m.festival, upcoming: upcomingFestival(events, tick), news: m.news
+    t: 'market', book: Book.levels(m, tick), seeds, flowers, compost: { p: compostPrice(m), st: m.compost.stock, h: m.hist.compost || [] },
+    festival: m.festival, upcoming: upcomingFestival(events, tick), news: [...m.news, ...Object.values(m.book?.trades || {}).flatMap(list => list)].sort((a, b) => b.tick - a.tick).slice(0, 14)
   };
 }
 export function boardView(c: Contracts): Extract<ServerMessage, { t: 'board' }> { return { t: 'board', list: c.list }; }

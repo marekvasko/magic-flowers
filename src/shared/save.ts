@@ -1,7 +1,7 @@
-// Uloženie sveta (data/room-<id>.json) vo verzii SAVE_VERSION 11 – presne tak, ako ho zapíše serialize() v src/server/server.ts.
+// Uloženie sveta (data/room-<id>.json) vo verzii SAVE_VERSION 12 – presne tak, ako ho zapíše serialize() v src/server/server.ts.
 // Typ opisuje existujúci formát, nemení ho (#122, fáza 2). Staršie verzie prevedie migrate() na tento tvar.
 // Kľúč hráča (PlayerKey) je meno malými písmenami; v uloženiach sa ním odkazuje na hráča (saves, vlastník pôdy, zákazky…).
-// test/save-v11.fixture.ts drží uloženie zo skutočného servera a prekladač ho kontroluje voči SaveFile (npm run typecheck).
+// test/save-v12.fixture.ts drží uloženie zo skutočného servera a prekladač ho kontroluje voči SaveFile (npm run typecheck).
 import type { AreaId, Batch, FestivalId, GiverId, ItemId, Look, SpeciesId, TillKind } from './data.ts';
 
 export type PlayerKey = string;
@@ -59,6 +59,10 @@ export interface PlayerSave {
   x: number;
   y: number;
   area?: AreaId;              // staršie uloženia ju nemajú (= záhrada)
+  name?: string;              // meno pre obchody aj počas neprítomnosti
+  marketOrders?: string[];
+  marketClaims?: string[];
+  marketOffline?: { bought: number; sold: number; spent: number; earned: number };
   lastTick?: number;          // kedy bol hráč naposledy v hre
 }
 
@@ -75,6 +79,7 @@ export type SavedEvent =
   | EventBase<'dawn' | 'hourly' | 'delivery' | 'npc_jano' | 'npc_fero' | 'npc_zuzka' | 'webDawn' | 'kriziakTrip', null>
   | EventBase<'festAnnounce' | 'festStart' | 'festEnd', { id: FestivalId }>
   | EventBase<'jano_sell', { sp: SpeciesId; n: number }>
+  | EventBase<'marketExpire', { id: string }>
   | EventBase<'cExpire' | 'cDue', { id: number }>
   | EventBase<'scavDone', { key: PlayerKey; n: string; i: number; seeds: boolean }>
   | EventBase<'vilyEnd' | 'loomDone', { key: PlayerKey }>
@@ -92,13 +97,45 @@ export interface ActiveFestival {
   mult: Partial<Record<SpeciesId, number>>;
   until: number;
 }
+export type MarketSide = 'buy' | 'sell';
+export type NpcId = 'wholesale' | 'jano' | 'fero' | 'zuzka';
+export type MarketOwner = { kind: 'player'; key: PlayerKey } | { kind: 'npc'; key: NpcId };
+export interface MarketAccount { coins: number; inv: Inventory; fb: Batches }
+export interface MarketOrder {
+  id: string;
+  item: ItemId;
+  owner: MarketOwner;
+  name: string;
+  side: MarketSide;
+  price: number;
+  quantity: number;
+  remaining: number;
+  filled: number;
+  value: number;
+  counterparties?: string[];
+  tick: number;
+  sequence: [number, number];
+  expires: number;
+  active: boolean;
+  ioc: boolean;
+  coins: number;
+  inv: Inventory;
+  fb: Batches;
+}
+export interface OrderBook {
+  orders: Partial<Record<string, MarketOrder>>;
+  accounts: Record<NpcId, MarketAccount>;
+  trades: Partial<Record<ItemId, { tick: number; text: string }[]>>;
+}
 export interface Market {
+  book?: OrderBook;           // doplní migrácia v12 / initEconomy
   seeds: Partial<Record<SpeciesId, { stock: number }>>;
   flowers: Partial<Record<SpeciesId, { stock: number; fest?: number }>>;   // fest = sviatočný násobok výkupnej ceny
   compost: { stock: number };
   hist: Partial<Record<ItemId, number[]>>;   // posledné ceny (graf na trhu)
   news: { tick: number; text: string }[];    // najnovšia prvá
   festival: ActiveFestival | null;
+  // Pôvodné polia pre prevod v11; po založení book sa už nepoužívajú na obchodovanie.
   npcs: { jano: { coins: number }; fero: { coins: number; hold: Partial<Record<SpeciesId, number>> } };
 }
 export type ContractKind = 'short' | 'long' | 'big';
@@ -155,7 +192,7 @@ export type CornerArea = 'garden' | 'hory';
 
 // ---- Celé uloženie ----
 export interface SaveFile {
-  v: 11;
+  v: 12;
   tick: number;
   wall: number;               // reálny čas (ms) k času tick
   mode: WorldMode;
@@ -168,7 +205,7 @@ export interface SaveFile {
   saves: Partial<Record<PlayerKey, PlayerSave>>;
   storage: Inventory;
   storageFb: Batches;
-  market: Market;
+  market: Market & { book: OrderBook };
   contracts: Contracts;
   fairyNight: number;
   eternal: boolean;
