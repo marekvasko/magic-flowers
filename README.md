@@ -175,7 +175,7 @@ Every flower has a short real-world fact in the 📖 **Herbár** (the in-game pl
   - Anything else → *Strange slime* 🫠
 - **Fairy ring** in the forest (north-west): at night (21:00–4:00), when **two players dance** 💃 inside the ring, fairies appear and give each of them a *fern seed* and a *rainbow seed*. Alone, it only works with the *Fairy elixir*.
 - **Fern flower** (Slavic legend): grows in shade and can only be picked **at night**. Using it grants a wish:
-  - *golden rain* – 400 coins for every connected player;
+  - *golden rain* – 400 coins for the wisher and 100 for every other connected player;
   - *eternal spring* – the garden waters itself forever and the season no longer matters;
   - *fairy treasure* – 3 rainbow seeds and 3 edelweiss seeds (no new fern seed, so the fern can't multiply by itself).
 - **Rainbow rose:** changes colour and grows in every season.
