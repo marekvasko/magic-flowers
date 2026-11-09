@@ -1044,8 +1044,13 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       if (avail > 0) return Math.round(total(avail).total / avail * k);
       return k * q.p;
     };
+    const open = shopOpen === key && !!q;
     let max = side === 'sell' ? have : 0;
     if (side === 'buy') while (max < 99 && ref(max + 1) <= S.coins) max++;
+    // Bez otvoreného Dopytu / Ponuky ide počítadlo len po to, čo sa dá hneď kúpiť či predať (nič = vypnuté);
+    // viac kusov (nad ponuku v knihe) až pre Dopyt / Ponuku
+    if (q && !open) max = Math.min(max, avail);
+    const locked = max <= 0;
     const n = Math.max(1, Math.min(shopN.get(key) ?? 1, Math.max(1, max)));
     const setN = (k: number): void => { shopN.set(key, Math.max(1, Math.min(k, Math.max(1, max)))); refreshModal(); };
     const now = total(n), avg = ref(n) / n;
@@ -1058,10 +1063,10 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     if (first && first.w) line.appendChild(h('span', { class: 'who' }, side === 'buy' ? ` · 🏷️ ${first.w}` : ` · ${first.w} kúpi za ${first.p}`));
     info.appendChild(line);
     if (side === 'buy' && first && first.fr != null) info.appendChild(h('small', { class: 'fr' }, `🌷 čerstvosť ${Math.round(first.fr * 100)} %`));
-    const open = shopOpen === key && !!q;
-    const cnt = h('div', { class: 'cnt' },
+    const cnt = h('div', { class: 'cnt' + (locked ? ' off' : '') },
       h('button', { onclick: () => { setN(n - 1); } }, '−'), h('span', null, String(n)), h('button', { onclick: () => { setN(n + 1); } }, '+'),
       side === 'buy' ? h('button', { onclick: () => { setN(n + 5); } }, '+5') : h('button', { onclick: () => { setN(have); } }, 'Všetko'));
+    if (locked) for (const b of cnt.querySelectorAll('button')) b.disabled = true;
     const inst = h('button', { class: 'btn', onclick: () => { send({ t: side, id, n, lim: now.worst }); if (side === 'sell') sfx('coin'); shopN.delete(key); } }, `${now.total} 🪙`);
     if (now.n < n || !now.total || (side === 'buy' && now.total > S.coins) || (side === 'sell' && have < n)) { inst.disabled = true; inst.textContent = '— 🪙'; }
     const ctl = h('div', { class: 'ctl' }, cnt, h('div', { class: 'grow' }), inst);
