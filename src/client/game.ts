@@ -904,7 +904,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     if (!M) return D.sellPrice(id);
     const fl = id.startsWith('fl_') ? lookup(M.flowers, id.slice(3)) : undefined, seed = id.startsWith('seed_') ? lookup(M.seeds, id.slice(5)) : undefined;
     if (fl) return fl.p;
-    if (seed) return Math.max(1, Math.round(seed.p * 0.4));
+    if (seed) return Math.max(1, Math.round(seed.p * D.SEED_SELL_BACK));
     if (id === 'compost') return Math.max(1, Math.round(M.compost.p * 0.5));
     if (id === 'ice') return D.ICE_PRICE[D.seasonOf(S.day)] ?? 0;
     return D.sellPrice(id);
