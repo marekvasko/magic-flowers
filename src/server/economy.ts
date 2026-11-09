@@ -23,7 +23,7 @@ export const SEED_CAP = 40, COMPOST_CAP = 30;
 export const PRICING = {
   seedDemand: { now: 1.35, next: 1.0, off: 0.8 }, // dopyt po semienkach podľa toho, kedy sa druh sadí
   seedScarcity: [0.75, 3], seedMin: 2,              // vzácnosť sqrt(SEED_TARGET / zásoba) v medziach, najnižšia cena
-  seedSellBack: 0.4,                                // výkup semienok = 40 % predajnej ceny
+  seedSellBack: D.SEED_SELL_BACK,                   // výkup semienok = 40 % predajnej ceny
   compostBase: 15, compostScarcity: [0.7, 3], compostMin: 5, compostSellBack: 0.5,
   flowerOffSeason: 1.6,                             // kvet mimo svojej sezóny je vzácnejší
   flowerSat: { start: 1.3, perUnit: 0.06, min: 0.35 }, // nasýtenie trhu: 1,3 − 0,06 × zásoba, najmenej 0,35

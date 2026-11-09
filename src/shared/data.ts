@@ -253,6 +253,7 @@ export const GLACIER_GROW = { rain: 14, snow: 20 };
 // Ľad v batohu: najviac ICE_CARRY kusov, každý spomalí chôdzu o ICE_SLOW a do pol dňa sa roztopí.
 export const ICE_CARRY = 6, ICE_SLOW = 0.06, ICE_LIFE = TICKS_PER_DAY / 2;
 export const ICE_PRICE: readonly number[] = [5, 12, 5, 1]; // výkupná cena ľadu na trhu podľa obdobia
+export const SEED_SELL_BACK = 0.4; // výkup semienok = 40 % predajnej ceny (server aj predaj v klientovi)
 export type ToolId = 'hoe' | 'can' | 'pick' | 'lamp';
 export const isTool = (id: string): id is ToolId => id === 'hoe' || id === 'can' || id === 'pick' || id === 'lamp';
 export const WILTED_PER_COMPOST = 4;
