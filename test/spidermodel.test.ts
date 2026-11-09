@@ -1,9 +1,11 @@
-const test = require('node:test');
-const assert = require('node:assert');
-const SM = require('../src/shared/spidermodel.ts');
+import test from 'node:test';
+import assert from 'node:assert';
+import * as SM from '../src/shared/spidermodel.ts';
+import { keys } from '../src/shared/util.ts';
+import { must } from './helpers.ts';
 
 // rozmery pavúkov: rozpätie nôh, výška pradleny ako hráč
-function bounds(kind) {
+function bounds(kind: string): { span: number; top: number } {
   let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, top = 0;
   for (const p of SM.build(kind, 0, 'ground')) {
     if (p.k === 'ell') top = Math.max(top, p.c[1] + Math.hypot(p.A[0][1], p.A[1][1], p.A[2][1]));
@@ -22,7 +24,7 @@ test('veľkosti: krížiak 1/4, vlčiak 1, pradlena 1,5 políčka a vysoká ako 
 
 test('16 pohľadov × 4 snímky: každý sa premietne do elíps a úsečiek', () => {
   assert.strictEqual(SM.VIEWS.length, 16);
-  for (const k of Object.keys(SM.SPECIES)) for (const v of SM.VIEWS) {
+  for (const k of keys(SM.SPECIES)) for (const v of SM.VIEWS) {
     const L = SM.layout(k, v);
     assert.ok(L.w > 20 && L.h > 20 && L.w < 400 && L.h < 400, `${k} ${v} ${L.w}×${L.h}`);
     assert.strictEqual(L.frames.length, SM.FRAMES);
@@ -45,7 +47,7 @@ test('smer hlavy voči kamere → pohľad na zemi', () => {
 });
 
 test('chrbát a brucho: kresba zadočka len zo strany, ktorá je ku kamere', () => {
-  const cols = v => new Set(SM.layout('k', v).frames[0].flatMap(i => (i.marks || []).map(m => m.col)));
+  const cols = (v: string): Set<string> => new Set(must(SM.layout('k', v).frames[0]).flatMap(i => (i.k === 'ell' ? i.marks : []).map(m => m.col)));
   const C = SM.SPECIES.k.col;
   assert.ok(cols('down').has(C.mark) && !cols('down').has(C.belly2)); // chrbtom: biely kríž
   assert.ok(cols('down-b').has(C.belly2) && !cols('down-b').has(C.mark)); // bruchom: žlté zátvorky
@@ -53,17 +55,17 @@ test('chrbát a brucho: kresba zadočka len zo strany, ktorá je ku kamere', () 
 
 test('nohy za veľkým zadočkom krížiaka sa kreslia pred ním (zakryje ich)', () => {
   // pohľad N (hlava od kamery): zadné nohy smerujú ku kamere, predné sú za zadočkom
-  const items = SM.layout('k', 'N').frames[0];
+  const items = must(SM.layout('k', 'N').frames[0]);
   const abd = items.findIndex(i => i.k === 'ell' && i.e.rx > 0.03);
-  const front = items.filter(i => i.k === 'seg' && i.tip && i.d < items[abd].d - 0.03);
+  const front = items.filter(i => i.k === 'seg' && i.tip && i.d < must(items[abd]).d - 0.03);
   assert.ok(front.length > 0 && front.every(s => items.indexOf(s) < abd));
 });
 
 test('na kmeni: 10 pohľadov podľa strany kmeňa voči kamere, zo zadnej strany žiaden', () => {
   assert.strictEqual(SM.TRUNK.length, 10);
-  for (const k of Object.keys(SM.SPECIES)) for (const v of SM.TRUNK) {
+  for (const k of keys(SM.SPECIES)) for (const v of SM.TRUNK) {
     const L = SM.layout(k, v);
-    assert.ok(L.w > 10 && L.h > 10 && L.frames[0].length > 20, `${k} ${v}`);
+    assert.ok(L.w > 10 && L.h > 10 && must(L.frames[0]).length > 20, `${k} ${v}`);
   }
   // kamera na +z (gx 0, gz 1); kmeň s pavúkom na strane ku kamere = 0°, vpravo = +90°
   assert.strictEqual(SM.trunkView(0, 1, 0, 1, false), 't0d');
@@ -78,21 +80,22 @@ test('na kmeni: 10 pohľadov podľa strany kmeňa voči kamere, zo zadnej strany
 
 test('oči na snímke: spredu áno, zozadu ich zakryje zadoček, z brucha žiadne', () => {
   for (const k of ['k', 'p']) {
-    assert.ok(SM.layout(k, 'S').eyes[0].length >= 2, k + ' spredu');
-    assert.strictEqual(SM.layout(k, 'N').eyes[0].length, 0, k + ' zozadu');
-    assert.strictEqual(SM.layout(k, 'down-b').eyes[0].length, 0, k + ' brucho');
+    assert.ok(must(SM.layout(k, 'S').eyes[0]).length >= 2, k + ' spredu');
+    assert.strictEqual(must(SM.layout(k, 'N').eyes[0]).length, 0, k + ' zozadu');
+    assert.strictEqual(must(SM.layout(k, 'down-b').eyes[0]).length, 0, k + ' brucho');
   }
-  for (const e of SM.layout('v', 'S').eyes[0]) assert.ok(e.r > 0 && Math.abs(e.x) < 0.15, 'oko na hlave (pri strednej osi)');
+  for (const e of must(SM.layout('v', 'S').eyes[0])) assert.ok(e.r > 0 && Math.abs(e.x) < 0.15, 'oko na hlave (pri strednej osi)');
 });
 
 test('nohy neprechádzajú zadočkom ani hrbmi (žiadna snímka, žiadna póza)', () => {
-  const cr = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]], d = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
-  const local = (A, p) => { const [a, b, c] = A, det = d(a, cr(b, c)); return [d(p, cr(b, c)) / det, d(a, cr(p, c)) / det, d(a, cr(b, p)) / det]; };
-  for (const k of Object.keys(SM.SPECIES)) for (let f = 0; f < SM.FRAMES; f++) for (const pose of ['ground', 'surface']) {
-    const parts = SM.build(k, f * 2 * Math.PI / SM.FRAMES, pose), bodies = parts.filter(p => p.part === 'abd' || p.part === 'hump');
-    for (const sg of parts.filter(p => p.k === 'seg' && p.leg != null)) for (let t = 0; t <= 1; t += 0.1) {
-      const q = sg.a.map((v, i) => v + (sg.b[i] - v) * t);
-      for (const e of bodies) assert.ok(Math.hypot(...local(e.A, q.map((v, i) => v - e.c[i]))) >= 1, `${k} snímka ${f} ${pose}: noha ${sg.leg} v ${e.part}`);
+  type V = SM.Vec;
+  const cr = (u: V, v: V): V => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]], d = (u: V, v: V): number => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+  const local = (A: SM.Mat, p: V): V => { const [a, b, c] = A, det = d(a, cr(b, c)); return [d(p, cr(b, c)) / det, d(a, cr(p, c)) / det, d(a, cr(b, p)) / det]; };
+  for (const k of keys(SM.SPECIES)) for (let f = 0; f < SM.FRAMES; f++) for (const pose of ['ground', 'surface']) {
+    const parts = SM.build(k, f * 2 * Math.PI / SM.FRAMES, pose), bodies = parts.filter((p): p is SM.Ell => p.part === 'abd' || p.part === 'hump');
+    for (const sg of parts.filter((p): p is SM.Seg => p.k === 'seg' && p.leg != null)) for (let t = 0; t <= 1; t += 0.1) {
+      const q: V = [sg.a[0] + (sg.b[0] - sg.a[0]) * t, sg.a[1] + (sg.b[1] - sg.a[1]) * t, sg.a[2] + (sg.b[2] - sg.a[2]) * t];
+      for (const e of bodies) assert.ok(Math.hypot(...local(e.A, [q[0] - e.c[0], q[1] - e.c[1], q[2] - e.c[2]])) >= 1, `${k} snímka ${f} ${pose}: noha ${String(sg.leg)} v ${e.part}`);
     }
   }
 });

@@ -1,12 +1,13 @@
-const test = require('node:test');
-const assert = require('node:assert');
-const W = require('../src/shared/world3d.ts');
+import test from 'node:test';
+import assert from 'node:assert';
+import * as W from '../src/shared/world3d.ts';
+import { must } from './helpers.ts';
 
 // Zoznam jemných modelov pre prehliadač v /debug (#79): každý sa postaví v každom období a otočení
-const voxels = m => m.data.reduce((n, v) => n + (v ? 1 : 0), 0);
+const voxels = (m: W.FineModel): number => m.data.reduce((n, v) => n + (v ? 1 : 0), 0);
 
 test('každý model zo zoznamu sa postaví v každom období a otočení', () => {
-  const ids = new Set();
+  const ids = new Set<string>();
   for (const e of W.FINE_MODELS) {
     assert.ok(e.id && e.name && e.group && e.fn && typeof e.build === 'function', e.id);
     assert.ok(!ids.has(e.id), 'duplicitné id ' + e.id);
@@ -35,7 +36,7 @@ test('každý model zo zoznamu sa postaví v každom období a otočení', () =>
 test('rotateY na štvorci = otočenie stromov v hre, štyrikrát = pôvodný model', () => {
   const t0 = W.treeModel('buk', 1, 0), t1 = W.treeModel('buk', 1, 1);
   assert.deepStrictEqual(W.rotateY(t0).data, t1.data);
-  const h = W.FINE_MODELS.find(e => e.id === 'house').build(3, 0);
+  const h = must(W.FINE_MODELS.find(e => e.id === 'house')).build(3, 0);
   let r = h;
   for (let i = 0; i < 4; i++) r = W.rotateY(r);
   assert.deepStrictEqual([r.sx, r.sy, r.sz], [h.sx, h.sy, h.sz]);
