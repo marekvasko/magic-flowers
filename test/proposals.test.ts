@@ -687,7 +687,7 @@ test('v hre už nie je zapisovač cez Proxy, návrh (draft) ani náhoda zo sveta
   }
 });
 
-test('dobiehanie: 30 dní s plnou záhradou (rýchlosť sa vypíše; stráž proti regresii: pod 150 µs na udalosť, zapisovač fázy 1 mal ≈200)', () => {
+test('dobiehanie: 30 dní s plnou záhradou (rýchlosť sa vypíše; stráže: engine pod 150 µs na udalosť – zapisovač fázy 1 mal ≈200 –, celý trh najviac 3× toľko)', () => {
   const w = makeWorld(24, D.DAWN_TICK + 6);
   w.up.plots = 4;
   const sp = Econ.PLANTABLE.filter(k => !D.SPECIES[k].strict);
@@ -695,15 +695,24 @@ test('dobiehanie: 30 dní s plnou záhradou (rýchlosť sa vypíše; stráž pro
   w.plotsUsed = Econ.plotsUsedOf(w.tiles);
   give(save(w, 'ana'), `fl_${SP}`, 3, w.tick); give(save(w, 'bob'), `fl_${SP}`, 3, w.tick);
   const spec: Spec = { ...SPEC, onBatch() {} }; // ako na serveri: so zmenami pre denník
+  // základ: tie isté dni bez udalostí trhu (dodávka, postavy, sviatky) – to meria engine; knihu objednávok (#112) meria
+  // pomer celého behu k základu (nezávisí od rýchlosti stroja)
+  const off = (): { keys: () => { writes: string[] }; run: () => void } => ({ keys: () => ({ writes: [] }), run() { /* udalosť trhu vypnutá */ } });
+  const base: Spec = { ...spec, proposers: { ...spec.proposers, delivery: off(), npc_jano: off(), jano_sell: off(), npc_fero: off(), npc_zuzka: off(), festAnnounce: off(), festStart: off(), festEnd: off() } };
   E.advanceTo(w, w.tick + 2 * TPD, spec);
-  // najlepší z 3 behov na rovnakých kópiách sveta: zdieľané CI stroje kolíšu (na dev 31–117 µs), stráž má merať kód, nie šum
-  const snap = json(w);
-  let n = 0, ms = Infinity;
+  // najlepší z 3 striedavých behov na rovnakých kópiách sveta: testy bežia súbežne a CI stroje kolíšu (na dev 31–117 µs),
+  // stráže majú merať kód, nie šum
+  const snap = json(w), run = (sp2: Spec): { n: number; ms: number } => {
+    const c = parseJson<typeof w>(snap), t0 = process.hrtime.bigint(), n = E.advanceTo(c, c.tick + 30 * TPD, sp2);
+    return { n, ms: Number(process.hrtime.bigint() - t0) / 1e6 };
+  };
+  let full = { n: 0, ms: Infinity }, eng = { n: 0, ms: Infinity };
   for (let k = 0; k < 3; k++) {
-    const c = parseJson<typeof w>(snap), t0 = process.hrtime.bigint();
-    n = E.advanceTo(c, c.tick + 30 * TPD, spec);
-    ms = Math.min(ms, Number(process.hrtime.bigint() - t0) / 1e6);
+    const b = run(base); if (b.ms < eng.ms) eng = b;
+    const f = run(spec); if (f.ms < full.ms) full = f;
   }
-  console.log(`  dobiehanie 30 dní: ${n} udalostí za ${ms.toFixed(1)} ms (${(ms / n * 1000).toFixed(1)} µs/udalosť)`);
-  assert.ok(n > 900 && ms / n * 1000 < 150, `${(ms / n * 1000).toFixed(1)} µs/udalosť`);
+  const us = (r: { n: number; ms: number }): string => (r.ms / r.n * 1000).toFixed(1);
+  console.log(`  dobiehanie 30 dní: ${full.n} udalostí za ${full.ms.toFixed(1)} ms (${us(full)} µs/udalosť); bez udalostí trhu ${eng.n} za ${eng.ms.toFixed(1)} ms (${us(eng)} µs/udalosť), pomer ${(full.ms / eng.ms).toFixed(2)}`);
+  assert.ok(eng.n > 900 && eng.ms / eng.n * 1000 < 150, `engine: ${us(eng)} µs/udalosť`);
+  assert.ok(full.n > 900 && full.ms < 3 * eng.ms, `trh: ${(full.ms / eng.ms).toFixed(2)}× základu`);
 });
