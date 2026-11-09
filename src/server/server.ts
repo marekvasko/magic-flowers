@@ -126,10 +126,13 @@ const MIME: Readonly<Partial<Record<string, string>>> = {
 const gzCache = new Map<string, { mtime: number; gz: Buffer }>(); // súbor → { mtime, gz } – kúsok balíka s Three.js má ~0,9 MB, gzip ho zmenší asi na štvrtinu
 // Posledná poistka (#145): výnimka z obsluhy požiadavky nesmie zhodiť server (odpojila by všetkých hráčov vo všetkých
 // svetoch). Zapíšeme ju do logu a odpovieme 500, ak hlavičky ešte neodišli, inak aspoň ukončíme odpoveď.
+function plain(res: ServerResponse, code: number, text: string): void {
+  res.writeHead(code, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end(text);
+}
 function safely(req: IncomingMessage, res: ServerResponse, fn: () => void): void {
   try { fn(); } catch (e) {
     console.error('Chyba pri obsluhe požiadavky', req.method, req.url, e);
-    try { if (!res.headersSent) { res.writeHead(500); res.end('Internal Server Error'); } else res.end(); } catch { /* poistka sama nesmie spadnúť */ }
+    try { if (!res.headersSent) plain(res, 500, 'Internal Server Error'); else res.end(); } catch { /* poistka sama nesmie spadnúť */ }
   }
 }
 const server = http.createServer((req, res) => { safely(req, res, () => { handleRequest(req, res); }); });
@@ -138,7 +141,8 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
   const reqUrl = req.url || '/';
   let url: string;
   // chybné percentové kódovanie (/%, /%zz) – decodeURIComponent hodí URIError (#145)
-  try { url = decodeURIComponent(reqUrl.split('?')[0] || ''); } catch { res.writeHead(400); res.end('Bad Request'); return; }
+  try { url = decodeURIComponent(reqUrl.split('?')[0] || ''); } catch { plain(res, 400, 'Bad Request'); return; }
+  if (url.includes('\0')) { plain(res, 400, 'Bad Request'); return; } // /%00 – fs.stat by hodil ERR_INVALID_ARG_VALUE
   // hra je len v 3D na '/'; staré odkazy na /3d presmerujeme (aj s ?room=…)
   if (url === '/3d' || url === '/3d/') { const q = reqUrl.indexOf('?'); res.writeHead(301, { Location: '/' + (q >= 0 ? reqUrl.slice(q) : '') }); res.end(); return; }
   if (url === '/') url = '/index.html';
@@ -836,7 +840,18 @@ function textOf(raw: WebSocket.RawData): string {
   return Buffer.isBuffer(raw) ? raw.toString('utf8') : Array.isArray(raw) ? Buffer.concat(raw).toString('utf8') : Buffer.from(raw).toString('utf8');
 }
 
+// Chyba servera: pri štarte (napr. obsadený port) skončíme ako predtým, za behu ju len zapíšeme (#145).
+// ws preposiela chyby HTTP servera na wss, preto ju počúvame na oboch.
+function serverError(e: Error): void {
+  console.error('Chyba servera', e);
+  if (!server.listening) process.exit(1);
+}
+server.on('error', serverError);
+wss.on('error', serverError);
+
 wss.on('connection', ws => {
+  // chybný rámec od klienta (bez masky, zlé UTF-8, neznámy opcode): ws vyšle 'error' – bez poslucháča by Node skončil (#145)
+  ws.on('error', e => { console.error('Chyba spojenia WebSocket', e.message); ws.terminate(); });
   P.watch(ws);
   let pl: Player | null = null;
   ws.on('message', raw => {
