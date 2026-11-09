@@ -291,7 +291,7 @@ export function reconcile<W extends EngineWorld, P extends { key: string }, M>(w
 }
 
 // ---- Výrezy (slices) ----
-// Kľúč deklarovaný návrhom → kde vo svete výrez leží (herná znalosť: ako je uložený svet, pozri serialize v server.js).
+// Kľúč deklarovaný návrhom → kde vo svete výrez leží (herná znalosť: ako je uložený svet, pozri serialize v server.ts).
 //   tile:<plocha>:<i> | tile:<plocha>:*   políčko / všetky políčka plochy (garden → world.tiles, hory → world.hory, les…)
 //   save:<kľúč> | save:*                  uloženie hráča / všetky uloženia – bez polohy (pozri pos)
 //   pos:<kľúč>                            poloha hráča v jeho uložení { x, y, area, lastTick }: píše ju každý pohyb,

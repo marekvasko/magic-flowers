@@ -125,7 +125,7 @@ A rough estimate of the effort, including tests, docs and review rounds.
 - **Testy** and **Docker image** checks must pass.
 - Keep the branch up to date with `git rebase origin/dev`, never `git merge`. Force-push only your own issue branch with `--force-with-lease`.
 - Add or extend tests in `test/` for game logic (`npm test`). For UI changes include a screenshot at a mobile portrait viewport (390×780).
-- Save-format changes need a migration (`migrate()` and `SAVE_VERSION` in `src/server/server.js`). Existing gardens must never be lost.
+- Save-format changes need a migration (`migrate()` and `SAVE_VERSION` in `src/server/server.ts`). Existing gardens must never be lost.
 - Update `README.md` when gameplay or operations change.
 
 ## Development

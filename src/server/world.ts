@@ -22,7 +22,7 @@ export interface Container {
 // Várka presúvaná medzi kontajnermi: počet a vek v krokoch
 export interface MovedBatch { n: number; age: number }
 
-// Snímka prítomnosti hráča pre návrhy (server.js presenceOf): kto je pripojený, kde stojí, čo robí.
+// Snímka prítomnosti hráča pre návrhy (server.ts presenceOf): kto je pripojený, kde stojí, čo robí.
 // Staršie záznamy denníka a testy nemajú všetky polia – preto voliteľné.
 export interface Presence {
   key: PlayerKey;

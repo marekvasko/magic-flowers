@@ -1,4 +1,4 @@
-// Správy cez WebSocket medzi serverom (src/server/server.js) a klientom (public/game.js) – #122, fáza 2.
+// Správy cez WebSocket medzi serverom (src/server/server.ts) a klientom (public/game.js) – #122, fáza 2.
 // Typy opisujú existujúci protokol, nemenia ho. Každá správa je objekt s diskriminátorom t.
 //  - ClientMessage: čo posiela klient (server každú správu ešte overí – hodnoty mimo typu zahodí alebo opraví)
 //  - ServerMessage: čo dostane klient (posiela server sám alebo ide z návrhov enginu cez ctx.emit)

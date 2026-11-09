@@ -80,7 +80,7 @@ See `README.md` for gameplay and architecture. [`CONTRIBUTING.md`](CONTRIBUTING.
 
 ## Persistence: don't lose players' gardens
 
-- Existing gardens must never be deleted or reset. World saves live in `data/room-*.json` inside the volume. Save-format changes need a migration (see `migrate()` in `server.js`, `SAVE_VERSION`).
+- Existing gardens must never be deleted or reset. World saves live in `data/room-*.json` inside the volume. Save-format changes need a migration (see `migrate()` in `server.ts`, `SAVE_VERSION`).
 - Never run `docker compose down -v`, `docker volume rm` or anything similar against production (project `magicflowers`). `scripts/deploy.sh down` refuses everything except `pr-*`.
 - Don't deploy production by hand. Make a release.
 

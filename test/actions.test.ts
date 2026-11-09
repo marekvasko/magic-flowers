@@ -430,7 +430,7 @@ test('denník s akciami a prítomnosťou sa prehrá na ten istý svet a ten ist�
 function freePort(): Promise<number> { return new Promise(r => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = portOf(srv); srv.close(() => { r(p); }); }); }); }
 type Server = ChildProcessByStdio<null, Readable, Readable>;
 function startServer(dataDir: string, port: number, env?: Partial<Record<string, string>>): Promise<Server> {
-  const proc = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'src', 'server', 'server.js')], {
+  const proc = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'src', 'server', 'server.ts')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DAY_SECONDS: '100000' }, env || {}), stdio: ['ignore', 'pipe', 'pipe']
   });
   return new Promise((resolve, reject) => {
@@ -582,7 +582,7 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
 });
 
 test('hygiena: server už nemení svet priamo – liveCtx len pri založení sveta; sendMe a políčka len z notify, uloženia nikde', () => {
-  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'server', 'server.js'), 'utf8');
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'server', 'server.ts'), 'utf8');
   assert.strictEqual((src.match(/liveCtx/g) || []).length, 1);
   assert.ok(!/actionCtx|Econ\.buy\(|Econ\.sell\(|Econ\.upgrade\(|deliverContract|takeContract|Ice\.digIce|Ice\.fillIcehouse|Ice\.buildIcehouse|Ice\.buyTool|pickWild|checkFairies|newSave|migrateSave/.test(src));
   const ws = src.slice(src.indexOf("ws.on('message'"), src.indexOf("ws.on('close'"));

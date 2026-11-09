@@ -93,7 +93,7 @@ export interface Kriziak extends Mover {
 }
 
 // ---- Správy z návrhov ----
-// Pokyny len pre server (notify v server.js), klient ich nedostane: pripojenie hotové, prechod do inej plochy,
+// Pokyny len pre server (notify v server.ts), klient ich nedostane: pripojenie hotové, prechod do inej plochy,
 // obnov batoh (me), hľadanie v tráve a ťahanie hodvábu začalo / skončilo
 export type Directive =
   | { t: 'joined' }

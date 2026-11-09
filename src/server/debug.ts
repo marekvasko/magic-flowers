@@ -49,7 +49,7 @@ export function redactor(keys: Iterable<unknown>): (v: unknown) => unknown {
 // správy a operácie s frontou každého návrhu, časy častí, rozhodnutia filtra správ hráčov, kto dávku spustil)
 // a rámce, v ktorých filter niečo rozhodol, no do enginu nič nešlo. Nikdy sa neukladá a nemení svet.
 // origins: seq udalosti → kto ju naplánoval (návrh, krok, kolo) – pre frontu; drží sa len pre udalosti, čo ešte čakajú.
-// Rozhodnutie filtra správ hráčov (server.js): poradie správy, hráč, typ správy, čo sa s ňou stalo a podľa akého pravidla
+// Rozhodnutie filtra správ hráčov (server.ts): poradie správy, hráč, typ správy, čo sa s ňou stalo a podľa akého pravidla
 export interface FilterDecision { seq: number | null; actor: PlayerKey | null; t: string; what: string; rule: string; id?: string }
 // Časy častí dávky a rámca v ms (engine: schedule, evaluate, resolve, commit; server: filter, journal, notify)
 export type TraceTiming = Partial<Record<string, number>>;

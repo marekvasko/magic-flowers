@@ -105,7 +105,7 @@ test('mapa: svet – jeho semienko, pôda a rastliny, ľadovňa, ľad a otvory a
   savedHory[glacier] = { ice: 1 }; savedHory[lake] = { cut: 1 };
   const state = { tiles, hory: savedHory, pomedzieSeed: 991, icehouse: { built: true, ice: 3 }, saves: {} };
 
-  // záhrada ako getRoom v server.js + applyIcehouse
+  // záhrada ako getRoom v server.ts + applyIcehouse
   const room = { tiles: garden.map((g, i) => { const t = { g, s: tiles[i].s || null }; if (g === 'water' && tiles[i].cut) t.cut = 1; return t; }), icehouse: state.icehouse };
   Ice.applyIcehouse(room.icehouse, room.tiles);
   const gm = M.buildTiles(D, 'garden', { state });
