@@ -1,5 +1,5 @@
 {
-  // Klient hry (#136): beží v prehliadači – knižnica DOM, bez typov Node. Zbalí ho esbuild (scripts/build.mjs),
+  // Klient hry (#136): beží v prehliadači – knižnica DOM, bez typov Node. Zbalí ho esbuild (scripts/build.ts),
   // preto moduleResolution "bundler". Zdieľané moduly (src/shared/) kontroluje aj tento projekt (bez Node, s DOM).
   "extends": "../../tsconfig.json",
   "compilerOptions": {

@@ -15,7 +15,7 @@ import type { GameSpec, GameWorld, Msg } from './game.ts';
 import type { Presence } from './world.ts';
 
 export const ROOM_RE = /^[a-z0-9-]{1,16}$/; // rovnaké mená svetov ako pri pripojení hráča
-const MIME: Readonly<Partial<Record<string, string>>> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
+const MIME: Readonly<Partial<Record<string, string>>> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.map': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png' };
 
 const sha = (s: string): string => crypto.createHash('sha256').update(s).digest('hex');
 // Kľúč hráča (jeho identita v ukladaní) sa nikdy neukáže – nahradí ho krátky odtlačok
@@ -148,11 +148,12 @@ export interface ReconcilerView {
 // Odpoveď /api/debug/room?id=… (kľúče hráčov nahradené odtlačkom, bez tajomstiev sveta)
 export type RoomSnapshot = Loaded & { reconciler: ReconcilerView | null };
 export interface RoomInfo { id: string; size: number | null; saved: number | null; loaded: boolean; online: Loaded['online']; tick?: number }
-// ctx: { dataDir, debugDir (stránka), rooms (Map id → svet v pamäti), serialize(room) → JSON, migrate(stav) → stav,
+// ctx: { dataDir, debugDir (stránka: index.html, debug.css), buildDir (zbalené skripty stránky, hľadajú sa najprv tam), rooms (Map id → svet v pamäti), serialize(room) → JSON, migrate(stav) → stav,
 //        sim() → špecifikácia simulácie { proposers, periodic } pre stav reconcilera, apis: meno → rozšírenie API }
 export interface DebugCtx<R extends DebugRoom> {
   dataDir: string;
   debugDir: string;
+  buildDir?: string;
   rooms: Map<string, R>;
   serialize: (room: R) => string;
   migrate: (state: DebugState) => DebugState;
@@ -278,8 +279,10 @@ export function create<R extends DebugRoom>(ctx: DebugCtx<R>): (req: Pick<Incomi
   }
 
   function serveFile(res: Res, rel: string): boolean {
-    const file = path.normalize(path.join(ctx.debugDir, rel));
-    if (!file.startsWith(ctx.debugDir + path.sep)) return notFound(res);
+    // zbalené skripty (build/debug/, npm run build) majú prednosť pred statickými súbormi stránky (debug/)
+    const inDir = (dir: string): string | null => { const f = path.normalize(path.join(dir, rel)); return f.startsWith(dir + path.sep) ? f : null; };
+    const built = ctx.buildDir ? inDir(ctx.buildDir) : null, file = built && fs.existsSync(built) ? built : inDir(ctx.debugDir);
+    if (!file) return notFound(res);
     fs.readFile(file, (err, buf) => {
       if (err) { notFound(res); return; }
       res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex', 'Referrer-Policy': 'no-referrer' });

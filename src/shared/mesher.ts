@@ -1,7 +1,7 @@
 // Optimalizácia siete z kociek (greedy meshing): susedné viditeľné steny v jednej rovine s rovnakým materiálom
 // a rovnakým ambientným zatienením rohov sa zlúčia do jedného obdĺžnika – namiesto 2 trojuholníkov na každú stenu
 // kocky ostane len toľko trojuholníkov, koľko treba na obrys povrchu. Používa to zem (podkocky) aj jemné modely.
-// Zdieľa ho klient (render3d.mjs) aj testy; nezávisí od Three.js.
+// Zdieľa ho klient (render3d.ts) aj testy; nezávisí od Three.js.
 
 // Os mriežky (x, y, z) a bod / bunka v nej
 export type Axis = 0 | 1 | 2;

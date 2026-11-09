@@ -41,12 +41,9 @@ const HEARTBEAT_MS = 30000; // ping klientom; kto neodpovie do ďalšieho kola, 
 const ROOT = path.join(import.meta.dirname, '..', '..');
 const DATA_DIR = process.env['DATA_DIR'] || path.join(ROOT, 'data');
 const PUBLIC_DIR = path.join(ROOT, 'public');
-// Prehliadač .ts nespustí – `npm run build` (scripts/build.mjs) zbalí hru do build/client/ (/client/<súbor>) a pre ladiacu
-// stránku /debug (do fázy 5c, #137) zdieľané moduly do build/shared/ (/shared/<x>.js) a 3D pohľad, pavučiny a kresby
-// hry do build/debug-compat/ (/render3d.mjs, /spiders3d.mjs, /art.js).
+// Prehliadač .ts nespustí – `npm run build` (scripts/build.ts) zbalí hru do build/client/ (/client/<súbor>)
+// a ladiacu stránku do build/debug/ (podáva ju debug.ts pod /debug/).
 const BUILD_CLIENT_DIR = path.join(ROOT, 'build', 'client');
-const BUILD_SHARED_DIR = path.join(ROOT, 'build', 'shared');
-const BUILD_DEBUG_DIR = path.join(ROOT, 'build', 'debug-compat');
 if (!fs.existsSync(path.join(BUILD_CLIENT_DIR, 'game.js'))) console.warn('[server] chýba build/client/game.js – spusti `npm run build`, inak sa hra v prehliadači nenačíta');
 
 // ---------- Typy servera ----------
@@ -121,14 +118,12 @@ type LoadedState = Omit<SaveFile, 'v' | 'events' | 'market' | 'contracts' | 'hor
 };
 
 // ---------- Statické súbory ----------
-const THREE_DIR = path.join(ROOT, 'node_modules', 'three', 'build');
-const DEBUG_COMPAT = new Set(['/render3d.mjs', '/spiders3d.mjs', '/art.js']); // pre /debug do fázy 5c (build/debug-compat/)
 
 const MIME: Readonly<Partial<Record<string, string>>> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.map': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json'
 };
-const gzCache = new Map<string, { mtime: number; gz: Buffer }>(); // súbor → { mtime, gz } – Three.js má ~2 MB, gzip ho zmenší asi na štvrtinu
+const gzCache = new Map<string, { mtime: number; gz: Buffer }>(); // súbor → { mtime, gz } – kúsok balíka s Three.js má ~0,9 MB, gzip ho zmenší asi na štvrtinu
 const server = http.createServer((req, res) => {
   if (debugHandle(req, res)) return; // /debug a /api/debug/* (len na čítanie)
   const reqUrl = req.url || '/';
@@ -138,16 +133,13 @@ const server = http.createServer((req, res) => {
   if (url === '/') url = '/index.html';
   let base = PUBLIC_DIR, rel = url.slice(1);
   if (url.startsWith('/client/')) { base = BUILD_CLIENT_DIR; rel = url.slice(8); }
-  else if (url.startsWith('/shared/')) { base = BUILD_SHARED_DIR; rel = url.slice(8); }
-  else if (url.startsWith('/vendor/three/')) { base = THREE_DIR; rel = url.slice(14); }
-  else if (DEBUG_COMPAT.has(url)) base = BUILD_DEBUG_DIR;
   const file = path.normalize(path.join(base, rel));
   if (!file.startsWith(base + path.sep)) { res.writeHead(403); res.end(); return; }
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404); res.end('Not found'); return; }
     const type = lookup(MIME, path.extname(file)) || 'application/octet-stream';
     // kúsky balíka hry majú v mene odtlačok obsahu (chunks/render3d-<hash>.js) – nemenia sa, prehliadač si ich nechá
-    const cache = base === THREE_DIR ? 'public, max-age=86400' : base === BUILD_CLIENT_DIR && rel.startsWith('chunks/') ? 'public, max-age=31536000, immutable' : 'no-cache';
+    const cache = base === BUILD_CLIENT_DIR && rel.startsWith('chunks/') ? 'public, max-age=31536000, immutable' : 'no-cache';
     const headers: OutgoingHttpHeaders = { 'Content-Type': type, 'Cache-Control': cache };
     const gzip = /\bgzip\b/.test(req.headers['accept-encoding'] || '') && /text|json|svg/.test(type);
     fs.readFile(file, (err2, buf) => {
@@ -378,7 +370,7 @@ function appendJournal(room: Room, entry: Omit<JournalLoad, 'wall'> | E.JournalE
 }
 
 // Ladiaca stránka /debug: svety len číta (z pamäte alebo zo súboru), nič nenačíta ani neuloží
-const debugHandle = Debug.create({ dataDir: DATA_DIR, debugDir: path.join(ROOT, 'debug'), rooms, serialize, migrate, sim: () => SIM, apis: DEBUG_APIS });
+const debugHandle = Debug.create({ dataDir: DATA_DIR, debugDir: path.join(ROOT, 'debug'), buildDir: path.join(ROOT, 'build', 'debug'), rooms, serialize, migrate, sim: () => SIM, apis: DEBUG_APIS });
 let saveSeq = 0;
 // Atómový zápis: najprv dočasný súbor, potom premenovanie – pri páde nezostane rozbitý JSON.
 function saveRoom(room: Room, sync?: boolean): void {

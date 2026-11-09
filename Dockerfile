@@ -1,9 +1,9 @@
-# Zostavenie: klienta hry (build/client/) a moduly pre /debug (build/shared/, build/debug-compat/) zbalí esbuild (#122, #136) – potrebuje dev závislosti.
+# Zostavenie: klienta hry (build/client/) a ladiacu stránku (build/debug/) zbalí esbuild (#122, #136, #137) – potrebuje dev závislosti.
 FROM node:24-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
-COPY scripts/build.mjs ./scripts/
+COPY scripts/build.ts ./scripts/
 COPY src ./src
 RUN npm run build
 

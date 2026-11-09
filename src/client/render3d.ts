@@ -1863,7 +1863,7 @@ void main() {
 
     // efekty (častice z S.fx sa hýbu po rovine sveta – ukotvíme ich do bodu vo svete)
     for (const p of S.fx) {
-      if (p.fairy) continue; // víly sú 3D častice (particles3d.mjs)
+      if (p.fairy) continue; // víly sú 3D častice (particles3d.ts)
       const a = 1 - p.life / p.max;
       const ox = p.ox ??= p.x, oy = p.oy ??= p.y; // kde efekt vznikol (pohyb sa kreslí na obrazovke od tohto bodu)
       const gy = grid ? W.surfaceY(grid, Math.max(0, Math.min(S.W - 1, Math.floor(ox))), Math.max(0, Math.min(S.H - 1, Math.floor(oy)))) : 1;

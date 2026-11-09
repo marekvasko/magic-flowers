@@ -85,7 +85,7 @@ import type { Kid, TabCtx, TabInstance, TabModule } from './ui.ts';
   function renderTabs(): void {
     $('tabs').replaceChildren(...TABS.map(t => h('button', { class: t.id === st.tab ? 'on' : null, onclick: () => { st.tab = t.id; saveHash(); renderTabs(); render(); } }, t.label)));
   }
-  // Záložky okrem Room sú samostatné moduly debug/tabs/<id>.mjs (načítajú sa až pri otvorení):
+  // Záložky okrem Room sú samostatné moduly src/debug/tabs/<id>.ts (v balíku samostatné kúsky, načítajú sa až pri otvorení):
   //   export function mount(el, ctx) → { update?(ctx), unmount?() }
   // ctx: { room, area, snap, rooms, param(k), setParam(k, v), setArea(a), api(path), h, D, fmt }
   // update(ctx) príde pri zmene sveta, plochy alebo po obnovení; unmount pri prepnutí záložky.
