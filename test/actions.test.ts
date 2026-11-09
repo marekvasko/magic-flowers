@@ -393,6 +393,18 @@ test('krhla v zime (#87): zamrznuté jazierko a pleso len cez vysekaný otvor, s
   // zima s otvorom: naberie ako vždy
   assert.deepStrictEqual(draw(3, 'garden', 'water', true), { water: cap, reject: undefined, splash: true });
   assert.deepStrictEqual(draw(3, 'hory', 'water', true), { water: cap, reject: undefined, splash: true });
+  // ráno otvor zamrzne – krhla znova nič nenaberie
+  {
+    const w = makeWorld(87, (dayOf(3) - 1) * TPD + D.DAWN_TICK + 6), i = w.tiles.findIndex(t => t.g === 'water');
+    must(w.tiles[i]).cut = 1;
+    save(w, 'ana').water = 0;
+    assert.strictEqual(E.commitBatch(w, [act('drawWater', 'ana', { area: 'garden', i })], SPEC).rejected.length, 0);
+    Ice.dawnIce(w.tiles, w.hory, 3, null);
+    assert.strictEqual(w.tiles[i]?.cut, undefined);
+    save(w, 'ana').water = 0;
+    const r = E.commitBatch(w, [act('drawWater', 'ana', { area: 'garden', i })], SPEC);
+    assert.deepStrictEqual([save(w, 'ana').water, r.rejected.map(x => x.reject)], [0, [D.frozenWaterText('garden')]]);
+  }
   // studňa nezamŕza
   assert.deepStrictEqual(draw(3, 'garden', 'well', false), { water: cap, reject: undefined, splash: true });
   // ostatné obdobia bez zmeny
