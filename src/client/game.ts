@@ -1021,7 +1021,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     return (id.startsWith('seed_') ? lookup(M.seeds, sp) : lookup(M.flowers, sp)) ?? null;
   }
   // Úrovne knihy bez vlastných objednávok (sám so sebou sa neobchoduje)
-  const others = (l: readonly Level[]): Level[] => l.filter(x => x.w !== S.name);
+  const others = (l: readonly Level[]): Level[] => l.filter(x => !x.id || !S.orders.some(o => o.id === x.id));
   // Čerstvosť i-teho predávaného kusu kvetu z batohu (najstaršie idú prvé)
   function sellFresh(id: string): (i: number) => number {
     const list = (S.fb && lookup(S.fb, id)) || [], sp = id.slice(3), extra = Math.max(0, S.tick - (S.fbTick ?? S.tick));

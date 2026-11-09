@@ -621,6 +621,7 @@ export function levels(m: Market, item: ItemId, s: OrderSide, tick: number): Lev
     const fr = s === 'sell' ? freshOf(item, o, tick) : undefined;
     if (fr != null) l.fr = fr;
     if (s === 'buy' && o.npc && isFlower(item)) l.f = 1;
+    if (o.pl != null) l.id = orderId(item, o.n);
     out.push({ l, k: prio(o, tick), n: o.n });
   }
   const vo = Object.values(book.orders).filter((o): o is Order => !!o && o.npc === 'vo');

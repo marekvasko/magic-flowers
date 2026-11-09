@@ -25,7 +25,7 @@ export const isFlowerItem = (id: string): boolean => id.startsWith('fl_');
 
 // Úroveň knihy pre klienta: cena za kus, kusy, kto (meno; '' = veľkoobchodník), čerstvosť najstaršieho kvetu ponuky (0–1)
 // a f = 1, ak kupujúci platí podľa čerstvosti (postavy vykupujú kvety ako doteraz trh: cena × čerstvosť).
-export interface Level { p: number; n: number; w: string; fr?: number; f?: 1 }
+export interface Level { p: number; n: number; w: string; fr?: number; f?: 1; id?: string }   // id = objednávka hráča (klient tak spozná svoje)
 // Cena n-tého kusu pri predaji kvetu postave: limit × čerstvosť kusu, aspoň 1
 export const freshPay = (p: number, fresh: number): number => Math.max(1, Math.round(p * fresh));
 
