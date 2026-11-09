@@ -92,7 +92,7 @@ jobs:
         run: |
           docker run -d --name mf -p 3000:3000 magic-flowers:ci
           for i in $(seq 1 30); do
-            if curl -fsS http://localhost:3000/ > /dev/null && curl -fsS http://localhost:3000/shared/data.js > /dev/null; then
+            if curl -fsS http://localhost:3000/ > /dev/null && curl -fsS http://localhost:3000/client/game.js > /dev/null && curl -fsS http://localhost:3000/debug/debug.js > /dev/null; then
               echo "Server odpovedá"; docker logs mf; exit 0
             fi
             sleep 1
