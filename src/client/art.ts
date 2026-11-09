@@ -209,27 +209,17 @@ export const Art = (() => {
     }
   }
 
-  // Vodný kvet z hĺbky (#38): plávajúce listy s výrezom na hladine (y), púčik a kvet ležia na nich
+  // Vodný kvet z hĺbky (#38): len púčik a kvet, ktoré ležia na hladine – spodok kreslenia (y − 0,1 s, ako báza stonky)
+  // je presne na hladine, aby sa kvet dotýkal svojho odrazu. Plávajúce listy sú plochá geometria na hladine (render3d buildPads),
+  // nie na zvislom sprite – tie by v odraze viseli nad vodou.
   function lilyPlant(c: C2, key: SpeciesId, stage: number, x: number, y: number, s: number, t: number, o: PlantOpts): void {
-    const pad = (px: number, py: number, rx: number, notch: number, col: string): void => {
-      c.fillStyle = col; c.strokeStyle = 'rgba(20,60,20,0.45)'; c.lineWidth = Math.max(1, s * 0.015);
-      c.beginPath(); c.moveTo(px, py); c.ellipse(px, py, rx, rx * 0.42, 0, notch + 0.3, notch - 0.3 + TAU); c.closePath(); c.fill(); c.stroke();
-    };
-    const padC = o.dead ? '#8a6a3a' : '#3f9a3a', padL = o.dead ? '#9b7b45' : '#5cb84a', bob = Math.sin(t * 1.5 + x * 0.1) * s * 0.008;
-    const wy = y - s * 0.08 + bob;
-    pad(x, wy, s * (stage === 0 ? 0.1 : 0.2), -0.6, padC);
-    if (stage === 0) return;
-    pad(x - s * 0.24, wy - s * 0.04, s * 0.15, 0.4, padL);
-    if (stage >= 2) pad(x + s * 0.22, wy - s * 0.02, s * 0.16, 2.6, padC);
-    if (o.dead) return;
-    const sp = D.SPECIES[key];
-    if (stage === 2) { ell(c, x + s * 0.02, wy - s * 0.07, s * 0.06, s * 0.09, 0.2, '#4f9a32', OUT); ell(c, x + s * 0.03, wy - s * 0.12, s * 0.035, s * 0.05, 0.2, sp.color); }
-    else if (stage === 3) {
-      if (o.wilting) c.globalAlpha = 0.6;
-      bloom(c, key, x + s * 0.02, wy - s * 0.08, s * 0.2, t, o.night);
-      c.globalAlpha = 1;
-      if (o.ready && !o.wilting) { const a = 0.5 + 0.5 * Math.sin(t * 4); circ(c, x + s * 0.24, wy - s * 0.2, s * 0.03 * (1 + a), 'rgba(255,255,220,' + (0.5 + a * 0.5) + ')'); }
-    }
+    if (o.dead || stage < 2) return;
+    const sp = D.SPECIES[key], wy = y - s * 0.1, r = s * 0.2;
+    if (stage === 2) { ell(c, x, wy - s * 0.08, s * 0.06, s * 0.09, 0.2, '#4f9a32', OUT); ell(c, x + s * 0.01, wy - s * 0.13, s * 0.035, s * 0.05, 0.2, sp.color); return; }
+    if (o.wilting) c.globalAlpha = 0.6;
+    bloom(c, key, x, wy - r * 0.6, r, t, o.night); // spodné lupene (0,78 r pod stredom) siahajú tesne pod hladinu
+    c.globalAlpha = 1;
+    if (o.ready && !o.wilting) { const a = 0.5 + 0.5 * Math.sin(t * 4); circ(c, x + r, wy - r * 1.4, s * 0.03 * (1 + a), 'rgba(255,255,220,' + (0.5 + a * 0.5) + ')'); }
   }
 
   // Postavička – x stred, y chodidlá.

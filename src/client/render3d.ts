@@ -503,6 +503,9 @@ export function create(api: Render3DApi): Render3D {
     for (let i = 0; i < S.tiles.length; i++) {
       const tl = must(S.tiles[i]);
       if (tl.cut) holes += i + ',';
+      const lp = lilyPlant(tl);
+      if (lp) holes += `${i}:${lp.st}${lp.dead ? 'd' : ''},`; // plávajúce listy vodných kvetov sú v tej istej sieti
+      else if (tl.s) holes += i + 's,'; // ozdobné lekno pod iným kvetom zmizne
       const sig = tl.g + '|' + (tl.s ? tl.s.k + String(tl.s.w) + String(tl.s.r) : '') + '|' + (tl.ice == null ? '' : tl.ice);
       if (force || sig !== tileSig[i]) { drawTile(i, se, t); tileSig[i] = sig; changed = true; } // vlny vody sú na GPU
     }
@@ -959,12 +962,19 @@ void main() {
     scene.add(waterMesh);
     lilyMesh = buildPads(se, y);
   }
+  // Zasadený vodný kvet z hĺbky (tvar lily, #38) na políčku: štádium a či uhynul – jeho listy plávajú na hladine
+  function lilyPlant(tl: (typeof S.tiles)[number]): { st: number; dead: boolean } | null {
+    const p = tl.g === 'water' ? tl.s?.p : null, sp = p && p.sp !== 'wild' ? D.SPECIES[p.sp] : null;
+    return p && sp && sp.shape === 'lily' ? { st: D.stageOf(p), dead: !!p.d } : null;
+  }
   // lekná z pixelov hladiny (WATER_PIX na blok) – list s výrezom a ružový kvietok, osvetlené ako svet;
-  // v zime namiesto nich otvory vysekané do ľadu (tmavá voda s bielym okrajom)
+  // v zime namiesto nich otvory vysekané do ľadu (tmavá voda s bielym okrajom).
+  // Zasadené vodné kvety z hĺbky (#38) tu majú svoje listy (viac a väčších s rastom); kvet nad nimi je sprite.
   function buildPads(se: number, y: number): THREE.Mesh | null {
-    const pads = W.lilyPads(S.tiles, se, S.W);
+    const pads = W.lilyPads(S.tiles, se, S.W).filter(p => !S.tiles[p.y * S.W + p.x]?.s); // ozdobné len na voľnej vode
+    const planted = se === 3 ? [] : S.tiles.flatMap((t, i) => { const lp = lilyPlant(t); return lp ? [{ x: i % S.W, y: (i / S.W) | 0, ...lp }] : []; });
     const holes = se === 3 ? S.tiles.flatMap((t, i) => t.cut && t.g === 'water' ? [{ x: i % S.W, y: (i / S.W) | 0 }] : []) : [];
-    if (!pads.length && !holes.length) return null;
+    if (!pads.length && !holes.length && !planted.length) return null;
     const P: number[] = [], C: number[] = [], A: number[] = [], E: number[] = [], T: number[] = [], U: number[] = [], N: number[] = [], I: number[] = [];
     const px = 1 / WATER_PIX;
     const quad = (pts: readonly V3[], n: Readonly<V3>, col: Readonly<V3>): void => {
@@ -994,6 +1004,23 @@ void main() {
       const fx = x + Math.floor(0.55 * WATER_PIX) * px, fz = z + Math.floor(0.42 * WATER_PIX) * px;
       box(fx - px, fz - px, fx + px, fz + px, y + 0.01, y + 0.01 + 1.5 * px, hex('#ffb6d9'));
       top(fx - px * 0.5, fz - px * 0.5, fx + px * 0.5, fz + px * 0.5, y + 0.012 + 1.5 * px, hex('#ffe066'));
+    }
+    // list s výrezom: stred (cx, cz) v políčku, polosi rx, rz, výrez smerom notch; pixely mimo políčka sa vynechajú
+    const leaf = (x: number, z: number, cx: number, cz: number, rx: number, rz: number, notch: number, a: Readonly<V3>, b: Readonly<V3>, h: number): void => {
+      for (let j = 0; j < WATER_PIX; j++) for (let i = 0; i < WATER_PIX; i++) {
+        const u = (i + 0.5) * px - cx, w = (j + 0.5) * px - cz;
+        if ((u / rx) ** 2 + (w / rz) ** 2 > 1) continue;
+        let da = Math.atan2(w, u) - notch; da = Math.atan2(Math.sin(da), Math.cos(da));
+        if (Math.abs(da) < 0.35) continue;
+        top(x + i * px, z + j * px, x + (i + 1) * px, z + (j + 1) * px, h, W.hash(x * 16 + i, z * 16 + j) < 0.3 ? b : a);
+      }
+    };
+    const live = [hex('#4fa63e'), hex('#3d8f32')] as const, dry = [hex('#8a6a3a'), hex('#76582e')] as const;
+    for (const { x, y: z, st, dead } of planted) {
+      const [a, b] = dead ? dry : live, n = W.hash(x, z, 5) * Math.PI * 2;
+      leaf(x, z, 0.5, 0.5, st === 0 ? 0.12 : st === 1 ? 0.2 : 0.27, st === 0 ? 0.1 : st === 1 ? 0.17 : 0.23, n, a, b, y + 0.012);
+      if (st >= 1) leaf(x, z, 0.24, 0.74, 0.14, 0.12, n + 2.1, b, a, y + 0.011);
+      if (st >= 2) leaf(x, z, 0.78, 0.24, 0.15, 0.13, n + 4.2, a, b, y + 0.011);
     }
     const rim = hex('#f4f9fc'), deep = hex('#1f5f8a');
     for (const { x, y: z } of holes) for (let j = 0; j < WATER_PIX; j++) for (let i = 0; i < WATER_PIX; i++) {
@@ -1355,9 +1382,13 @@ void main() {
       let key: string | null = null, draw: ((c: CanvasRenderingContext2D) => void) | null = null, h = 1.5;
       const pl = tl.s?.p;
       if (pl && pl.sp !== 'wild') {
-        const p = { ...pl, sp: pl.sp }, k = plantKey(p, night);
-        key = 'p:' + k.key;
-        draw = c => { Art.plant(c, p.sp, k.st, 32, 92, 60, 0, { dead: !!p.d, night, ready: false, wilting: k.wil }); };
+        const p = { ...pl, sp: pl.sp }, k = plantKey(p, night), wet = tl.g === 'water';
+        // vodný kvet z hĺbky bez púčika (alebo uhynutý) – len listy na hladine (buildPads), sprite nemá
+        if (wet && D.SPECIES[p.sp].shape === 'lily' && (k.st < 2 || p.d)) continue;
+        // vo vode báza stonky (y − 0,1 s) presne na ukotvení spritu (3 % výšky od spodku): rastlina vyrastá z hladiny
+        // a dotýka sa svojho odrazu; na súši ostáva o kúsok vyššie ako doteraz
+        key = 'p:' + (wet ? 'w' : '') + k.key;
+        draw = c => { Art.plant(c, p.sp, k.st, 32, wet ? 99.1 : 92, 60, 0, { dead: !!p.d, night, ready: false, wilting: k.wil }); };
       } else if (tl.g === 'shroom') {
         key = 's:' + (night ? 1 : 0); h = 1;
         draw = c => { Art.shroom(c, 32, 58, 60, night, 0); };
