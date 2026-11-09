@@ -162,12 +162,13 @@ export interface DebugCtx<R extends DebugRoom> {
 }
 
 // Vráti handle(req, res) → true, ak požiadavku vybavil (inak ju server spracuje ako obyčajný súbor).
-export function create<R extends DebugRoom>(ctx: DebugCtx<R>): (req: Pick<IncomingMessage, 'url' | 'method'>, res: Pick<ServerResponse, 'writeHead' | 'end'>) => boolean {
-  type Res = Pick<ServerResponse, 'writeHead' | 'end'>;
+export function create<R extends DebugRoom>(ctx: DebugCtx<R>): (req: Pick<IncomingMessage, 'url' | 'method'>, res: Pick<ServerResponse, 'writeHead' | 'end' | 'headersSent'>) => boolean {
+  type Res = Pick<ServerResponse, 'writeHead' | 'end' | 'headersSent'>;
   const notFound = (res: Res): true => { res.writeHead(404); res.end('Not found'); return true; };
   const json = (res: Res, code: number, obj: unknown): true => {
+    const body = JSON.stringify(obj); // najprv telo: keď zlyhá (napr. BigInt), hlavička ešte neodišla a dá sa odpovedať 500
     res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex' });
-    res.end(JSON.stringify(obj));
+    res.end(body);
     return true;
   };
   const roomFile = (id: string): string => path.join(ctx.dataDir, 'room-' + id + '.json');
@@ -217,20 +218,27 @@ export function create<R extends DebugRoom>(ctx: DebugCtx<R>): (req: Pick<Incomi
   // Tajomstvá sveta (semienko náhody, soľ divých semienok) von nejdú – z nich by sa dali predvídať výsledky.
   // Odstraňujú sa až pred odpoveďou: reconcilerView potrebuje semienko, aby ukázal ten istý čas, aký naplánuje engine.
   function secretless<T extends { state: DebugState } | null>(r: T): T { if (r) { delete r.state.seed; delete r.state.scavSalt; } return r; }
+  const CORRUPT = 'corrupt save', MIGRATE_FAILED = 'migrate failed';
+  // Do odpovede ide len známa chyba uloženia; ostatné (chyby kódu) len ako „internal error“, podrobnosti sú v logu
+  const publicError = (e: unknown): string => e instanceof Error && (e.message === CORRUPT || e.message === MIGRATE_FAILED) ? e.message : 'internal error';
   function loadState(id: string): Loaded | null {
     if (!ROOM_RE.test(id)) return null;
     const room = ctx.rooms.get(id);
     if (room) return { id, source: 'memory', file: null, online: online(room), state: parseState(ctx.serialize(room)) };
     let text;
     try { text = fs.readFileSync(roomFile(id), 'utf8'); } catch { return null; }
-    // Poškodený súbor (zlý JSON, nie objekt, migrate zlyhá) je chyba len tejto požiadavky – nikdy nie pád servera (#134).
-    // Hra s ním zaobchádza po svojom; /debug ho len ohlási ako „corrupt save“ (podrobnosti sú v príčine, v logu).
+    let st;
+    try { st = fs.statSync(roomFile(id)); } catch { return null; } // zmazaný medzitým
+    // Poškodený súbor (zlý JSON, nie objekt) je chyba len tejto požiadavky – nikdy nie pád servera (#134). Hra s ním
+    // zaobchádza po svojom; /debug ho len ohlási ako „corrupt save“, zlyhanie migrate ako „migrate failed“ (príčina je v logu).
+    let raw;
+    try { raw = parseState(text); } catch (e) { throw new Error(CORRUPT, { cause: e }); }
+    let state;
     try {
-      const st = fs.statSync(roomFile(id));
-      const state = ctx.migrate(parseState(text));
+      state = ctx.migrate(raw);
       if (state.market) Econ.syncFestival(state.market); // ako pri načítaní na serveri: sviatočné násobky v položkách kvetov
-      return { id, source: 'file', file: { size: st.size, saved: st.mtimeMs }, online: [], state };
-    } catch (e) { throw new Error('corrupt save', { cause: e }); }
+    } catch (e) { throw new Error(MIGRATE_FAILED, { cause: e }); }
+    return { id, source: 'file', file: { size: st.size, saved: st.mtimeMs }, online: [], state };
   }
   // Uložený svet (JSON zapísaný serverom): objekt s krokom; tvar ďalších polí sa tu neoveruje
   function parseState(text: string): DebugState {
@@ -283,6 +291,7 @@ export function create<R extends DebugRoom>(ctx: DebugCtx<R>): (req: Pick<Incomi
   }
 
   function serveFile(res: Res, rel: string): boolean {
+    if (rel.includes('\0')) return notFound(res); // /debug/%00: fs.readFile by s \0 v ceste hodil synchrónne
     // zbalené skripty (build/debug/, npm run build) majú prednosť pred statickými súbormi stránky (debug/)
     const inDir = (dir: string): string | null => { const f = path.normalize(path.join(dir, rel)); return f.startsWith(dir + path.sep) ? f : null; };
     const built = ctx.buildDir ? inDir(ctx.buildDir) : null, file = built && fs.existsSync(built) ? built : inDir(ctx.debugDir);
@@ -300,7 +309,11 @@ export function create<R extends DebugRoom>(ctx: DebugCtx<R>): (req: Pick<Incomi
     const reqUrl = req.url || '/', q = reqUrl.indexOf('?');
     const url = (q >= 0 ? reqUrl.slice(0, q) : reqUrl) || '/';
     if (url !== '/debug' && !url.startsWith('/debug/') && !url.startsWith('/api/debug/')) return false;
-    try { return route(req, res, url, new URLSearchParams(q >= 0 ? reqUrl.slice(q + 1) : '')); } catch (e) { console.error('[debug]', reqUrl, e); return json(res, 500, { error: 'internal error' }); }
+    try { return route(req, res, url, new URLSearchParams(q >= 0 ? reqUrl.slice(q + 1) : '')); } catch (e) {
+      console.error('[debug]', reqUrl, e);
+      try { if (res.headersSent) res.end(); else json(res, 500, { error: 'internal error' }); } catch (e2) { console.error('[debug] odpoveď 500 sa nedá poslať', e2); }
+      return true;
+    }
   };
   function route(req: Pick<IncomingMessage, 'method'>, res: Res, url: string, query: URLSearchParams): boolean {
     if (req.method !== 'GET') return notFound(res); // len na čítanie
@@ -309,7 +322,7 @@ export function create<R extends DebugRoom>(ctx: DebugCtx<R>): (req: Pick<Incomi
       const id = query.get('id') || '';
       if (!ROOM_RE.test(id)) return json(res, 400, { error: 'bad room id' });
       let snap;
-      try { snap = roomSnapshot(id); } catch (e) { console.error('[debug] room', id, e); return json(res, 500, { error: e instanceof Error ? e.message : undefined }); }
+      try { snap = roomSnapshot(id); } catch (e) { console.error('[debug] room', id, e); return json(res, 500, { error: publicError(e) }); }
       return snap ? json(res, 200, snap) : json(res, 404, { error: 'no such room' });
     }
     if (url.startsWith('/api/debug/')) return extension(res, url.slice(11), query);
