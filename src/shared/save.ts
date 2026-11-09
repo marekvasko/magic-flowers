@@ -40,8 +40,8 @@ export interface SavedTile {
   s: Soil | null;
   cut?: 1;
 }
-// Políčko hôr v uložení: 0 = nič, inak zásoba ľadu (vrstvy) a otvor vo vode
-export type SavedHoryTile = 0 | { ice?: number; cut?: 1 };
+// Políčko hôr v uložení: 0 = nič, inak zásoba ľadu (vrstvy), otvor vo vode a vodný kvet v plese (#38, staršie uloženia ho nemajú)
+export type SavedHoryTile = 0 | { ice?: number; cut?: 1; s?: Soil };
 
 // ---- Hráč ----
 export interface PlayerSave {

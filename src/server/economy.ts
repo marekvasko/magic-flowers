@@ -313,7 +313,7 @@ export const PROPOSERS: { [T in keyof EconInputs]: GameProposer<EconInputs[T]> }
     ...market,
     run(s, d, ctx) {
       const m = sl(s, 'market:*'), tick = ctx.tick, se = season(tick), jano = m.npcs.jano, g = ctx.rng;
-      const cands = PLANTABLE.filter(sp => !D.SPECIES[sp].strict && seedOf(m, sp).stock >= 3 && phase(sp, se) !== 'off')
+      const cands = PLANTABLE.filter(sp => !D.SPECIES[sp].strict && !D.isAqua(sp) && seedOf(m, sp).stock >= 3 && phase(sp, se) !== 'off') // jazierko nemá (#38)
         .map(sp => { const sc = D.SPECIES[sp], p = seedPrice(m, tick, sp); return { sp, p, score: (sc.sell * 2 - p) / sc.days, cheap: p <= sc.seed * 1.25 }; })
         .filter(c => c.cheap && c.score > 0).sort((a, b) => b.score - a.score);
       const c = cands[0];
@@ -449,12 +449,13 @@ function takenSaves(s: GameSlices, c: Contract): Partial<Record<PlayerKey, Playe
 //   world.maxRep    – najvyššia reputácia medzi hráčmi (veľké zákazky od úrovne 2); udržiava každá zmena reputácie
 //   world.plotsUsed – počet obrobených políčok záhrady; udržiava kopanie a zarovnanie (server.ts)
 export function maxRepOf(saves: Partial<Record<PlayerKey, PlayerSave>>): number { let m = 0; for (const [, sv] of entries(saves)) m = Math.max(m, sv.rep || 0); return m; }
-export function plotsUsedOf(tiles: readonly Tile[]): number { let n = 0; for (const t of tiles) if (t.s) n++; return n; }
+// (hory = políčka hôr: vodné kvety v plese zaberajú miesto v tom istom povolení, #38)
+export function plotsUsedOf(tiles: readonly Tile[], hory?: readonly Tile[]): number { let n = 0; for (const t of tiles.concat(hory || [])) if (t.s) n++; return n; }
 
 // Nová zákazka na nástenke c. Náhoda a plánovanie termínov cez ctx.
 function genContract(c: Contracts, tick: number, kind: ContractKind, ctx: E.Scheduler): Contract {
   const se = season(tick), g = ctx.rng;
-  const ok = (sp: SpeciesId): boolean => !D.SPECIES[sp].strict;
+  const ok = (sp: SpeciesId): boolean => !D.SPECIES[sp].strict && !D.isAqua(sp); // vodných políčok je málo, mnohé druhy sa ešte nedajú zasadiť (#38)
   // krátka zákazka len na kvet, ktorý sa stihne zasadiť teraz a vypestovať ešte v tomto období
   const daysLeft = DPS - dayInSeason(tick);
   const nowPool = PLANTABLE.filter(sp => ok(sp) && D.SPECIES[sp].seasons.includes(se) && D.SPECIES[sp].days <= daysLeft + 1);

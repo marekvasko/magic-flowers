@@ -36,7 +36,7 @@ export const seasonNo = (tick: number): number => Math.floor((D.dayOfTick(tick) 
 export const WELL = { tip: 0.45, seeds: 0.65, rain: 0.75, fern: 0.755, gold: 0.76, potion: 0.765 } as const;
 export const WELL_GOLD = 60;
 // Vrecúško zo studne: len obyčajné druhy, ktoré rastú kdekoľvek (bez čarovných a bez prísnych ako plesnivec)
-export const WELL_SEEDS: readonly D.SpeciesId[] = keys(D.SPECIES).filter(k => !D.SPECIES[k].magic && !D.SPECIES[k].strict);
+export const WELL_SEEDS: readonly D.SpeciesId[] = keys(D.SPECIES).filter(k => !D.SPECIES[k].magic && !D.SPECIES[k].strict && !D.SPECIES[k].aqua);
 export const WELL_POTIONS: readonly PotionId[] = ['rast', 'dazd'];
 const toast$ = (to: To, text: string, kind?: ToastKind): Msg => ({ to, t: 'toast', text, kind: kind || 'info' });
 const fx$ = (area: AreaId, k: FxKind, x: number, y: number, extra?: { c: string }): Msg => ({ to: E.area(area), t: 'fx', k, x, y, ...extra });
@@ -50,12 +50,12 @@ export interface ActionInputs {
   dance: { key: PlayerKey; now: number };
   till: { key: PlayerKey; i: number };
   level: { key: PlayerKey; i: number };
-  clear: { key: PlayerKey; i: number };
+  clear: { key: PlayerKey; i: number; area?: AreaId };   // area: vodné kvety v plese (#38); bez nej záhrada
   water: { key: PlayerKey; i: number };
   compost: { key: PlayerKey; i: number };
-  plant: { key: PlayerKey; i: number; item: string };
+  plant: { key: PlayerKey; i: number; item: string; area?: AreaId };
   plantWild: { key: PlayerKey; i: number; item: string };
-  pick: { key: PlayerKey; i: number };
+  pick: { key: PlayerKey; i: number; area?: AreaId };
   scavStart: { key: PlayerKey; i: number; seeds: boolean };
   scavStop: { key: PlayerKey };
   digIce: { key: PlayerKey; area: AreaId; i: number };
@@ -113,6 +113,21 @@ const nameOf = (ctx: GameCtx, key: PlayerKey): string => (ctx.actor ? ctx.actor.
 // ---------- Pomocníci nad výrezmi ----------
 const saveOf = (s: GameSlices, key: PlayerKey, ctx: GameCtx): PlayerSave => sl(s, `save:${key}`) || ctx.reject(null);
 const garden = (s: GameSlices, i: number): Tile => must(sl(s, `tile:garden:${i}`));
+const tileIn = (s: GameSlices, area: AreaId, i: number): Tile => must(sl(s, `tile:${area}:${i}`));
+// Vodné políčko (#38): kvet sa sadí priamo do vody a zaberá miesto v spoločnom povolení, kým na ňom niečo rastie
+const waterKeys = (area: AreaId | undefined, i: number): string[] => (D.waterSpot(area || 'garden', i) ? ['plotsUsed'] : []);
+const WATER_PERMIT = (lim: number): string => `Spoločné povolenie záhrady je na ${lim} políčok a všetky sú obsadené (ráta sa aj voda s kvetmi). Väčšie povolenie môže pre všetkých kúpiť ktokoľvek na trhu (záložka Vylepšiť).`;
+// Políčko vody, kde sa sadia vodné kvety (jazierko, pleso): zber, odstránenie uhynutej rastliny, sadenie; undefined = nič z toho
+function waterAct(t: Tile, area: AreaId, key: PlayerKey, i: number, item: string): ActInput | { toast: string } | null | undefined {
+  if (t.g !== 'water' || !D.waterSpot(area, i)) return undefined;
+  const p = t.s && t.s.p, a = area === 'garden' ? {} : { area };
+  if (p && !p.d && p.prog >= D.SPECIES[p.sp].days) return input('pick', { key, i, ...a });
+  if (item === 'hoe' && p && p.d) return input('clear', { key, i, ...a });
+  if (item.startsWith('seed_')) return input('plant', { key, i, item, ...a });
+  if (D.isWild(item)) return { toast: 'Divé semienko vo vode nevyrastie – sadí sa do prekopanej zeme. 🌱' };
+  if (item === 'compost') return { toast: 'Vodné kvety kompost nepotrebujú – živí ich bahno na dne. 🌊' };
+  return undefined;
+}
 function give(sv: PlayerSave, id: ItemId, n: number, tick: number, batches?: MovedBatch[]): void { I.addItems(I.playerC(sv), id, n, tick, batches); }
 function take(sv: PlayerSave, id: ItemId, n: number, tick: number): MovedBatch[] | null { return I.removeItems(I.playerC(sv), id, n, tick); }
 // Políčka záhrady okolo (x, y) v polomere r: indexy
@@ -155,7 +170,7 @@ export function bodyTiles(area: string, x: number, y: number): Set<number> {
 // start = { coins, rep } zo serverového prostredia (v náhľadoch viac), aby bol záznam v denníku úplný.
 export function newSave(tick: number, start: { coins: number; rep: number }): PlayerSave {
   const se = season(tick);
-  const sp = must(Econ.PLANTABLE.filter(k => !D.SPECIES[k].strict && D.SPECIES[k].seasons.includes(se))
+  const sp = must(Econ.PLANTABLE.filter(k => !D.SPECIES[k].strict && !D.SPECIES[k].aqua && D.SPECIES[k].seasons.includes(se))
     .sort((a, b) => D.SPECIES[a].seed - D.SPECIES[b].seed)[0]);
   return {
     coins: start.coins, water: 5, inv: { hoe: 1, can: 1, [`seed_${sp}`]: 4 },
@@ -211,6 +226,8 @@ export function resolveAct(world: GameWorld, presence: readonly Presence[] | nul
   }
   if (area !== 'garden') {
     if (t.g === 'water' && item === 'can') return input('drawWater', { key, area, i });
+    const wa = waterAct(t, area, key, i, item);
+    if (wa !== undefined) return wa;
     if (t.g === 'glacier') return { toast: 'Na ľad potrebuješ krompáč – kúpiš ho na trhu (záložka Vylepšiť). ⛏️' };
     if (item === 'hoe' || item.startsWith('seed_') || D.isWild(item) || item === 'compost') {
       return { toast: area === 'hory'
@@ -227,6 +244,8 @@ export function resolveAct(world: GameWorld, presence: readonly Presence[] | nul
   // Studňa prianí a voda do krhly
   if (t.g === 'well' && item !== 'can') return input('well', { key });
   if ((t.g === 'water' || t.g === 'well') && item === 'can') return input('drawWater', { key, area, i });
+  const wa = waterAct(t, area, key, i, item);
+  if (wa !== undefined) return wa;
   // Zber
   const p = t.s && t.s.p;
   if (p && !p.d && p.prog >= D.SPECIES[p.sp].days) return input('pick', { key, i });
@@ -378,9 +397,14 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
     }
   },
   // motykou odstrániť uhynutú rastlinu (záhon ostáva)
+  // (na vode zmizne aj „záhon“ a uvoľní miesto v povolení)
   clear: {
-    keys: d => ({ writes: [`tile:garden:${d.i}`] }),
-    run(s, d, ctx) { const t = garden(s, d.i), p = t.s && t.s.p; if (!t.s || !p || !p.d) ctx.reject(null); else t.s.p = null; }
+    keys: d => ({ writes: [`tile:${d.area || 'garden'}:${d.i}`, ...waterKeys(d.area, d.i)] }),
+    run(s, d, ctx) {
+      const t = tileIn(s, d.area || 'garden', d.i), p = t.s && t.s.p;
+      if (!t.s || !p || !p.d) ctx.reject(null);
+      else if (t.s.k === 'water') { t.s = null; s.plotsUsed--; } else t.s.p = null;
+    }
   },
   water: {
     keys: d => ({ writes: [`tile:garden:${d.i}`, `save:${d.key}`] }),
@@ -401,12 +425,26 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
       t.s.r = 1;
     }
   },
-  // d: { key, i, item: 'seed_<druh>' }
+  // d: { key, i, item: 'seed_<druh>', area? }; vodný druh sa sadí priamo do vody svojej vodnej plochy a zóny (#38)
   plant: {
-    keys: d => ({ writes: [`tile:garden:${d.i}`, `save:${d.key}`], reads: ['eternal'] }),
+    keys: d => ({ writes: [`tile:${d.area || 'garden'}:${d.i}`, `save:${d.key}`, ...waterKeys(d.area, d.i)], reads: ['eternal', ...(D.waterSpot(d.area || 'garden', d.i) ? ['up'] : [])] }),
     run(s, d, ctx) {
-      const t = garden(s, d.i), sv = saveOf(s, d.key, ctx), spId = d.item.slice(5), sp = lookup(D.SPECIES, spId);
+      const area = d.area || 'garden', t = tileIn(s, area, d.i), sv = saveOf(s, d.key, ctx), spId = d.item.slice(5), sp = lookup(D.SPECIES, spId);
       if (!sp || !D.isSpeciesId(spId)) { ctx.reject(null); return; }
+      const spot = t.g === 'water' ? D.waterSpot(area, d.i) : null, err = D.aquaPlantError(spId, spot ? spot.body : null, spot ? spot.zone : null);
+      if (err) ctx.reject(err);
+      if (spot) {
+        if (t.s) ctx.reject(t.s.p && t.s.p.d ? 'Tu je uhynutá rastlina – najprv ju odstráň motykou.' : null);
+        if (!sp.seasons.includes(season(ctx.tick)) && !s.eternal) ctx.reject(`${sp.name} sa sadí v období: ${sp.seasons.map(x => must(D.SEASONS[x])).join(', ')}.`);
+        const lim = Econ.plotLimit(s.up);
+        if (s.plotsUsed >= lim) ctx.reject(WATER_PERMIT(lim));
+        if (!D.isItemId(d.item) || !take(sv, d.item, 1, ctx.tick)) ctx.reject(null);
+        t.s = { k: 'water', w: 1, r: 0, p: { sp: spId, prog: 0, q: 3, dry: 0 }, o: d.key };
+        s.plotsUsed++;
+        ctx.emit(fx$(area, 'splash', d.i % D.W + 0.5, Math.floor(d.i / D.W) + 0.5));
+        return;
+      }
+      if (area !== 'garden') ctx.reject(null);
       if (!t.s) { ctx.reject('Najprv zem prekopaj motykou.'); return; }
       if (t.s.p) ctx.reject(null);
       if (!sp.seasons.includes(season(ctx.tick)) && !s.eternal) ctx.reject(`${sp.name} sa sadí v období: ${sp.seasons.map(x => must(D.SEASONS[x])).join(', ')}.`);
@@ -432,19 +470,19 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
     }
   },
   pick: {
-    keys: d => ({ writes: [`tile:garden:${d.i}`, `save:${d.key}`] }),
+    keys: d => ({ writes: [`tile:${d.area || 'garden'}:${d.i}`, `save:${d.key}`, ...waterKeys(d.area, d.i)] }),
     run(s, d, ctx) {
-      const t = garden(s, d.i), sv = saveOf(s, d.key, ctx), p = t.s && t.s.p;
+      const area = d.area || 'garden', t = tileIn(s, area, d.i), sv = saveOf(s, d.key, ctx), p = t.s && t.s.p;
       if (!t.s || !p || p.d || p.prog < D.SPECIES[p.sp].days) { ctx.reject('Tu nič nekvitne.'); return; }
       const sp = D.SPECIES[p.sp];
       if (p.sp === 'papradie' && !D.isNight(D.minOfTick(ctx.tick))) ctx.reject('Papraď drží púčik pevne zatvorený… vraj sa otvára len v noci. 🌙');
       const n = Math.min(4, p.q + (t.s.r ? 1 : 0));
       give(sv, `fl_${p.sp}`, n, ctx.tick);
       t.s.r = 0;
-      if (sp.perennial) { p.prog = sp.days * 0.5; p.q = 3; p.bt = null; } else t.s.p = null;
+      if (sp.perennial) { p.prog = sp.days * 0.5; p.q = 3; p.bt = null; } else if (t.s.k === 'water') { t.s = null; s.plotsUsed--; } else t.s.p = null;
       ctx.emit(toast$(d.key, `+${n}× ${sp.name}` + (n >= 3 ? ' ⭐ výborná kvalita!' : '')));
       if (p.sp === 'papradie') ctx.emit(toast$(E.ALL, `✨ ${nameOf(ctx, d.key)} našiel(a) papraďový kvet! Môže si niečo priať…`, 'magic'));
-      ctx.emit(fx$('garden', p.sp === 'papradie' ? 'sparkle' : 'pop', d.i % D.W + 0.5, Math.floor(d.i / D.W) + 0.5, { c: sp.color }));
+      ctx.emit(fx$(area, p.sp === 'papradie' ? 'sparkle' : 'pop', d.i % D.W + 0.5, Math.floor(d.i / D.W) + 0.5, { c: sp.color }));
     }
   },
 

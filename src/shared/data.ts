@@ -48,11 +48,19 @@ export const SEASON_ICONS: readonly string[] = ['🌱', '☀️', '🍂', '❄�
 // light: 'sun' | 'shade' | 'any'
 // soil: preferovaná pôda ('sand' | 'rich' | 'rock'), strict = inde nerastie
 export type Soil = 'sand' | 'rich' | 'rock';
-export type FlowerShape = 'bell' | 'hell' | 'cup' | 'star' | 'daisy' | 'spiky' | 'sun' | 'spike' | 'rose' | 'pom' | 'edel' | 'fern' | 'rainbow';
+export type FlowerShape = 'bell' | 'hell' | 'cup' | 'star' | 'daisy' | 'spiky' | 'sun' | 'spike' | 'rose' | 'pom' | 'edel' | 'fern' | 'rainbow' | 'lily';
+// ---- Vodné kvety (#38) ----
+// Každé políčko vody patrí k vodnej ploche (jazierko v záhrade, pleso v horách; potok a mŕtve rameno v hre ešte nie sú)
+// a má zónu: breh = voda, ktorá má aspoň z jednej zo 4 strán súš (uhlopriečky sa nerátajú), inak hĺbka.
+// Vodný druh (aqua) rastie len vo vymenovaných vodných plochách a v jednej zóne; sadí sa priamo do vody, bez motyky a zálievky.
+export type WaterBody = 'jazierko' | 'pleso' | 'potok' | 'rameno';
+export type WaterZone = 'shore' | 'deep';
+export interface Aqua { readonly in: readonly WaterBody[]; readonly zone: WaterZone }
 interface SpeciesDef {
   readonly name: string; readonly latin: string; readonly seasons: readonly Season[]; readonly days: number; readonly water: 1 | 2 | 3;
   readonly light: 'sun' | 'shade' | 'any'; readonly soil: Soil | null; readonly strict?: true; readonly seed: number; readonly sell: number;
   readonly color: string; readonly center: string; readonly shape: FlowerShape; readonly perennial?: true; readonly magic?: true; readonly fact: string;
+  readonly aqua?: Aqua;
 }
 // life = koľko dní kvet vydrží vo váze (a kvitne na poli), z tabuľky LIFE
 export interface Species extends SpeciesDef { readonly life: number }
@@ -137,6 +145,79 @@ const SPECIES_DEF = {
     light: 'sun', soil: 'rock', strict: true, seed: 80, sell: 210, color: '#f4f3e8', center: '#d9d4a0', shape: 'edel',
     fact: 'Symbol hôr. Na Slovensku rastie divo len v Belianskych Tatrách a Pieninách a je prísne chránený.'
   },
+  // ---- Vodné kvety (#38): water nemá význam (voda ich polieva sama), soil = null ----
+  lekno: {
+    name: 'Lekno biele', latin: 'Nymphaea alba', seasons: [1], days: 6, water: 3,
+    light: 'sun', soil: null, seed: 40, sell: 85, color: '#fbfbf5', center: '#f2c230', shape: 'lily', perennial: true,
+    aqua: { in: ['jazierko', 'rameno'], zone: 'deep' },
+    fact: 'Kráľovná stojatých vôd. Korene má v bahne aj dva metre hlboko a kvet sa na noc zatvára. Na Slovensku je chránené – v prírode ho netrhaj!'
+  },
+  leknica: {
+    name: 'Leknica žltá', latin: 'Nuphar lutea', seasons: [1], days: 5, water: 3,
+    light: 'sun', soil: null, seed: 30, sell: 60, color: '#f7d21e', center: '#c9a400', shape: 'lily', perennial: true,
+    aqua: { in: ['jazierko', 'rameno', 'potok'], zone: 'deep' },
+    fact: 'Žltá guľka nad hladinou, ktorá vonia ako alkohol – ľudovo „fľaškovník“. Znesie aj pomalý prúd. V prírode je chránená, netrhaj ju!'
+  },
+  mociarka: {
+    name: 'Močiarka vlasolistá', latin: 'Ranunculus trichophyllus', seasons: [0, 1], days: 3, water: 3,
+    light: 'sun', soil: null, seed: 14, sell: 28, color: '#ffffff', center: '#f5d22a', shape: 'lily',
+    aqua: { in: ['pleso', 'jazierko'], zone: 'deep' },
+    fact: 'Ponorené listy má jemné ako vlasy, nad hladinu vystrčí len biele kvietky. Neprekáža jej studená voda – rastie aj v tatranskom plese.'
+  },
+  kotvica: {
+    name: 'Kotvica plávajúca', latin: 'Trapa natans', seasons: [1], days: 5, water: 3,
+    light: 'sun', soil: null, seed: 25, sell: 55, color: '#ffffff', center: '#d8e8a0', shape: 'lily',
+    aqua: { in: ['rameno'], zone: 'deep' },
+    fact: 'Jej tvrdý plod s rožkami ako kotva sa volá „vodný orech“ a dá sa jesť. U nás rastie len v ramenách Dunaja, Ipľa, Bodrogu a Latorice a je chránená.'
+  },
+  leknovec: {
+    name: 'Leknovec štítnatý', latin: 'Nymphoides peltata', seasons: [1, 2], days: 6, water: 3,
+    light: 'sun', soil: null, seed: 45, sell: 100, color: '#ffd21f', center: '#e8a800', shape: 'lily', perennial: true,
+    aqua: { in: ['rameno'], zone: 'deep' },
+    fact: 'Žlté kvety so strapatými okrajmi sa ráno otvoria a večer sa zatvoria a ponoria. Je veľmi vzácny – na Slovensku prísne chránený, rastie napríklad na Senianskych rybníkoch.'
+  },
+  kosatec: {
+    name: 'Kosatec žltý', latin: 'Iris pseudacorus', seasons: [0], days: 4, water: 3,
+    light: 'sun', soil: null, seed: 20, sell: 42, color: '#ffd31a', center: '#8a5a00', shape: 'star', perennial: true,
+    aqua: { in: ['jazierko', 'rameno', 'potok'], zone: 'shore' },
+    fact: 'Stojí nohami vo vode na brehoch rybníkov a potokov. Jeho korene čistia vodu – preto ho sadia aj do koreňových čističiek.'
+  },
+  zaruzlie: {
+    name: 'Záružlie močiarne', latin: 'Caltha palustris', seasons: [0], days: 3, water: 3,
+    light: 'sun', soil: null, seed: 16, sell: 32, color: '#ffc800', center: '#e09a00', shape: 'cup', perennial: true,
+    aqua: { in: ['jazierko', 'pleso', 'potok'], zone: 'shore' },
+    fact: 'Zlaté kvety na jar rozžiaria mokrade od nížin až vysoko do hôr. Celá rastlina je jedovatá.'
+  },
+  okrasa: {
+    name: 'Okrasa okolíková', latin: 'Butomus umbellatus', seasons: [1], days: 5, water: 3,
+    light: 'sun', soil: null, seed: 22, sell: 45, color: '#f2a0b8', center: '#b0406a', shape: 'pom', perennial: true,
+    aqua: { in: ['jazierko', 'rameno'], zone: 'shore' },
+    fact: 'Ružové kvety má v okolíku ako dáždnik na vysokej stonke. Rastie v plytkej vode pri brehu.'
+  },
+  iskernik: {
+    name: 'Iskerník zakoreňujúci', latin: 'Ranunculus reptans', seasons: [1], days: 6, water: 3,
+    light: 'sun', soil: null, seed: 60, sell: 150, color: '#ffe02a', center: '#d9a800', shape: 'cup', perennial: true,
+    aqua: { in: ['pleso'], zone: 'shore' },
+    fact: 'Drobný iskerník, ktorý sa plazí po brehoch horských jazier a zakoreňuje sa v každom uzlíku. V Tatrách je kriticky ohrozený a prísne chránený – v prírode ho netrhaj!'
+  },
+  riecna: {
+    name: 'Močiarka riečna', latin: 'Ranunculus fluitans', seasons: [1], days: 5, water: 3,
+    light: 'sun', soil: null, seed: 30, sell: 62, color: '#ffffff', center: '#f5d22a', shape: 'lily', perennial: true,
+    aqua: { in: ['potok'], zone: 'deep' },
+    fact: 'Dlhé zelené vlasy jej vlajú v prúde a nad hladinu vykúkajú biele kvety. V stojatej vode takmer nerastie. Na Slovensku je chránená.'
+  },
+  potocnica: {
+    name: 'Potočnica lekárska', latin: 'Nasturtium officinale', seasons: [1], days: 4, water: 3,
+    light: 'sun', soil: null, seed: 18, sell: 36, color: '#ffffff', center: '#e8f0c0', shape: 'pom', perennial: true,
+    aqua: { in: ['potok'], zone: 'shore' },
+    fact: 'Rastie v čistých potokoch a pri prameňoch. Jej listy štípu ako reďkovka – je to jedlá „žerucha“. U nás je chránená.'
+  },
+  veronika: {
+    name: 'Veronika potočná', latin: 'Veronica beccabunga', seasons: [0, 1], days: 3, water: 3,
+    light: 'sun', soil: null, seed: 12, sell: 24, color: '#4f7fe0', center: '#ffffff', shape: 'star', perennial: true,
+    aqua: { in: ['potok'], zone: 'shore' },
+    fact: 'Drobné modré kvietky na brehoch potokov. Listy sa kedysi jedli ako šalát proti jarnej únave.'
+  },
   // ---- Čarovné kvety ----
   papradie: {
     name: 'Papraďový kvet', latin: 'Flos filicis (legenda)', seasons: [0, 1, 2], days: 3, water: 2,
@@ -154,9 +235,61 @@ export type SpeciesId = keyof typeof SPECIES_DEF;
 // Životnosť odrezaného kvetu (dni vo váze) – približne podľa skutočnosti. Rovnako dlho kvitne aj na poli.
 const LIFE: Readonly<Record<SpeciesId, number>> = {
   snezienka: 3, cemerica: 6, safran: 2, tulipan: 4, narcis: 4, konvalinka: 3, harmancek: 4, mak: 2, nevadza: 4,
-  slnecnica: 5, levandula: 8, ruza: 4, astra: 5, jesienka: 3, chryzantema: 7, plesnivec: 12, papradie: 1, duhova: 6
+  slnecnica: 5, levandula: 8, ruza: 4, astra: 5, jesienka: 3, chryzantema: 7, plesnivec: 12, papradie: 1, duhova: 6,
+  lekno: 3, leknica: 3, mociarka: 2, kotvica: 3, leknovec: 2, kosatec: 5, zaruzlie: 4, okrasa: 6, iskernik: 3, riecna: 2, potocnica: 3, veronika: 3
 };
 export const SPECIES: Readonly<Record<SpeciesId, Species>> = mapValues<SpeciesId, SpeciesDef, Species>(SPECIES_DEF, (s, k) => ({ ...s, life: LIFE[k] }));
+// vodné plochy: kde sú v hre (area) a ako o nich hovorí herbár; potok a mŕtve rameno zatiaľ nikde nie sú
+export const WATER_BODIES: Readonly<Record<WaterBody, { readonly area: AreaId | null; readonly where: string }>> = {
+  jazierko: { area: 'garden', where: 'v záhradnom jazierku' },
+  pleso: { area: 'hory', where: 'v horskom plese' },
+  potok: { area: null, where: 'v tečúcej vode potokov a riek' },
+  rameno: { area: null, where: 'v mŕtvych ramenách veľkých riek' }
+};
+// vodná plocha na ploche area (null = na tej ploche voda nie je)
+export function waterBodyOf(area: string): WaterBody | null {
+  for (const b of Object.keys(WATER_BODIES) as WaterBody[]) if (WATER_BODIES[b].area === area) return b;
+  return null;
+}
+// zóna vodného políčka i na ploche s šírkou w: breh, ak má aspoň z jednej zo 4 strán súš (okraj plochy sa ráta ako súš)
+export function waterZone(tiles: readonly (GroundTile | null | undefined)[], i: number, w: number): WaterZone | null {
+  if (tiles[i]?.g !== 'water') return null;
+  const x = i % w, y = Math.floor(i / w), h = tiles.length / w;
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+    const nx = x + dx, ny = y + dy;
+    if (nx < 0 || ny < 0 || nx >= w || ny >= h || tiles[ny * w + nx]?.g !== 'water') return 'shore';
+  }
+  return 'deep';
+}
+// Vodná plocha a zóna políčka i na ploche area (null = nie je to voda, kde sa dá sadiť). Zem vody sa nemení,
+// preto stačí mapa z generátora (záhrada a hory nezávisia od semienka sveta).
+const ZONES = new Map<WaterBody, readonly (WaterZone | null)[]>();
+export function waterSpot(area: string, i: number): { body: WaterBody; zone: WaterZone } | null {
+  const body = waterBodyOf(area);
+  if (!body) return null;
+  let z = ZONES.get(body);
+  if (!z) { const g = buildArea(area, 0).map(g => ({ g })), w = areaSize(area).w; z = g.map((t, j) => waterZone(g, j, w)); ZONES.set(body, z); }
+  const zone = z[i];
+  return zone ? { body, zone } : null;
+}
+export const isAqua = (sp: SpeciesId): boolean => !!SPECIES[sp].aqua;
+// dá sa vodný druh už niekde v hre zasadiť? (potok a mŕtve rameno zatiaľ nie)
+export const aquaReachable = (a: Aqua): boolean => a.in.some(b => WATER_BODIES[b].area != null);
+// Kde vodný druh rastie – pre herbár aj pre správu pri zlom sadení. Druh, ktorý sa zatiaľ nikde zasadiť nedá, dostane tajomnú otázku.
+export function aquaHint(a: Aqua): string {
+  const where = a.in.map(b => WATER_BODIES[b].where), list = where.length > 1 ? where.slice(0, -1).join(', ') + ' aj ' + where[where.length - 1] : where[0];
+  return (a.zone === 'deep' ? 'Rastie na hlbokej vode, ďalej od brehu – ' : 'Rastie pri brehu, v plytkej vode – ') + String(list) + '.'
+    + (aquaReachable(a) ? '' : ' Kam sa k nim dostaneš?');
+}
+// Prečo sa vodný druh sp nedá zasadiť na políčko (zóna zone, vodná plocha body; null = nie je to voda); null = dá sa
+export function aquaPlantError(sp: SpeciesId, body: WaterBody | null, zone: WaterZone | null): string | null {
+  const s = SPECIES[sp], a = s.aqua;
+  if (!a) return zone ? `${s.name} vo vode nevyrastie – sadí sa do prekopanej zeme.` : null;
+  if (!zone || !body) return `${s.name} je vodná rastlina – sadí sa priamo do vody. ${aquaHint(a)}`;
+  if (!a.in.includes(body)) return `${s.name} tu nevyrastie. ${aquaHint(a)}`;
+  if (a.zone !== zone) return a.zone === 'deep' ? `${s.name} potrebuje hlbokú vodu – zasaď ju ďalej od brehu. 🪷` : `${s.name} rastie len pri brehu, v plytkej vode. 🌿`;
+  return null;
+}
 export const STORAGE_AGE_RATE = 0.5; // v chladnom sklade kvety starnú 2× pomalšie
 
 // ---- Ľad ----
@@ -956,7 +1089,8 @@ export function canStep(from: GroundTile | null | undefined, to: GroundTile | nu
   return crawl ? up === 0 : up <= GLACIER_STEP + (lift || 0);
 }
 // Druh obrobenej pôdy podľa zeme pod ňou
-export type TillKind = 'normal' | 'forest' | 'sand' | 'rock';
+// water = políčko vody s vodným kvetom (#38): nekope sa, vznikne zasadením a zanikne, keď kvet zmizne
+export type TillKind = 'normal' | 'forest' | 'sand' | 'rock' | 'water';
 export const TILLABLE: Readonly<Partial<Record<Ground, TillKind>>> = { grass: 'normal', forest: 'forest', sand: 'sand', rock: 'rock' };
 // Prázdne obrobené políčko môže motykou zarovnať ktokoľvek zo záhrady, nielen ten, kto ho prekopal (spoločné pole)
 export const canLevel = (t: { readonly s?: { readonly p: unknown } | null | undefined } | null | undefined): boolean => !!(t && t.s && !t.s.p);
