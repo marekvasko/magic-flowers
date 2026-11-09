@@ -353,6 +353,9 @@ export const MIN_SEED_REP: Readonly<Partial<Record<SpeciesId, number>>> = { ples
 
 const SPECIES_IDS = Object.keys(SPECIES) as SpeciesId[];
 export const SHOP: readonly ItemId[] = (['compost'] as ItemId[]).concat(SPECIES_IDS.filter(k => !SPECIES[k].magic).map(k => `seed_${k}` as const));
+// Z akej ceny trh vykupuje semienko (výkup = SEED_SELL_BACK z nej): prísne druhy (plesnivec) najviac zo základnej ceny – ich zásoba
+// je zvyčajne 0, takže vzácnosť ×3 by inak semienko z pokladu vykúpila za 77–130 🪙 (#100). Zdieľa ju server aj klient.
+export function seedSellBase(sp: SpeciesId, price: number): number { const s = SPECIES[sp]; return s.strict ? Math.min(price, s.seed) : price; }
 const prices: Partial<Record<ItemId, number>> = { compost: 15 };
 for (const k of SPECIES_IDS) if (!SPECIES[k].magic) prices[`seed_${k}`] = SPECIES[k].seed;
 export const PRICES: Readonly<Partial<Record<ItemId, number>>> = prices;

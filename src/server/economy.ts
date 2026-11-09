@@ -115,7 +115,7 @@ export function flowerPrice(m: Pick<MarketPart, 'flowers' | 'festival'>, tick: n
 // Cena, za ktorú trh od hráča vykúpi 1 kus (null = nevykupuje)
 export function sellQuote(m: MarketPart, tick: number, id: string): number | null {
   if (id.startsWith('fl_')) { const sp = id.slice(3); return D.isSpeciesId(sp) && m.flowers[sp] ? flowerPrice(m, tick, sp) : null; }
-  if (id.startsWith('seed_')) { const sp = id.slice(5); return D.isSpeciesId(sp) && m.seeds[sp] ? Math.max(1, Math.round(seedPrice(m, tick, sp) * PRICING.seedSellBack)) : D.sellPrice(id); }
+  if (id.startsWith('seed_')) { const sp = id.slice(5); return D.isSpeciesId(sp) && m.seeds[sp] ? Math.max(1, Math.round(D.seedSellBase(sp, seedPrice(m, tick, sp)) * PRICING.seedSellBack)) : D.sellPrice(id); }
   if (id === 'compost') return Math.max(1, Math.round(compostPrice(m) * PRICING.compostSellBack));
   if (id.startsWith('po_') || id === 'wilted') return D.sellPrice(id);
   if (id === 'ice') return must(D.ICE_PRICE[season(tick)]); // v lete drahý, v zime takmer zadarmo
