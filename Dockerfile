@@ -1,4 +1,4 @@
-# Zostavenie: zdieľané moduly v TypeScripte zbalí esbuild pre prehliadač (build/shared/, #122) – potrebuje dev závislosti.
+# Zostavenie: klienta hry (build/client/) a moduly pre /debug (build/shared/, build/debug-compat/) zbalí esbuild (#122, #136) – potrebuje dev závislosti.
 FROM node:24-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -21,5 +21,4 @@ USER node
 EXPOSE 3000
 VOLUME ["/app/data"]
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s CMD wget -qO- http://127.0.0.1:3000/ >/dev/null || exit 1
-# --disable-warning: balík je do fázy 4 (#122) CommonJS a .ts moduly sú ES moduly – Node by to pri štarte hlásil
 CMD ["node", "src/server/server.ts"]

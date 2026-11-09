@@ -41,11 +41,13 @@ const HEARTBEAT_MS = 30000; // ping klientom; kto neodpovie do ďalšieho kola, 
 const ROOT = path.join(import.meta.dirname, '..', '..');
 const DATA_DIR = process.env['DATA_DIR'] || path.join(ROOT, 'data');
 const PUBLIC_DIR = path.join(ROOT, 'public');
-const SHARED_DIR = path.join(import.meta.dirname, '..', 'shared');
-// Zdieľané moduly prepísané do TypeScriptu zbalí `npm run build` (scripts/build.mjs) do build/shared/ – prehliadač
-// .ts nespustí. /shared/<x>.js sa hľadá najprv tam, potom v src/shared/ (moduly, ktoré sú ešte v JS).
+// Prehliadač .ts nespustí – `npm run build` (scripts/build.mjs) zbalí hru do build/client/ (/client/<súbor>) a pre ladiacu
+// stránku /debug (do fázy 5c, #137) zdieľané moduly do build/shared/ (/shared/<x>.js) a 3D pohľad, pavučiny a kresby
+// hry do build/debug-compat/ (/render3d.mjs, /spiders3d.mjs, /art.js).
+const BUILD_CLIENT_DIR = path.join(ROOT, 'build', 'client');
 const BUILD_SHARED_DIR = path.join(ROOT, 'build', 'shared');
-if (!fs.existsSync(path.join(BUILD_SHARED_DIR, 'data.js'))) console.warn('[server] chýba build/shared/data.js – spusti `npm run build`, inak sa hra v prehliadači nenačíta');
+const BUILD_DEBUG_DIR = path.join(ROOT, 'build', 'debug-compat');
+if (!fs.existsSync(path.join(BUILD_CLIENT_DIR, 'game.js'))) console.warn('[server] chýba build/client/game.js – spusti `npm run build`, inak sa hra v prehliadači nenačíta');
 
 // ---------- Typy servera ----------
 // Správa od klienta: nedôveryhodný JSON s typom t. Server každú hodnotu ešte overí alebo prevedie (String, Number, |0) –
@@ -120,9 +122,11 @@ type LoadedState = Omit<SaveFile, 'v' | 'events' | 'market' | 'contracts' | 'hor
 
 // ---------- Statické súbory ----------
 const THREE_DIR = path.join(ROOT, 'node_modules', 'three', 'build');
+const DEBUG_COMPAT = new Set(['/render3d.mjs', '/spiders3d.mjs', '/art.js']); // pre /debug do fázy 5c (build/debug-compat/)
+
 const MIME: Readonly<Partial<Record<string, string>>> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json'
+  '.json': 'application/json', '.map': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json'
 };
 const gzCache = new Map<string, { mtime: number; gz: Buffer }>(); // súbor → { mtime, gz } – Three.js má ~2 MB, gzip ho zmenší asi na štvrtinu
 const server = http.createServer((req, res) => {
@@ -133,14 +137,18 @@ const server = http.createServer((req, res) => {
   if (url === '/3d' || url === '/3d/') { const q = reqUrl.indexOf('?'); res.writeHead(301, { Location: '/' + (q >= 0 ? reqUrl.slice(q) : '') }); res.end(); return; }
   if (url === '/') url = '/index.html';
   let base = PUBLIC_DIR, rel = url.slice(1);
-  if (url.startsWith('/shared/')) { rel = url.slice(8); base = fs.existsSync(path.join(BUILD_SHARED_DIR, path.basename(rel))) && path.dirname(rel) === '.' ? BUILD_SHARED_DIR : SHARED_DIR; }
+  if (url.startsWith('/client/')) { base = BUILD_CLIENT_DIR; rel = url.slice(8); }
+  else if (url.startsWith('/shared/')) { base = BUILD_SHARED_DIR; rel = url.slice(8); }
   else if (url.startsWith('/vendor/three/')) { base = THREE_DIR; rel = url.slice(14); }
+  else if (DEBUG_COMPAT.has(url)) base = BUILD_DEBUG_DIR;
   const file = path.normalize(path.join(base, rel));
   if (!file.startsWith(base + path.sep)) { res.writeHead(403); res.end(); return; }
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404); res.end('Not found'); return; }
     const type = lookup(MIME, path.extname(file)) || 'application/octet-stream';
-    const headers: OutgoingHttpHeaders = { 'Content-Type': type, 'Cache-Control': base === THREE_DIR ? 'public, max-age=86400' : 'no-cache' };
+    // kúsky balíka hry majú v mene odtlačok obsahu (chunks/render3d-<hash>.js) – nemenia sa, prehliadač si ich nechá
+    const cache = base === THREE_DIR ? 'public, max-age=86400' : base === BUILD_CLIENT_DIR && rel.startsWith('chunks/') ? 'public, max-age=31536000, immutable' : 'no-cache';
+    const headers: OutgoingHttpHeaders = { 'Content-Type': type, 'Cache-Control': cache };
     const gzip = /\bgzip\b/.test(req.headers['accept-encoding'] || '') && /text|json|svg/.test(type);
     fs.readFile(file, (err2, buf) => {
       if (err2) { res.writeHead(500); res.end(); return; }
