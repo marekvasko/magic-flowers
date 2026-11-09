@@ -172,7 +172,8 @@ Every flower has a short real-world fact in the 📖 **Herbár** (the in-game pl
   - Aster + Chrysanthemum + Autumn crocus → *Fairy elixir*
   - Rose + Rose + Tulip → *Love elixir* (give it to another player → rainbow seeds for both)
   - 3× Rainbow rose → *Rainbow elixir* (a rainbow over the garden, 300 coins for everyone)
-  - Anything else → *Strange slime* 🫠
+  - Anything else → *Strange slime* 🫠, with a hint from the closest recipe: if 2 flowers fit, it names them and gives the season of the missing one (or names the recipe if you already know it); if 1 fits, it names that flower.
+  - **Discovering recipes:** Babka's tips give every recipe (while you know none, she always starts with a recipe tip), the well sometimes whispers one, and the cauldron's slime hints point you to the rest. Rain brew and Love elixir mix spring and summer flowers: keep the spring ones in the storage (slower wilting, even slower with ice in the icehouse).
 - **Fairy ring** in the forest (north-west): at night (21:00–4:00), when **two players dance** 💃 inside the ring, fairies appear and give each of them a *fern seed* and a *rainbow seed*. Alone, it only works with the *Fairy elixir*.
 - **Fern flower** (Slavic legend): grows in shade and can only be picked **at night**. Using it grants a wish:
   - *golden rain* – 400 coins for the wisher and 100 for every other connected player;

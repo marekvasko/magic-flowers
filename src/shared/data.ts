@@ -306,6 +306,17 @@ export const RECIPES: Readonly<Record<string, PotionId>> = {
   'duhova+duhova+duhova': 'duha'
 };
 
+// Babkine rady, ktoré prezrádzajú recept (kľúč = recept). Dva recepty miešajú kvety dvoch období – rada pripomenie sklad.
+export const RECIPE_TIPS = {
+  'harmancek+levandula+slnecnica': 'V kotlíku miešaj vždy tri kvety. Harmanček, levanduľa a slnečnica vraj urýchlia rast…',
+  'narcis+safran+tulipan': 'Tulipán, narcis a šafran… jarná trojica, ktorá zastaví čas.',
+  'ruza+ruza+tulipan': 'Dve ruže a tulipán – to je recept na lásku. Tulipán kvitne na jar, ruža v lete: uschovaj si jarné kvety v sklade, v chlade ľadovne vydržia dlhšie.',
+  'astra+chryzantema+jesienka': 'Astra, chryzantéma a jesienka – jesenný odvar ti otvorí oči pre víly.',
+  'levandula+mak+plesnivec': 'Mak, levanduľa a plesnivec – hojnosť z hôr aj polí.',
+  'konvalinka+nevadza+snezienka': 'Snežienka, konvalinka a nevädza privolajú dážď. Nevädza kvitne až v lete – jarné kvety si zatiaľ uschovaj v sklade.',
+  'duhova+duhova+duhova': 'Tri dúhové ruže v jednom kotlíku? To som ešte nevidela…'
+} as const satisfies Readonly<Record<string, string>>;
+
 export const TIPS: readonly string[] = [
   'Snežienky a čemerice zvládnu aj zimu. Ostatné kvety mráz spáli.',
   'Levanduľa a mak majú radi piesok – nájdeš ho pri jazierku.',
@@ -316,16 +327,55 @@ export const TIPS: readonly string[] = [
   'Ruže, čemerice a chryzantémy potrebujú výživnú pôdu. Kompost kúpiš na trhu.',
   'Slnečnica je smädná – polievaj ju každý deň!',
   'Keď je rastlina spokojná (svetlo, pôda, voda), dá ti až 3 kvety.',
-  'V kotlíku miešaj vždy tri kvety. Harmanček, levanduľa a slnečnica vraj urýchlia rast…',
-  'Tulipán, narcis a šafran… jarná trojica, ktorá zastaví čas.',
-  'Dve ruže a tulipán – to je recept na lásku.',
-  'Astra, chryzantéma a jesienka – jesenný odvar ti otvorí oči pre víly.',
-  'Mak, levanduľa a plesnivec – hojnosť z hôr aj polí.',
-  'Snežienka, konvalinka a nevädza privolajú dážď.',
+  RECIPE_TIPS['harmancek+levandula+slnecnica'],
+  RECIPE_TIPS['narcis+safran+tulipan'],
+  RECIPE_TIPS['ruza+ruza+tulipan'],
+  RECIPE_TIPS['astra+chryzantema+jesienka'],
+  RECIPE_TIPS['levandula+mak+plesnivec'],
+  RECIPE_TIPS['konvalinka+nevadza+snezienka'],
   'Keď sa zotmie, v lese pri kruhu z húb tancujú víly. Vraj sa pridajú, keď tancujú dvaja.',
   'Hovorí sa, že papraď kvitne len v noci. Kto jej kvet nájde, tomu sa splní želanie.',
-  'Tri dúhové ruže v jednom kotlíku? To som ešte nevidela…'
+  RECIPE_TIPS['duhova+duhova+duhova']
 ];
+// Indexy rád v TIPS s receptom z obyčajných kvetov (bez dúhového) – babka ich hovorí prvé, kým hráč nepozná žiadny recept
+export const RECIPE_TIP_IDX: readonly number[] = TIPS.flatMap((t, i) =>
+  Object.entries(RECIPE_TIPS).some(([k, v]) => v === t && !k.startsWith('duhova')) ? [i] : []);
+
+// ---- Rada kotlíka, keď sa uvarí sliz ----
+// Najbližší recept k trom kvetom: koľko kvetov sedí (prienik multimnožín, ruža+ruža+X → 2), ktoré to sú (hit, v poradí
+// vložených) a ktorý kvet receptu chýba (miss, len pri fit 2). Pri zhode viacerých receptov vyhrá ten, ktorý hráč ešte
+// nepozná (known = objavené recepty), potom poradie v RECIPES. known v odpovedi = vybraný recept už hráč pozná.
+export interface BrewHint { readonly fit: 0 | 1 | 2; readonly hit: readonly SpeciesId[]; readonly miss: SpeciesId | null; readonly recipe: PotionId | null; readonly known: boolean }
+export function brewHint(flowers: readonly SpeciesId[], known: readonly string[]): BrewHint {
+  let best: { n: number; hit: SpeciesId[]; left: SpeciesId[]; key: string; known: boolean } | null = null;
+  for (const key of Object.keys(RECIPES)) {
+    const left = key.split('+').filter(isSpeciesId), hit: SpeciesId[] = [];
+    for (const f of flowers) { const j = left.indexOf(f); if (j >= 0) { hit.push(f); left.splice(j, 1); } }
+    const k = known.includes(key);
+    if (!best || hit.length > best.n || (hit.length === best.n && best.known && !k)) best = { n: hit.length, hit, left, key, known: k };
+  }
+  const fit = best ? Math.min(2, best.n) : 0;
+  if (!best || fit === 0) return { fit: 0, hit: [], miss: null, recipe: null, known: false };
+  return { fit: fit === 2 ? 2 : 1, hit: best.hit.slice(0, fit), miss: fit === 2 ? best.left[0] ?? null : null, recipe: lookup(RECIPES, best.key) ?? null, known: best.known };
+}
+// Krátke meno kvetu do vety („Ruža šípová“ → „ruža“, čarovné kvety celým menom); big = s veľkým písmenom
+export function shortName(sp: SpeciesId, big = false): string {
+  const s = SPECIES[sp], n = s.magic ? s.name : must(s.name.split(' ')[0]);
+  return big ? n : n.charAt(0).toLowerCase() + n.slice(1);
+}
+const SEASON_ADJ: readonly string[] = ['jarné', 'letné', 'jesenné', 'zimné'];
+// Text rady pod výsledkom. Pri fit 2 nápoveda o chýbajúcom kvete = jeho obdobie (čarovný kvet: „niečo čarovné“).
+export function brewHintText(h: BrewHint): string {
+  if (h.fit === 0) return 'Fuj! Tieto kvety sa spolu vôbec neznesú. 🤢';
+  const [a, b] = h.hit;
+  if (h.fit === 1 || !a || !b) return `${shortName(must(a), true)} sem možno patrí, ale tie ďalšie dva nie.`;
+  const pair = a === b ? `Dvakrát ${shortName(a)} – to sa k sebe hodí` : `${shortName(a, true)} a ${shortName(b)} sa k sebe hodia`;
+  if (h.known && h.recipe) return `${pair} – veď sú v recepte na ${POTIONS[h.recipe].name}, ktorý už poznáš! 📜`;
+  const m = h.miss ? SPECIES[h.miss] : null;
+  const clue = !m || m.magic ? 'čarovné' : m.seasons.map(x => must(SEASON_ADJ[x])).join(' alebo ');
+  return `${pair}, ale niečo tomu chýba… možno niečo ${clue}?`;
+}
+
 
 // ---- Ekonomika ----
 // Reputácia: hranice úrovní. Úroveň odomyká vylepšenia, viac súbežných zákaziek a veľké zákazky.

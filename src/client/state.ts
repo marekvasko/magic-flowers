@@ -1,6 +1,6 @@
 // Stav klienta (#136): jeden objekt S zdieľaný hrou (game.ts) a 3D pohľadom (render3d.ts, spiders3d.ts, particles3d.ts).
 // V konzole je to window.MF – jediný ladiaci háčik klienta (README).
-import type { AreaId, Ground, ItemId, Look, MasterPos, PotionId, SpeciesId } from '../shared/data.ts';
+import type { AreaId, BrewHint, Ground, ItemId, Look, MasterPos, PotionId, SpeciesId } from '../shared/data.ts';
 import type { WebOverrides } from '../shared/webs.ts';
 import type { Other } from '../shared/players.ts';
 import type { BatchesView, CornerView, PlayerView, ServerMessage, SpiderKind, TileView, WebView } from '../shared/protocol.ts';
@@ -51,7 +51,7 @@ export interface ClientState {
   keys: Partial<Record<Dir, boolean>>; kbd?: boolean; stick: Pt; path: Pt[] | null; pendingAct: (Pt & { onTile?: boolean }) | null;
   tapMark: (Pt & { t: number; act: boolean }) | null; lastSent: string; sentAt: number;
   fx: Fx[]; screenFx: ScreenFx[]; bubbles: Partial<Record<number, { text: string; until: number }>>; modal: { refresh: () => void } | null;
-  cauldron: ItemId[]; brewed: PotionId | null; anchors: Partial<Record<Ground, Pt>>; joined: boolean;
+  cauldron: ItemId[]; brewed: PotionId | null; brewHint: BrewHint | null; anchors: Partial<Record<Ground, Pt>>; joined: boolean;
   skyTaps: number[]; tipIdx: number; stuckT: number;
   asleep?: boolean; ff?: boolean; sleepN?: number; sleepTotal?: number; areaFx?: AreaFx | null;
   // pavúky (#57): pavučiny v Lese divov (webTile: políčko → pavučina), nory a čistina pradleny, kútové pavučiny krížiaka,
