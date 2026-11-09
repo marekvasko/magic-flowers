@@ -62,9 +62,13 @@ export interface ClientState {
   r3: Render3D | null; // 3D pohľad (pre ladenie v konzole: MF.r3.pick(x, y))
 }
 
-// Stav, ktorý kreslí 3D pohľad: hra mu dá celé S, ladiaca stránka /debug (záložka World, do fázy 5c – #137) len časť –
-// stav budov (icehouse, dielna) jej chýba
-export type ViewState = Omit<ClientState, 'icehouse' | 'dielna'> & Partial<Pick<ClientState, 'icehouse' | 'dielna'>>;
+// Stav, ktorý kreslí 3D pohľad (render3d.ts, spiders3d.ts, particles3d.ts): hra mu dá celé S, ladiaca stránka /debug
+// (záložka World) len to, čo pohľad naozaj číta – bez stavu budov a hráčov s id podľa odtlačku kľúča (reťazec)
+export type ViewOther = Pick<OtherPlayer, 'x' | 'y' | 'name' | 'look' | 'a' | 'dir' | 'e' | 'phase' | 'jz' | 'cr' | 'lp' | 'si' | 'wb'> & { id: number | string };
+export type ViewState = Pick<ClientState, 'W' | 'H' | 'tiles' | 'area' | 'tilesGen' | 'tick' | 'day' | 'weather' | 'me' | 'look' | 'name' | 'id'
+  | 'myEmote' | 'sel' | 'anchors' | 'fx' | 'screenFx' | 'bubbles' | 'tapMark' | 'webs' | 'homes' | 'websGen' | 'corner' | 'cornerGen' | 'spiders'>
+  & Partial<Pick<ClientState, 'icehouse' | 'dielna' | 'webLeft' | 'kbd' | 'mySi' | 'worldGen'>>
+  & { others: ReadonlyMap<number | string, ViewOther> };
 
 // Ladiace prepínače z konzoly (README): čítajú sa za behu, hra ich sama nenastavuje
 declare global {
