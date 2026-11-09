@@ -5,7 +5,7 @@
 import * as D from '../shared/data.ts';
 import type { Festival, FestivalId, GiverId, ItemId, SpeciesId, UpgradeId } from '../shared/data.ts';
 import type { MarketItemView, ServerMessage, UpcomingFestival } from '../shared/protocol.ts';
-import type { Contract, ContractKind, Contracts, Market, PlayerKey, PlayerSave } from '../shared/save.ts';
+import type { Contract, ContractKind, Contracts, Market, PlayerKey, PlayerSave, Trader } from '../shared/save.ts';
 import { entries, isRecord, keys, must } from '../shared/util.ts';
 import * as E from './engine.ts';
 import type { EngineEvent } from './engine.ts';
@@ -106,14 +106,15 @@ const festival = (id: FestivalId): Festival => must(D.FESTIVALS.find(x => x.id =
 // Správy hráčom idú cez ctx.emit – server ich pošle až po vykonaní návrhu; obnovu trhu a nástenky odvodí zo zapísaných kľúčov.
 const market = { keys: () => ({ writes: ['market:*', 'save:*'] }) };
 // Postavy a dodávka: len časti trhu s knihami a uloženia hráčov s objednávkami (Mkt.npcEventKeys)
-const npcs = (extra: readonly string[] = []): { keys: (d: unknown, w: GameWorld) => { writes: string[] } } => ({ keys: (d, w) => ({ writes: Mkt.npcEventKeys(w, extra) }) });
+const npcs = (items: readonly ItemId[], who: readonly Trader[], extra: readonly string[] = []): { keys: (d: unknown, w: GameWorld) => { writes: string[] } } =>
+  ({ keys: (d, w) => ({ writes: Mkt.npcEventKeys(w, items, who, extra) }) });
 // Beh udalosti trhu nad knihou: f dostane trh v návrhu; obchody sa potom oznámia hráčom
 const withBook = (s: GameSlices, ctx: GameCtx, f: (mk: Mkt.Mk, m: Market) => void): void => { const mk = Mkt.mkOf(s, ctx, null); f(mk, sl(s, 'market:*')); Mkt.announce(mk); };
 const withNpc = (s: GameSlices, ctx: GameCtx, f: (mk: Mkt.Mk) => void): void => { const mk = Mkt.mkOf(s, ctx, null); f(mk); Mkt.announce(mk); };
 export const PROPOSERS: { [T in keyof EconInputs]: GameProposer<EconInputs[T]> } = {
   // Veľkoobchodník priviezol tovar (do svojej zásoby, najviac po strop) a vypíše nové ceny
   delivery: {
-    ...npcs(),
+    ...npcs([...Mkt.SEED_ITEMS, 'compost'], []),
     run(s, d, ctx) {
       withNpc(s, ctx, mk => {
         const tick = ctx.tick, se = season(tick), dis = dayInSeason(tick), g = ctx.rng, vo = (id: ItemId): Mkt.Container => Mkt.npcC(mk.book(id).vo);
@@ -138,13 +139,13 @@ export const PROPOSERS: { [T in keyof EconInputs]: GameProposer<EconInputs[T]> }
   },
 
   // Záhradník Jano: kúpi semienka s najlepším očakávaným ziskom za deň, vypestuje ich a kvety ponúkne na trhu.
-  npc_jano: { ...npcs(), run(s, d, ctx) { withNpc(s, ctx, mk => { Mkt.janoVisit(mk, ctx.rng); }); } },
-  jano_sell: { ...npcs(), run(s, d, ctx) { withNpc(s, ctx, mk => { Mkt.janoSell(mk, d.sp, d.n); }); } },
+  npc_jano: { ...npcs([...Mkt.SEED_ITEMS, ...Mkt.FLOWER_ITEMS], ['jano']), run(s, d, ctx) { withNpc(s, ctx, mk => { Mkt.janoVisit(mk, ctx.rng); }); } },
+  jano_sell: { keys: (d, w) => ({ writes: Mkt.npcEventKeys(w, [`fl_${d.sp}`], ['jano']) }), run(s, d, ctx) { withNpc(s, ctx, mk => { Mkt.janoSell(mk, d.sp, d.n); }); } },
   // Špekulant Fero: skupuje lacné semienka pred sezónou, v sezóne ich ponúka, keď je ich málo a sú drahé.
-  npc_fero: { ...npcs(), run(s, d, ctx) { withNpc(s, ctx, mk => { Mkt.feroVisit(mk, ctx.rng); }); } },
+  npc_fero: { ...npcs(Mkt.SEED_ITEMS, ['fero']), run(s, d, ctx) { withNpc(s, ctx, mk => { Mkt.feroVisit(mk, ctx.rng); }); } },
   // Kvetinárka Zuzka: dopyty po kvetoch nad výkupom veľkoobchodníka (viac počas sviatkov).
   npc_zuzka: {
-    ...npcs(['market:festival']),
+    ...npcs(Mkt.FLOWER_ITEMS, ['zuzka'], ['market:festival']),
     run(s, d, ctx) { const f = sl(s, 'market:festival'); withNpc(s, ctx, mk => { Mkt.zuzkaVisit(mk, f ? f.mult : null); }); }
   },
 

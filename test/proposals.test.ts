@@ -696,9 +696,14 @@ test('dobiehanie: 30 dní s plnou záhradou (rýchlosť sa vypíše; stráž pro
   give(save(w, 'ana'), `fl_${SP}`, 3, w.tick); give(save(w, 'bob'), `fl_${SP}`, 3, w.tick);
   const spec: Spec = { ...SPEC, onBatch() {} }; // ako na serveri: so zmenami pre denník
   E.advanceTo(w, w.tick + 2 * TPD, spec);
-  const t0 = process.hrtime.bigint();
-  const n = E.advanceTo(w, w.tick + 30 * TPD, spec);
-  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  // najlepší z 3 behov na rovnakých kópiách sveta: zdieľané CI stroje kolíšu (na dev 31–117 µs), stráž má merať kód, nie šum
+  const snap = json(w);
+  let n = 0, ms = Infinity;
+  for (let k = 0; k < 3; k++) {
+    const c = parseJson<typeof w>(snap), t0 = process.hrtime.bigint();
+    n = E.advanceTo(c, c.tick + 30 * TPD, spec);
+    ms = Math.min(ms, Number(process.hrtime.bigint() - t0) / 1e6);
+  }
   console.log(`  dobiehanie 30 dní: ${n} udalostí za ${ms.toFixed(1)} ms (${(ms / n * 1000).toFixed(1)} µs/udalosť)`);
   assert.ok(n > 900 && ms / n * 1000 < 150, `${(ms / n * 1000).toFixed(1)} µs/udalosť`);
 });
