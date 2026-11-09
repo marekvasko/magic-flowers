@@ -21,7 +21,7 @@ import type { AreaId, Ground } from '../shared/data.ts';
 import type { CornerView, ServerMessage, SpiderView, ToastKind, WebView } from '../shared/protocol.ts';
 import type { CornerArea, PlayerKey, PlayerSave, Web, Webs as WebState } from '../shared/save.ts';
 import { entries, isRecord, must } from '../shared/util.ts';
-import Webs from '../shared/webs.ts';
+import * as Webs from '../shared/webs.ts';
 import type { Analysis, CornerSpot, Home } from '../shared/webs.ts';
 import * as E from './engine.ts';
 import type { Keys, Slice } from './engine.ts';
