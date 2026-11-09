@@ -41,7 +41,7 @@ export type Dir = 'u' | 'd' | 'l' | 'r';
 export interface ClientState {
   ws: WebSocket | null; id: number; room: string; name: string; look: Look | null;
   tiles: TileView[]; tick: number; market: MsgOf<'market'> | null; board: Contract[]; rep: number; up: Partial<MsgOf<'me'>['up']>;
-  canCap: number; plotLimit: number; plotsUsed: number; maxActive: number; day: number; min: number; weather: Weather;
+  canCap: number; plotLimit: number; plotsUsed: number; maxActive: number; orders: MsgOf<'me'>['orders']; orderLimit: number; day: number; min: number; weather: Weather;
   timeAt: number; tickMs: number; daySeconds: number; mode: WorldMode; storage: Partial<Record<ItemId, number>>;
   me: Me; crawlKey: boolean; crawlTgl: boolean; myEmote: PlayerView['e']; mySi?: number;
   others: Map<number, OtherPlayer>; inv: Partial<Record<ItemId, number>>; coins: number; water: number; recipes: string[]; seen: SpeciesId[]; vily: boolean;
