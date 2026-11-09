@@ -39,7 +39,10 @@ function oldFlowerPrice(room: Room, sp: SpeciesId): number {
 function oldSellQuote(room: Room, id: string): number | null {
   const sp = D.speciesOfItem(id);
   if (id.startsWith('fl_')) return oldFlowerPrice(room, must(sp ?? undefined));
-  if (id.startsWith('seed_')) return Math.max(1, Math.round(oldSeedPrice(room, must(sp ?? undefined)) * 0.4));
+  if (id.startsWith('seed_')) { // prísne druhy (plesnivec) sa vykupujú najviac zo základnej ceny (#100)
+    const k = must(sp ?? undefined), p = oldSeedPrice(room, k);
+    return Math.max(1, Math.round((D.SPECIES[k].strict ? Math.min(p, D.SPECIES[k].seed) : p) * 0.4));
+  }
   if (id === 'compost') return Math.max(1, Math.round(oldCompostPrice(room) * 0.5));
   return null;
 }
