@@ -17,17 +17,21 @@ async function setup() {
   const dataDir = path.join(dir, 'data'), debugDir = path.join(dir, 'debug');
   fs.mkdirSync(dataDir); fs.mkdirSync(debugDir);
   fs.writeFileSync(path.join(debugDir, 'index.html'), '<h1>debug</h1>');
-  fs.mkdirSync(path.join(debugDir, 'api'));
   // rozšírenie API: vráti kľúče a mince zo sveta – kľúč sa z odpovede musí stratiť sám
-  fs.writeFileSync(path.join(debugDir, 'api', 'coins.js'), `module.exports = (q, t) => { const r = t.load(q.get('id')); if (!r) return null; r.state.saves = {}; return { source: r.source, coins: Object.entries(JSON.parse(JSON.stringify(t.load(q.get('id')).state.saves))).map(([k, v]) => [k, v.coins]) }; };`);
-  fs.writeFileSync(path.join(debugDir, 'api', 'boom.js'), 'module.exports = () => { throw new Error("bum"); };');
+  const coins: Debug.DebugApi = (q, t) => {
+    const r = t.load(q.get('id'));
+    if (!r) return null;
+    r.state.saves = {}; // zmena kópie – ďalšie load() dá znova čistú kópiu
+    return { source: r.source, coins: Object.entries(must(t.load(q.get('id')) ?? undefined).state.saves || {}).map(([k, v]) => [k, v?.coins]) };
+  };
+  const boom: Debug.DebugApi = () => { throw new Error('bum'); };
   fs.writeFileSync(path.join(dir, 'secret.txt'), 'nie');
   const saved = JSON.stringify({ v: 1, tick: 100, rng: 1, events: [{ at: 150, seq: 1, type: 'stary', data: null }, { at: 130, seq: 2, type: 'dawn', data: null, key: 'dawn', periodic: true }], saves: { [KEY]: { coins: 5 } }, contracts: { list: [{ by: KEY }] } });
   fs.writeFileSync(path.join(dataDir, 'room-stary.json'), saved);
   type Room = Debug.DebugRoom & { state: { tick: number; saves: Partial<Record<string, { coins: number }>> } };
   const rooms = new Map<string, Room>([['zivy', { tick: 7, state: { tick: 7, saves: { [KEY]: { coins: 9 } } }, players: new Map([[1, { name: 'Anka', area: 'hory', key: KEY }]]) }]]);
   const sim: GameSpec = { proposers: { dawn: partial<GameProposer<unknown>>({}), hourly: partial<GameProposer<unknown>>({}) }, periodic: [{ key: 'dawn', type: 'dawn', next: from => from + 50 }, { key: 'hourly', type: 'hourly', next: from => from + 12 }] };
-  const handle = Debug.create({ dataDir, debugDir, rooms, serialize: r => JSON.stringify(r.state), migrate: s => Object.assign({ migrated: true }, s), sim: () => sim });
+  const handle = Debug.create({ dataDir, debugDir, rooms, serialize: r => JSON.stringify(r.state), migrate: s => Object.assign({ migrated: true }, s), sim: () => sim, apis: { coins, boom } });
   const srv = http.createServer((req, res) => { if (!handle(req, res)) { res.writeHead(404); res.end(); } });
   await new Promise<void>(r => srv.listen(0, '127.0.0.1', r));
   type Reply = { status: number | undefined; headers: IncomingHttpHeaders; body: string };
@@ -106,7 +110,7 @@ test('debug: stav reconcilera – naplánované, chýbajúce a zahodené udalost
   } finally { s.close(); }
 });
 
-test('debug: rozšírenia API z debug/api/<name>.js dostanú len kópiu sveta, bez kľúčov hráčov', async () => {
+test('debug: rozšírenia API (ctx.apis, src/server/debug-api/<name>.ts) dostanú len kópiu sveta, bez kľúčov hráčov', async () => {
   const s = await setup();
   try {
     const f = await s.get('/api/debug/coins?id=stary');

@@ -23,6 +23,7 @@ import * as Areas from './areas.ts';
 import * as P from './presence.ts';
 import * as Debug from './debug.ts';
 import type { FilterDecision, TraceRing, TraceTiming } from './debug.ts';
+import { DEBUG_APIS } from './debug-api/index.ts';
 import * as Events from './events.ts';
 import * as Actions from './actions.ts';
 import * as Spiders from './spiders.ts';
@@ -369,7 +370,7 @@ function appendJournal(room: Room, entry: Omit<JournalLoad, 'wall'> | E.JournalE
 }
 
 // Ladiaca stránka /debug: svety len číta (z pamäte alebo zo súboru), nič nenačíta ani neuloží
-const debugHandle = Debug.create({ dataDir: DATA_DIR, debugDir: path.join(ROOT, 'debug'), rooms, serialize, migrate, sim: () => SIM });
+const debugHandle = Debug.create({ dataDir: DATA_DIR, debugDir: path.join(ROOT, 'debug'), rooms, serialize, migrate, sim: () => SIM, apis: DEBUG_APIS });
 let saveSeq = 0;
 // Atómový zápis: najprv dočasný súbor, potom premenovanie – pri páde nezostane rozbitý JSON.
 function saveRoom(room: Room, sync?: boolean): void {
