@@ -17,7 +17,7 @@ export interface Tracks3dApi {
 export interface Tracks3d { readonly mesh: THREE.Mesh; update: () => void; count: () => number; dispose: () => void }
 
 // Veľkosť stopy v políčkach: dĺžka (v smere pohybu) × šírka, podľa kódu druhu (encode: 0/1 šľapaj, 2 pavúk, 3 sane)
-const SIZE: readonly (readonly [number, number])[] = [[0.27, 0.13], [0.27, 0.13], [0.3, 0.3], [T.TRACKS.stride.runner * 1.08, 0.46]];
+const SIZE: readonly (readonly [number, number])[] = [[0.32, 0.17], [0.32, 0.17], [0.34, 0.34], [T.TRACKS.stride.runner * 1.08, 0.46]];
 const LIFT = 0.012; // nad zemou (proti blikaniu s terénom)
 
 const VERT = `

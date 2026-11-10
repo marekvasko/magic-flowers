@@ -23,7 +23,7 @@ export const TRACKS = {
   life: 3 * D.TICKS_PER_HOUR,            // stopa zmizne za 3 herné hodiny (pri 20-minútovom dni ≈ 2,5 min)
   snowLife: D.TICKS_PER_HOUR / 2,        // kým sneží, novú stopu zasype za pol hodiny
   stride: { foot: 0.55, spider: 0.32, runner: 0.4 } as Readonly<Record<TrackKind, number>>, // políčka medzi stopami
-  side: 0.09,                            // šľapaj je o toľko vľavo / vpravo od stredu chôdze
+  side: 0.1,                             // šľapaj je o toľko vľavo / vpravo od stredu chôdze
   jump: 2                                // väčší skok polohy (prechod, oprava polohy servera) stopy nenechá
 };
 
