@@ -269,7 +269,7 @@ export const Art = (() => {
     // plazenie: kolená pokrčené (kratšie nohy), trup sa predkloní v bokoch smerom pohybu;
     // pri pohľade spredu/zozadu predklon nevidno do strany, tak sa hlava len prikrčí k telu
     const fx = d === 1 ? -1 : d === 2 ? 1 : side;
-    const kn = o.crawl ? s * 0.08 : o.crouch ? s * 0.11 : 0; // čupnutie (#157): ešte kratšie nohy, telo nižšie
+    const kn = o.crawl ? s * 0.08 : o.crouch ? s * 0.14 : 0; // čupnutie (#157): ešte kratšie nohy, telo nižšie
     if (o.crawl) { c.save(); c.translate(-fx * s * 0.08, 0); } // ťažisko dozadu, nech sa postavička zmestí do spritu
     // nohy
     c.fillStyle = o.babka ? '#5b3a6b' : '#3b4a6b';
@@ -281,6 +281,11 @@ export const Art = (() => {
       c.fillRect(x + s * 0.02 - (d === 1 ? -step : d === 2 ? step : 0), yb - s * 0.05, s * 0.12, s * 0.05);
     }
     const squat = !!o.crouch && !o.crawl;
+    if (squat && !o.babka) { // čupí: kolená do strán (pri pohľade z boku dopredu)
+      c.fillStyle = '#3b4a6b';
+      if (d === 1 || d === 2) ell(c, x + (d === 1 ? -1 : 1) * s * 0.13, yb - s * 0.14, s * 0.11, s * 0.07, 0, '#3b4a6b');
+      else { ell(c, x - s * 0.15, yb - s * 0.13, s * 0.09, s * 0.07, 0, '#3b4a6b'); ell(c, x + s * 0.15, yb - s * 0.13, s * 0.09, s * 0.07, 0, '#3b4a6b'); }
+    }
     if (squat) { c.save(); c.translate(0, kn); } // čupí: trup, ruky a hlava o kolená nižšie
     if (o.crawl) { const hx = x, hyp = yb - s * 0.2; c.translate(hx, hyp + kn + (fx ? 0 : s * 0.07)); c.rotate(fx * (d === 0 || d === 3 ? 0.3 : 0.45)); c.translate(-hx, -hyp); }
     // telo
