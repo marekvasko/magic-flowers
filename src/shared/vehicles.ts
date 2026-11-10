@@ -30,9 +30,9 @@ export const VEHICLES: Readonly<Record<VehicleId, VehicleInfo>> = {
 export const isVehicleId = (v: unknown): v is VehicleId => v === 'furik' || v === 'sane';
 export const VEHICLE_ICE = 6;                                 // najviac kusov ľadu vo fúriku či saniach
 export const VEHICLE_AREAS: readonly AreaId[] = ['garden', 'hory'];  // kam smú (aj prechod medzi nimi)
-export const VEHICLE_REACH = 1.9;                             // ako blízko treba stáť, aby sa dal chytiť, naložiť, naskočiť
+export const VEHICLE_REACH = 1.6;                             // ako blízko treba stáť, aby sa dal chytiť, naložiť, naskočiť
 export const VEHICLE_ICEHOUSE = 3.4;                          // ako blízko ľadovne musí stáť, aby sa z neho dalo vyložiť do nej
-export const PUSH_L = 0.95, TOW_L = 1.3;                      // vzdialenosť stredu fúrika pred hráčom / saní za hráčom (políčka)
+export const PUSH_L = 0.62, TOW_L = 0.95;                      // vzdialenosť stredu fúrika pred hráčom / saní za hráčom (políčka)
 const TURN = 2.6;                                             // ako rýchlo sa fúrik natáča za smerom chôdze (radiány na políčko)
 const BACK = 2.2;                                             // pohyb proti smeru fúrika (viac než ~126°) je cúvanie – fúrik sa nenatáča
 // Kde stojí nový fúrik a nové sane: pred Dielňou (pozemok x 15–16, y 27–28; vchod je na juh)
@@ -43,7 +43,7 @@ export const VEHICLE_HOME: Readonly<Record<VehicleId, { x: number; y: number; a:
 
 export function newVehicle(id: VehicleId): Vehicle {
   const h = VEHICLE_HOME[id];
-  return { bought: false, area: 'garden', x: h.x, y: h.y, a: h.a, ice: 0, driver: null, passenger: null };
+  return { bought: false, area: 'garden', x: h.x, y: h.y, a: h.a, ice: 0, fb: [], usable: true, driver: null, passenger: null };
 }
 export const newVehicles = (): Vehicles => ({ furik: newVehicle('furik'), sane: newVehicle('sane') });
 

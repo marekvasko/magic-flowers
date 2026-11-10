@@ -14,7 +14,7 @@ import * as D from '../src/shared/data.ts';
 import type { ServerMessage } from '../src/shared/protocol.ts';
 import type { PlayerSave, SaveFile, Vehicle, VehicleId } from '../src/shared/save.ts';
 import * as V from '../src/shared/vehicles.ts';
-import * as W from '../src/shared/world3d.ts';
+import * as Shape from '../src/shared/vehicleshape.ts';
 import * as E from '../src/server/engine.ts';
 import * as Econ from '../src/server/economy.ts';
 import * as Events from '../src/server/events.ts';
@@ -46,7 +46,7 @@ function makeWorld(tick = SUMMER): W {
   for (const key of ['ana', 'bob', 'cyril']) w.saves[key] = partial<PlayerSave>({ coins: 1000, water: 5, inv: { hoe: 1, can: 1 }, fb: {}, recipes: [], seen: [], vily: 0, rep: must(D.REP_LEVELS[2]), up: { can: 0, composter: 0 }, area: 'garden', ...DIELNA_AT });
   return Object.assign(w, { presence: ['ana', 'bob', 'cyril'].map(key => ({ key, name: key.charAt(0).toUpperCase() + key.slice(1), area: 'garden' as const, ...DIELNA_AT, scav: null })) });
 }
-const SPEC: E.Spec<W, Presence, Msg> = { proposers: { ...Events.PROPOSERS, ...Actions.PROPOSERS, ...Vehicles.PROPOSERS, ...Cheats.PROPOSERS }, periodic: Events.PERIODIC, presence: w => w.presence, onError: rethrow };
+const SPEC: E.Spec<W, Presence, Msg> = { proposers: { ...Events.PROPOSERS, ...Actions.PROPOSERS, ...Vehicles.PROPOSERS, ...Vehicles.EVENTS, ...Cheats.PROPOSERS }, periodic: Events.PERIODIC.concat(Vehicles.PERIODIC), presence: w => w.presence, onError: rethrow };
 type Out = E.BatchOut<Presence, Msg>;
 type AllInputs = Actions.ActionInputs & VehicleInputs;
 let seq = 0;
@@ -69,6 +69,8 @@ function move(w: W, key: string, x: number, y: number): Out {
   Object.assign(must(w.presence.find(p => p.key === key)), { x: sv.x, y: sv.y, area: sv.area });
   return r;
 }
+// Nové obdobie: čas sveta a udalosť vehSeason (ako ju na začiatku obdobia spustí plánovač)
+function season(w: W, tick: number): Out { w.tick = tick; return run(w, { type: 'vehSeason', data: {}, id: 'e#' + String(++seq) }); }
 const buy = (w: W, id: VehicleId): void => { assert.deepStrictEqual(rejected(run(w, act('vehBuy', 'ana', { id }))), []); };
 
 test('kúpa v Dielni: 400 🪙, reputácia 2, len pri Dielni a raz; fúrik je spoločný pre celú záhradu', () => {
@@ -102,7 +104,8 @@ test('obdobia: fúrik na jar, v lete a na jeseň, sane len v zime – mimo obdob
   assert.match(reason(run(w, act('vehGrab', 'ana', { id: 'sane' }))), /jazdia len v zime/);
   assert.deepStrictEqual(rejected(run(w, act('vehGrab', 'ana', { id: 'furik' }))), []);
   run(w, act('vehDrop', 'ana'));
-  w.tick = WINTER;
+  season(w, WINTER);
+  assert.deepStrictEqual([veh(w, 'furik').usable, veh(w, 'sane').usable], [false, true], 'príznak prepla udalosť');
   assert.match(reason(run(w, act('vehGrab', 'ana', { id: 'furik' }))), /V zime vezmi radšej sane/);
   assert.deepStrictEqual(rejected(run(w, act('vehGrab', 'ana', { id: 'sane' }))), []);
   assert.strictEqual(veh(w, 'sane').driver, 'ana');
@@ -120,7 +123,7 @@ test('chytenie je atómové: dvaja naraz → drží ho len prvý; naraz len jedn
   assert.match(reason(run(w, act('vehGrab', 'ana', { id: 'furik' }))), /už tlačíš/);
   place(w, 'cyril', 3, 10);
   assert.match(reason(run(w, act('vehGrab', 'cyril', { id: 'sane' }))), /ešte v Dielni nie sú/);
-  w.tick = WINTER; buy(w, 'sane');
+  w.tick = WINTER; buy(w, 'sane'); // bez udalosti obdobia – ana stále drží fúrik
   place(w, 'ana', 16.6, 30.4);
   assert.match(reason(run(w, act('vehGrab', 'ana', { id: 'sane' }))), /Najprv pusti fúrik/);
   assert.deepStrictEqual(rejected(run(w, act('vehGrab', 'cyril', { id: 'sane' }))), ['Podíď bližšie k saniam.']);
@@ -136,7 +139,7 @@ test('tlačenie: fúrik ide pred hráčom a natáča sa za ním; kam neprejde (t
   assert.ok(Math.abs(f.a + Math.PI / 2) < 1e-3, 'smeruje na sever (od hráča)');
   assert.deepStrictEqual(rejected(move(w, 'ana', 12.5, 30.2)), []);
   assert.ok(Math.abs(f.y - (30.2 - V.PUSH_L)) < 1e-3 && Math.abs(f.x - 12.5) < 1e-3, `pred hráčom: ${f.x}, ${f.y}`);
-  const r = move(w, 'ana', 12.5, 29.7); // fúrik by vošiel do stánku trhu (12, 28)
+  const r = move(w, 'ana', 12.5, 29.3); // fúrik by vošiel do stánku trhu (12, 28)
   assert.strictEqual(r.rejected.length, 1, 'pohyb odmietnutý');
   assert.strictEqual(save(w, 'ana').y, 30.2, 'hráč ostal');
   // na východ: fúrik sa natočí za smerom chôdze (postupne, nie naraz)
@@ -156,9 +159,9 @@ test('ťahanie: sane stoja, kým je lano voľné, potom idú za hráčom', () =>
   buy(w, 'sane');
   const s = veh(w, 'sane');
   Object.assign(s, { x: 8.5, y: 20.5 });
-  place(w, 'ana', 8.5, 21.3);
+  place(w, 'ana', 8.5, 21.2);
   run(w, act('vehGrab', 'ana', { id: 'sane' }));
-  move(w, 'ana', 8.5, 21.6);
+  move(w, 'ana', 8.5, 21.4);
   assert.deepStrictEqual([s.x, s.y], [8.5, 20.5], 'lano je voľné');
   move(w, 'ana', 8.5, 22.4);
   assert.ok(Math.abs(Math.hypot(s.x - 8.5, s.y - 22.4) - V.TOW_L) < 1e-3, 'za hráčom na lane');
@@ -275,10 +278,12 @@ test('odchod hráča: fúrik ostane stáť, kde ho pustil; spolujazdec vystúpi;
 });
 
 test('načítanie: staré uloženie bez fúrikov → predvolené; kto ich držal a kto v nich sedel, sa zabudne; zlé hodnoty sa opravia', () => {
-  assert.deepStrictEqual(Vehicles.loadVehicles(undefined), V.newVehicles());
-  assert.deepStrictEqual(Vehicles.loadVehicles('zlé'), V.newVehicles());
-  const v = Vehicles.loadVehicles({ furik: { bought: true, area: 'hory', x: 5.25, y: 7.5, a: 1, ice: 4, driver: 'ana', passenger: 'bob' }, sane: { bought: 1, area: 'les', x: 'x', ice: 99 } });
-  assert.deepStrictEqual(v.furik, { bought: true, area: 'hory', x: 5.25, y: 7.5, a: 1, ice: 4, driver: null, passenger: null });
+  const summer = { ...V.newVehicles(), sane: { ...V.newVehicle('sane'), usable: false } }; // príznak podľa obdobia (leto)
+  assert.deepStrictEqual(Vehicles.loadVehicles(undefined, SUMMER), summer);
+  assert.deepStrictEqual(Vehicles.loadVehicles('zlé', SUMMER), summer);
+  assert.deepStrictEqual([Vehicles.loadVehicles(undefined, WINTER).furik.usable, Vehicles.loadVehicles(undefined, WINTER).sane.usable], [false, true]);
+  const v = Vehicles.loadVehicles({ furik: { bought: true, area: 'hory', x: 5.25, y: 7.5, a: 1, ice: 4, usable: false, driver: 'ana', passenger: 'bob' }, sane: { bought: 1, area: 'les', x: 'x', ice: 99 } }, SUMMER);
+  assert.deepStrictEqual(v.furik, { bought: true, area: 'hory', x: 5.25, y: 7.5, a: 1, ice: 4, fb: [{ n: 4, a: 0, at: SUMMER }], usable: false, driver: null, passenger: null }, 'uložený príznak platí, várky sa doplnia');
   assert.deepStrictEqual([v.sane.bought, v.sane.area, v.sane.x, v.sane.ice, v.sane.driver], [true, 'garden', V.VEHICLE_HOME.sane.x, 6, null]);
 });
 
@@ -312,22 +317,94 @@ test('pohyb: predpoveď klienta a server počítajú to isté (zdieľaný výpo�
   assert.ok(p.a > 0 && p.a < Math.PI / 2 + 1e-9, 'natočil sa smerom na juh');
 });
 
-test('modely: fúrik a sane (prázdne aj s ľadom) sú v prehliadači modelov; náklad je vidieť ako kocky ľadu', () => {
-  for (const id of ['furik', 'furik-ice', 'sane', 'sane-ice']) assert.ok(W.FINE_MODELS.some(m => m.id === id && m.group === 'Vehicles'), id);
-  const ice = (f: W.FineModel): number => f.data.filter(m => m === W.M.ICE).length;
-  for (const k of ['furik', 'sane'] as const) {
-    assert.strictEqual(ice(W.vehicleModel(k, 0)), 0, k);
-    assert.ok(ice(W.vehicleModel(k, 3)) > 0 && ice(W.vehicleModel(k, 6)) > ice(W.vehicleModel(k, 3)), k + ': viac ľadu = viac kociek');
-    assert.strictEqual(W.vehicleModel(k, 9), W.vehicleModel(k, 6), 'najviac 6 (model z pamäte)');
+test('tvar: fúrik a sane sú najviac takí dlhí ako hráč; náklad ľadu sú kocky (0–6), nie voxely', () => {
+  for (const id of V.VEHICLE_IDS) {
+    const e = Shape.extent(Shape.vehicleParts(id, 6));
+    assert.ok(e.len <= Shape.VEHICLE_LEN + 1e-9 && e.len > 0.7, `${id}: dĺžka ${e.len.toFixed(2)}`);
+    assert.ok(e.wid < e.len && e.top < 0.6, `${id}: šírka ${e.wid.toFixed(2)}, výška ${e.top.toFixed(2)}`);
+    const iceFaces = (n: number): number => Shape.vehicleParts(id, n).filter(p => p.k === 'poly' && p.layer === 'ice').length;
+    for (const n of [0, 1, 3, 6]) assert.strictEqual(iceFaces(n), n * 6, `${id}: ${n} kociek ľadu`);
+    assert.strictEqual(iceFaces(9), 36, 'najviac 6');
+    assert.ok(Shape.SEAT_Y[id] > 0 && Shape.SEAT_Y[id] < e.top);
   }
+  assert.ok(V.PUSH_L - Shape.VEHICLE_LEN / 2 < 0.3, 'rúčky fúrika sú pri hráčovi');
 });
 
 test('ladiaca stránka: World dostane kúpené fúriky plochy aj s vodičom a spolujazdcom (načítanie hry ich maže)', () => {
   const saved = { furik: { ...V.newVehicle('furik'), bought: true, driver: 'ana', passenger: 'bob', ice: 2 }, sane: { ...V.newVehicle('sane'), bought: true, area: 'hory' } };
-  assert.deepStrictEqual(Vehicles.debugView(saved, 'garden').map(v => [v.id, v.d, v.r, v.ice]), [['furik', 'ana', 'bob', 2]]);
-  assert.deepStrictEqual(Vehicles.debugView(saved, 'hory').map(v => v.id), ['sane']);
-  assert.deepStrictEqual(Vehicles.debugView(undefined, 'garden'), [], 'staré uloženie: nič');
-  assert.strictEqual(Vehicles.loadVehicles(saved).furik.driver, null);
+  assert.deepStrictEqual(Vehicles.debugView(saved, 'garden', SUMMER).map(v => [v.id, v.d, v.r, v.ice, v.u]), [['furik', 'ana', 'bob', 2, true]]);
+  assert.deepStrictEqual(Vehicles.debugView(saved, 'hory', SUMMER).map(v => v.id), ['sane']);
+  assert.deepStrictEqual(Vehicles.debugView(undefined, 'garden', SUMMER), [], 'staré uloženie: nič');
+  assert.strictEqual(Vehicles.loadVehicles(saved, SUMMER).furik.driver, null);
+});
+
+test('topenie: ľad vo fúriku sa topí ako v batohu – nesie si vek pri nakladaní aj vykladaní, po ICE_LIFE zmizne', () => {
+  const w = makeWorld();
+  buy(w, 'furik');
+  const f = veh(w, 'furik'), sv = save(w, 'ana');
+  place(w, 'ana', 15.5, 30.4);
+  run(w, act('vehGrab', 'ana', { id: 'furik' }));
+  const old = w.tick - D.ICE_LIFE / 2; // polovicu života už má za sebou
+  sv.inv.ice = 2; sv.fb = { ice: [{ n: 2, a: 0, at: old }] };
+  run(w, act('vehLoad', 'ana', { id: 'furik', n: 0 }));
+  assert.strictEqual(f.ice, 2);
+  assert.strictEqual(Vehicles.meltAt(f), old + D.ICE_LIFE, 'vek ľadu sa preniesol do fúrika');
+  const t1 = w.tick;
+  sv.inv.ice = 1; sv.fb = { ice: [{ n: 1, a: 0, at: t1 }] };
+  run(w, act('vehLoad', 'ana', { id: 'furik', n: 0 }));
+  assert.strictEqual(f.ice, 3);
+  // hodinová udalosť: kým nie je čas, nič; po polovici dňa sa staré kusy roztopia, vodič dostane hlásenie
+  const hourly = (tick: number): Out => { w.tick = tick; return run(w, { type: 'hourly', data: {}, id: 'e#' + String(++seq) }); };
+  hourly(old + D.ICE_LIFE - 1);
+  assert.strictEqual(f.ice, 3);
+  const r = hourly(old + D.ICE_LIFE);
+  assert.deepStrictEqual([f.ice, f.fb.reduce((n, b) => n + b.n, 0)], [1, 1], 'počet sedí s várkami');
+  assert.ok(must(r.applied[0]).outbox.some(m => m.to === 'ana' && m.t === 'toast' && /Vo fúriku sa roztopil ľad \(2×\)/.test(m.text)));
+  // vyloženie do batohu: ľad si nesie vek (nie je zase čerstvý)
+  run(w, act('vehUnload', 'ana', { id: 'furik', n: 0 }));
+  assert.deepStrictEqual([f.ice, sv.inv.ice], [0, 1]);
+  const b = must(must(sv.fb.ice)[0]);
+  assert.strictEqual(D.batchAge(b, w.tick, 1), w.tick - t1, 'kus má svoj vek z fúrika, nie je zase čerstvý');
+});
+
+test('obdobie: udalosť vehSeason na začiatku obdobia vypne fúrik a pustí vodiča aj spolujazdca s hlásením; sane zapne', () => {
+  const w = makeWorld();
+  buy(w, 'furik'); buy(w, 'sane');
+  const f = veh(w, 'furik');
+  Object.assign(f, { x: 8.5, y: 20.5 });
+  place(w, 'ana', 8.5, 21.4); place(w, 'bob', 9.2, 20.5);
+  run(w, act('vehGrab', 'ana', { id: 'furik' }));
+  run(w, act('vehIn', 'bob', { id: 'furik' }));
+  const r = season(w, WINTER);
+  assert.deepStrictEqual([f.usable, f.driver, f.passenger, veh(w, 'sane').usable], [false, null, null, true]);
+  const out = must(r.applied[0]).outbox;
+  for (const k of ['ana', 'bob']) assert.ok(out.some(m => m.to === k && m.t === 'toast' && /koliesko fúrika zaborilo.*Fúrik ostal stáť/.test(m.text)), k);
+  assert.match(reason(run(w, act('vehGrab', 'ana', { id: 'furik' }))), /V zime vezmi radšej sane/);
+  // cheat prepne príznak (a pustí vodiča)
+  run(w, { type: 'cheat', data: { op: 'vehicle', id: 'furik', act: 'usable' }, id: 'cheat#' + String(++seq) });
+  assert.strictEqual(f.usable, true);
+  assert.deepStrictEqual(rejected(run(w, act('vehGrab', 'ana', { id: 'furik' }))), [], 'po cheate sa dá chytiť aj v zime');
+});
+
+test('obdobie: plánovač naplánuje vehSeason na začiatok každého obdobia a prehranie denníka dá ten istý svet', () => {
+  const start = makeWorld(SUMMER - 6), journal: E.JournalEntry<Presence, Msg>[] = [];
+  buy(start, 'furik'); buy(start, 'sane');
+  const copy = E.clone({ ...start, presence: start.presence });
+  const spec: E.Spec<W, Presence, Msg> = { ...SPEC, onBatch: (_w, out) => { journal.push(E.clone(out.entry)); } };
+  E.reconcile(start, spec);
+  const ev = must(E.pending(start, 'vehSeason') ?? undefined);
+  const SEASON = D.DAYS_PER_SEASON * D.TICKS_PER_DAY;
+  assert.strictEqual(ev.at % SEASON, 0, 'na začiatku obdobia');
+  assert.ok(ev.at > start.tick && ev.at - start.tick <= SEASON);
+  const autumn = 2 * SEASON;
+  E.advanceTo(start, autumn + 10, spec);
+  assert.deepStrictEqual([veh(start, 'furik').usable, veh(start, 'sane').usable], [true, false], 'jeseň');
+  E.advanceTo(start, 3 * SEASON + 10, spec);
+  assert.deepStrictEqual([veh(start, 'furik').usable, veh(start, 'sane').usable], [false, true], 'zima');
+  assert.ok(journal.some(e => e.inputs.some(i => i.type === 'vehSeason')), 'udalosť je v denníku');
+  E.reconcile(copy, SPEC);
+  E.replay(copy, journal, SPEC);
+  assert.deepStrictEqual(copy.vehicles, start.vehicles, 'prehranie: rovnaké fúriky');
 });
 
 // ---------- Server: staré uloženie, správa vehicles ----------

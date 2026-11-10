@@ -164,6 +164,8 @@ export interface Vehicle {
   y: number;
   a: number;
   ice: number;
+  fb: Batch[];                // várky ľadu (vek, ako v batohu) – ľad sa vo fúriku topí rovnako ako v batohu
+  usable: boolean;            // dá sa teraz používať (obdobie) – prepína ho udalosť vehSeason na začiatku obdobia
   driver: PlayerKey | null;
   passenger: PlayerKey | null;
 }

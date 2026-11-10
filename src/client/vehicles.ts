@@ -8,7 +8,7 @@ import type { ClientMessage, VehicleView } from '../shared/protocol.ts';
 import type { VehicleId } from '../shared/save.ts';
 import * as V from '../shared/vehicles.ts';
 import type { ClientState, CtxAction } from './state.ts';
-import type * as VehicleArt from './vehicleart.ts';
+import { vehicleIcon } from './vehicleart.ts';
 
 export interface VehiclesDeps {
   S: ClientState;
@@ -16,6 +16,7 @@ export interface VehiclesDeps {
   toast: (text: string) => void;
   openModal: (title: string, render: (body: HTMLElement) => void) => void;
   changed: () => void;          // stav fúrikov sa zmenil (lišta, otvorené okno)
+  left: (ticks: number) => string;   // „o 3 h“ – kedy sa roztopí ľad
 }
 export interface ClientVehicles {
   onList: (list: VehicleView[]) => void;
@@ -52,13 +53,8 @@ export function createVehicles(dp: VehiclesDeps): ClientVehicles {
   const shown = new Map<VehicleId, VehicleView>();        // čo sa kreslí (plynulo dobieha srv; vlastný fúrik predpovedá)
   let pred: (V.Pose & { area: D.AreaId; id: VehicleId }) | null = null; // fúrik, ktorý práve tlačím (predpoveď)
   let target: VehicleId | null = null, gateToastAt = 0;
-  // obrázky z 3D modelu – modul s modelmi sa načíta až pri prvej potrebe (dovtedy emoji)
-  let art: typeof VehicleArt | null = null, artLoading = false;
-  function icon(id: VehicleId, ice = 0): string {
-    if (art) return art.vehicleIcon(id, ice);
-    if (!artLoading) { artLoading = true; import('./vehicleart.ts').then(m => { art = m; dp.changed(); }).catch((e: unknown) => { console.error(e); }); }
-    return '';
-  }
+  // kreslený obrázok (vehicleart.ts – ten istý ako v 3D)
+  const icon = (id: VehicleId, ice = 0): string => vehicleIcon(id, ice);
   const img = (id: VehicleId, ice: number, px: number): HTMLElement => {
     const url = icon(id, ice);
     return url ? el('img', { src: url, style: `width:${px}px;height:${px}px;flex:none`, alt: '' }) : el('div', { style: `font-size:${Math.round(px * 0.6)}px;width:${px}px;text-align:center;flex:none` }, V.VEHICLES[id].icon);
@@ -70,7 +66,6 @@ export function createVehicles(dp: VehiclesDeps): ClientVehicles {
 
   let sig = '';
   function onList(list: VehicleView[]): void {
-    icon('furik'); // obrázky nech sú pripravené (hlásenie o kúpe, okno Dielne)
     for (const v of list) {
       srv.set(v.id, v);
       const s = shown.get(v.id);
@@ -85,7 +80,7 @@ export function createVehicles(dp: VehiclesDeps): ClientVehicles {
     } else pred = null;
     S.vehicles = [...shown.values()];
     // lišta a otvorené okno sa prekreslia, len keď sa zmenilo niečo okrem polohy (pri jazde prichádza správa 10× za sekundu)
-    const now = list.map(v => [v.id, v.bought, v.area, v.ice, v.d, v.r, v.dn, v.rn].join(',')).join('|');
+    const now = list.map(v => [v.id, v.bought, v.area, v.ice, v.u, v.mt, v.d, v.r, v.dn, v.rn].join(',')).join('|');
     if (now !== sig) { sig = now; dp.changed(); }
   }
   function resync(): void {
@@ -172,8 +167,8 @@ export function createVehicles(dp: VehiclesDeps): ClientVehicles {
     body.appendChild(el('div', { class: 'row' }, img(id, v.ice, 64),
       el('div', { class: 'info' }, el('b', null, `🧊 Ľad: ${String(v.ice)}/${String(V.VEHICLE_ICE)}`),
         el('div', { style: 'height:8px;background:#eee;border-radius:4px;overflow:hidden;margin:3px 0' }, el('div', { style: `height:100%;width:${String(v.ice / V.VEHICLE_ICE * 100)}%;background:#6ec6ff` })),
-        el('small', null, who + pass))));
-    const why = V.seasonText(id, D.seasonOf(S.day));
+        el('small', null, who + pass + (v.ice && v.mt != null ? ` Ľad sa topí – najstarší sa roztopí o ${dp.left(Math.max(0, v.mt - S.tick))}.` : '')))));
+    const why = v.u === false ? V.seasonText(id, D.seasonOf(S.day)) || (id === 'sane' ? 'Sane sa teraz používať nedajú.' : 'Fúrik sa teraz používať nedá.') : ''; // príznak zo servera (mení ho začiatok obdobia)
     const btns: HTMLElement[] = [];
     if (iDrive) btns.push(button('Pustiť', () => { send({ t: 'veh', op: 'drop' }); }));
     else if (v.d == null && !iRide) btns.push(button(id === 'sane' ? 'Chytiť lano' : 'Chytiť', () => { send({ t: 'veh', op: 'grab', id }); }, !!why || !!other || !near(v)));

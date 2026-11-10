@@ -17,6 +17,7 @@ import * as I from './items.ts';
 import * as Ice from './ice.ts';
 import * as Scav from './scavenge.ts';
 import * as Dielna from './dielna.ts';
+import * as Vehicles from './vehicles.ts';
 import type { Tile } from './world.ts';
 
 const TPD = D.TICKS_PER_DAY;
@@ -110,7 +111,7 @@ const OWN: { [T in keyof EventInputs]: GameProposer<EventInputs[T]> } = {
   },
   // Každú hernú hodinu: kvety staršie než ich životnosť zvädnú (v batohoch aj v sklade, aj u offline hráčov), ľad sa topí.
   hourly: {
-    keys: () => ({ writes: ['save:*', 'storage', 'icehouse'] }),
+    keys: () => ({ writes: ['save:*', 'storage', 'icehouse', 'vehicles'] }), // vehicles: ľad vo fúriku a v saniach (#158)
     run(s, d, ctx) {
       const tick = ctx.tick, saves = sl(s, 'save:*');
       for (const [key, sv] of entries(saves)) {
@@ -123,6 +124,7 @@ const OWN: { [T in keyof EventInputs]: GameProposer<EventInputs[T]> } = {
       }
       I.wiltSweep(I.storageC(s.storage, s.icehouse), tick);
       if (Ice.meltHourly(s.icehouse, s.storage, tick, D.seasonOf(D.dayOfTick(tick)))) ctx.emit(toast$(ALL, '💧 Ľad v ľadovni sa roztopil. Sklad už nechladí tak dobre – doplň ľad z hôr alebo v zime z jazierka. 🧊'));
+      Vehicles.meltHourly(s, ctx); // ľad vo fúriku a v saniach sa topí ako v batohu (#158)
     }
   },
   // Koniec hľadania v tráve (d: { key, n, i, seeds }); hráč musí podľa prítomnosti stále hľadať to isté (n) – inak už udalosť nič neurobí.

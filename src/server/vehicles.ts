@@ -3,7 +3,9 @@
 // ktorí ho v jednom rámci chytia naraz, sa v engine pobijú o ten istý kľúč a vyhrá len prvý (druhý dostane odmietnutie).
 // Pohyb: fúrik / sane sa hýbu s hráčom, ktorý ich drží – v návrhu pos (actions.ts volá posKeys a onPos) aj so spolujazdcom.
 // Fúrik sa tlačí pred sebou, sane sa ťahajú za sebou (shared/vehicles.ts follow). Kam smú: záhrada a hory.
-// Náklad: len ľad, najviac 6 kusov, nespomaľuje; ľad vo fúriku sa netopí (je to len počet, nie várky ako v batohu).
+// Náklad: len ľad, najviac 6 kusov, nespomaľuje; ľad sa vo fúriku topí ako v batohu (rovnaké várky, hodinová udalosť).
+// Obdobie: fúrik či sane majú vlastný príznak usable (stav sveta), ktorý na začiatku každého obdobia prepne periodická
+// udalosť vehSeason – keď sa vozidlo prestane dať používať, kto ho drží a kto v ňom sedí, ho pustí (s hlásením).
 import * as D from '../shared/data.ts';
 import type { AreaId } from '../shared/data.ts';
 import type { ToastKind, VehicleView } from '../shared/protocol.ts';
@@ -16,8 +18,8 @@ import * as Ice from './ice.ts';
 import * as Areas from './areas.ts';
 import * as Dielna from './dielna.ts';
 import { savesOf, sl } from './game.ts';
-import type { GameCtx, GameProposer, GameSlices, GameWorld, Msg, To } from './game.ts';
-import type { Presence } from './world.ts';
+import type { GameCtx, GamePeriodic, GameProposer, GameSlices, GameWorld, Msg, To } from './game.ts';
+import type { Container, Presence } from './world.ts';
 
 const { VEHICLES } = V;
 const season = (tick: number): D.Season => D.seasonOf(D.dayOfTick(tick));
@@ -29,12 +31,14 @@ const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 // ---------- Načítanie a uloženie ----------
 // Uloženie bez fúrikov (staršie svety) alebo poškodené → predvolené (nekúpené pred Dielňou). Kto ich držal a kto
 // v nich sedel, sa zabudne: po reštarte servera nie je nikto pripojený (fúrik ostane stáť, kde bol).
-export function loadVehicles(saved: unknown): Vehicles { return parseVehicles(saved, false); }
+// tick = čas sveta: uloženie bez príznaku usable (staršie) ho dostane podľa obdobia; várky ľadu sa zladia s počtom.
+export function loadVehicles(saved: unknown, tick: number): Vehicles { return parseVehicles(saved, false, tick); }
 // keep = nechať aj vodiča a spolujazdca (ladiaca stránka ukazuje uložený stav, ako je)
-export function parseVehicles(saved: unknown, keep: boolean): Vehicles {
+export function parseVehicles(saved: unknown, keep: boolean, tick: number): Vehicles {
   const out = V.newVehicles(), src = isRecord(saved) ? saved : {};
   for (const id of V.VEHICLE_IDS) {
     const v = src[id];
+    out[id].usable = V.inSeason(id, season(tick)); // staršie uloženie: podľa obdobia
     if (!isRecord(v)) continue;
     const t = out[id], num = (k: string, d: number): number => { const n = v[k]; return typeof n === 'number' && Number.isFinite(n) ? n : d; };
     t.bought = !!v['bought'];
@@ -43,6 +47,11 @@ export function parseVehicles(saved: unknown, keep: boolean): Vehicles {
     const p = Areas.clampPos(t.area, num('x', t.x), num('y', t.y));
     t.x = p.x; t.y = p.y; t.a = num('a', t.a);
     t.ice = Math.max(0, Math.min(V.VEHICLE_ICE, Math.round(num('ice', 0))));
+    const fb = v['fb'], u = v['usable'];
+    // várky ľadu zapísal server ({ n, a, at }); syncAll ich zladí s počtom (chýbajúce = čerstvé)
+    t.fb = Array.isArray(fb) ? fb.filter((b): b is D.Batch => isRecord(b) && typeof b['n'] === 'number' && typeof b['a'] === 'number' && typeof b['at'] === 'number') : [];
+    const c = container(t); I.syncAll(c, tick); c.done();
+    t.usable = typeof u === 'boolean' ? u : V.inSeason(id, season(tick));
     const dr = v['driver'], ps = v['passenger'];
     if (keep) { t.driver = typeof dr === 'string' ? dr : null; t.passenger = typeof ps === 'string' ? ps : null; }
   }
@@ -51,6 +60,17 @@ export function parseVehicles(saved: unknown, keep: boolean): Vehicles {
 // Fúriky sveta pre kľúče návrhov – svety v testoch ich nemusia mať
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- čiastočné svety v testoch; na serveri sú vždy
 export const vehiclesOf = (w: Pick<GameWorld, 'vehicles'>): Partial<Vehicles> => w.vehicles || {};
+// Ľad vo fúriku ako kontajner predmetov (items.ts) – várky sa topia rovnako ako v batohu; po zmene sa počet a várky
+// zapíšu späť do vozidla (v.ice, v.fb)
+export function container(v: Vehicle): Container & { done: () => void } {
+  const c: Container = { inv: v.ice ? { ice: v.ice } : {}, fb: v.fb.length ? { ice: v.fb } : {}, rate: 1 };
+  return Object.assign(c, { done: () => { v.ice = c.inv.ice ?? 0; v.fb = c.fb.ice ?? []; } });
+}
+// Kedy sa roztopí najstarší ľad (krok), alebo null
+export function meltAt(v: Vehicle): number | null {
+  const b = v.fb[0];
+  return b ? b.at + D.ICE_LIFE - b.a : null;
+}
 export const save = (w: Pick<GameWorld, 'vehicles'>): { vehicles: Vehicles } => ({ vehicles: w.vehicles });
 
 // ---------- Pohľad pre klienta ----------
@@ -58,17 +78,17 @@ export const save = (w: Pick<GameWorld, 'vehicles'>): { vehicles: Vehicles } => 
 export function view(vs: Vehicles, who: (key: PlayerKey) => { id: number; name: string } | null): VehicleView[] {
   return V.VEHICLE_IDS.map(id => {
     const v = vs[id], d = v.driver ? who(v.driver) : null, r = v.passenger ? who(v.passenger) : null;
-    return { id, bought: v.bought, area: v.area, x: v.x, y: v.y, a: +v.a.toFixed(3), ice: v.ice, d: d ? d.id : null, r: r ? r.id : null, dn: d ? d.name : null, rn: r ? r.name : null };
+    return { id, bought: v.bought, area: v.area, x: v.x, y: v.y, a: +v.a.toFixed(3), ice: v.ice, u: v.usable, mt: meltAt(v), d: d ? d.id : null, r: r ? r.id : null, dn: d ? d.name : null, rn: r ? r.name : null };
   });
 }
 
 // Pre ladiacu stránku (/debug → World): kúpené fúriky plochy area z uloženého stavu; vodič a spolujazdec sú kľúče hráčov
 // (odpoveď ladiacej stránky ich nahradí odtlačkom, rovnakým ako pri hráčoch)
-export function debugView(saved: unknown, area: AreaId): VehicleView[] {
-  const vs = parseVehicles(saved, true);
+export function debugView(saved: unknown, area: AreaId, tick: number): VehicleView[] {
+  const vs = parseVehicles(saved, true, tick);
   return V.VEHICLE_IDS.filter(id => vs[id].bought && vs[id].area === area).map(id => {
     const v = vs[id];
-    return { id, bought: true, area: v.area, x: v.x, y: v.y, a: v.a, ice: v.ice, d: v.driver, r: v.passenger };
+    return { id, bought: true, area: v.area, x: v.x, y: v.y, a: v.a, ice: v.ice, u: v.usable, mt: meltAt(v), d: v.driver, r: v.passenger };
   });
 }
 
@@ -139,7 +159,7 @@ export const PROPOSERS: { [T in keyof VehicleInputs]: GameProposer<VehicleInputs
       if (D.repLevel(sv.rep || 0) < X.rep) ctx.reject(`Potrebuješ reputáciu úrovne ${String(X.rep)}.`);
       if (sv.coins < X.price) ctx.reject('Nemáš dosť mincí. 🪙');
       sv.coins -= X.price;
-      Object.assign(v, V.newVehicle(d.id), { bought: true });
+      Object.assign(v, V.newVehicle(d.id), { bought: true, usable: V.inSeason(d.id, season(ctx.tick)) });
       ctx.emit(toast$(E.ALL, d.id === 'sane'
         ? `🛷 ${nameOf(ctx, d.key)} kúpil(a) do Dielne sane! Stoja pred Dielňou – v zime na nich odvezieš naraz ${V.iceText(V.VEHICLE_ICE)} z hôr do ľadovne.`
         : `🛞 ${nameOf(ctx, d.key)} kúpil(a) do Dielne fúrik! Stojí pred Dielňou – odvezieš v ňom naraz ${V.iceText(V.VEHICLE_ICE)} z hôr do ľadovne.`, 'gift', d.id));
@@ -156,8 +176,7 @@ export const PROPOSERS: { [T in keyof VehicleInputs]: GameProposer<VehicleInputs
       const other = V.drivenBy(vs, d.key);
       if (other) ctx.reject(`Najprv pusti ${VEHICLES[other].acc}. Naraz udržíš len jedno.`);
       if (!nearVehicle(me, v)) ctx.reject(closer(d.id));
-      const why = V.seasonText(d.id, season(ctx.tick));
-      if (why) ctx.reject(why);
+      if (!v.usable) ctx.reject(V.seasonText(d.id, season(ctx.tick)) || (d.id === 'sane' ? 'Sane sa teraz používať nedajú.' : 'Fúrik sa teraz používať nedá.'));
       v.driver = d.key;
       v.a = V.round3(V.grabAngle(d.id, v, me));
       ctx.emit(toast$(d.key, X.push
@@ -186,8 +205,9 @@ export const PROPOSERS: { [T in keyof VehicleInputs]: GameProposer<VehicleInputs
       if (!have) ctx.reject(`Nemáš ľad. ${cap(VEHICLES[d.id].loc)} sa vozí len ľad – vysekáš ho krompáčom na ľadovci v horách. ⛏️`);
       const k = Math.min(d.n > 0 ? d.n : have, have, V.VEHICLE_ICE - v.ice);
       if (k <= 0) ctx.reject(`${cap(VEHICLES[d.id].loc)} je už ${V.iceText(V.VEHICLE_ICE)} – viac sa nezmestí. 🧊`);
-      I.removeItems(I.playerC(sv), 'ice', k, ctx.tick);
-      v.ice += k;
+      const c = container(v);
+      I.addItems(c, 'ice', k, ctx.tick, I.removeItems(I.playerC(sv), 'ice', k, ctx.tick)); // ľad si nesie svoj vek
+      c.done();
       ctx.emit(toast$(d.key, `🧊 Naložil(a) si ${V.iceText(k)}. ${cap(VEHICLES[d.id].loc)} je ${String(v.ice)}/${String(V.VEHICLE_ICE)}.`, 'info', d.id));
     }
   },
@@ -201,8 +221,9 @@ export const PROPOSERS: { [T in keyof VehicleInputs]: GameProposer<VehicleInputs
       const room = D.ICE_CARRY - (sv.inv.ice || 0);
       if (room <= 0) ctx.reject(`Viac ľadu neunesieš (najviac ${String(D.ICE_CARRY)}).`);
       const k = Math.min(d.n > 0 ? d.n : v.ice, v.ice, room);
-      I.addItems(I.playerC(sv), 'ice', k, ctx.tick);
-      v.ice -= k;
+      const c = container(v);
+      I.addItems(I.playerC(sv), 'ice', k, ctx.tick, I.removeItems(c, 'ice', k, ctx.tick)); // najstarší ľad, aj s vekom
+      c.done();
       ctx.emit(toast$(d.key, `🧊 Vzal(a) si si ${V.iceText(k)}. ${cap(VEHICLES[d.id].loc)} ostáva ${String(v.ice)}/${String(V.VEHICLE_ICE)}.`, 'info', d.id));
     }
   },
@@ -217,7 +238,9 @@ export const PROPOSERS: { [T in keyof VehicleInputs]: GameProposer<VehicleInputs
       if (!v.ice) ctx.reject(`${cap(VEHICLES[d.id].loc)} nie je žiadny ľad.`);
       const k = Ice.fillIcehouse(s.icehouse, s.storage, ctx.tick, v.ice);
       if (!k) ctx.reject('Ľadovňa je plná. 🧊');
-      v.ice -= k;
+      const c = container(v);
+      I.removeItems(c, 'ice', k, ctx.tick); // najstarší ľad ide do ľadovne prvý
+      c.done();
       ctx.emit(toast$(d.key, `🧊 Vyložil(a) si do ľadovne ${V.iceText(k)}. V ľadovni je ${String(Math.ceil(s.icehouse.ice))}/${String(D.ICEHOUSE.cap)}.`, 'info', d.id));
       const L = D.ICEHOUSE.lot;
       ctx.emit({ to: E.area('garden'), t: 'fx', k: 'ice', x: L.x0 + 1, y: L.y0 + 1 });
@@ -315,14 +338,14 @@ export function onLeave(s: GameSlices, d: { key: PlayerKey }): void {
 // ---------- Cheaty z ladiacej stránky (#153) ----------
 // kúpiť / odstrániť (nekúpený, späť pred Dielňou), premiestniť (aj do hôr), nastaviť náklad, pustiť (vodič aj spolujazdec)
 export type VehicleCheat =
-  | { act: 'buy' | 'remove' | 'release'; id: VehicleId }
+  | { act: 'buy' | 'remove' | 'release' | 'usable'; id: VehicleId }
   | { act: 'tp'; id: VehicleId; area: AreaId; x: number; y: number }
   | { act: 'ice'; id: VehicleId; n: number; set: boolean };
 // Telo požiadavky → cheat, alebo text chyby
 export function parseCheat(b: { [field: string]: unknown }): VehicleCheat | string {
   const id = b['id'], act = b['act'];
   if (!V.isVehicleId(id)) return 'unknown vehicle';
-  if (act === 'buy' || act === 'remove' || act === 'release') return { act, id };
+  if (act === 'buy' || act === 'remove' || act === 'release' || act === 'usable') return { act, id };
   if (act === 'tp') {
     const area = b['area'], x = Number(b['x']), y = Number(b['y']);
     const a = V.VEHICLE_AREAS.find(k => k === area);
@@ -341,7 +364,8 @@ export const cheatKeys = (): E.Keys => ({ writes: ['vehicles'] });
 export function cheatRun(s: GameSlices, d: VehicleCheat, ctx: GameCtx): void {
   const vs = s.vehicles || ctx.reject('no vehicles'), v = vs[d.id];
   switch (d.act) {
-    case 'buy': if (v.bought) ctx.reject('already bought'); Object.assign(v, V.newVehicle(d.id), { bought: true }); return;
+    case 'buy': if (v.bought) ctx.reject('already bought'); Object.assign(v, V.newVehicle(d.id), { bought: true, usable: V.inSeason(d.id, season(ctx.tick)) }); return;
+    case 'usable': v.usable = !v.usable; if (!v.usable) { v.driver = null; v.passenger = null; } return; // prepnúť (ďalšia vehSeason ho nastaví podľa obdobia)
     case 'remove': if (!v.bought) ctx.reject('not bought'); Object.assign(v, V.newVehicle(d.id)); return;
     case 'release': v.driver = null; v.passenger = null; return;
     case 'tp': {
@@ -350,6 +374,51 @@ export function cheatRun(s: GameSlices, d: VehicleCheat, ctx: GameCtx): void {
       Object.assign(v, { area: d.area, x: V.round3(p.x), y: V.round3(p.y), driver: null, passenger: null });
       return;
     }
-    case 'ice': if (!v.bought) ctx.reject('not bought'); v.ice = Math.max(0, Math.min(V.VEHICLE_ICE, Math.round(d.set ? d.n : v.ice + d.n))); return;
+    case 'ice': {
+      if (!v.bought) ctx.reject('not bought');
+      const want = Math.max(0, Math.min(V.VEHICLE_ICE, Math.round(d.set ? d.n : v.ice + d.n))), c = container(v);
+      if (want > v.ice) I.addItems(c, 'ice', want - v.ice, ctx.tick); else if (want < v.ice) I.removeItems(c, 'ice', v.ice - want, ctx.tick);
+      c.done();
+      return;
+    }
+  }
+}
+
+// ---------- Udalosti: obdobie a topenie ----------
+export interface VehicleEvents { vehSeason: Record<string, never> }
+// Na začiatku obdobia: fúrik / sane sa dajú (alebo prestanú dať) používať. Kto drží vozidlo, ktoré sa práve prestalo
+// dať používať, ho pustí; spolujazdec vystúpi – obaja dostanú hlásenie.
+export const EVENTS: { [T in keyof VehicleEvents]: GameProposer<VehicleEvents[T]> } = {
+  vehSeason: {
+    keys: () => ({ writes: ['vehicles'] }),
+    run(s, d, ctx) {
+      const vs = s.vehicles;
+      if (!vs) return;
+      const se = season(ctx.tick);
+      for (const id of V.VEHICLE_IDS) {
+        const v = vs[id], want = V.inSeason(id, se);
+        if (v.usable === want) continue;
+        v.usable = want;
+        if (want || !v.bought) continue;
+        const text = `${V.seasonText(id, se)} ${id === 'sane' ? 'Sane ostali stáť' : 'Fúrik ostal stáť'}, kde ${id === 'sane' ? 'boli' : 'bol'}.`;
+        for (const who of [v.driver, v.passenger]) if (who) ctx.emit(toast$(who, text, 'day', id));
+        v.driver = null; v.passenger = null;
+      }
+    }
+  }
+};
+// Začiatok každého obdobia (polnoc prvého dňa obdobia)
+export const PERIODIC: GamePeriodic[] = [{ key: 'vehSeason', type: 'vehSeason', next: E.every(D.DAYS_PER_SEASON * D.TICKS_PER_DAY) }];
+// Každú hernú hodinu (udalosť hourly v events.ts): ľad vo fúriku a v saniach sa topí ako v batohu
+export function meltHourly(s: GameSlices, ctx: GameCtx): void {
+  const vs = s.vehicles;
+  if (!vs) return;
+  for (const id of V.VEHICLE_IDS) {
+    const v = vs[id];
+    if (!v.fb.length) continue;
+    const c = container(v), k = I.meltSweep(c, ctx.tick);
+    c.done();
+    if (!k) continue;
+    for (const who of [v.driver, v.passenger]) if (who) ctx.emit(toast$(who, `💧 ${cap(VEHICLES[id].loc)} sa roztopil ľad (${String(k)}×). Odvez ho rýchlo do ľadovne.`, 'info', id));
   }
 }
