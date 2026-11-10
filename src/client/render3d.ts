@@ -1802,8 +1802,8 @@ void main() {
     }
     for (const o of chars.values()) o.alive = false;
     const me = S.me;
-    const meO = api.noPlayer ? null : drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : dirAngle(me.dir), S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz, crawl: me.crawl, dig: api.searching({ si: S.mySi }) ? t : 0, lamp: S.sel === 'lamp' && lampState, web: S.webLeft ? S.webLeft() : 0, crouch: me.crouch, pose: me.pose ?? null }, dt);
-    for (const o of S.others.values()) drawChar(o.id, o.x, o.y, o.look, o.a != null ? o.a : dirAngle(o.dir || 0), o.e === 'dance' ? t * 4 : o.phase, { dance: o.e === 'dance', jz: o.jz, crawl: o.cr, dig: api.searching(o) ? t : 0, lamp: o.lp && lampState, web: o.wb || 0, crouch: o.cq, pose: o.po ?? null }, dt);
+    const meO = api.noPlayer ? null : drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : dirAngle(me.dir), S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz, crawl: me.crawl, dig: api.searching({ si: S.mySi }) ? t : 0, lamp: S.sel === 'lamp' && lampState, web: S.webLeft ? S.webLeft() : 0, crouch: me.crouch, pose: me.pose ?? null, poseK: me.poseK ?? 1 }, dt);
+    for (const o of S.others.values()) drawChar(o.id, o.x, o.y, o.look, o.a != null ? o.a : dirAngle(o.dir || 0), o.e === 'dance' ? t * 4 : o.phase, { dance: o.e === 'dance', jz: o.jz, crawl: o.cr, dig: api.searching(o) ? t : 0, lamp: o.lp && lampState, web: o.wb || 0, crouch: o.cq, pose: o.po ?? null, poseK: o.poseAt === undefined ? 1 : Math.min(1, (performance.now() - o.poseAt) / 400) }, dt);
     if (S.area !== 'garden') babka = null; // babka býva v záhrade (bez alive ju upratovanie nižšie odstráni)
     else if (!babka) babka = drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, 0, { babka: true }, 1);
     else { babka.alive = true; if (Math.floor(t) !== babka.lastT) { babka.lastT = Math.floor(t); drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, Math.sin(t) * 0.3, { babka: true }, 1); } }

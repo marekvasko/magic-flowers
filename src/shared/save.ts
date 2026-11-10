@@ -69,7 +69,10 @@ export interface IceWalk {
   vx: number;
   vy: number;
   t?: number;
+  ix?: number;                // vstup klienta v čase t (platí, kým v správe nepríde zmena)
+  iy?: number;
   fall?: number;
+  fe?: number;                // koniec ležania na ľade v čase klienta (ms) – šmýkanie ležiaceho počíta server ako klient
   sw?: 1;
 }
 

@@ -154,9 +154,9 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       case 'market': S.market = m; if (S.modal) S.modal.refresh(); break;
       case 'board': S.board = m.list; if (S.modal) S.modal.refresh(); break;
       case 'tile': S.tiles[m.i] = m.v; break;
-      case 'pos': S.me.x = m.x; S.me.y = m.y; stopWalk(); if (S.ice && S.ice.fallUntil <= performance.now()) { S.me.vx = 0; S.me.vy = 0; } break; // server pohyb odmietol (neprechodná zem) – späť na potvrdené miesto
+      case 'pos': IceC.nudge(iceSt(), S.me, m.x, m.y); stopWalk(); break; // server pohyb odmietol (neprechodná zem) – späť na potvrdené miesto, plynulo (#157)
       case 'iw': { // chôdza po ľade (#157): server rozhodol – pošmyknutie, prepadnutie, plávanie, oprava polohy
-        const ev = IceC.onMsg(iceSt(), S.me, m, performance.now());
+        const ev = IceC.onMsg(iceSt(), S.me, m, performance.now(), iceFree);
         if (ev) stopWalk();
         if (ev === 'fall') sfx('bad'); else if (ev === 'splash') sfx('water'); else if (ev === 'out') sfx('pop');
         break;
@@ -171,7 +171,8 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
         // vlastná postavička nikdy medzi ostatnými (#125)
         const mine = Players.syncOthers(S.others, m.list, S.id, (o, p) => {
           if (p.j !== o.j && !o.jz) o.jv = JUMP_V; // iný hráč skočil
-          Object.assign(o, { id: p.id, tx: p.x, ty: p.y, dir: p.dir, a: p.a, look: p.look, name: p.name, e: p.e, cr: !!p.cr, lp: !!p.lp, j: p.j, si: p.si, wb: p.wb || 0, cq: !!p.cq, po: p.po ?? null });
+          Object.assign(o, { id: p.id, tx: p.x, ty: p.y, dir: p.dir, a: p.a, look: p.look, name: p.name, e: p.e, cr: !!p.cr, lp: !!p.lp, j: p.j, si: p.si, wb: p.wb || 0, cq: !!p.cq, po: p.po ?? null,
+            ...((p.po ?? null) !== (o.po ?? null) ? { poseAt: performance.now() } : {}) }); // začiatok pádu / ponorenia (#157)
         }, (p): OtherPlayer => ({ x: p.x, y: p.y, phase: 0, jz: 0, jv: 0, j: p.j, id: p.id, tx: p.x, ty: p.y, dir: p.dir, a: p.a, look: p.look, name: p.name, e: p.e, cr: false, lp: false, si: -1, wb: 0 }));
         if (mine) { S.myEmote = mine.e; S.mySi = mine.si; }
         break;
@@ -316,6 +317,12 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     return !IW.canStep(here, t, season(), swim, lift, crawl);
   }
   const iceSt = (): IceC.IceClient => (S.ice ??= IceC.create());
+  // Kam smie telo pri prepočte šmýkania po oprave zo servera (#157): ako chôdza, bez výšky skoku a plazenia
+  function iceFree(x: number, y: number): boolean {
+    const { rx, ry } = D.BODY, se = season(), here = tileAt(Math.floor(S.me.x), Math.floor(S.me.y)), careful = S.me.crawl || !!S.me.crouch;
+    return ([[x - rx, y - ry], [x + rx, y - ry], [x - rx, y + ry], [x + rx, y + ry]] as const).every(([cx, cy]) => !solid(cx, cy, here, 0, false, new Set(), false))
+      && !(careful && IW.isHole(tileAt(Math.floor(x), Math.floor(y)), se));
+  }
   function playerOn(tx: number, ty: number): OtherPlayer | null {
     for (const o of S.others.values()) if (Math.hypot(o.x - (tx + 0.5), o.y - (ty + 0.5)) < 0.8) return o;
     return null;
@@ -1441,29 +1448,38 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     }
     const len = Math.hypot(vx, vy);
     if (len > 1) { vx /= len; vy /= len; }
-    // chôdza po ľade (#157): leží → nehýbe sa; na ľade hybnosť (šmýka sa aj bez vstupu); vo vode pláva pomaly
+    // chôdza po ľade (#157): hodiny fyziky v celých ms, vstup zaokrúhlený ako pre server; čľapká → stojí; leží na ľade →
+    // šmýka sa bez vstupu; na ľade hybnosť (šmýka sa aj bez vstupu); vo vode pláva pomaly
     const ice = iceSt(), nowI = performance.now(), se = season();
-    const iceMode = IceC.mode(ice, tileAt(Math.floor(me.x), Math.floor(me.y)), se, nowI);
+    IceC.expire(ice, nowI);
+    const [t0I, tI] = IceC.clock(ice, nowI);
+    const here0 = tileAt(Math.floor(me.x), Math.floor(me.y));
+    let iceMode = IceC.mode(ice, here0, se, nowI);
+    if (!ice.swim && IW.openWater(here0, se)) { // ľad sa pod ním roztopil: prepadne sa hneď (server to potvrdí)
+      IceC.predictFallIn(ice, me, nowI); sfx('water'); S.lastSent = ''; iceMode = 'fall';
+    }
     if (iceMode === 'fall') { vx = vy = 0; stopWalk(); }
-    const iceDt = IceC.realDt(ice, nowI, dt);
-    me.pose = IceC.pose(ice, nowI);
+    if (IceC.lying(ice, nowI)) stopWalk(); // leží: vstup sa v šmýkaní nepočíta (IceC.pieces), smer pohľadu áno
+    const [pose, pk] = IceC.pose(ice, nowI);
+    me.pose = pose; me.poseK = pk;
     me.crouch = !S.asleep && (!!S.crouchKey || !!S.crouchTgl) && !me.jz && !me.pose;
+    me.crawl = !S.asleep && (S.crawlKey || S.crawlTgl) && !me.jz;
     if (iceMode === 'ice' && !ice.hinted) {
       ice.hinted = true;
       if (!localStorage.getItem('mfIceHint')) { localStorage.setItem('mfIceHint', '1'); toast('🧊 Ľad sa šmýka! V prudkej zákrute sa pošmykneš. Čupni si (drž C, na mobile 🧎) a pôjdeš opatrne.'); }
     }
-    const sliding = iceMode === 'ice' && Math.hypot(me.vx || 0, me.vy || 0) > 0.02;
+    const swim = iceMode === 'swim', careful = me.crawl || me.crouch;
+    // ťažký ľad v náručí spomaľuje; lepkavá pavučina spomaľuje (slowK / slowUntil – spomalenie je vo 'webbed')
+    const slowK = (performance.now() < S.slowUntil ? S.slowK : 1) * webSpeed(performance.now()) * webDrag();
+    const spK = (me.crawl ? CRAWL_SPEED : 1) * (me.crouch ? IW.ICE.crouch : 1) * (swim ? IW.ICE.swim : 1) * Math.max(0.4, 1 - D.ICE_SLOW * (S.inv.ice || 0)) * slowK;
+    // vstup pre server aj pre fyziku: smer × všetky spomalenia, dve desatinné miesta (dĺžka ≤ 1)
+    const inp: [number, number] = iceMode === 'ice' || iceMode === null ? [IW.roundIn(vx * spK), IW.roundIn(vy * spK)] : [0, 0];
+    IceC.input(ice, t0I, inp[0], inp[1]);
+    const sliding = iceMode === 'ice' && Math.hypot(me.vx || 0, me.vy || 0) > 0.001;
     me.moving = len > 0.05 || sliding;
-    me.crawl = !S.asleep && (S.crawlKey || S.crawlTgl) && !me.jz;
     if (me.jz > 0 || me.jv > 0) { me.jz += me.jv * dt; me.jv -= JUMP_G * dt; if (me.jz <= 0) me.jz = me.jv = 0; }
     if (me.moving) {
-      // ťažký ľad v náručí spomaľuje
-      // lepkavá pavučina spomaľuje (slowK / slowUntil – správu 'slow' server už neposiela, spomalenie je vo 'webbed')
-      const slowK = (performance.now() < S.slowUntil ? S.slowK : 1) * webSpeed(performance.now()) * webDrag();
-      const swim = iceMode === 'swim', careful = me.crawl || me.crouch;
-      const sp = 3.8 * dt * (me.crawl ? CRAWL_SPEED : 1) * (me.crouch ? IW.ICE.crouch : 1) * (swim ? IW.ICE.swim : 1) * Math.max(0.4, 1 - D.ICE_SLOW * (S.inv.ice || 0)) * slowK;
-      const ik = dt > 0 ? sp / (IW.ICE.speed * dt) : 0; // vstup pre server: smer × všetky spomalenia (dĺžka ≤ 1)
-      S.iceIn = [vx * ik, vy * ik];
+      const sp = 3.8 * dt * spK;
       const ox = me.x, oy = me.y;
       const { rx, ry } = D.BODY;
       // hráč stojí na najvyššom políčku pod sebou – kým celkom nezíde z ľadu, nezasekne sa o jeho hranu
@@ -1483,13 +1499,15 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       const free = (x: number, y: number): boolean => corners(x, y).every(([cx, cy]) => !solid(cx, cy, from, lift, me.crawl, overlap, swim))
         && (!me.crawl || D.level(tileAt(Math.floor(x), Math.floor(y))) === D.level(mid))
         && (swim || !careful || !IW.isHole(tileAt(Math.floor(x), Math.floor(y)), se));
-      // na zemi: hybnosť = vstup × rýchlosť (tak ju pri vstupe na ľad prevezme aj server); na ľade fyzika v reálnom čase
-      if (iceMode !== 'ice') { me.vx = iceMode ? 0 : vx * ik * IW.ICE.speed; me.vy = iceMode ? 0 : vy * ik * IW.ICE.speed; }
-      const [dx, dy] = iceMode === 'ice' ? IceC.slide(me, vx * ik, vy * ik, iceDt) : [vx * sp, vy * sp];
-      const nx = me.x + dx;
-      if (free(nx, me.y)) me.x = nx; else me.vx = 0;
-      const ny = me.y + dy;
-      if (free(me.x, ny)) me.y = ny; else me.vy = 0;
+      if (iceMode === 'ice') IceC.slideFrame(ice, me, t0I, tI, inp[0], inp[1], free); // presne ako server; ležiaci bez vstupu
+      else {
+        // na zemi: hybnosť = vstup × rýchlosť (tak ju pri vstupe na ľad prevezme aj server)
+        me.vx = iceMode ? 0 : inp[0] * IW.ICE.speed; me.vy = iceMode ? 0 : inp[1] * IW.ICE.speed;
+        const nx = me.x + vx * sp;
+        if (free(nx, me.y)) me.x = nx;
+        const ny = me.y + vy * sp;
+        if (free(me.x, ny)) me.y = ny;
+      }
       if (len > 0.05) {
         face(vx, vy);
         me.a = Math.atan2(vy, vx); // presný smer pre 8-smerový sprite
@@ -1500,13 +1518,19 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
         else S.stuckT = 0;
       }
     } else { me.phase = 0; me.vx = 0; me.vy = 0; }
+    IceC.frame(ice, me, { t0: t0I, t: tI, ix: inp[0], iy: inp[1], ice: iceMode === 'ice' }); // zápis snímky a kus opravy
+    // nečupiaci vošiel stredom do otvoru: prepadne sa hneď (server to potvrdí)
+    if (!ice.swim && !careful && (iceMode === 'ice' || iceMode === null) && IW.isHole(tileAt(Math.floor(me.x), Math.floor(me.y)), se)) {
+      IceC.predictFallIn(ice, me, nowI); sfx('water'); S.lastSent = '';
+    }
     // odoslanie pozície
     const now = performance.now();
-    const iceIn = me.moving && S.iceIn ? S.iceIn : [0, 0];
-    const key = me.x.toFixed(2) + ',' + me.y.toFixed(2) + ',' + me.dir + ',' + (me.a != null ? me.a.toFixed(1) : '') + ',' + me.crawl + ',' + (S.sel === 'lamp') + ',' + me.crouch;
+    const key = me.x.toFixed(2) + ',' + me.y.toFixed(2) + ',' + me.dir + ',' + (me.a != null ? me.a.toFixed(1) : '') + ',' + me.crawl + ',' + (S.sel === 'lamp') + ',' + me.crouch + ',' + inp.join();
     if (key !== S.lastSent && now - S.sentAt > 90) {
-      // ľad (#157): vstup, čupnutie a čas klienta – server podľa nich počíta šmýkanie a pošmyknutie
-      send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq, ix: +(iceIn[0] ?? 0).toFixed(2), iy: +(iceIn[1] ?? 0).toFixed(2), ck: me.crouch, ts: Math.round(now) });
+      // ľad (#157): vstup, zmeny vstupu za poslednú sekundu, čupnutie a čas klienta (koniec tohto snímku) – server podľa
+      // nich počíta šmýkanie a pošmyknutie presne ako klient
+      const onIce = iceMode === 'ice' || IceC.lying(ice, nowI);
+      send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq, ix: inp[0], iy: inp[1], ck: me.crouch, ts: tI, ...(onIce ? { in: ice.segs.map((g): [number, number, number] => [g[0], g[1], g[2]]) } : {}) });
       S.lastSent = key; S.sentAt = now;
     }
     // ostatní hráči

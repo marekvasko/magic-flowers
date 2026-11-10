@@ -60,7 +60,8 @@ export const SEASONS: readonly string[] = ['Spring', 'Summer', 'Autumn', 'Winter
 // Pózy postavičky v galérii: meno, voľby, fáza chôdze (#157: čupí, leží na ľade, pláva)
 const POSES: readonly (readonly [string, string, CharOpts, number])[] = [
   ['Standing', '{}', {}, 0], ['Walking', 'phase 1.2', {}, 1.2], ['Crawling', '{ crawl }', { crawl: true }, 0.8],
-  ['Crouching', '{ crouch }', { crouch: true }, 0], ['Fallen on ice', "{ pose: 'fall' }", { pose: 'fall' }, 1], ['Swimming', "{ pose: 'swim' }", { pose: 'swim' }, 1]
+  ['Crouching', '{ crouch }', { crouch: true }, 0], ['Falling (halfway)', "{ pose: 'fall', poseK: 0.5 }", { pose: 'fall', poseK: 0.5 }, 1], ['Fallen on ice', "{ pose: 'fall' }", { pose: 'fall' }, 1],
+  ['Sinking (halfway)', "{ pose: 'swim', poseK: 0.5 }", { pose: 'swim', poseK: 0.5 }, 1], ['Swimming', "{ pose: 'swim' }", { pose: 'swim' }, 1]
 ];
 export const ROTS: readonly string[] = ['0°', '90°', '180°', '270°'];
 

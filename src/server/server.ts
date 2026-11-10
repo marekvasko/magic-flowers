@@ -746,6 +746,8 @@ function iceInput(m: InMsg): IceWalk.IceInput {
   if (m['ck']) out.ck = true;
   if (m['cr']) out.cr = true;
   if (t !== undefined) out.ts = t;
+  const segs = IceWalk.segsOf(m['in']).map(([t0, x, y]): [number, number, number] => [Math.round(t0), Math.round(x * 100) / 100, Math.round(y * 100) / 100]);
+  if (segs.length) out.in = segs;
   return out;
 }
 

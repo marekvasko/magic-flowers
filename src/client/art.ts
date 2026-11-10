@@ -10,7 +10,7 @@ export interface PlantOpts { dead?: boolean; night?: boolean; wilting?: boolean;
 // Voľby postavičky (char): plazí sa, tancuje, hrabe v tráve (dig = čas v s), babka, lampáš v ruke ('lit' = svieti), bez tieňa
 export interface CharOpts {
   crawl?: boolean; dance?: boolean; dig?: number; babka?: boolean; lamp?: 'lit' | 'on' | boolean; noShadow?: boolean;
-  crouch?: boolean | undefined; pose?: 'fall' | 'swim' | null | undefined;   // chôdza po ľade (#157): čupí, leží na ľade, pláva
+  crouch?: boolean | undefined; pose?: 'fall' | 'swim' | null | undefined; poseK?: number;   // chôdza po ľade (#157): čupí, leží na ľade, pláva; priebeh pózy 0 → 1
 }
 // Prechod na okraji plochy: strana, kam vedie, a ikona cieľovej plochy
 export interface GateInfo { side: 'n' | 's' | 'w' | 'e'; icon: string }
@@ -224,14 +224,16 @@ export const Art = (() => {
   // pláva (vidno len hlavu a plecia nad hladinou, okolo vlnky a ruky, ktoré pádlujú)
   function posed(c: C2, x: number, y: number, s: number, look: Partial<Look> | null, dir: number, phase: number, o: CharOpts): void {
     const rest: CharOpts = { ...o, pose: null, crouch: false, crawl: false, dance: false, dig: 0, lamp: false };
-    if (o.pose === 'fall') {
-      const k = 0.78, side = dir === 1 || dir === 4 || dir === 6 ? -1 : 1;
-      if (!o.noShadow) ell(c, x, y, s * 0.4, s * 0.08, 0, 'rgba(0,0,0,0.25)');
+    const e = 1 - (1 - Math.max(0, Math.min(1, o.poseK ?? 1))) ** 2; // priebeh pádu / ponorenia (zrýchľuje sa)
+    if (o.pose === 'fall') { // padá na chrbát okolo chodidiel, naležato je o kúsok menší, nech sa zmestí do spritu
+      const k = 1 - 0.22 * e, side = dir === 1 || dir === 4 || dir === 6 ? -1 : 1;
+      if (!o.noShadow) ell(c, x, y, s * (0.24 + 0.16 * e), s * 0.08, 0, 'rgba(0,0,0,0.25)');
       c.save();
-      c.translate(x, y - s * 0.13);
-      c.rotate(side * Math.PI / 2);
-      char(c, 0, s * k * 0.47, s * k, look, 0, 0, { ...rest, noShadow: true });
+      c.translate(x - side * s * 0.37 * e, y - s * 0.13 * e);
+      c.rotate(side * Math.PI / 2 * e);
+      char(c, 0, 0, s * k, look, e > 0.5 ? 0 : dir, 0, { ...rest, noShadow: true });
       c.restore();
+      if (e < 1) return;
       const tw = phase * 0.7; // hviezdičky krúžia nad hlavou
       for (let i = 0; i < 3; i++) {
         const a = tw + i * TAU / 3;
@@ -239,14 +241,15 @@ export const Art = (() => {
       }
       return;
     }
-    const wl = y - s * 0.05, dip = s * 0.42; // hladina a o koľko je postavička ponorená
+    const wl = y - s * 0.05 * e, dip = s * 0.42 * e; // hladina a o koľko je postavička ponorená (plynulo sa ponára)
     c.save();
     c.beginPath(); c.rect(x - s, y - s * 1.6, s * 2, wl - (y - s * 1.6)); c.clip();
     char(c, x, y + dip, s, look, dir, 0, { ...rest, noShadow: true });
     c.restore();
-    const bob = Math.sin(phase * 1.5) * s * 0.02;
-    ell(c, x, wl + bob, s * 0.34, s * 0.08, 0, 'rgba(168,214,240,0.9)', '#ffffff');
-    ell(c, x, wl + bob, s * 0.2, s * 0.045, 0, 'rgba(120,180,220,0.9)');
+    const bob = Math.sin(phase * 1.5) * s * 0.02 * e;
+    ell(c, x, wl + bob, s * (0.16 + 0.18 * e), s * (0.04 + 0.04 * e), 0, 'rgba(168,214,240,0.9)', '#ffffff');
+    ell(c, x, wl + bob, s * 0.2 * e, s * 0.045 * e, 0, 'rgba(120,180,220,0.9)');
+    if (e < 0.7) return;
     const skin = '#f2c9a0', pd = Math.sin(phase * 3) * s * 0.03;
     circ(c, x - s * 0.27, wl - s * 0.02 + pd, s * 0.055, skin);
     circ(c, x + s * 0.27, wl - s * 0.02 - pd, s * 0.055, skin);

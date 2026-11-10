@@ -23,9 +23,10 @@ export const ICE = {
   slipRate: 9,      // najvyššie riziko pošmyknutia za sekundu (pri otočke v plnej rýchlosti ≈ 60 % za 0,1 s)
   fallS: 1.6,       // ako dlho po pošmyknutí leží (s)
   splashS: 1.0,     // ako dlho po prepadnutí čľapká, kým môže plávať (s)
-  tol: 0.35,        // o koľko smie poloha klienta ujsť od výpočtu servera, kým ju server opraví (políčka)
-  dtMax: 0.25,      // najdlhší krok fyziky na jeden pohyb (s)
-  dtDef: 0.1        // krok, keď klient čas neposlal alebo je zlý
+  tol: 0.03,        // o koľko smie poloha klienta ujsť od výpočtu servera, kým mu ju server pošle (políčka) – klient ju dobehne plynulo
+  dtMax: 0.5,       // najdlhší úsek fyziky (s): dlhšia medzera medzi pohybmi sa oreže rovnako na klientovi aj na serveri
+  dtDef: 0.1,       // krok, keď klient čas neposlal alebo je zlý
+  segMs: 1000       // vstupy klienta (zmeny smeru) za posledných toľko ms idú s každým pohybom
 } as const;
 
 export const isWinter = (season: number): boolean => season === WINTER;
@@ -66,6 +67,47 @@ export function accelerate(vx: number, vy: number, ix: number, iy: number, dt: n
   if (d <= k || d === 0) return [tx, ty];
   return [vx + dx / d * k, vy + dy / d * k];
 }
+// Presný úsek fyziky so stálym vstupom: rýchlosť sa mení rovnomerne, kým nedosiahne cieľ, potom je stála. Poloha je
+// presný integrál – výsledok nezávisí od toho, na koľko kúskov sa úsek rozdelí (snímky klienta = jeden krok servera).
+// Vráti [vx, vy, dx, dy].
+export function advance(vx: number, vy: number, ix: number, iy: number, dt: number): [number, number, number, number] {
+  if (dt <= 0) return [vx, vy, 0, 0];
+  const tx = ix * ICE.speed, ty = iy * ICE.speed, ex = tx - vx, ey = ty - vy, d = Math.hypot(ex, ey);
+  const k = ix || iy ? ICE.accel : ICE.brake;
+  if (d === 0) return [vx, vy, vx * dt, vy * dt];
+  const ux = ex / d, uy = ey / d, tr = d / k; // za tr sekúnd dosiahne cieľ
+  if (dt <= tr) return [vx + ux * k * dt, vy + uy * k * dt, vx * dt + ux * k * dt * dt / 2, vy * dt + uy * k * dt * dt / 2];
+  return [tx, ty, vx * tr + ux * k * tr * tr / 2 + tx * (dt - tr), vy * tr + uy * k * tr * tr / 2 + ty * (dt - tr)];
+}
+// Telo šmýkajúceho sa hráča: poloha a hybnosť (mení sa na mieste)
+export interface Slider { x: number; y: number; vx: number; vy: number }
+// Úsek šmýkania s nárazom do prekážky po osiach (ako chôdza): ok(x, y) = smie telo stáť na (x, y). Server aj klient.
+export function slideStep(b: Slider, ix: number, iy: number, dt: number, ok: (x: number, y: number) => boolean): void {
+  const [vx, vy, dx, dy] = advance(b.vx, b.vy, ix, iy, dt);
+  b.vx = vx; b.vy = vy;
+  if (dx && ok(b.x + dx, b.y)) b.x += dx; else if (dx) b.vx = 0;
+  if (dy && ok(b.x, b.y + dy)) b.y += dy; else if (dy) b.vy = 0;
+}
+// Body, v ktorých sa úsek od a po z (ms klienta) delí: násobky GRID_MS (nárazy do prekážok sa tak skúšajú na tých istých
+// miestach na klientovi aj na serveri, nech sa snímky a pohyby delia akokoľvek) a ďalšie body (zmena vstupu, koniec ležania)
+export const GRID_MS = 10;
+export function cutsOf(a: number, z: number, extra: readonly number[]): number[] {
+  const out = [a];
+  for (let g = (Math.floor(a / GRID_MS) + 1) * GRID_MS; g < z; g += GRID_MS) out.push(g);
+  for (const x of extra) if (x > a && x < z) out.push(x);
+  out.push(z);
+  return [...new Set(out)].sort((p, q) => p - q);
+}
+// Vstup na dve desatinné miesta – tak ide v správe move a s presne týmto číslom počítajú klient aj server
+export const roundIn = (v: number): number => Math.round(v * 100) / 100;
+// Vstup platný v čase t (ms klienta): posledná zmena [t0, ix, iy] s t0 ≤ t, inak fallback
+export type Seg = [number, number, number];
+export function inputAt(segs: readonly Seg[], t: number, fallback: readonly [number, number]): [number, number] {
+  let r: [number, number] = [fallback[0], fallback[1]];
+  for (const [t0, ix, iy] of segs) if (t0 <= t) r = [ix, iy]; else break;
+  return r;
+}
+
 // Riziko pošmyknutia za krok dt: podľa uhla medzi smerom šmýkania a vstupom a podľa rýchlosti (0 = bezpečné).
 // Server hodí kockou (ctx.rng) – pomalá zákruta je bezpečná, prudká otočka v plnej rýchlosti takmer istá.
 export function slipChance(vx: number, vy: number, ix: number, iy: number, dt: number): number {

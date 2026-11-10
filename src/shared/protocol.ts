@@ -13,8 +13,8 @@ export type WishKind = 'zlato' | 'jar' | 'poklad';
 export type ClientMessage =
   | { t: 'join'; room: string; name: string; look?: Look | null }   // bez vzhľadu: z uloženia alebo predvolený
   // a = presný smer pohľadu, cr = plazí sa, lp = drží lampáš, ar = poradie plochy (pohyb z predchádzajúcej plochy sa zahodí);
-  // chôdza po ľade (#157): ix, iy = vstup (smer × spomalenie, dĺžka ≤ 1), ck = čupí, ts = čas klienta (ms)
-  | { t: 'move'; x: number; y: number; dir: number; a?: number | undefined; cr?: boolean; lp?: boolean; ar: number; ix?: number; iy?: number; ck?: boolean; ts?: number }
+  // chôdza po ľade (#157): ix, iy = vstup (smer × spomalenie, dĺžka ≤ 1), ck = čupí, ts = čas klienta (ms), in = zmeny vstupu [od ms, ix, iy] za poslednú sekundu
+  | { t: 'move'; x: number; y: number; dir: number; a?: number | undefined; cr?: boolean; lp?: boolean; ar: number; ix?: number; iy?: number; ck?: boolean; ts?: number; in?: [number, number, number][] }
   | { t: 'act'; x: number; y: number; item: ItemId | '' }   // '' = prázdna ruka
   | { t: 'buy' | 'sell' | 'store' | 'unstore'; id: ItemId; n: number }
   | { t: 'upgrade'; kind: UpgradeId }
@@ -105,7 +105,8 @@ export type ServerMessage =
   | { t: 'tile'; i: number; v: TileView }
   | { t: 'pos'; x: number; y: number }                     // server pohyb odmietol – späť na potvrdené miesto
   // chôdza po ľade (#157): hybnosť, koľko ms ešte leží, či pláva; x, y = oprava polohy (server ju vypočítal inak)
-  | { t: 'iw'; vx: number; vy: number; fall: number; sw: 0 | 1; x?: number; y?: number }
+  // ts = čas klienta (ms), ku ktorému stav platí (oprava pohybu); bez ts platí hneď (cheat, roztopenie)
+  | { t: 'iw'; vx: number; vy: number; fall: number; sw: 0 | 1; x?: number; y?: number; ts?: number; why?: 'slip' | 'hole' | 'melt' | 'out' }
   | {
     t: 'me'; coins: number; water: number; inv: Partial<Record<ItemId, number>>; recipes: string[]; seen: SpeciesId[]; vily: boolean;
     rep: number; up: { can: number; composter: number; plots: number }; canCap: number; plotLimit: number; plotsUsed: number; maxActive: number;

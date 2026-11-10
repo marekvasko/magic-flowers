@@ -8,6 +8,7 @@ import { ICE } from '../src/shared/icewalk.ts';
 import * as E from '../src/server/engine.ts';
 import * as IceWalk from '../src/server/icewalk.ts';
 import * as Cheats from '../src/server/cheats.ts';
+import * as IceC from '../src/client/icewalk.ts';
 import type { CheatData } from '../src/server/cheats.ts';
 import type { Msg } from '../src/server/game.ts';
 import type { Presence } from '../src/server/world.ts';
@@ -95,13 +96,13 @@ test('šmýkanie: vstup na ľad dá hybnosť; bez vstupu sa hráč šmýka ďale
   const fix = r.outbox.find((m): m is Extract<Msg, { t: 'iw' }> => m.t === 'iw');
   assert.ok(fix && near(fix.x ?? NaN, x, 1e-3), 'oprava polohy klientovi');
   assert.ok(must(iw(w)).vx < ICE.speed && must(iw(w)).vx > 0, 'brzdí');
-  // na ľade platí vždy výpočet servera; keď je klient blízko, opravu mu neposiela
-  const st = must(iw(w)), ex = x + IW.accelerate(st.vx, st.vy, 0, 0, 0.1)[0] * 0.1;
-  r = E.commitBatch(w, [mv('ana', ex + 0.05, cy, 0, 0)], spec);
+  // na ľade platí vždy výpočet servera (presný integrál); keď je klient blízko, opravu mu neposiela
+  const st = must(iw(w)), ex = x + IW.advance(st.vx, st.vy, 0, 0, 0.1)[2];
+  r = E.commitBatch(w, [mv('ana', ex + 0.01, cy, 0, 0)], spec);
   assert.ok(near(pos(w)[0], ex) && !r.outbox.some(m => m.t === 'iw'), 'malý rozdiel: bez opravy');
 });
 
-test('pošmyknutie: otočka v plnej rýchlosti → leží (pevný počet krokov), nehýbe sa, potom vstane; každý svet rovnako (kocka enginu)', () => {
+test('pošmyknutie: otočka v plnej rýchlosti → leží (pevný počet krokov) a šmýka sa ďalej bez vstupu, potom vstane; každý svet rovnako (kocka enginu)', () => {
   const run = (seed: number): { slipAt: number; w: W; out: Msg[] } => {
     const { w, cx, cy } = iceWorld(seed);
     w.icewalk = { ana: { vx: ICE.speed, vy: 0, t: ts } };
@@ -122,14 +123,20 @@ test('pošmyknutie: otočka v plnej rýchlosti → leží (pevný počet krokov)
   assert.strictEqual(a.slipAt, b.slipAt, 'rovnaký svet → rovnaký výsledok');
   assert.ok(a.out.some(m => textOf(m) === IceWalk.MSG.slip) && a.out.some(m => m.t === 'fx' && m.k === 'ice'));
   const w = a.w, st = must(iw(w)), fall = must(st.fall);
-  assert.deepStrictEqual([st.vx, st.vy], [0, 0]);
+  const slipMsg = a.out.find((m): m is Extract<Msg, { t: 'iw' }> => m.t === 'iw' && m.why === 'slip');
+  assert.ok(slipMsg && slipMsg.ts === st.t && slipMsg.x === pos(w)[0], 'pošmyknutie ostane tam, kde je (žiadny presun), k času pohybu');
+  assert.ok(Math.hypot(st.vx, st.vy) > 0, 'hybnosť ostala – ležiaci sa šmýka ďalej');
   assert.strictEqual(fall - w.tick, IW.ticksOf(ICE.fallS, w.daySeconds));
   assert.strictEqual(IceWalk.pose(st, w.tick), 'fall');
-  const [x, y] = pos(w);
+  // kým leží, vstup sa nepočíta: šmýka sa a brzdí ako bez vstupu
+  const [x, y] = pos(w), [, , ex, ey] = IW.advance(st.vx, st.vy, 0, 0, 0.1);
+  st.t = ts; st.fe = ts + 1000; // druhý beh (b) posunul spoločné hodiny testu; leží ešte sekundu (čas klienta)
   let r = E.commitBatch(w, [mv('ana', x + 0.2, y, 1, 0)], spec);
-  assert.deepStrictEqual([r.rejected.length, pos(w)[0]], [1, x], 'kým leží, nehne sa');
+  assert.ok(r.applied.length === 1 && near(pos(w)[0], x + ex) && near(pos(w)[1], y + ey), 'leží a šmýka sa bez vstupu');
+  assert.strictEqual(must(iw(w)).fall, fall, 'stále leží');
   E.advanceTo(w, fall, spec);
-  r = E.commitBatch(w, [mv('ana', x + 0.03, y, 1, 0)], spec);
+  const [x2] = pos(w);
+  r = E.commitBatch(w, [mv('ana', x2 + 0.03, y, 1, 0)], spec);
   assert.strictEqual(r.applied.length, 1, 'vstal');
   assert.strictEqual(iw(w)?.fall, undefined);
   assert.strictEqual(IceWalk.pose(iw(w), w.tick), null);
@@ -153,7 +160,9 @@ test('čupnutie: čupnutý sa nepošmykne ani pri otočkách a pred otvorom zast
   let r = E.commitBatch(w, [mv('ana', cx + 0.6, cy, 1, 0, 0.1, { ck: true })], spec);
   assert.deepStrictEqual([r.rejected.length, pos(w)[0]], [1, cx + 0.45], 'čupnutý pred otvorom zastane');
   r = E.commitBatch(w, [mv('ana', cx + 0.6, cy, 1, 0)], spec);
-  assert.deepStrictEqual(pos(w), [cx + 1, cy], 'prepadol sa – je uprostred otvoru');
+  assert.deepStrictEqual(pos(w), [cx + 1, cy], 'prepadol sa – skĺzne do stredu otvoru');
+  const fm = r.outbox.find((m): m is Extract<Msg, { t: 'iw' }> => m.t === 'iw');
+  assert.ok(fm && fm.why === 'hole' && fm.x === cx + 1 && fm.sw === 1 && fm.fall > 0, 'klient dostane stred otvoru, kam sa plynulo dosunie');
   assert.ok(r.outbox.some(m => textOf(m) === IceWalk.MSG.fallIn) && r.outbox.some(m => m.t === 'fx' && m.k === 'splash'));
   assert.strictEqual(must(iw(w)).sw, 1);
   assert.strictEqual(IceWalk.pose(iw(w), w.tick), 'swim');
@@ -288,4 +297,170 @@ test('ladiaca stránka: World ukáže stav hráča na ľade, Map vrstvu ľadu, C
   assert.deepStrictEqual(Cheats.parseCheat(room, { op: 'iw', player: 'ana', what: 'momentum', vx: 2, vy: '1' }, k => k), { op: 'iw', key: 'ana', what: 'momentum', vx: 2, vy: 1 });
   assert.deepStrictEqual(Cheats.parseCheat(room, { op: 'iw', player: 'ana', what: 'slip' }, k => k), { op: 'iw', key: 'ana', what: 'slip' });
   assert.throws(() => Cheats.parseCheat(room, { op: 'iw', player: 'ana', what: 'fly' }, k => k), /what must be/);
+});
+
+// ---- Klient a server počítajú to isté (#163: bez skokov) ----
+
+test('klient a server vypočítajú to isté šmýkanie: nerovnaké snímky, zmeny vstupu medzi pohybmi, zlúčené pohyby – žiadna oprava', () => {
+  const { w, cx, cy } = iceWorld(15);
+  const me = { x: cx, y: cy, vx: 0, vy: 0 }, cl = IceC.create(), anywhere = (): boolean => true;
+  Object.assign(save(w, 'ana'), { x: cx, y: cy });
+  w.icewalk = { ana: { vx: 0, vy: 0, t: 10000, ix: 0, iy: 0 } };
+  cl.lastT = 10000;
+  // vstup podľa času (čupí – bez pošmyknutia): doprava, šikmo, späť, pustí, hore…
+  const inputOf = (t: number): [number, number] => t < 10400 ? [0.5, 0] : t < 10750 ? [0.35, -0.35] : t < 11300 ? [-0.5, 0] : t < 11600 ? [0, 0] : t < 12100 ? [0, 0.5] : [-0.21, -0.43];
+  let now = 10000, sent = 0, k = 0, fixes = 0;
+  const pending: E.Input[] = [];
+  while (now < 13000) {
+    now += 14 + ((k * 7919) % 13); k++; // snímky 14–26 ms
+    const [t0, t] = IceC.clock(cl, now), [ix, iy] = inputOf(t0).map(IW.roundIn) as [number, number];
+    IceC.input(cl, t0, ix, iy);
+    IceC.slideFrame(cl, me, t0, t, ix, iy, anywhere);
+    IceC.frame(cl, me, { t0, t, ix, iy, ice: true });
+    if (t - sent >= 90) { // pohyb ako ho pošle klient
+      sent = t;
+      pending.push(act('pos', 'ana', { x: me.x, y: me.y, ix, iy, ck: true, ts: t, in: cl.segs.map((g): [number, number, number] => [g[0], g[1], g[2]]) }));
+      if (k % 3) { // server zlúči dva pohyby z jedného rámca: platí len posledný
+        const inp = must(pending.pop());
+        pending.length = 0;
+        const r = E.commitBatch(w, [inp], spec);
+        fixes += r.outbox.filter(m => m.t === 'iw').length;
+        const [sx, sy] = pos(w);
+        assert.ok(near(sx, me.x, 1e-9) && near(sy, me.y, 1e-9), `server ${sx},${sy} = klient ${me.x},${me.y} (t ${t})`);
+      }
+    }
+  }
+  assert.strictEqual(fixes, 0, 'žiadna oprava');
+  assert.ok(Math.hypot(me.x - cx, me.y - cy) > 0.3, 'naozaj sa šmýkal');
+});
+
+test('oprava zo servera sa nikdy nepreskočí: klient prepočíta snímky od ts a rozdiel dobieha plynulo', () => {
+  const cl = IceC.create(), me = { x: 5, y: 5, vx: 2, vy: 0 }, anywhere = (): boolean => true;
+  cl.lastT = 0;
+  for (let t = 20; t <= 400; t += 20) {
+    const [t0, t1, dt] = IceC.clock(cl, t);
+    IceC.input(cl, t0, 0, 0);
+    IceC.slide(me, 0, 0, dt, anywhere);
+    IceC.frame(cl, me, { t0, t: t1, ix: 0, iy: 0, ice: true });
+  }
+  // server: v čase 200 bol o 0,2 ďalej a pošmykol sa (leží 1 s) – klient prepočíta od 200 bez vstupu
+  const at = must(cl.frames.find(f => f.t === 200)), before = { x: me.x, y: me.y };
+  IceC.onMsg(cl, me, { t: 'iw', x: at.x + 0.2, y: at.y, vx: 1.5, vy: 0, fall: 1000, sw: 0, ts: 200, why: 'slip' }, 400, anywhere);
+  assert.deepStrictEqual([me.x, me.y], [before.x, before.y], 'poloha sa hneď nezmení');
+  const b = { x: at.x + 0.2, y: at.y, vx: 1.5, vy: 0 };
+  IW.slideStep(b, 0, 0, 0.2, anywhere);
+  assert.ok(near(before.x + cl.pend.x, b.x, 1e-9), 'cieľ = prepočet od stavu servera');
+  let prev = me.x, maxStep = 0;
+  for (let t = 420; t <= 1400; t += 20) {
+    const [t0, t1, dt] = IceC.clock(cl, t);
+    IceC.slide(me, 0, 0, dt, anywhere);
+    IceC.frame(cl, me, { t0, t: t1, ix: 0, iy: 0, ice: true });
+    maxStep = Math.max(maxStep, Math.abs(me.x - prev) - Math.abs(me.vx) * dt);
+    prev = me.x;
+  }
+  assert.ok(maxStep < 0.06, `dobieha po kúskoch (najväčší kúsok opravy ${maxStep.toFixed(3)})`);
+  assert.ok(Math.abs(cl.pend.x) < 1e-3, 'oprava je dobehnutá');
+  assert.deepStrictEqual(cl.corr.length, 1);
+});
+
+// ---- Prepadnutie bez presunu, roztopenie ----
+
+test('prepadnutie počas šmýkania: stredom vojde do otvoru, klient sa nezastaví skokom – do stredu otvoru sa plynulo dosunie', () => {
+  const { w, i, cx, cy } = iceWorld(16);
+  must(w.tiles[i + 1]).cut = 1;
+  Object.assign(save(w, 'ana'), { x: cx + 0.3, y: cy });
+  w.icewalk = { ana: { vx: 3, vy: 0, t: ts, ix: 1, iy: 0 } };
+  const r = E.commitBatch(w, [mv('ana', cx + 0.6, cy, 1, 0)], spec);
+  assert.deepStrictEqual(pos(w), [cx + 1, cy]);
+  const m = must(r.outbox.find((q): q is Extract<Msg, { t: 'iw' }> => q.t === 'iw'));
+  assert.ok(m.why === 'hole' && m.x === cx + 1 && m.sw === 1);
+  assert.deepStrictEqual([must(iw(w)).vx, must(iw(w)).sw], [0, 1]);
+  // klient: predpovedal prepadnutie na okraji otvoru (x + 0,55) – správa servera ho neprenesie, len dosunie
+  const cl = IceC.create(), me = { x: cx + 0.55, y: cy, vx: 0, vy: 0 };
+  IceC.predictFallIn(cl, me, 0);
+  IceC.onMsg(cl, me, m, 50, () => true); // klient snímku s týmto ts nemá – cieľom je poloha servera
+  assert.deepStrictEqual([me.x, cl.pend.x > 0.4], [cx + 0.55, true], 'žiadny skok');
+  let prev = me.x;
+  for (let t = 66; t <= 700; t += 16) { IceC.frame(cl, me, { t0: t - 16, t, ix: 0, iy: 0, ice: false }); assert.ok(me.x - prev < 0.08, 'po kúskoch'); prev = me.x; }
+  assert.ok(near(me.x, cx + 1, 0.01), 'v strede otvoru');
+});
+
+test('roztopenie: kto stojí na ľade jazierka, keď zima prejde na jar, prepadne sa na mieste a pláva (klient pošle pohyb hneď, ako zbadá vodu)', () => {
+  const { w, cx, cy } = iceWorld(17);
+  w.icewalk = { ana: { vx: 0, vy: 0, t: ts } }; // stojí na ľade, nehýbe sa
+  E.advanceTo(w, (WINTER_DAY - 1 + D.DAYS_PER_SEASON) * TPD + 10, spec); // cez polnoc do jari
+  assert.strictEqual(D.seasonOf(D.dayOfTick(w.tick)), 0);
+  // klient: pod ním je otvorená voda → predpovie prepadnutie a pošle pohyb na tom istom mieste
+  const cl = IceC.create(), me = { x: cx, y: cy, vx: 0, vy: 0 };
+  assert.strictEqual(IceC.mode(cl, must(w.tiles[Math.floor(cy) * D.W + Math.floor(cx)]), 0, 0), 'swim');
+  IceC.predictFallIn(cl, me, 0);
+  assert.deepStrictEqual([cl.swim, IceC.pose(cl, 0)[0], IceC.pose(cl, 200)[1]], [true, 'swim', 0.5], 'ponára sa plynulo');
+  const r = E.commitBatch(w, [mv('ana', cx, cy, 0, 0)], spec);
+  assert.deepStrictEqual(pos(w), [cx, cy], 'ostal, kde stál');
+  assert.strictEqual(must(iw(w)).sw, 1, 'pláva');
+  assert.ok(r.outbox.some(m => textOf(m) === IceWalk.MSG.melt) && r.outbox.some(m => m.t === 'iw' && m.why === 'melt'));
+  IceC.onMsg(cl, me, must(r.outbox.find((m): m is Extract<Msg, { t: 'iw' }> => m.t === 'iw')), 50, () => true);
+  assert.deepStrictEqual([cl.swim, cl.pred, me.x, me.y], [true, 0, cx, cy], 'server potvrdil predpoveď – bez presunu');
+});
+
+test('roztopenie pod hráčom kdekoľvek: otvor vysekaný pod stojacim hráčom ho pri ďalšom pohybe zhodí do vody na mieste', () => {
+  const { w, i, cx, cy } = iceWorld(18);
+  w.icewalk = { ana: { vx: 0, vy: 0, t: ts } };
+  must(w.tiles[i]).cut = 1; // niekto vysekal otvor priamo pod ňou
+  const r = E.commitBatch(w, [mv('ana', cx + 0.02, cy, 0, 0)], spec);
+  assert.deepStrictEqual(pos(w), [cx, cy], 'bez presunu');
+  assert.ok(r.outbox.some(m => m.t === 'iw' && m.why === 'melt' && m.sw === 1));
+});
+
+test('ležanie po pošmyknutí sa meria časom klienta: v jednom pohybe do konca ležania bez vstupu, potom so vstupom – klient rovnako', () => {
+  const { w, cx, cy } = iceWorld(19);
+  Object.assign(save(w, 'ana'), { x: cx - 1, y: cy });
+  w.icewalk = { ana: { vx: 2, vy: 0, t: 5000, ix: 0, iy: 0, fall: w.tick + 1000, fe: 5050 } };
+  E.commitBatch(w, [act('pos', 'ana', { x: cx - 1, y: cy, ix: 0.5, iy: 0, ts: 5100, in: [[5000, 0.5, 0]] })], spec);
+  const b = { x: cx - 1, y: cy, vx: 2, vy: 0 }, ok = (): boolean => true;
+  IW.slideStep(b, 0, 0, 0.05, ok); IW.slideStep(b, 0.5, 0, 0.05, ok);
+  assert.ok(near(pos(w)[0], b.x, 1e-9), 'server delí úsek koncom ležania');
+  const cl = IceC.create(), me = { x: cx - 1, y: cy, vx: 2, vy: 0 };
+  cl.fallUntil = 5050;
+  IceC.slideFrame(cl, me, 5000, 5030, 0.5, 0, ok); IceC.slideFrame(cl, me, 5030, 5100, 0.5, 0, ok); // iné snímky, ten istý výsledok
+  assert.ok(near(me.x, b.x, 1e-9), 'klient tiež');
+  assert.deepStrictEqual(IW.cutsOf(5003, 5031, [5017]), [5003, 5010, 5017, 5020, 5030, 5031], 'mriežka 10 ms a zmeny');
+});
+
+test('náraz do brehu: klient (snímky) a server (pohyby) sa rozídu najviac o kúsok mriežky, nikdy o celý pohyb', () => {
+  const { w, cx, cy } = iceWorld(20);
+  const se = D.seasonOf(D.dayOfTick(w.tick));
+  const body = (x: number, y: number): boolean => [[-1, -1], [1, -1], [-1, 1], [1, 1]].every(([sx = 0, sy = 0]) =>
+    IW.passableNow(w.tiles[Math.floor(y + sy * D.BODY.ry) * D.W + Math.floor(x + sx * D.BODY.rx)], se, false));
+  const me = { x: cx, y: cy, vx: 0, vy: 0 }, cl = IceC.create();
+  Object.assign(save(w, 'ana'), { x: cx, y: cy });
+  w.icewalk = { ana: { vx: 0, vy: 0, t: 20000, ix: 0, iy: 0 } };
+  cl.lastT = 20000;
+  let now = 20000, sent = 20000, k = 0, worst = 0;
+  while (now < 23000) {
+    now += 15 + ((k * 31) % 11); k++;
+    const [t0, t] = IceC.clock(cl, now), ix = IW.roundIn(now < 21500 ? 0.5 : -0.5); // čupí: k brehu a späť
+    IceC.input(cl, t0, ix, 0);
+    IceC.slideFrame(cl, me, t0, t, ix, 0, body);
+    IceC.frame(cl, me, { t0, t, ix, iy: 0, ice: true });
+    if (t - sent >= 95) {
+      sent = t;
+      E.commitBatch(w, [act('pos', 'ana', { x: me.x, y: me.y, ix, iy: 0, ck: true, ts: t, in: cl.segs.map((g): [number, number, number] => [g[0], g[1], g[2]]) })], spec);
+      worst = Math.max(worst, Math.hypot(pos(w)[0] - me.x, pos(w)[1] - me.y));
+    }
+  }
+  assert.ok(worst < 0.03, `najväčší rozdiel ${worst.toFixed(4)} políčka`);
+  assert.ok(me.x > cx + 1, 'došiel až k brehu');
+});
+
+test('zíde z ľadu na breh: od chvíle, keď je stredom na zemi, platí poloha klienta ako na zemi (klient sa tam hneď zastaví)', () => {
+  const w = makeWorld(21, winterTick());
+  w.icewalk = {};
+  const k = w.tiles.findIndex((t, j) => t.g === 'water' && w.tiles[j + 1]?.g === 'sand' && w.tiles[j - 1]?.g === 'water');
+  const x0 = k % D.W + 0.8, y0 = Math.floor(k / D.W) + 0.5;
+  Object.assign(save(w, 'ana'), { x: x0, y: y0, area: 'garden' });
+  w.icewalk = { ana: { vx: 3, vy: 0, t: 30000, ix: 0, iy: 0 } };
+  // klient: o 0,1 s je stredom na piesku (x + 0,25) a tam zastal (na zemi bez vstupu)
+  const r = E.commitBatch(w, [act('pos', 'ana', { x: x0 + 0.25, y: y0, ix: 0, iy: 0, ts: 30100, in: [[29900, 0, 0]] })], spec);
+  assert.deepStrictEqual([pos(w)[0], iw(w), r.outbox.filter(m => m.t === 'iw').length], [x0 + 0.25, undefined, 0]);
 });
