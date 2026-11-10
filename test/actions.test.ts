@@ -24,6 +24,7 @@ import * as I from '../src/server/items.ts';
 import * as Ice from '../src/server/ice.ts';
 import * as Areas from '../src/server/areas.ts';
 import * as Spiders from '../src/server/spiders.ts';
+import * as Vehicles from '../src/server/vehicles.ts';
 import * as Dielna from '../src/server/dielna.ts';
 import type { GameCtx, GameWorld, Msg } from '../src/server/game.ts';
 import type { Presence, Tile } from '../src/server/world.ts';
@@ -615,6 +616,7 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
   Ice.applyIcehouse(room.icehouse, room.tiles);
   room.icehouse.bl = 0; room.dielna = Dielna.newDielna(); room.redeem = {}; // ako migrácia z verzie 10 (#23)
   room.plotsUsed = Econ.plotsUsedOf(room.tiles); room.maxRep = Econ.maxRepOf(room.saves); // ako getRoom: odvodené počítadlá sa pri načítaní prepočítajú
+  room.vehicles = Vehicles.loadVehicles(start.vehicles); // ako getRoom: fúrik a sane (#158), staršie uloženie ich nemá
   const les = Areas.loadLes(savedLes, start.lesSeed); // ako getRoom: Les divov, trh a nástenka, pavučiny (jeden živý kontext)
   const world = Object.assign(room, { les });
   const live: GameCtx = E.liveCtx(world, 'ekonomika');

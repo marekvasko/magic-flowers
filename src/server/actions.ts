@@ -21,6 +21,7 @@ import * as Events from './events.ts';
 import * as Spiders from './spiders.ts';
 import type { SpiderInputs } from './spiders.ts';
 import * as Dielna from './dielna.ts';
+import * as Vehicles from './vehicles.ts';
 import { gardenOf, put, redeemOf, savesOf, sl } from './game.ts';
 import type { GameCtx, GameProposer, GameSlices, GameWorld, Msg, To } from './game.ts';
 import type { MovedBatch, Presence, Tile } from './world.ts';
@@ -288,7 +289,7 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
         for (const i of bodyTiles(area, p.x, p.y)) reads.add(`tile:${area}:${i}`);
         reads.add(`tile:${area}:${Math.floor(p.y) * aw + Math.floor(p.x)}`);
       }
-      return E.mergeKeys({ writes: [`pos:${d.key}`], reads: [...reads] }, Spiders.posKeys(d, w)); // pavučiny v lese, pavúky
+      return E.mergeKeys({ writes: [`pos:${d.key}`], reads: [...reads] }, Spiders.posKeys(d, w), Vehicles.posKeys(d, w)); // pavučiny v lese, pavúky, fúrik (#158)
     },
     run(s, d, ctx) {
       const pos = sl(s, `pos:${d.key}`) || ctx.reject(null);
@@ -305,6 +306,7 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
         ctx.emit({ to: d.key, t: 'scavDone' });
         ctx.emit(toast$(d.key, 'Pohol(a) si sa skôr, než si dohľadal(a).'));
       }
+      Vehicles.onPos(s, d, ctx, from, p); // fúrik či sane, ktoré hráč drží, idú s ním; spolujazdec sám nechodí (#158)
       const { w: aw } = D.areaSize(area), under = sl(s, `tile:${area}:${Math.floor(p.y) * aw + Math.floor(p.x)}`);
       if (under && under.g === 'gate') {
         const g = D.gateAt(area, Math.floor(p.x), Math.floor(p.y)), a = g && D.arrival(area, g.to);
@@ -319,7 +321,10 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
   },
   // hráč je pripojený (každých 15 s) / odišiel: „naposledy videný“ (d: { key })
   seen: { keys: d => ({ writes: [`pos:${d.key}`] }), run(s, d, ctx) { const pos = sl(s, `pos:${d.key}`) || ctx.reject(null); pos.lastTick = ctx.tick; } },
-  leave: { keys: d => ({ writes: [`pos:${d.key}`] }), run(s, d, ctx) { const pos = sl(s, `pos:${d.key}`) || ctx.reject(null); pos.lastTick = ctx.tick; } },
+  leave: {
+    keys: (d, w) => E.mergeKeys({ writes: [`pos:${d.key}`] }, Vehicles.leaveKeys(d, w)), // kto držal fúrik, pustí ho; spolujazdec vystúpi (#158)
+    run(s, d, ctx) { const pos = sl(s, `pos:${d.key}`) || ctx.reject(null); pos.lastTick = ctx.tick; Vehicles.onLeave(s, d); }
+  },
   // pripojenie (d: { key, name, look, start: { coins, rep }, quick }): nové alebo prevedené uloženie, vzhľad, uvítanie;
   // server po vykonaní pošle hráčovi svet (pokyn joined). quick = rýchle znovupripojenie (bez hlásení)
   join: {
