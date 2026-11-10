@@ -62,6 +62,16 @@ export interface PlayerSave {
   lastTick?: number;          // kedy bol hráč naposledy v hre
   wellFern?: number;          // v ktorom období (seasonNo) mu studňa naposledy dala papraďové semienko
 }
+// Chôdza po ľade (#157, src/server/icewalk.ts): hybnosť (vx, vy v políčkach/s), čas posledného pohybu podľa klienta (t, ms),
+// do ktorého kroku leží po pošmyknutí alebo čľapká po prepadnutí (fall) a či pláva vo vode (sw).
+// Hráč ho má len na ľade, vo vode alebo kým leží; inak záznam chýba.
+export interface IceWalk {
+  vx: number;
+  vy: number;
+  t?: number;
+  fall?: number;
+  sw?: 1;
+}
 
 // ---- Udalosti v plánovači (engine.js) ----
 interface EventBase<T extends string, D> {
@@ -190,4 +200,5 @@ export interface SaveFile {
   tiles: SavedTile[];
   hory: SavedHoryTile[];
   les: string;                // rozloženie Lesa divov, jeden znak na políčko (D.LES_CODE)
+  icewalk?: Partial<Record<PlayerKey, IceWalk>>;   // chôdza po ľade (#157); staršie uloženia ju nemajú (= nikto nie je na ľade)
 }

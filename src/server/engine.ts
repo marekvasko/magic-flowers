@@ -296,6 +296,7 @@ export function reconcile<W extends EngineWorld, P extends { key: string }, M>(w
 //   save:<kľúč> | save:*                  uloženie hráča / všetky uloženia – bez polohy (pozri pos)
 //   pos:<kľúč>                            poloha hráča v jeho uložení { x, y, area, lastTick }: píše ju každý pohyb,
 //                                         preto je to vlastný výrez a uloženie (save:) ju nikdy neprepíše
+//   iw:<kľúč>                             chôdza hráča po ľade (world.icewalk[kľúč], #157): hybnosť, pád, plávanie
 //   market:seed_<sp> | market:fl_<sp> | market:compost | market:festival | market:hist | market:news | market:npc:<meno>
 //   market:seed_* | market:fl_* | market:npc:* | market:*     kolekcie trhu / celý trh
 //   storage                               sklad ako { inv, fb } (world.storage + world.storageFb)
@@ -351,6 +352,7 @@ export function sliceOf(world: EngineWorld, key: string): Slice | null {
     case 'tile': { const coll = b === 'garden' ? 'tiles' : b; return c === '*' ? at(w, coll) : at(w[coll], +c); }
     case 'save': { const k = key.slice(5); return k === '*' ? savesSlice(w) : saveSlice(w['saves'], k); } // kľúč hráča smie obsahovať ':'
     case 'pos': return posSlice(w['saves'], key.slice(4));
+    case 'iw': return at(w['icewalk'], key.slice(3)); // chôdza po ľade (#157): world.icewalk[kľúč hráča]
     case 'market': {
       const m = w['market'];
       if (b === '*') return at(w, 'market');

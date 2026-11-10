@@ -13,6 +13,7 @@ import type { JsonRecord } from '../shared/util.ts';
 import * as I from './items.ts';
 import * as Ice from './ice.ts';
 import * as Econ from './economy.ts';
+import * as IceWalk from './icewalk.ts';
 import { ROOM_RE } from './debug.ts';
 import { sl } from './game.ts';
 import type { GameCtx, GameProposer, GameSlices } from './game.ts';
@@ -25,7 +26,8 @@ export type CheatData =
   | ({ op: 'coins'; key: PlayerKey } & Amount)
   | ({ op: 'rep'; key: PlayerKey } & Amount)
   | ({ op: 'item'; key: PlayerKey | null; id: ItemId } & Amount)
-  | ({ op: 'ice' } & Amount);
+  | ({ op: 'ice' } & Amount)
+  | IceWalk.IceCheat;   // chôdza po ľade (#157): pošmyknúť, hodiť do vody, hybnosť, zrušiť
 
 // Nová hodnota: celé číslo, nie záporné
 export const target = (have: number, a: Amount): number => Math.max(0, Math.round(a.set ? a.n : have + a.n));
@@ -39,12 +41,13 @@ export function setCount(c: Container, id: ItemId, want: number, tick: number): 
 const saveOf = (s: GameSlices, key: PlayerKey, ctx: GameCtx): PlayerSave => sl(s, `save:${key}`) || ctx.reject('no such player');
 export const PROPOSERS: { cheat: GameProposer<CheatData> } = {
   cheat: {
-    keys: d => {
+    keys: (d, w) => {
       switch (d.op) {
         case 'coins': return { writes: [`save:${d.key}`] };
         case 'rep': return { writes: ['save:*', 'maxRep'] }; // najvyššia reputácia záhrady sa prepočíta zo všetkých hráčov
         case 'item': return d.key === null ? { writes: ['storage'], reads: ['icehouse'] } : { writes: [`save:${d.key}`] };
         case 'ice': return { writes: ['icehouse', 'storage'] };
+        case 'iw': return IceWalk.cheatKeys(d, w);
       }
     },
     run(s, d, ctx) {
@@ -62,6 +65,7 @@ export const PROPOSERS: { cheat: GameProposer<CheatData> } = {
           return;
         }
         case 'ice': Ice.setIce(s.icehouse, s.storage, ctx.tick, target(s.icehouse.ice, d)); return;
+        case 'iw': IceWalk.cheat(s, d, ctx); return;
       }
     }
   }
@@ -115,6 +119,12 @@ export function parseCheat(room: CheatRoom, b: JsonRecord, keyId: (k: PlayerKey)
       return { op: 'item', key: b['player'] === 'storage' ? null : playerKey(room, b['player'], keyId), id, ...amount(b) };
     }
     case 'ice': return { op: 'ice', ...amount(b) };
+    case 'iw': { // chôdza po ľade (#157)
+      const what = b['what'];
+      if (what !== 'slip' && what !== 'swim' && what !== 'momentum' && what !== 'clear') throw new Bad(400, 'what must be slip, swim, momentum or clear');
+      const key = playerKey(room, b['player'], keyId);
+      return what === 'momentum' ? { op: 'iw', key, what, vx: num(b['vx'], 'vx'), vy: num(b['vy'], 'vy') } : { op: 'iw', key, what };
+    }
     case 'jump': case 'jumpStop': case 'speed': case 'status': return null;
     default: throw new Bad(400, 'unknown op');
   }

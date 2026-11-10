@@ -21,6 +21,7 @@ import * as Events from './events.ts';
 import * as Spiders from './spiders.ts';
 import type { SpiderInputs } from './spiders.ts';
 import * as Dielna from './dielna.ts';
+import * as IceWalk from './icewalk.ts';
 import { gardenOf, put, redeemOf, savesOf, sl } from './game.ts';
 import type { GameCtx, GameProposer, GameSlices, GameWorld, Msg, To } from './game.ts';
 import type { MovedBatch, Presence, Tile } from './world.ts';
@@ -43,7 +44,7 @@ const fx$ = (area: AreaId, k: FxKind, x: number, y: number, extra?: { c: string 
 
 // Dáta akcií hráča (vstupy enginu; key = kľúč konajúceho hráča – server ho doplní, rovnaký ako actor)
 export interface ActionInputs {
-  pos: { key: PlayerKey; x: number; y: number };
+  pos: IceWalk.PosData;   // poloha a (#157) vstup, čupnutie a čas klienta pre chôdzu po ľade
   seen: { key: PlayerKey };
   leave: { key: PlayerKey };
   join: { key: PlayerKey; name: string; look: Look | null; start: { coins: number; rep: number }; quick: boolean };
@@ -268,16 +269,15 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
         for (const i of bodyTiles(area, p.x, p.y)) reads.add(`tile:${area}:${i}`);
         reads.add(`tile:${area}:${Math.floor(p.y) * aw + Math.floor(p.x)}`);
       }
-      return E.mergeKeys({ writes: [`pos:${d.key}`], reads: [...reads] }, Spiders.posKeys(d, w)); // pavučiny v lese, pavúky
+      return E.mergeKeys({ writes: [`pos:${d.key}`], reads: [...reads] }, Spiders.posKeys(d, w), IceWalk.posKeys(d, w)); // pavučiny v lese, pavúky, ľad
     },
     run(s, d, ctx) {
       const pos = sl(s, `pos:${d.key}`) || ctx.reject(null);
       const area = pos.area && D.AREAS.includes(pos.area) ? pos.area : 'garden';
       const from = { area, x: pos.x, y: pos.y };
       if (!(Number.isFinite(d.x) && Number.isFinite(d.y))) ctx.reject(null);
-      const p = Areas.clampPos(area, d.x, d.y);
-      const body = bodyTiles(area, p.x, p.y);
-      for (const i of body) if (!D.passable(sl(s, `tile:${area}:${i}`))) ctx.reject(null);
+      // priechodnosť, ľad, otvory a voda (#157): IceWalk.move vráti, kde hráč naozaj je (na ľade to počíta server)
+      const p = IceWalk.move(s, d, ctx, area, from, Areas.clampPos(area, d.x, d.y), bodyTiles);
       pos.x = p.x; pos.y = p.y; pos.lastTick = ctx.tick;
       const me = ctx.actor;
       if (me && me.scav && Math.hypot(p.x - me.scav.px, p.y - me.scav.py) > SCAV_MOVE) {

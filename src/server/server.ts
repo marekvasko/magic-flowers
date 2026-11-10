@@ -28,6 +28,7 @@ import { DEBUG_APIS } from './debug-api/index.ts';
 import * as Events from './events.ts';
 import * as Actions from './actions.ts';
 import * as Spiders from './spiders.ts';
+import * as IceWalk from './icewalk.ts';
 import type { Directive, GameWorld, Msg } from './game.ts';
 import type { Presence, Tile } from './world.ts';
 
@@ -68,6 +69,7 @@ interface Player {
   dir: number;
   a?: number;
   cr?: boolean;
+  ck?: boolean;   // čupí (#157)
   lp?: boolean;
   jn?: number;
   emote: Emote | null;
@@ -314,6 +316,7 @@ function getRoom(id: string): Room {
   Dielna.applyDielna(room.dielna, room.tiles);
   if (!room.redeem || typeof room.redeem !== 'object') room.redeem = {};
   room.up = room.up || { plots: 0 };
+  room.icewalk = IceWalk.load(room.icewalk); // chôdza po ľade (#157); staršie uloženia ju nemajú
   Object.defineProperty(room, 'day', { get: () => D.dayOfTick(room.tick) });
   Object.defineProperty(room, 'min', { get: () => D.minOfTick(room.tick) });
   room.daySeconds = DAY_SECONDS;
@@ -350,7 +353,7 @@ function serialize(room: Room): string {
     seed: room.seed, step: room.step, seq: room.seq, events: room.events,
     weather: room.weather, saves: room.saves, storage: room.storage, storageFb: room.storageFb, market: room.market, contracts: room.contracts,
     fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom, scav: room.scav, scavSalt: room.scavSalt, icehouse: room.icehouse, dielna: room.dielna, redeem: room.redeem, pomedzieSeed: room.pomedzieSeed, up: room.up, lesSeed: room.lesSeed,
-    glacierFed: room.glacierFed, plotsUsed: room.plotsUsed, maxRep: room.maxRep, ...Spiders.save(room),
+    glacierFed: room.glacierFed, plotsUsed: room.plotsUsed, maxRep: room.maxRep, ...Spiders.save(room), ...(room.icewalk && Object.keys(room.icewalk).length ? { icewalk: room.icewalk } : {}), // ľad (#157): len keď na ňom niekto je
     tiles: room.tiles.map(t => t.cut ? { s: t.s, cut: 1 } : { s: t.s }), hory: Ice.saveHory(room.hory), les: Areas.saveLes(room)
   });
 }
@@ -481,6 +484,11 @@ function velocity(p: Player): { vx: number; vy: number } {
   if (!p.movedAt || Date.now() - p.movedAt > 250) return { vx: 0, vy: 0 };
   return { vx: Math.round((p.vx || 0) * 100) / 100, vy: Math.round((p.vy || 0) * 100) / 100 };
 }
+// Póza hráča na ľade pre ostatných (#157): čupí (prítomnosť), leží po pošmyknutí alebo pláva (stav sveta)
+function poseOf(room: Room, p: Player): Pick<PlayerView, 'cq' | 'po'> {
+  const po = IceWalk.pose(room.icewalk && room.icewalk[p.key], room.tick);
+  return { ...(p.ck ? { cq: 1 as const } : {}), ...(po ? { po } : {}) };
+}
 function playerByKey(room: Room, key: string | undefined): Player | null { for (const p of room.players.values()) if (p.key === key) return p; return null; }
 
 const SIM: E.Spec<Room, Presence, Msg> = {
@@ -575,6 +583,7 @@ function notify(room: Room, out: BatchOut<Presence, Msg>): void {
     else if (body.t === 'pullDone') pl.pull = null;
     else if (body.t === 'webbed') { pl.web = { at: Date.now(), ms: body.ms }; pl.pull = null; send(pl.ws, body); } // zabalený do pavučiny – vidia to aj ostatní (pl)
     else if (body.t === 'travel') arrived(pl, body.from, body.area);
+    else if (body.t === 'iw') { if (body.x !== undefined && body.y !== undefined) { pl.x = body.x; pl.y = body.y; } send(pl.ws, body); } // ľad (#157): oprava polohy aj do prítomnosti
     else if (body.t === 'joined') { joined(pl); me.add(to); }
     else send(pl.ws, body);
   }
@@ -723,9 +732,21 @@ function moveInput(room: Room, pl: Player, e: InboxEntry, inputs: Input[]): Inpu
   const ma = m['a'];
   if (typeof ma === 'number' && isFinite(ma)) pl.a = +ma.toFixed(3); // presný smer pohľadu (3D: 8 smerov)
   pl.cr = !!m['cr']; // plazí sa
+  pl.ck = !!m['ck']; // čupí (#157)
   pl.lp = !!m['lp'] && !!sv.inv.lamp; // drží lampáš (svieti)
   if (pl.lp && pl.pull) { pl.pull = null; inputs.push(actionInput(room, pl, ++room.inSeq, 'pullStop', {})); toast(pl, 'Prestal(a) si ťahať hodváb.'); } // s lampášom sa hodváb neťahá
-  return actionInput(room, pl, e.seq, 'pos', { x: pos.x, y: pos.y });
+  return actionInput(room, pl, e.seq, 'pos', { x: pos.x, y: pos.y, ...iceInput(m) });
+}
+
+// Chôdza po ľade (#157): vstup, čupnutie, plazenie a čas klienta zo správy move (zaokrúhlené, idú do denníka)
+function iceInput(m: InMsg): IceWalk.IceInput {
+  const n = (v: unknown, k: number): number | undefined => (typeof v === 'number' && isFinite(v) ? Math.round(v * k) / k : undefined);
+  const ix = n(m['ix'], 100), iy = n(m['iy'], 100), t = n(m['ts'], 1), out: IceWalk.IceInput = {};
+  if (ix !== undefined && iy !== undefined) { out.ix = ix; out.iy = iy; }
+  if (m['ck']) out.ck = true;
+  if (m['cr']) out.cr = true;
+  if (t !== undefined) out.ts = t;
+  return out;
 }
 
 // Správa, ktorá mení herný stav → vstup enginu (alebo null). Prítomnosť presence je snímka po pohyboch tohto rámca.
@@ -977,7 +998,8 @@ setInterval(() => {
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- uloženie bez polohy (pred prvým pohybom): poloha z prítomnosti
         id: p.id, name: p.name, x: +(sv && sv.x != null ? sv.x : p.x).toFixed(3), y: +(sv && sv.y != null ? sv.y : p.y).toFixed(3), dir: p.dir, ...(p.a === undefined ? {} : { a: p.a }), look: p.look, cr: p.cr ? 1 : 0, lp: p.lp ? 1 : 0, j: p.jn || 0, si: p.scav ? p.scav.i : -1, area: p.area,
         e: p.sleep ? 'sleep' : p.scav ? 'search' : p.pull ? 'pull' : p.emote && now - p.emoteAt < 6000 ? p.emote : null,
-        wb: webLeft(p, now) // koľko pavučiny ešte na hráčovi zostáva (1 → 0)
+        wb: webLeft(p, now), // koľko pavučiny ešte na hráčovi zostáva (1 → 0)
+        ...poseOf(room, p) // čupí, leží na ľade, pláva (#157)
       };
     });
     P.sendPlayers(room.players.values(), list); // kto sa ešte pripája, polohy nedostane (#125)

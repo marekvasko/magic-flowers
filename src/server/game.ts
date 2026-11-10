@@ -2,7 +2,7 @@
 // Engine (engine.ts) je všeobecný; tu sa dosadí, čo je herný svet, prítomnosť a správa.
 import type { AreaId } from '../shared/data.ts';
 import type { ServerMessage } from '../shared/protocol.ts';
-import type { Contracts, Dielna, Icehouse, Inventory, Market, PlayerKey, PlayerSave, SaveFile, Weather, Webs, WorldMode } from '../shared/save.ts';
+import type { Contracts, Dielna, Icehouse, IceWalk, Inventory, Market, PlayerKey, PlayerSave, SaveFile, Weather, Webs, WorldMode } from '../shared/save.ts';
 import type { Ctx, EngineWorld, Keys, PeriodicDef, Proposer, Slices, Spec } from './engine.ts';
 import type { Scav } from './scavenge.ts';
 import type { AreaTilesWorld, Presence, StorageSlice, Tile } from './world.ts';
@@ -36,6 +36,7 @@ export interface GameWorld extends EngineWorld, AreaTilesWorld {
   // pavúky v lese a krížiaky na ceste do kúta – neukladajú sa (Spiders.load ich po načítaní postaví)
   sps?: Partial<Record<string, SpiderState>>;
   kz?: Partial<Record<AreaId, Kriziak | null>>;
+  icewalk?: Partial<Record<PlayerKey, IceWalk>>;   // chôdza po ľade (#157, icewalk.ts): výrez iw:<kľúč>
 }
 
 // ---- Pavúky (spiders.ts) ----
@@ -148,6 +149,7 @@ export type KeyedSlice<K extends string> =
   : K extends 'spider:*' ? Partial<Record<string, SpiderState>>
   : K extends `spider:${string}` ? SpiderState | undefined
   : K extends `kz:${string}` ? Kriziak | null | undefined
+  : K extends `iw:${string}` ? IceWalk | undefined   // chôdza po ľade (#157): hráč nie je na ľade → undefined
   : never;
 // Výrez s dvojbodkou v kľúči (save:ana, tile:garden:12, market:fl_mak…) s typom podľa kľúča.
 // Jediné miesto, kde sa hodnota výrezu (JSON) prevedie na herný typ – tvar zaručuje kľúč (engine.ts sliceOf).

@@ -12,8 +12,9 @@ export type Emote = 'dance' | 'wave' | 'heart' | 'laugh' | 'flower';
 export type WishKind = 'zlato' | 'jar' | 'poklad';
 export type ClientMessage =
   | { t: 'join'; room: string; name: string; look?: Look | null }   // bez vzhľadu: z uloženia alebo predvolený
-  // a = presný smer pohľadu, cr = plazí sa, lp = drží lampáš, ar = poradie plochy (pohyb z predchádzajúcej plochy sa zahodí)
-  | { t: 'move'; x: number; y: number; dir: number; a?: number | undefined; cr?: boolean; lp?: boolean; ar: number }
+  // a = presný smer pohľadu, cr = plazí sa, lp = drží lampáš, ar = poradie plochy (pohyb z predchádzajúcej plochy sa zahodí);
+  // chôdza po ľade (#157): ix, iy = vstup (smer × spomalenie, dĺžka ≤ 1), ck = čupí, ts = čas klienta (ms)
+  | { t: 'move'; x: number; y: number; dir: number; a?: number | undefined; cr?: boolean; lp?: boolean; ar: number; ix?: number; iy?: number; ck?: boolean; ts?: number }
   | { t: 'act'; x: number; y: number; item: ItemId | '' }   // '' = prázdna ruka
   | { t: 'buy' | 'sell' | 'store' | 'unstore'; id: ItemId; n: number }
   | { t: 'upgrade'; kind: UpgradeId }
@@ -72,6 +73,8 @@ export interface PlayerView {
   area: AreaId;
   e: Emote | 'sleep' | 'search' | 'pull' | null;
   wb: number;
+  cq?: 1;                     // čupí (#157)
+  po?: 'fall' | 'swim';       // leží na ľade po pošmyknutí / pláva vo vode (#157)
 }
 export type SpiderKind = 'v' | 'p' | 'k';   // v = vlčiak, p = stará pradlena, k = krížiak
 // Pavúk na ploche: m = hýbe sa, h = doma; na kmeni výška z, strana kmeňa n a u = lezie hore
@@ -101,6 +104,8 @@ export type ServerMessage =
   | { t: 'tiles'; tiles: TileView[] }
   | { t: 'tile'; i: number; v: TileView }
   | { t: 'pos'; x: number; y: number }                     // server pohyb odmietol – späť na potvrdené miesto
+  // chôdza po ľade (#157): hybnosť, koľko ms ešte leží, či pláva; x, y = oprava polohy (server ju vypočítal inak)
+  | { t: 'iw'; vx: number; vy: number; fall: number; sw: 0 | 1; x?: number; y?: number }
   | {
     t: 'me'; coins: number; water: number; inv: Partial<Record<ItemId, number>>; recipes: string[]; seen: SpeciesId[]; vily: boolean;
     rep: number; up: { can: number; composter: number; plots: number }; canCap: number; plotLimit: number; plotsUsed: number; maxActive: number;
