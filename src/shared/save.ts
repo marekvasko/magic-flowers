@@ -153,6 +153,21 @@ export interface Webs {
   pend: Partial<Record<string, number[]>>;   // index pavúka → kroky, kedy znova utká roztrhnutú pavučinu
 }
 export type CornerArea = 'garden' | 'hory';
+// ---- Doprava (#158): fúrik a sane, spoločné pre celú záhradu ----
+// Poloha (area, x, y) a natočenie a (radiány, smer „dopredu“), koľko ľadu vezú; kto ich tlačí či ťahá (driver)
+// a kto v nich sedí (passenger) – obaja sa pri načítaní vymažú (hráč po reštarte nie je pripojený).
+export type VehicleId = 'furik' | 'sane';
+export interface Vehicle {
+  bought: boolean;
+  area: AreaId;
+  x: number;
+  y: number;
+  a: number;
+  ice: number;
+  driver: PlayerKey | null;
+  passenger: PlayerKey | null;
+}
+export type Vehicles = Record<VehicleId, Vehicle>;
 
 // ---- Celé uloženie ----
 export interface SaveFile {
@@ -187,6 +202,7 @@ export interface SaveFile {
   maxRep: number;
   webs: Webs;
   corners: Record<CornerArea, string[]>;
+  vehicles?: Vehicles;        // fúrik a sane (#158): staršie uloženia ho nemajú, pri načítaní sa doplní (bez zmeny verzie)
   tiles: SavedTile[];
   hory: SavedHoryTile[];
   les: string;                // rozloženie Lesa divov, jeden znak na políčko (D.LES_CODE)

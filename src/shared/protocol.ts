@@ -5,7 +5,7 @@
 // Pokyny návrhov len pre server (joined, travel, me, scavStart, scavDone, pullStart, pullDone) klient nedostane;
 // typuje ich engine (fáza 3). Správa webbed ide aj klientovi.
 import type { AreaId, BrewHint, Ground, ItemId, Look, PotionId, SpeciesId, UpgradeId } from './data.ts';
-import type { ActiveFestival, Contract, CornerArea, Icehouse, Plant, Soil, Weather, WorldMode } from './save.ts';
+import type { ActiveFestival, Contract, CornerArea, Icehouse, Plant, Soil, VehicleId, Weather, WorldMode } from './save.ts';
 
 // ---- Klient → server ----
 export type Emote = 'dance' | 'wave' | 'heart' | 'laugh' | 'flower';
@@ -27,7 +27,10 @@ export type ClientMessage =
   | { t: 'sleep'; on: boolean }
   | { t: 'emote'; e: Emote }
   | { t: 'settings'; mode: WorldMode }
-  | { t: 'chat'; text: string };
+  | { t: 'chat'; text: string }
+  // fúrik a sane (#158): kúpiť, chytiť, pustiť, naložiť / vyložiť ľad (n kusov), vyložiť do ľadovne, naskočiť, vystúpiť
+  | { t: 'veh'; op: VehicleOp; id?: VehicleId; n?: number };
+export type VehicleOp = 'buy' | 'grab' | 'drop' | 'load' | 'unload' | 'icehouse' | 'in' | 'out';
 export type ClientMessageType = ClientMessage['t'];
 
 // ---- Server → klient ----
@@ -91,6 +94,21 @@ export interface WebView { id: number; x: number; y: number; ax: 0 | 1; n: numbe
 // Kútová pavučina krížiaka: políčko, smery dvoch stien a počet stien (2 = koniec steny, 3 = vnútorný roh)
 export interface CornerView { x: number; y: number; dx: number; dy: number; ex: number; ey: number; f: 2 | 3 }
 export type ToastKind = 'info' | 'day' | 'magic' | 'gift';
+// Fúrik či sane na ploche (#158): poloha a natočenie, náklad ľadu; d = kto ich tlačí/ťahá a r = kto v nich sedí –
+// v hre číslo hráča (ako v správe pl) s menom (dn, rn), na ladiacej stránke odtlačok kľúča
+export interface VehicleView {
+  id: VehicleId;
+  bought: boolean;
+  area: AreaId;
+  x: number;
+  y: number;
+  a: number;
+  ice: number;
+  d: number | string | null;
+  r: number | string | null;
+  dn?: string | null;
+  rn?: string | null;
+}
 export type FxKind =
   | 'fairies' | 'glimmer' | 'dirt' | 'drops' | 'sparkle' | 'pop' | 'ice' | 'splash' | 'burp' | 'gift' | 'hearts' | 'wave' | 'brew'
   | 'gold' | 'rainbow' | 'cobweb';
@@ -119,7 +137,7 @@ export type ServerMessage =
   | { t: 'board'; list: Contract[] }
   | { t: 'pl'; list: PlayerView[] }
   | { t: 'sleep'; ids: number[]; total: number; ff: boolean }
-  | { t: 'toast'; text: string; kind: ToastKind }
+  | { t: 'toast'; text: string; kind: ToastKind; icon?: VehicleId }   // icon = obrázok fúrika či saní pred textom (#158)
   | { t: 'chat'; name: string; text: string; id: number }
   | { t: 'fx'; k: FxKind; x?: number; y?: number; c?: string }
   | { t: 'webs'; webs: WebView[]; homes: { k: 'v' | 'p'; x: number; y: number }[] }   // v = nora vlčiaka, p = pradlena
@@ -128,5 +146,6 @@ export type ServerMessage =
   | { t: 'webbed'; stuck: number; ms: number; k: number; sp: SpiderKind }   // pavúk hráča zabalil do pavučiny
   | { t: 'shove'; x: number; y: number }                   // stará pradlena hráča odhodila
   | { t: 'brewed'; k: PotionId; hint?: BrewHint }        // hint len pri slize (rada kotlíka)
-  | { t: 'error'; text: string };
+  | { t: 'error'; text: string }
+  | { t: 'vehicles'; list: VehicleView[] };                 // fúrik a sane (#158): všetky, pri každej zmene
 export type ServerMessageType = ServerMessage['t'];

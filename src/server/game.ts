@@ -2,7 +2,7 @@
 // Engine (engine.ts) je všeobecný; tu sa dosadí, čo je herný svet, prítomnosť a správa.
 import type { AreaId } from '../shared/data.ts';
 import type { ServerMessage } from '../shared/protocol.ts';
-import type { Contracts, Dielna, Icehouse, Inventory, Market, PlayerKey, PlayerSave, SaveFile, Weather, Webs, WorldMode } from '../shared/save.ts';
+import type { Contracts, Dielna, Icehouse, Inventory, Market, PlayerKey, PlayerSave, SaveFile, Vehicles, Weather, Webs, WorldMode } from '../shared/save.ts';
 import type { Ctx, EngineWorld, Keys, PeriodicDef, Proposer, Slices, Spec } from './engine.ts';
 import type { Scav } from './scavenge.ts';
 import type { AreaTilesWorld, Presence, StorageSlice, Tile } from './world.ts';
@@ -33,6 +33,7 @@ export interface GameWorld extends EngineWorld, AreaTilesWorld {
   webs?: Webs | null;
   corners?: Partial<Record<AreaId, string[]>> | null;   // kúty krížiaka sú len v CornerArea, kód ich hľadá podľa plochy
   migratedFrom?: number;
+  vehicles: Vehicles;   // fúrik a sane (#158)
   // pavúky v lese a krížiaky na ceste do kúta – neukladajú sa (Spiders.load ich po načítaní postaví)
   sps?: Partial<Record<string, SpiderState>>;
   kz?: Partial<Record<AreaId, Kriziak | null>>;
@@ -129,6 +130,7 @@ export interface GameSlices extends Slices {
   webs: Webs;
   corners: Partial<Record<AreaId, string[]>>;
   storage: StorageSlice;
+  vehicles?: Vehicles;   // fúrik a sane (#158): pohyb (pos) ho deklaruje, len keď hráč fúrik drží alebo v ňom sedí
 }
 // Poloha hráča v uložení (výrez pos:<kľúč>)
 export type PosSlice = Pick<PlayerSave, 'x' | 'y'> & Partial<Pick<PlayerSave, 'area' | 'lastTick'>>;

@@ -13,6 +13,8 @@ import type { JsonRecord } from '../shared/util.ts';
 import * as I from './items.ts';
 import * as Ice from './ice.ts';
 import * as Econ from './economy.ts';
+import * as Vehicles from './vehicles.ts';
+import type { VehicleCheat } from './vehicles.ts';
 import { ROOM_RE } from './debug.ts';
 import { sl } from './game.ts';
 import type { GameCtx, GameProposer, GameSlices } from './game.ts';
@@ -25,7 +27,8 @@ export type CheatData =
   | ({ op: 'coins'; key: PlayerKey } & Amount)
   | ({ op: 'rep'; key: PlayerKey } & Amount)
   | ({ op: 'item'; key: PlayerKey | null; id: ItemId } & Amount)
-  | ({ op: 'ice' } & Amount);
+  | ({ op: 'ice' } & Amount)
+  | ({ op: 'vehicle' } & VehicleCheat);   // fúrik a sane (#158): kúpiť, odstrániť, premiestniť, náklad, pustiť
 
 // Nová hodnota: celé číslo, nie záporné
 export const target = (have: number, a: Amount): number => Math.max(0, Math.round(a.set ? a.n : have + a.n));
@@ -45,6 +48,7 @@ export const PROPOSERS: { cheat: GameProposer<CheatData> } = {
         case 'rep': return { writes: ['save:*', 'maxRep'] }; // najvyššia reputácia záhrady sa prepočíta zo všetkých hráčov
         case 'item': return d.key === null ? { writes: ['storage'], reads: ['icehouse'] } : { writes: [`save:${d.key}`] };
         case 'ice': return { writes: ['icehouse', 'storage'] };
+        case 'vehicle': return Vehicles.cheatKeys();
       }
     },
     run(s, d, ctx) {
@@ -62,6 +66,7 @@ export const PROPOSERS: { cheat: GameProposer<CheatData> } = {
           return;
         }
         case 'ice': Ice.setIce(s.icehouse, s.storage, ctx.tick, target(s.icehouse.ice, d)); return;
+        case 'vehicle': Vehicles.cheatRun(s, d, ctx); return;
       }
     }
   }
@@ -115,6 +120,7 @@ export function parseCheat(room: CheatRoom, b: JsonRecord, keyId: (k: PlayerKey)
       return { op: 'item', key: b['player'] === 'storage' ? null : playerKey(room, b['player'], keyId), id, ...amount(b) };
     }
     case 'ice': return { op: 'ice', ...amount(b) };
+    case 'vehicle': { const v = Vehicles.parseCheat(b); if (typeof v === 'string') throw new Bad(400, v); return { op: 'vehicle', ...v }; }
     case 'jump': case 'jumpStop': case 'speed': case 'status': return null;
     default: throw new Bad(400, 'unknown op');
   }

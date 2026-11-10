@@ -11,6 +11,7 @@ import type { AreaId, Look } from '../shared/data.ts';
 import type { Emote, PlayerView, ServerMessage, WishKind } from '../shared/protocol.ts';
 import type { Contracts, Market, PlayerKey, PlayerSave, SaveFile, SavedTile, Webs, WorldMode } from '../shared/save.ts';
 import { isRecord, lookup, must } from '../shared/util.ts';
+import * as V from '../shared/vehicles.ts';
 import type { JsonRecord } from '../shared/util.ts';
 import * as E from './engine.ts';
 import type { BatchOut, EngineEvent, Input, JournalLoad } from './engine.ts';
@@ -28,6 +29,7 @@ import { DEBUG_APIS } from './debug-api/index.ts';
 import * as Events from './events.ts';
 import * as Actions from './actions.ts';
 import * as Spiders from './spiders.ts';
+import * as Vehicles from './vehicles.ts';
 import type { Directive, GameWorld, Msg } from './game.ts';
 import type { Presence, Tile } from './world.ts';
 
@@ -301,6 +303,7 @@ function getRoom(id: string): Room {
       return t;
     }),
     hory: Ice.loadHory(savedHory), pomedzie: [], les: [],
+    vehicles: Vehicles.loadVehicles(st.vehicles), // fúrik a sane (#158): staršie uloženia ich nemajú – predvolené, bez zmeny verzie
     inbox: [], inSeq: 0, trace: null, spSent: {}, day: 0, min: 0
   });
   if (!Number.isInteger(room.pomedzieSeed)) room.pomedzieSeed = Areas.newSeed();
@@ -351,6 +354,7 @@ function serialize(room: Room): string {
     weather: room.weather, saves: room.saves, storage: room.storage, storageFb: room.storageFb, market: room.market, contracts: room.contracts,
     fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom, scav: room.scav, scavSalt: room.scavSalt, icehouse: room.icehouse, dielna: room.dielna, redeem: room.redeem, pomedzieSeed: room.pomedzieSeed, up: room.up, lesSeed: room.lesSeed,
     glacierFed: room.glacierFed, plotsUsed: room.plotsUsed, maxRep: room.maxRep, ...Spiders.save(room),
+    ...Vehicles.save(room),
     tiles: room.tiles.map(t => t.cut ? { s: t.s, cut: 1 } : { s: t.s }), hory: Ice.saveHory(room.hory), les: Areas.saveLes(room)
   });
 }
@@ -484,7 +488,7 @@ function velocity(p: Player): { vx: number; vy: number } {
 function playerByKey(room: Room, key: string | undefined): Player | null { for (const p of room.players.values()) if (p.key === key) return p; return null; }
 
 const SIM: E.Spec<Room, Presence, Msg> = {
-  proposers: { ...Events.PROPOSERS, ...Actions.PROPOSERS, ...Spiders.PROPOSERS, ...Cheats.PROPOSERS }, periodic: Events.PERIODIC.concat(Spiders.PERIODIC), presence: presenceOf, clock,
+  proposers: { ...Events.PROPOSERS, ...Actions.PROPOSERS, ...Spiders.PROPOSERS, ...Cheats.PROPOSERS, ...Vehicles.PROPOSERS }, periodic: Events.PERIODIC.concat(Spiders.PERIODIC), presence: presenceOf, clock,
   slice: (world, key) => { const s = Spiders.slice(world, key); return s === undefined ? E.sliceOf(world, key) : s; }, // pavúky: spider:<id>, kz:<plocha>
   // denník najprv (nech záznam nechýba), potom správy hráčom; chyba pri posielaní nesmie zhodiť simuláciu ani server;
   // nakoniec záznam pre ladiacu stránku (kto dávku spustil, rozhodnutia filtra, časy častí)
@@ -536,7 +540,7 @@ function notify(room: Room, out: BatchOut<Presence, Msg>): void {
   room.dirty = true;
   const tiles = new Map<string, Set<number>>(), me = new Set<string>(), whole = new Set<string>();
   for (const a of D.AREAS) tiles.set(a, new Set());
-  let info = false, time = false, plots = false, everyone = false, webs = false, corners = false;
+  let info = false, time = false, plots = false, everyone = false, webs = false, corners = false, vehicles = false;
   for (const p of out.entry.proposals) {
     if (p.outcome !== 'applied') continue;
     for (const key in p.changes) {
@@ -555,6 +559,7 @@ function notify(room: Room, out: BatchOut<Presence, Msg>): void {
       else if (key === 'plotsUsed') plots = true;
       else if (key === 'webs') webs = true;
       else if (key === 'corners') corners = true;
+      else if (key === 'vehicles') vehicles = true; // fúrik a sane (#158): poloha, náklad, kto ich drží
       else if (key === 'up') { plots = true; everyone = true; } // spoločné vylepšenie: každému nové limity v me
     }
   }
@@ -576,6 +581,7 @@ function notify(room: Room, out: BatchOut<Presence, Msg>): void {
     else if (body.t === 'webbed') { pl.web = { at: Date.now(), ms: body.ms }; pl.pull = null; send(pl.ws, body); } // zabalený do pavučiny – vidia to aj ostatní (pl)
     else if (body.t === 'travel') arrived(pl, body.from, body.area);
     else if (body.t === 'joined') { joined(pl); me.add(to); }
+    else if (body.t === 'pos') { pl.x = body.x; pl.y = body.y; send(pl.ws, body); } // spolujazdca vezie fúrik (#158): aj prítomnosť je tam, kde on
     else send(pl.ws, body);
   }
   if (everyone) for (const p of room.players.values()) sendMe(p);
@@ -585,6 +591,11 @@ function notify(room: Room, out: BatchOut<Presence, Msg>): void {
   if (corners) for (const a of D.CORNER_AREAS) if (a === 'garden' || a === 'hory') broadcastArea(room, a, Spiders.cornerView(room, a));
   if (info) broadcast(room, roomInfo(room));
   if (time) broadcast(room, timeMsg(room));
+  if (vehicles) broadcast(room, vehiclesMsg(room));
+}
+// Fúrik a sane (#158) pre klientov: kto ich drží a kto v nich sedí, číslom pripojeného hráča (ako v správe pl)
+function vehiclesMsg(room: Room): ServerMessage {
+  return { t: 'vehicles', list: Vehicles.view(room.vehicles, key => { const p = playerByKey(room, key); return p ? { id: p.id, name: p.name } : null; }) };
 }
 // Zmeny trhu a nástenky posielame hráčom dávkovo (najviac raz za 100 ms).
 function flushEconomy(room: Room): void {
@@ -646,7 +657,7 @@ function timeMsg(room: Room): ServerMessage {
 // Udalosti a akcie nie sú nikdy v jednej dávke: dávka akcií sa vykoná v kroku, v ktorom správy prišli (svet sa medzi
 // rámcami nehýbe, takže to je práve aktuálny krok), až potom rámec posunie čas.
 const INBOX_MAX = 2000, PLAYER_INBOX_MAX = 100, DEFER_MAX = 3; // ochrana pred zaplavením: čo sa nezmestí (na svet, na hráča, odložené akcie), sa zahodí
-const MESSAGES = new Set(['move', 'act', 'jump', 'sleep', 'emote', 'buy', 'sell', 'upgrade', 'ctake', 'cdeliver', 'brew', 'wish', 'settings', 'store', 'unstore', 'compostWilted', 'buyTool', 'build', 'icehouse', 'buyLoom', 'masterWeave', 'loomStart', 'loomTake', 'chat']);
+const MESSAGES = new Set(['move', 'act', 'jump', 'sleep', 'emote', 'buy', 'sell', 'upgrade', 'ctake', 'cdeliver', 'brew', 'wish', 'settings', 'store', 'unstore', 'compostWilted', 'buyTool', 'build', 'icehouse', 'buyLoom', 'masterWeave', 'loomStart', 'loomTake', 'chat', 'veh']);
 const PRESENCE_ONLY = new Set(['jump', 'sleep', 'emote', 'settings', 'chat']); // správy len o prítomnosti – engine ich nevidí
 const EMOTES: readonly Emote[] = ['dance', 'wave', 'heart', 'laugh', 'flower'];
 const WISHES: readonly WishKind[] = ['zlato', 'jar', 'poklad'];
@@ -702,6 +713,7 @@ function joined(pl: Player): void {
   send(pl.ws, Econ.boardView(must(room.contracts ?? undefined)));
   broadcast(room, roomInfo(room));
   broadcast(room, sleepMsg(room));
+  send(pl.ws, vehiclesMsg(room)); // fúrik a sane (#158)
 }
 
 // Pohyb: smer, plazenie a lampáš sú len prítomnosť (ozdoba); poloha sa premietne do prítomnosti hneď (vysielanie polôh
@@ -710,6 +722,7 @@ function moveInput(room: Room, pl: Player, e: InboxEntry, inputs: Input[]): Inpu
   const m = e.m, no = (why: string): null => { e.why = why; return null; }; // why: dôvod pre ladiacu stránku
   if (pl.sleep || pl.joining) return no(pl.sleep ? 'player is asleep' : 'player is still joining'); // spiaci hráč leží v posteli
   if ((Number(m['ar']) | 0) !== pl.areaSeq) return no('sent from the previous area'); // pohyb ešte z predchádzajúcej plochy
+  if (V.ridden(room.vehicles, pl.key)) return no('player rides in a vehicle'); // spolujazdca vezie fúrik či sane (#158)
   const mx = m['x'], my = m['y'];
   if (!(typeof mx === 'number' && typeof my === 'number' && isFinite(mx) && isFinite(my))) return no('invalid position');
   const sv = must(pl.save);
@@ -769,6 +782,7 @@ function toInput(room: Room, pl: Player, e: InboxEntry, presence: Presence[], in
     case 'build': return m['id'] === 'icehouse' || m['id'] === 'dielna' ? mk('build', { id: m['id'] }) : null;
     case 'icehouse': return mk('fillIce', { n: Number(m['n']) | 0 });
     case 'buyLoom': case 'masterWeave': case 'loomStart': case 'loomTake': return mk(m.t, {});
+    case 'veh': { const v = Vehicles.toInput(m); return v ? mk(v.type, v.data) : no('invalid vehicle message'); } // fúrik a sane (#158)
   }
   return no('invalid message');
 }
