@@ -73,6 +73,9 @@ button { font: inherit; cursor: pointer; border: none; }
 #bJump { width: 64px; height: 64px; font-size: 30px; }
 #bCrawl { width: 46px; height: 46px; font-size: 22px; }
 #bCrawl.on { background: #ffe082; border-color: #e0a020; box-shadow: 0 0 0 4px #ffe08266, 0 3px 0 #0004; }
+/* Čupnutie (#157): ako plazenie, zap/vyp; na ľade s ním hráč ide opatrne */
+#bCrouch { width: 46px; height: 46px; font-size: 22px; }
+#bCrouch.on { background: #b3e5fc; border-color: #2a8fc0; box-shadow: 0 0 0 4px #b3e5fc66, 0 3px 0 #0004; }
 .mvbtn:active { transform: translateY(2px); box-shadow: 0 1px 0 #0004; }
 /* Akcie bez podkladu – každé tlačidlo má len tieň; otáčanie pohľadu (3D) na okrajoch obrazovky */
 #actions { position: relative; display: flex; justify-content: center; padding: 0 8px 8px; }

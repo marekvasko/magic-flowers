@@ -9,6 +9,8 @@ import type { Weather } from '../../shared/save.ts';
 import * as Ice from '../ice.ts';
 import * as Areas from '../areas.ts';
 import * as Scav from '../scavenge.ts';
+import * as IceWalk from '../icewalk.ts';
+import * as IW from '../../shared/icewalk.ts';
 import { keyId } from '../debug.ts';
 import type { DebugState, Tools } from '../debug.ts';
 import type { Tile } from '../world.ts';
@@ -33,7 +35,10 @@ function areaTiles(state: TileSource, area: AreaId): TileView[] {
   return room.tiles.map(t => Scav.tileView(t)); // druh divej rastliny ostane skrytý ako v hre
 }
 
-export interface WorldPlayer { id: string; name: string | null; online: boolean; x: number; y: number; look: Look | null }
+export interface WorldPlayer { id: string; name: string | null; online: boolean; x: number; y: number; look: Look | null; ice?: WorldIce }   // ice len na ľade, vo vode, so stavom alebo keď čupí (#157)
+// Chôdza po ľade (#157): stojí na ľade / na otvore, hybnosť a rýchlosť (políčka/s), koľko krokov ešte leží (0 = nie),
+// pláva, čupí (len pripojený) a póza, ako ju vidia ostatní
+export interface WorldIce { onIce: boolean; hole: boolean; vx: number; vy: number; speed: number; fall: number; swim: boolean; crouch: boolean; pose: IceWalk.Pose | null }
 export interface WorldView {
   room: string | null; source?: 'memory' | 'file'; seed: number | undefined; area: AreaId; w: number; h: number; tick: number; weather: Weather;
   tiles: TileView[]; players: WorldPlayer[];
@@ -51,6 +56,7 @@ export default function world(query: URLSearchParams, tools: Pick<Tools, 'load'>
   const r = tools.load(id);
   if (!r) return null;
   const st = r.state, online = new Map(r.online.map(o => [o.player, o]));
+  const tiles = areaTiles(st, area), se = D.seasonOf(D.dayOfTick(st.tick || 0)), icewalk = IceWalk.load(st['icewalk']);
   // hráči na tejto ploche: online podľa mena, ostatní len ako posledné miesto, kde boli
   const players: WorldPlayer[] = [];
   for (const [key, sv] of Object.entries(st.saves || {})) {
@@ -58,7 +64,13 @@ export default function world(query: URLSearchParams, tools: Pick<Tools, 'load'>
     const o = online.get(keyId(key)) || null;
     const pa = o ? o.area : D.AREAS.find(a => a === sv.area) ?? 'garden';
     if (pa !== area || typeof sv.x !== 'number' || typeof sv.y !== 'number') continue;
-    players.push({ id: key, name: o ? o.name : null, online: !!o, x: sv.x, y: sv.y, look: sv.look || null });
+    const iw = icewalk[key], t = tiles[Math.floor(sv.y) * w + Math.floor(sv.x)], tick = st.tick || 0;
+    const ice: WorldIce = {
+      onIce: IW.isIce(t, se), hole: IW.isHole(t, se), vx: iw ? iw.vx : 0, vy: iw ? iw.vy : 0, speed: iw ? Math.round(Math.hypot(iw.vx, iw.vy) * 100) / 100 : 0,
+      fall: iw && iw.fall != null ? Math.max(0, iw.fall - tick) : 0, swim: !!(iw && iw.sw), crouch: !!(o && o.ck), pose: IceWalk.pose(iw, tick)
+    };
+    const any = ice.onIce || ice.hole || ice.crouch || !!iw || IW.openWater(t, se);
+    players.push({ id: key, name: o ? o.name : null, online: !!o, x: sv.x, y: sv.y, look: sv.look || null, ...(any ? { ice } : {}) });
   }
-  return { room: r.id, source: r.source, seed: area === 'les' ? st.lesSeed : st.pomedzieSeed, area, w, h, tick: st.tick || 0, weather: st.weather || 'sun', tiles: areaTiles(st, area), players };
+  return { room: r.id, source: r.source, seed: area === 'les' ? st.lesSeed : st.pomedzieSeed, area, w, h, tick: st.tick || 0, weather: st.weather || 'sun', tiles, players };
 }

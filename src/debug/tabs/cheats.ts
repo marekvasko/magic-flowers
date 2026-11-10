@@ -162,6 +162,29 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
         h('button', { onclick: () => { void act({ op: 'ice', n: val(ice), set: true }, `Icehouse ice set to ${Math.min(D.ICEHOUSE.cap, val(ice))}.`); } }, 'Set')));
   }
 
+  // Chôdza po ľade (#157): pošmyknúť, hodiť do vody (v zime cez nový otvor), nastaviť hybnosť, zrušiť stav
+  function iceBox(saves: [string, PlayerSave][], online: Map<string, string>, w: RoomSnapshot['state']): HTMLElement {
+    const who = h('select', null, saves.map(([id]) => h('option', { value: id }, online.get(id) ? `${online.get(id) ?? ''} (${id})` : id)));
+    const vx = h('input', { type: 'number', value: 3, step: 0.5 }), vy = h('input', { type: 'number', value: 0, step: 0.5 });
+    const iw = (w['icewalk'] ?? {}) as Partial<Record<string, { vx: number; vy: number; fall?: number; sw?: 1 }>>; // uložený stav (#157), tvar zo servera
+    const state = h('div', { class: 'inv' });
+    const show = (): void => {
+      const st = iw[who.value];
+      state.textContent = !st ? 'not on ice (no state)' : [`momentum ${st.vx}, ${st.vy}`, st.sw ? 'swimming' : '', st.fall != null && st.fall > w.tick ? `lying ${st.fall - w.tick} more ticks` : ''].filter(Boolean).join(' · ');
+    };
+    who.onchange = show; show();
+    const go = (what: string, done: string, extra?: Record<string, number>): void => { void act({ op: 'iw', player: who.value, what, ...extra }, done); };
+    return h('section', null, h('h4', null, 'Ice walking'),
+      h('div', { class: 'row' }, who,
+        h('button', { onclick: () => { go('slip', 'The player slipped and fell.'); } }, 'Slip & fall'),
+        h('button', { onclick: () => { go('swim', 'The player fell into the water.'); } }, 'Drop into water'),
+        h('button', { onclick: () => { go('clear', 'Ice state cleared.'); } }, 'Clear')),
+      h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Momentum (tiles/s)'), 'vx', vx, 'vy', vy,
+        h('button', { onclick: () => { go('momentum', `Momentum set to ${val(vx)}, ${val(vy)}.`, { vx: Number(vx.value) || 0, vy: Number(vy.value) || 0 }); } }, 'Set')),
+      state,
+      h('div', { class: 'muted' }, 'Drop into water moves the player to the nearest water tile of their area (in winter it cuts a hole there). Momentum is capped at 3.8 tiles/s and matters only on ice. A player standing in open water swims again at the next move.'));
+  }
+
   function render(): void {
     if (!ctx.room) { root.replaceChildren(h('div', { class: 'empty' }, 'Select a room on the left.')); return; }
     if (disabled) { root.replaceChildren(h('section', null, h('h4', null, 'Cheats are off on this server'), h('div', { class: 'muted' }, 'Set DEBUG_CHEATS_KEY in the server environment (deploy: GitHub secret) to turn them on.'))); return; }
@@ -170,6 +193,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
       const saves = Object.entries(snap.state.saves || {}).filter((e): e is [string, PlayerSave] => !!e[1]);
       const online = new Map(snap.online.map(o => [o.player, o.name]));
       out.push(playersBox(saves, online), itemsBox(saves, online, snap.state));
+      if (saves.length) out.push(iceBox(saves, online, snap.state));
     }
     root.replaceChildren(...out);
   }

@@ -101,7 +101,7 @@ export function traceFilter(ring: TraceRing, tick: number, filter: FilterDecisio
 
 // Svet v pamäti, ako ho vidí ladiaca stránka: hráči, krok, kruhová pamäť, uloženia
 export interface DebugRoom {
-  players: Map<number, { name: string; area: AreaId; key: PlayerKey }>;
+  players: Map<number, { name: string; area: AreaId; key: PlayerKey; ck?: boolean }>;   // ck = čupí (#157)
   tick: number;
   trace?: TraceRing | null;
   saves?: GameWorld['saves'];
@@ -125,7 +125,7 @@ export interface DebugState {
   icehouse?: Icehouse | null;
   [key: string]: unknown;
 }
-export interface Loaded { id: string; source: 'memory' | 'file'; file: { size: number; saved: number } | null; online: { name: string; area: AreaId; player: string }[]; state: DebugState }
+export interface Loaded { id: string; source: 'memory' | 'file'; file: { size: number; saved: number } | null; online: { name: string; area: AreaId; player: string; ck?: true }[]; state: DebugState }
 // Nástroje pre rozšírenia API (src/server/debug-api/<meno>.ts)
 export interface Tools {
   ROOM_RE: RegExp;
@@ -173,7 +173,7 @@ export function create<R extends DebugRoom>(ctx: DebugCtx<R>): (req: Pick<Incomi
     return true;
   };
   const roomFile = (id: string): string => path.join(ctx.dataDir, 'room-' + id + '.json');
-  const online = (room: DebugRoom): Loaded['online'] => [...room.players.values()].map(p => ({ name: p.name, area: p.area, player: keyId(p.key) }));
+  const online = (room: DebugRoom): Loaded['online'] => [...room.players.values()].map(p => ({ name: p.name, area: p.area, player: keyId(p.key), ...(p.ck ? { ck: true as const } : {}) }));
 
   function listRooms(): RoomInfo[] {
     const out = new Map<string, RoomInfo>();

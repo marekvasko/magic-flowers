@@ -11,9 +11,13 @@ import * as Cheats from '../src/server/cheats.ts';
 import type { CheatData } from '../src/server/cheats.ts';
 import type { Msg } from '../src/server/game.ts';
 import type { Presence } from '../src/server/world.ts';
+import { keyId } from '../src/server/debug.ts';
+import type { DebugState, Loaded } from '../src/server/debug.ts';
+import worldApi from '../src/server/debug-api/world.ts';
+import { iceOf, iceSeason } from '../src/debug/tabs/map-core.ts';
 import { SPEC, act, json, makeWorld, save, textOf, TPD } from './game-world.ts';
 import type { W } from './game-world.ts';
-import { must, parseJson, rethrow } from './helpers.ts';
+import { must, parseJson, partial, rethrow } from './helpers.ts';
 
 type Spec = E.Spec<W, Presence, Msg>;
 type Journal = E.JournalEntry<Presence, Msg>[];
@@ -261,4 +265,27 @@ test('denník s chôdzou po ľade (šmýkanie, pošmyknutie, prepadnutie, pláva
 test('uložený stav ľadu: zlé záznamy sa zahodia, chýbajúci = nikto nie je na ľade', () => {
   assert.deepStrictEqual(IceWalk.load(undefined), {});
   assert.deepStrictEqual(IceWalk.load({ ana: { vx: 1, vy: 'x', fall: 5, sw: 1, t: 3 }, bob: 7 }), { ana: { vx: 1, vy: 0, t: 3, fall: 5, sw: 1 } });
+});
+
+// ---- Ladiaca stránka ----
+
+test('ladiaca stránka: World ukáže stav hráča na ľade, Map vrstvu ľadu, Cheats rozumejú op iw', () => {
+  const { w, i, cx, cy } = iceWorld(14);
+  // World: kópia sveta ako JSON (serialize) – ana leží na ľade, čupí (prítomnosť), bob je na tráve bez stavu
+  const tick = w.tick, state = { tick, saves: { ana: { x: cx, y: cy, area: 'garden' }, bob: { x: 10.5, y: 8.5, area: 'garden' } }, icewalk: { ana: { vx: 1.5, vy: -2, fall: tick + 7 } } };
+  const online: Loaded['online'] = [{ name: 'Ana', area: 'garden', player: keyId('ana'), ck: true }];
+  const tools = { load: (id: unknown): Loaded | null => id === 'svet' ? partial<Loaded>({ id: 'svet', source: 'memory', online, state: parseJson<DebugState>(JSON.stringify(state)) }) : null };
+  const v = must(worldApi(new URLSearchParams({ room: 'svet', area: 'garden' }), tools) ?? undefined);
+  const ana = must(v.players.find(p => p.id === 'ana')), bob = must(v.players.find(p => p.id === 'bob'));
+  assert.deepStrictEqual(ana.ice, { onIce: true, hole: false, vx: 1.5, vy: -2, speed: 2.5, fall: 7, swim: false, crouch: true, pose: 'fall' });
+  assert.strictEqual(bob.ice, undefined, 'na tráve bez stavu nič navyše');
+  // Map: vrstva ľadu podľa obdobia sveta; plocha zo semienka ako v zime
+  must(w.tiles[i]).cut = 1;
+  assert.deepStrictEqual([iceOf({ g: 'water' }, 3), iceOf({ g: 'water', cut: 1 }, 3), iceOf({ g: 'water' }, 1), iceOf({ g: 'glacier', ice: 2 }, 1), iceOf({ g: 'grass' }, 3)], ['ice', 'hole', 'open', 'ice', null]);
+  assert.deepStrictEqual([iceSeason(D, { tick }), iceSeason(D, { tick: 0 }), iceSeason(D, null)], [3, 0, 3]);
+  // Cheats: telo požiadavky → vstup enginu
+  const room = { id: 'svet', tick, saves: w.saves, players: new Map() };
+  assert.deepStrictEqual(Cheats.parseCheat(room, { op: 'iw', player: 'ana', what: 'momentum', vx: 2, vy: '1' }, k => k), { op: 'iw', key: 'ana', what: 'momentum', vx: 2, vy: 1 });
+  assert.deepStrictEqual(Cheats.parseCheat(room, { op: 'iw', player: 'ana', what: 'slip' }, k => k), { op: 'iw', key: 'ana', what: 'slip' });
+  assert.throws(() => Cheats.parseCheat(room, { op: 'iw', player: 'ana', what: 'fly' }, k => k), /what must be/);
 });

@@ -6,16 +6,21 @@ import type { Other } from '../shared/players.ts';
 import type { BatchesView, CornerView, PlayerView, ServerMessage, SpiderKind, TileView, WebView } from '../shared/protocol.ts';
 import type { Contract, Icehouse, Weather, WorldMode } from '../shared/save.ts';
 import type { FadeConfig, FadeOverrides, Render3D } from './render3d.ts';
+import type { IceClient } from './icewalk.ts';
 
 export type MsgOf<T extends ServerMessage['t']> = Extract<ServerMessage, { t: T }>;
 export interface Pt { x: number; y: number }
 
 // Vlastná postavička: poloha, smer (dir 0–3, a = presný uhol), fáza chôdze, výška a rýchlosť skoku, plazenie
-export interface Me { x: number; y: number; dir: number; a?: number; phase: number; moving: boolean; jz: number; jv: number; crawl: boolean }
+export interface Me {
+  x: number; y: number; dir: number; a?: number; phase: number; moving: boolean; jz: number; jv: number; crawl: boolean;
+  crouch?: boolean; vx?: number; vy?: number; pose?: 'fall' | 'swim' | null;   // chôdza po ľade (#157): čupí, hybnosť, póza
+}
 // Iný hráč: k polohe zo zdieľaného modulu (players.ts) cieľ pohybu (tx, ty) a údaje zo správy pl
 export interface OtherPlayer extends Other {
   id: number; tx: number; ty: number; dir: number; a: number | undefined; look: Look | null; name: string;
   e: PlayerView['e']; cr: boolean; lp: boolean; si: number; wb: number;
+  cq?: boolean; po?: 'fall' | 'swim' | null;   // chôdza po ľade (#157): čupí, leží / pláva
 }
 // Pavúk na ploche: poloha plynulo dobieha cieľ zo servera (tx, ty, tz), fáza nôh podľa prejdenej dráhy
 export interface Spider {
@@ -60,11 +65,12 @@ export interface ClientState {
   spiders: Map<string, Spider>; slowK: number; slowUntil: number; web: { start: number; stuck: number; end: number; k: number } | null;
   webLeft?: () => number; // koľko pavučiny je ešte na mne (1 → 0); na ladiacej stránke chýba
   r3: Render3D | null; // 3D pohľad (pre ladenie v konzole: MF.r3.pick(x, y))
+  ice?: IceClient; crouchKey?: boolean; crouchTgl?: boolean; iceIn?: [number, number]; // chôdza po ľade (#157): leží / pláva, čupnutie (C, tlačidlo 🧎)
 }
 
 // Stav, ktorý kreslí 3D pohľad (render3d.ts, spiders3d.ts, particles3d.ts): hra mu dá celé S, ladiaca stránka /debug
 // (záložka World) len to, čo pohľad naozaj číta – bez stavu budov a hráčov s id podľa odtlačku kľúča (reťazec)
-export type ViewOther = Pick<OtherPlayer, 'x' | 'y' | 'name' | 'look' | 'a' | 'dir' | 'e' | 'phase' | 'jz' | 'cr' | 'lp' | 'si' | 'wb'> & { id: number | string };
+export type ViewOther = Pick<OtherPlayer, 'x' | 'y' | 'name' | 'look' | 'a' | 'dir' | 'e' | 'phase' | 'jz' | 'cr' | 'lp' | 'si' | 'wb' | 'cq' | 'po'> & { id: number | string };
 export type ViewState = Pick<ClientState, 'W' | 'H' | 'tiles' | 'area' | 'tilesGen' | 'tick' | 'day' | 'weather' | 'me' | 'look' | 'name' | 'id'
   | 'myEmote' | 'sel' | 'anchors' | 'fx' | 'screenFx' | 'bubbles' | 'tapMark' | 'webs' | 'homes' | 'websGen' | 'corner' | 'cornerGen' | 'spiders'>
   & Partial<Pick<ClientState, 'icehouse' | 'dielna' | 'webLeft' | 'kbd' | 'mySi' | 'worldGen'>>

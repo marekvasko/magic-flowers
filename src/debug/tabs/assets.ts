@@ -5,7 +5,7 @@ import { createViewer, loadWorld3D, loadArt, injectCss, modelStats, matName } fr
 import type { Viewer } from './modelview.ts';
 import type * as World3D from '../../shared/world3d.ts';
 import type { FineModel, FineModelEntry } from '../../shared/world3d.ts';
-import type { Art as ArtApi, PlantOpts } from '../../client/art.ts';
+import type { Art as ArtApi, CharOpts, PlantOpts } from '../../client/art.ts';
 import type { SpeciesId } from '../../shared/data.ts';
 import { keys, must } from '../../shared/util.ts';
 import type { TabCtx, TabInstance, h as H } from '../ui.ts';
@@ -57,6 +57,11 @@ body.dbg-wide aside { display: none; }
 }
 `;
 export const SEASONS: readonly string[] = ['Spring', 'Summer', 'Autumn', 'Winter'];
+// Pózy postavičky v galérii: meno, voľby, fáza chôdze (#157: čupí, leží na ľade, pláva)
+const POSES: readonly (readonly [string, string, CharOpts, number])[] = [
+  ['Standing', '{}', {}, 0], ['Walking', 'phase 1.2', {}, 1.2], ['Crawling', '{ crawl }', { crawl: true }, 0.8],
+  ['Crouching', '{ crouch }', { crouch: true }, 0], ['Fallen on ice', "{ pose: 'fall' }", { pose: 'fall' }, 1], ['Swimming', "{ pose: 'swim' }", { pose: 'swim' }, 1]
+];
 export const ROTS: readonly string[] = ['0°', '90°', '180°', '270°'];
 
 // Prepínač s tlačidlami (jedno je zapnuté)
@@ -86,7 +91,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
   Promise.all([loadWorld3D(), loadArt().catch(() => null)]).then(([w, a]) => {
     if (gone) return;
     W = w; Art = a;
-    if (st.model !== 'flowers' && !W.FINE_MODELS.some(m => m.id === st.model)) st.model = must(W.FINE_MODELS[0]).id;
+    if (st.model !== 'flowers' && st.model !== 'poses' && !W.FINE_MODELS.some(m => m.id === st.model)) st.model = must(W.FINE_MODELS[0]).id;
     el.replaceChildren(root);
     build(w);
   }).catch((e: unknown) => { if (!gone) el.replaceChildren(h('div', { class: 'as-err' }, 'Cannot load models: ' + errText(e))); });
@@ -113,7 +118,8 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
   listEl.append(pick, search, items);
   function renderList(W: typeof World3D): void {
     const all = W.FINE_MODELS.map(m => ({ id: m.id, name: m.name, group: m.group, sub: String(m.kind || m.id) }))
-      .concat([{ id: 'flowers', name: 'Flower gallery', group: 'Flowers (2D, art.js)', sub: Object.keys(ctx.D.SPECIES).length + ' species' }]);
+      .concat([{ id: 'flowers', name: 'Flower gallery', group: 'Flowers (2D, art.js)', sub: Object.keys(ctx.D.SPECIES).length + ' species' },
+        { id: 'poses', name: 'Player poses', group: 'Characters (2D, art.ts)', sub: POSES.length + ' poses' }]); // #157: čupí, leží, pláva
     const list = all.filter(m => !q || (m.name + ' ' + m.id + ' ' + m.group + ' ' + m.sub).toLowerCase().includes(q));
     const groups = [...new Set(list.map(m => m.group))];
     items.replaceChildren(...groups.flatMap(g => [h('h4', null, g), ...list.filter(m => m.group === g).map(m =>
@@ -125,7 +131,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
 
   // ---------- ovládanie ----------
   function renderBar(W: typeof World3D): void {
-    const flowers = st.model === 'flowers';
+    const flowers = st.model === 'flowers' || st.model === 'poses'; // 2D galérie: bez obdobia, otočenia a mriežky
     barEl.replaceChildren(
       seg(h, SEASONS, st.grid ? -1 : st.season, i => { st.season = i; st.grid = false; save(); renderBar(W); show(W); }, flowers),
       seg(h, ROTS, st.grid ? -1 : st.rot, i => { st.rot = i; st.grid = false; save(); renderBar(W); show(W); }, flowers),
@@ -135,11 +141,11 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
 
   // ---------- zobrazenie ----------
   function show(W: typeof World3D): void {
-    if (st.model === 'flowers') {
+    if (st.model === 'flowers' || st.model === 'poses') {
       if (viewer) { viewer.dispose(); viewer = null; }
       viewEl.style.display = 'none';
       infoEl.replaceChildren();
-      galEl.replaceChildren(...flowerGallery());
+      galEl.replaceChildren(...(st.model === 'poses' ? poseGallery() : flowerGallery()));
       return;
     }
     viewEl.style.display = '';
@@ -196,6 +202,31 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
         keys(D.SPECIES).map(k => h('tr', null,
           h('td', null, h('b', null, D.SPECIES[k].name), h('br'), h('small', { class: 'muted mono' }, `${k} · ${D.SPECIES[k].shape}${D.SPECIES[k].magic ? ' · magic' : ''}`)),
           cols.map(([, stage, o]) => h('td', null, cell(k, stage, o)))))))
+    ];
+  }
+
+  // 2D galéria postavičky (#157): riadok = póza (aj čupnutie, ležanie po pošmyknutí, plávanie), stĺpce = smery pohľadu
+  function poseGallery(): HTMLElement[] {
+    const A = Art;
+    if (!A) return [h('div', { class: 'as-err' }, 'Cannot load the drawings (art.ts)')];
+    const dirs: readonly (readonly [string, number])[] = [['Down', 0], ['Left', 1], ['Right', 2], ['Up', 3], ['Down-left', 4], ['Up-right', 7]];
+    const look = { shirt: '#4a90d9', hair: '#5b3a1a', hat: false };
+    const cell = (o: CharOpts, dir: number, phase: number): HTMLCanvasElement => {
+      const c = h('canvas', { width: 112, height: 140 });
+      const g = must(c.getContext('2d') ?? undefined);
+      g.fillStyle = o.pose ? '#cfe9f7' : '#cfe7b8'; g.fillRect(0, 0, 112, 140);
+      g.fillStyle = o.pose === 'swim' ? '#7fbde6' : o.pose ? '#e6f4fb' : '#a07850'; g.fillRect(0, 118, 112, 22);
+      try { A.char(g, 56, 124, 100, look, dir, phase, o); } catch { g.fillStyle = '#c0392b'; g.fillText('error', 10, 20); }
+      return c;
+    };
+    return [
+      h('h2', null, 'Player poses (art.ts)'),
+      h('div', { class: 'muted', style: 'margin-bottom:8px' }, 'Art.char(ctx, x, y, size, look, dir, phase, opts) – the sprite the 3D game draws for every player. Crouching, fallen and swimming are the ice-walking poses (#157); other players see them through cq / po in the pl message.'),
+      h('div', { class: 'as-gal' }, h('table', null,
+        h('tr', null, h('th', null, 'Pose'), dirs.map(d => h('th', null, d[0]))),
+        POSES.map(([name, sub, o, phase]) => h('tr', null,
+          h('td', null, h('b', null, name), h('br'), h('small', { class: 'muted mono' }, sub)),
+          dirs.map(([, d]) => h('td', null, cell(o, d, phase)))))))
     ];
   }
 

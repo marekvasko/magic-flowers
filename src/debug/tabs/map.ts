@@ -1,7 +1,7 @@
 // Záložka Mapa (#77): pôdorys plochy na plátne – výška zeme, chodníky, objekty, prechody, mriežka,
 // inšpektor políčka a štatistiky. Zdroj: semienko (hocijaké) alebo vybraný svet (jeho semienko, pôda, ľad, hráči).
 // Výpočty sú v map-core.ts (bez DOM, testované), tu je len ovládanie a kreslenie.
-import { kindOf, isSeeded, randomSeed, parseSeed, buildTiles, heightBlocks, arrivals, playersOn, areaStats, tileInfo } from './map-core.ts';
+import { kindOf, isSeeded, randomSeed, parseSeed, buildTiles, heightBlocks, arrivals, playersOn, areaStats, tileInfo, iceOf, iceSeason } from './map-core.ts';
 import type { AreaMap, MapError, MapPlayer, MapTile } from './map-core.ts';
 import type { Kid, TabCtx, TabInstance } from '../ui.ts';
 import { lookup, must } from '../../shared/util.ts';
@@ -55,8 +55,9 @@ function heightColor(b: number): string {
 }
 const LAYERS: readonly { id: string; label: string; room?: boolean }[] = [
   { id: 'h', label: 'Heights' }, { id: 'p', label: 'Paths' }, { id: 'o', label: 'Objects' }, { id: 'g', label: 'Grid' },
-  { id: 'b', label: 'Beds', room: true }, { id: 'u', label: 'Players', room: true }
+  { id: 'b', label: 'Beds', room: true }, { id: 'u', label: 'Players', room: true }, { id: 'i', label: 'Ice' }
 ];
+const ICE_COL = { ice: 'rgba(225, 246, 255, .62)', hatch: 'rgba(90, 160, 205, .9)', hole: '#ff3b5c' }; // vrstva ľadu (#157)
 const DEFAULT_LAYERS = 'hpobu';
 
 export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
@@ -68,6 +69,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
   let seed = parseSeed(ctx.param('mapseed'));
   if (seed == null) { seed = randomSeed(); ctx.setParam('mapseed', seed); }
   let layers = ctx.param('maplayers') ?? DEFAULT_LAYERS;
+  let iceSe = 3; // obdobie pre vrstvu ľadu (#157): svet podľa času, semienko ako v zime
   let map: AreaMap | MapError | null = null, players: MapPlayer[] = [], hover: Pt | null = null, sel: Pt | null = null, T = 16, shownArea: string | null = null;
   const on = (id: string): boolean => layers.includes(id);
   const source = (): 'room' | 'seed' => {
@@ -133,12 +135,14 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     let msg: string;
     if (src === 'room' && snap) {
       map = buildTiles(D, ctx.area, { state: snap.state });
+      iceSe = iceSeason(D, snap.state);
       players = playersOn(D, ctx.area, snap);
       msg = map.error
         ? `Room ${ctx.room} has no seed for ${name} yet; it gets one the next time the world loads. Switch to Seed to look at any seed.`
         : `Room ${ctx.room} (${snap.source === 'memory' ? 'loaded, live state' : 'read from file'})${seeded ? `, seed ${String(map.seed)}` : ''}: its planted beds, tilled soil, ice and players.`;
     } else {
       map = buildTiles(D, ctx.area, { seed });
+      iceSe = iceSeason(D, null);
       players = [];
       msg = src === 'room' ? 'Loading the room…' : seeded ? `${name} generated from seed ${seed}, as a new world with this seed would get it.` : `${name} has a fixed layout: every world has the same one, the seed doesn’t change it.`;
       if (!ctx.room && ctx.param('mapsrc') === 'room') msg = 'No room selected, showing the seed. ' + msg;
@@ -191,6 +195,19 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
         g.globalAlpha = t.top ? 0.25 + 0.7 * (t.ice || 0) / t.top : 0.6;
         g.fillStyle = COL.glacier; g.fillRect(x, y, 1.02, 1.02);
         g.globalAlpha = 1;
+      }
+    }
+    // ľad (#157): šrafované políčka, po ktorých sa šmýka; otvor = krížik (prepadne sa ním, kto nečupí)
+    if (on('i')) for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) {
+      const k = iceOf(tl(x, y), iceSe);
+      if (k === 'ice') {
+        g.fillStyle = ICE_COL.ice; g.fillRect(x, y, 1.02, 1.02);
+        g.strokeStyle = ICE_COL.hatch; g.lineWidth = 0.05; g.beginPath();
+        for (const d of [0.25, 0.6, 0.95]) { g.moveTo(x + d - 0.2, y + 0.95); g.lineTo(x + d + 0.05, y + 0.05); }
+        g.stroke();
+      } else if (k === 'hole') {
+        g.strokeStyle = ICE_COL.hole; g.lineWidth = 0.14; g.beginPath();
+        g.moveTo(x + 0.22, y + 0.22); g.lineTo(x + 0.78, y + 0.78); g.moveTo(x + 0.78, y + 0.22); g.lineTo(x + 0.22, y + 0.78); g.stroke();
       }
     }
     // pôda a rastliny (svet)
@@ -311,6 +328,10 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
       [null, 'Gate to another area', g => { g.fillStyle = COL.gate; tri(g, 0.5, 0.5, 'n', 0.4); }],
       [null, 'Arrival point', g => { g.strokeStyle = COL.gate; g.lineWidth = 0.1; g.beginPath(); g.arc(0.5, 0.5, 0.28, 0, 7); g.stroke(); }]
     ];
+    items.push(['i', `Ice (slippery) · ✕ hole (falls through) – ${map && !map.error && map.source === 'room' ? 'the room’s season now' : 'as in winter'}`, g => {
+      g.fillStyle = ICE_COL.ice; g.fillRect(0.1, 0.1, 0.8, 0.8); g.strokeStyle = ICE_COL.hole; g.lineWidth = 0.12;
+      g.beginPath(); g.moveTo(0.3, 0.3); g.lineTo(0.7, 0.7); g.moveTo(0.7, 0.3); g.lineTo(0.3, 0.7); g.stroke();
+    }]);
     if (map && !map.error && map.source === 'room') items.push(
       ['b', 'Tilled soil · plant (darker = watered)', g => { g.fillStyle = COL.soil; g.fillRect(0.1, 0.1, 0.8, 0.8); g.fillStyle = '#f2c94c'; g.beginPath(); g.arc(0.5, 0.5, 0.22, 0, 7); g.fill(); }],
       ['u', 'Player online · last place offline', g => { g.fillStyle = COL.player; g.strokeStyle = '#fff'; g.lineWidth = 0.1; g.beginPath(); g.arc(0.5, 0.5, 0.32, 0, 7); g.fill(); g.stroke(); }]);
@@ -333,6 +354,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
       i.gateTo ? ['Gate to', D.AREA_NAMES[i.gateTo] || i.gateTo] : null,
       i.ice != null ? ['Ice', `${i.ice} / ${i.iceTop ?? 0} layers`] : null,
       i.cut ? ['Ice hole', 'cut today'] : null,
+      ((k): [string, string] | null => k === 'ice' ? ['On foot', 'slippery ice (#157)'] : k === 'hole' ? ['On foot', 'falls through unless crouching'] : k === 'open' ? ['On foot', 'open water: swim only'] : null)(iceOf(must(map.tiles[p.y * map.w + p.x]), iceSe)),
       i.soil ? ['Soil', `${i.soil}${i.wet ? ', watered' : ''}`] : null,
       i.plant ? ['Plant', `${i.plant.name}${i.plant.wild ? ' (wild)' : ''}, stage ${i.plant.stage}${i.plant.dead ? ', dead' : ''}`] : null,
       here.length ? ['Players', here.map(q => q.online ? q.name : `${q.id} (offline)`).join(', ')] : null

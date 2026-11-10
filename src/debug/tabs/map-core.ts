@@ -5,6 +5,7 @@ import type * as Data from '../../shared/data.ts';
 import type { AreaId, Ground } from '../../shared/data.ts';
 import type { Soil } from '../../shared/save.ts';
 import { isRecord, lookup } from '../../shared/util.ts';
+import * as IW from '../../shared/icewalk.ts';
 import type { JsonRecord } from '../../shared/util.ts';
 import type { DebugState, RoomSnapshot } from '../../server/debug.ts';
 
@@ -32,6 +33,13 @@ export const KINDS: Readonly<Partial<Record<Ground, Kind>>> = {
   hut: 'building', house: 'building', stall: 'building', well: 'building', cauldron: 'building', babka: 'building', icehouse: 'building', dielna: 'building', majster: 'lot',
   lot: 'lot', gate: 'gate'
 };
+// Chôdza po ľade (#157): čo je políčko v danom období – ľad (šmýka sa), otvor (prepadne sa), otvorená voda (pláva sa)
+export type IceKind = 'ice' | 'hole' | 'open' | null;
+export function iceOf(t: MapTile, season: number): IceKind {
+  return IW.isIce(t, season) ? 'ice' : IW.isHole(t, season) ? 'hole' : IW.openWater(t, season) ? 'open' : null;
+}
+// Obdobie pre vrstvu ľadu: svet podľa svojho času, plocha zo semienka ako v zime (vtedy je ľadu najviac)
+export function iceSeason(D: D, state: MapState | null | undefined): number { return state && typeof state.tick === 'number' ? D.seasonOf(D.dayOfTick(state.tick)) : IW.WINTER; }
 export function kindOf(D: D, g: Ground): Kind { return KINDS[g] || (D.BLOCK[g] ? 'building' : 'ground'); }
 // stromy do štatistiky: obrovský strom (2 × 2) je jeden strom, jeho ďalšie tri políčka ('trunk') sa nerátajú
 const TREES = new Set<Ground>(['tree', 'spruce', 'giant']);

@@ -8,7 +8,10 @@ type C2 = CanvasRenderingContext2D;
 // Voľby kreslenia rastliny (plant): zahynutá, v noci (papraď svieti), odkvitá, pripravená na zber (trblietka)
 export interface PlantOpts { dead?: boolean; night?: boolean; wilting?: boolean; ready?: boolean }
 // Voľby postavičky (char): plazí sa, tancuje, hrabe v tráve (dig = čas v s), babka, lampáš v ruke ('lit' = svieti), bez tieňa
-export interface CharOpts { crawl?: boolean; dance?: boolean; dig?: number; babka?: boolean; lamp?: 'lit' | 'on' | boolean; noShadow?: boolean }
+export interface CharOpts {
+  crawl?: boolean; dance?: boolean; dig?: number; babka?: boolean; lamp?: 'lit' | 'on' | boolean; noShadow?: boolean;
+  crouch?: boolean | undefined; pose?: 'fall' | 'swim' | null | undefined;   // chôdza po ľade (#157): čupí, leží na ľade, pláva
+}
 // Prechod na okraji plochy: strana, kam vedie, a ikona cieľovej plochy
 export interface GateInfo { side: 'n' | 's' | 'w' | 'e'; icon: string }
 export const Art = (() => {
@@ -217,7 +220,40 @@ export const Art = (() => {
     c.fillRect(x - w * 0.04, y + h * 0.3, w * 0.08, h * 0.5); // priečka
   }
 
+  // Pózy z chôdze po ľade (#157): leží na chrbte po pošmyknutí (postavička otočená naležato, nad ňou hviezdičky),
+  // pláva (vidno len hlavu a plecia nad hladinou, okolo vlnky a ruky, ktoré pádlujú)
+  function posed(c: C2, x: number, y: number, s: number, look: Partial<Look> | null, dir: number, phase: number, o: CharOpts): void {
+    const rest: CharOpts = { ...o, pose: null, crouch: false, crawl: false, dance: false, dig: 0, lamp: false };
+    if (o.pose === 'fall') {
+      const k = 0.78, side = dir === 1 || dir === 4 || dir === 6 ? -1 : 1;
+      if (!o.noShadow) ell(c, x, y, s * 0.4, s * 0.08, 0, 'rgba(0,0,0,0.25)');
+      c.save();
+      c.translate(x, y - s * 0.13);
+      c.rotate(side * Math.PI / 2);
+      char(c, 0, s * k * 0.47, s * k, look, 0, 0, { ...rest, noShadow: true });
+      c.restore();
+      const tw = phase * 0.7; // hviezdičky krúžia nad hlavou
+      for (let i = 0; i < 3; i++) {
+        const a = tw + i * TAU / 3;
+        circ(c, x + side * s * 0.3 + Math.cos(a) * s * 0.09, y - s * 0.34 + Math.sin(a) * s * 0.035, s * 0.028, i ? '#fff3a0' : '#ffd23f');
+      }
+      return;
+    }
+    const wl = y - s * 0.05, dip = s * 0.42; // hladina a o koľko je postavička ponorená
+    c.save();
+    c.beginPath(); c.rect(x - s, y - s * 1.6, s * 2, wl - (y - s * 1.6)); c.clip();
+    char(c, x, y + dip, s, look, dir, 0, { ...rest, noShadow: true });
+    c.restore();
+    const bob = Math.sin(phase * 1.5) * s * 0.02;
+    ell(c, x, wl + bob, s * 0.34, s * 0.08, 0, 'rgba(168,214,240,0.9)', '#ffffff');
+    ell(c, x, wl + bob, s * 0.2, s * 0.045, 0, 'rgba(120,180,220,0.9)');
+    const skin = '#f2c9a0', pd = Math.sin(phase * 3) * s * 0.03;
+    circ(c, x - s * 0.27, wl - s * 0.02 + pd, s * 0.055, skin);
+    circ(c, x + s * 0.27, wl - s * 0.02 - pd, s * 0.055, skin);
+  }
+
   function char(c: C2, x: number, y: number, s: number, look: Partial<Look> | null, dir: number, phase: number, o: CharOpts = {}): void {
+    if (o.pose === 'fall' || o.pose === 'swim') { posed(c, x, y, s, look, dir, phase, o); return; }
     look = look || {};
     const skin = '#f2c9a0';
     let d = dir;
@@ -233,7 +269,7 @@ export const Art = (() => {
     // plazenie: kolená pokrčené (kratšie nohy), trup sa predkloní v bokoch smerom pohybu;
     // pri pohľade spredu/zozadu predklon nevidno do strany, tak sa hlava len prikrčí k telu
     const fx = d === 1 ? -1 : d === 2 ? 1 : side;
-    const kn = o.crawl ? s * 0.08 : 0;
+    const kn = o.crawl ? s * 0.08 : o.crouch ? s * 0.11 : 0; // čupnutie (#157): ešte kratšie nohy, telo nižšie
     if (o.crawl) { c.save(); c.translate(-fx * s * 0.08, 0); } // ťažisko dozadu, nech sa postavička zmestí do spritu
     // nohy
     c.fillStyle = o.babka ? '#5b3a6b' : '#3b4a6b';
@@ -244,6 +280,8 @@ export const Art = (() => {
       c.fillRect(x - s * 0.14 + (d === 1 ? -step : d === 2 ? step : 0), yb - s * 0.05, s * 0.12, s * 0.05);
       c.fillRect(x + s * 0.02 - (d === 1 ? -step : d === 2 ? step : 0), yb - s * 0.05, s * 0.12, s * 0.05);
     }
+    const squat = !!o.crouch && !o.crawl;
+    if (squat) { c.save(); c.translate(0, kn); } // čupí: trup, ruky a hlava o kolená nižšie
     if (o.crawl) { const hx = x, hyp = yb - s * 0.2; c.translate(hx, hyp + kn + (fx ? 0 : s * 0.07)); c.rotate(fx * (d === 0 || d === 3 ? 0.3 : 0.45)); c.translate(-hx, -hyp); }
     // telo
     const shirt = look.shirt || '#4a90d9';
@@ -302,6 +340,7 @@ export const Art = (() => {
     if (o.babka && d === 0 && !side) { c.strokeStyle = '#555'; c.lineWidth = 1; c.beginPath(); c.arc(x - s * 0.075, hy + s * 0.03, s * 0.055, 0, TAU); c.moveTo(x + s * 0.13, hy + s * 0.03); c.arc(x + s * 0.075, hy + s * 0.03, s * 0.055, 0, TAU); c.stroke(); }
     // slamený klobúk pre farmára
     if (look.hat) { ell(c, x, hy - s * 0.12, s * 0.32, s * 0.08, 0, '#e8c86a'); ell(c, x, hy - s * 0.2, s * 0.16, s * 0.1, 0, '#e8c86a'); c.fillStyle = '#c0392b'; c.fillRect(x - s * 0.16, hy - s * 0.17, s * 0.32, s * 0.03); }
+    if (squat) c.restore();
     if (o.crawl) c.restore();
   }
 

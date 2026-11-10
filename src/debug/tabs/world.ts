@@ -9,13 +9,13 @@ import type { ViewOther, ViewState } from '../../client/state.ts';
 import * as World3D from '../../shared/world3d.ts';
 import type { AreaId, Gate, Ground } from '../../shared/data.ts';
 import type { Weather } from '../../shared/save.ts';
-import type { WorldPlayer, WorldView } from '../../server/debug-api/world.ts';
+import type { WorldIce, WorldPlayer, WorldView } from '../../server/debug-api/world.ts';
 import { lookup, must } from '../../shared/util.ts';
 import type { TabCtx, TabInstance } from '../ui.ts';
 import { errText } from '../ui.ts';
 
 type Layer = 'terrain' | 'buildings' | 'trees' | 'rocks' | 'plants' | 'chars' | 'water' | 'glacier' | 'particles' | 'shadows' | 'lights';
-type Helper = 'boxes' | 'grid' | 'tap' | 'gates' | 'lights' | 'wire' | 'frustum';
+type Helper = 'boxes' | 'grid' | 'tap' | 'gates' | 'lights' | 'wire' | 'frustum' | 'ice';
 // online hráč ako postavička: k pohľadu (ViewOther) cieľ pohybu medzi obnoveniami
 type Walker = ViewOther & { id: string; tx: number; ty: number };
 interface Pt { x: number; y: number }
@@ -27,8 +27,16 @@ const LAYERS: readonly (readonly [Layer, string])[] = [
 ];
 const HELPERS: readonly (readonly [Helper, string])[] = [
   ['boxes', 'Bounding boxes'], ['grid', 'Tile grid'], ['tap', 'Tap areas'], ['gates', 'Gates, arrivals'],
-  ['lights', 'Lights & sun'], ['wire', 'Wireframe'], ['frustum', 'Shadow camera']
+  ['lights', 'Lights & sun'], ['wire', 'Wireframe'], ['frustum', 'Shadow camera'], ['ice', 'Ice state (players)']
 ];
+// Chôdza po ľade (#157): stav hráča jedným riadkom (na ľade, rýchlosť, leží, pláva, čupí)
+export function iceText(i: WorldIce): string {
+  const parts = [i.swim ? '🏊 swimming' : i.hole ? '🕳 on a hole' : i.onIce ? '🧊 on ice' : 'off ice'];
+  if (i.speed) parts.push(`${i.speed} t/s (${i.vx}, ${i.vy})`);
+  if (i.fall) parts.push(`⤵ ${i.swim ? 'splashing' : 'fallen'} ${i.fall} ticks`);
+  if (i.crouch) parts.push('🧎 crouching');
+  return parts.join(' · ');
+}
 const BOX_COL: Readonly<Record<string, number>> & { sprite: number; other: number } = { tree: 0x3fbf4a, bush: 0x9be05a, rock: 0xa0a0a0, sprite: 0xff6fb5, other: 0xff9a2e };
 
 const CSS = `
@@ -340,6 +348,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
       let o = S.others.get(p.id);
       if (!o) { o = { id: p.id, name: p.name || p.id, x: p.x, y: p.y, dir: 0, phase: 0, tx: p.x, ty: p.y, look: null, a: undefined, e: null, jz: 0, cr: false, lp: false, si: -1, wb: 0 }; S.others.set(p.id, o); }
       o.tx = p.x; o.ty = p.y; o.look = p.look; o.name = p.name || p.id;
+      o.cq = !!p.ice && p.ice.crouch; o.po = p.ice ? p.ice.pose : null; // póza na ľade (#157)
     }
     for (const id of [...S.others.keys()]) if (!seen.has(id)) S.others.delete(id);
     if (P.follow && !S.others.has(P.follow)) P.follow = '';
@@ -548,6 +557,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     if (H.grid) for (let y = 0; y < S.H; y += 5) for (let x = 0; x < S.W; x += 5) tag(x + 0.5, v.groundY(x + 0.5, y + 0.5) + 0.1, y + 0.5, `${x},${y}`, '#fff');
     if (H.lights) for (const l of v.lights) tag(l.x, l.y + 0.35, l.z, 'r ' + l.w.toFixed(1), '#ffd28a');
     if (L.chars) for (const p of offline) tag(p.x, v.groundY(p.x, p.y) + 0.3, p.y, '◌ ' + p.id + ' (offline)', '#bbb');
+    if (H.ice && world) for (const p of world.players) tag(p.x, v.groundY(p.x, p.y) + (p.online ? 1.75 : 0.65), p.y, p.ice ? iceText(p.ice) : 'off ice', '#bfe8ff'); // stav na ľade (#157)
   }
 
   // ---------- slučka ----------
