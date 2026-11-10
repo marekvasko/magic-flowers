@@ -1746,9 +1746,11 @@ void main() {
     // Les divov (temná plocha): ťuknutie prechádza cez všetky objekty (stromy, kmene, kry…) na zem pod prstom –
     // ťukať sa bude len na vyslovene hracie objekty (a na hráčov), premietnutie na stromy by prekáželo
     const objects: THREE.Object3D[] = D.isDark(S.area) ? [] : [...fineMeshes.filter(m => m.visible && m.fade > 0.5), ...fineMeshes.flatMap(m => m.solidPart ? [m.solidPart] : [])];
-    const hits = ray.intersectObjects([...sprites, ...(mesh ? [mesh] : []), ...(glacierMesh ? [glacierMesh] : []), ...(waterMesh ? [waterMesh] : []), ...objects], false);
+    const hits = ray.intersectObjects([...sprites, ...(mesh ? [mesh] : []), ...(glacierMesh ? [glacierMesh] : []), ...(waterMesh ? [waterMesh] : []), ...objects, ...vehicles3d.pickables()], false);
     for (const h of hits) {
       const o = h.object;
+      const vt = vehicles3d.tileOf(o); // fúrik či sane (#158): ťuknutie kamkoľvek na model = jeho políčko
+      if (vt) return vt;
       if (o instanceof TileSprite || o instanceof THREE.Sprite) return o instanceof TileSprite && o.tile ? { ...o.tile } : null; // sprite bez políčka (pavúk) nič nevyberie
       if (o instanceof TileMesh && o.tile) return { ...o.tile };
       if (!h.face) continue;

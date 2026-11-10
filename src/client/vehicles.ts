@@ -68,7 +68,9 @@ export function createVehicles(dp: VehiclesDeps): ClientVehicles {
   const driving = (): VehicleId | null => { for (const v of srv.values()) if (v.bought && mine(v)) return v.id; return null; };
   const ridingIn = (): VehicleId | null => { for (const v of srv.values()) if (v.bought && v.r === S.id) return v.id; return null; };
 
+  let sig = '';
   function onList(list: VehicleView[]): void {
+    icon('furik'); // obrázky nech sú pripravené (hlásenie o kúpe, okno Dielne)
     for (const v of list) {
       srv.set(v.id, v);
       const s = shown.get(v.id);
@@ -82,7 +84,9 @@ export function createVehicles(dp: VehiclesDeps): ClientVehicles {
       if (v && (!pred || pred.id !== id || pred.area !== v.area)) pred = { id, area: v.area, x: v.x, y: v.y, a: v.a };
     } else pred = null;
     S.vehicles = [...shown.values()];
-    dp.changed();
+    // lišta a otvorené okno sa prekreslia, len keď sa zmenilo niečo okrem polohy (pri jazde prichádza správa 10× za sekundu)
+    const now = list.map(v => [v.id, v.bought, v.area, v.ice, v.d, v.r, v.dn, v.rn].join(',')).join('|');
+    if (now !== sig) { sig = now; dp.changed(); }
   }
   function resync(): void {
     const id = driving(), v = id ? srv.get(id) : undefined;
@@ -137,13 +141,17 @@ export function createVehicles(dp: VehiclesDeps): ClientVehicles {
   }
 
   // Ťuknutie na políčko s fúrikom (aj E na políčko pred sebou) – otvorí jeho okno
+  // (políčko pod stredom fúrika, alebo políčko, ktorého stred je od stredu fúrika najviac 0,75 – model je dlhší než políčko)
   function ctxAt(tx: number, ty: number): CtxAction | null {
+    let best: VehicleView | null = null, bd = Infinity;
     for (const s of shown.values()) {
-      if (!s.bought || s.area !== S.area || Math.floor(s.x) !== tx || Math.floor(s.y) !== ty) continue;
-      target = s.id;
-      return { i: V.VEHICLES[s.id].icon, l: V.VEHICLES[s.id].name, ui: 'vehicle' };
+      if (!s.bought || s.area !== S.area) continue;
+      const d = Math.floor(s.x) === tx && Math.floor(s.y) === ty ? 0 : Math.hypot(s.x - (tx + 0.5), s.y - (ty + 0.5));
+      if (d <= 0.75 && d < bd) { best = s; bd = d; }
     }
-    return null;
+    if (!best) return null;
+    target = best.id;
+    return { i: V.VEHICLES[best.id].icon, l: V.VEHICLES[best.id].name, ui: 'vehicle' };
   }
 
   function near(v: VehicleView): boolean { return v.area === S.area && Math.hypot(S.me.x - v.x, S.me.y - v.y) <= V.VEHICLE_REACH + 0.3; }

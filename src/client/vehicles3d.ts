@@ -28,6 +28,8 @@ export interface Vehicles3d {
   update: (dt: number, se: number) => void;
   seat: (charId: number | string) => number;   // o koľko vyššie sedí spolujazdec (0 = nesedí)
   objects: () => THREE.Object3D[];             // pre ladiacu stránku
+  pickables: () => THREE.Object3D[];           // siete na ťuknutie (render3d pick)
+  tileOf: (o: THREE.Object3D) => { x: number; y: number } | null;   // políčko vozidla, na ktorého sieť sa ťuklo
   dispose: () => void;
 }
 const SEAT: Readonly<Record<VehicleId, number>> = { furik: 0.42, sane: 0.3 };
@@ -77,6 +79,7 @@ export function createVehicles3d(dp: Vehicles3dDeps): Vehicles3d {
     group.add(o.shadow); // tieň ide s vozidlom (otáča sa s ním)
     o.shadow.position.set(0, 0.01, 0); o.shadow.scale.set(id === 'sane' ? 1.5 : 1.35, 0.75, 1);
     o.rope.layers.set(1); o.rope.visible = false; o.rope.frustumCulled = false;
+    o.rope.raycast = () => { /* lano sa ťuknutím nevyberá */ };
     scene.add(group); scene.add(o.rope);
     objs.set(id, o);
     return o;
@@ -120,5 +123,9 @@ export function createVehicles3d(dp: Vehicles3dDeps): Vehicles3d {
     for (const g of geos.values()) { g.geo.dispose(); g.color.dispose(); g.ao.dispose(); }
     geos.clear();
   }
-  return { update, seat, objects: () => [...objs.values()].map(o => o.group), dispose };
+  function tileOf(m: THREE.Object3D): { x: number; y: number } | null {
+    for (const [id, o] of objs) if (o.mesh === m) { const v = shown().find(x => x.id === id); return v ? { x: Math.floor(v.x), y: Math.floor(v.y) } : null; }
+    return null;
+  }
+  return { update, seat, objects: () => [...objs.values()].map(o => o.group), pickables: () => [...objs.values()].map(o => o.mesh), tileOf, dispose };
 }
