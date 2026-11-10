@@ -783,6 +783,69 @@ export function rotateY(f: FineModel): FineModel {
   for (let j = 0; j < sx; j++) for (let y = 0; y < sy; y++) for (let i = 0; i < sz; i++) out[(j * sy + y) * sz + i] = data[((sz - 1 - i) * sy + y) * sx + j] ?? 0;
   return { sx: sz, sy, sz: sx, data: out };
 }
+// ---- Doprava (#158): fúrik a sane ----
+// Pohyblivé modely (nie sú v mriežke plochy): plátno 2 × 1 polia, „dopredu“ je +x, stred vozidla je v strede pôdorysu
+// (minikocka 8, 4 – VEHICLE_CENTER v blokoch od rohu dát). ice = koľko kusov ľadu (0–6) vezie: kocky 2×2×2 v rade 3 × 2.
+// Fúrik: červená vanička na dvoch drevených ojach s rúčkami vzadu, vpredu koleso so železnou obručou a drevenými špicami.
+// Sane: dve sanice (vpredu zahnuté), stĺpiky, doska z latiek, opierka vzadu a vpredu priečka s lanom.
+export const VEHICLE_CENTER = { x: (8 + FM) / FINE, z: (4 + FM) / FINE };
+const vehicleCache = new Map<string, FineModel>();
+function iceBlocks(C: FineCanvas, x0: number, y0: number, n: number, step: number): void {
+  for (let k = 0; k < Math.min(6, n); k++) {
+    const bx = x0 + (k % 3) * step, bz = k < 3 ? 2 : 4;
+    C.fbox(bx, y0, bz, bx + 1, y0 + 1, bz + 1, M.ICE);
+    C.put(bx, y0 + 1, bz, M.SNOW); // lesk na hrane kocky
+  }
+}
+function furikModel(ice: number): FineModel {
+  const C = fineCanvas(2, 1, 12), { put, fbox } = C;
+  // koleso vpredu: obruč, špice a os (stred x 13, y 2,5, hrúbka z 3–4)
+  for (let x = 10; x <= 16; x++) for (let y = 0; y <= 5; y++) {
+    const r = Math.hypot(x - 13, y - 2.5);
+    const m = r > 2.6 ? 0 : r > 1.7 ? M.POT : (x === 13 || Math.abs(y - 2.5) < 0.6) ? M.PLANK_DARK : 0;
+    if (m) { put(x, y, 3, m); put(x, y, 4, m); }
+  }
+  put(13, 2, 3, M.HANDLE); put(13, 3, 4, M.HANDLE);
+  // oje: od osi kolesa šikmo dozadu a hore k rúčkam
+  C.line(13, 3, 2, 4, 4, 2, M.PLANK_DARK); C.line(13, 3, 5, 4, 4, 5, M.PLANK_DARK);
+  C.line(4, 4, 2, -2, 6, 2, M.PLANK_DARK); C.line(4, 4, 5, -2, 6, 5, M.PLANK_DARK);
+  fbox(-3, 6, 2, -2, 6, 2, M.LOG_DARK); fbox(-3, 6, 5, -2, 6, 5, M.LOG_DARK); // rúčky
+  fbox(5, 0, 2, 5, 3, 2, M.PLANK_DARK); fbox(5, 0, 5, 5, 3, 5, M.PLANK_DARK);  // nôžky
+  // vanička: dno a steny (predná šikmá), hore tmavý lem
+  fbox(4, 4, 1, 10, 4, 6, M.AWN_RED);
+  for (let y = 5; y <= 6; y++) {
+    const xf = 10 + (y - 4); // predná stena sa vyklápa dopredu
+    fbox(3, y, 1, xf, y, 1, M.AWN_RED); fbox(3, y, 6, xf, y, 6, M.AWN_RED);
+    fbox(3, y, 1, 3, y, 6, M.AWN_RED); fbox(xf, y, 1, xf, y, 6, M.AWN_RED);
+  }
+  fbox(3, 7, 1, 13, 7, 1, M.POT); fbox(3, 7, 6, 13, 7, 6, M.POT); fbox(3, 7, 1, 3, 7, 6, M.POT); fbox(13, 7, 1, 13, 7, 6, M.POT);
+  iceBlocks(C, 4, 6, ice, 2);
+  if (ice) fbox(4, 5, 2, 9, 5, 5, M.ICE); // kopa ľadu siaha až po lem
+  return C.done();
+}
+function saneModel(ice: number): FineModel {
+  const C = fineCanvas(2, 1, 10), { put, fbox } = C;
+  for (const z of [1, 6]) {
+    fbox(0, 0, z, 13, 0, z, M.POT);                               // železom kované sanice
+    put(14, 1, z, M.POT); put(15, 2, z, M.POT); put(15, 3, z, M.POT); put(14, 4, z, M.POT); // zahnutá špička
+    for (const x of [2, 6, 10]) fbox(x, 1, z, x, 2, z, M.PLANK_DARK); // stĺpiky
+    put(13, 1, z, M.PLANK_DARK); put(13, 2, z, M.PLANK_DARK);
+  }
+  for (let x = 1; x <= 13; x++) fbox(x, 3, 1, x, 3, 6, x % 2 ? M.PLANK : M.PLANK_DARK); // doska z latiek
+  fbox(0, 3, 1, 0, 5, 1, M.PLANK_DARK); fbox(0, 3, 6, 0, 5, 6, M.PLANK_DARK); fbox(0, 5, 1, 0, 5, 6, M.PLANK_DARK); // opierka
+  fbox(14, 4, 1, 14, 4, 6, M.LOG_DARK);                          // priečka vpredu
+  fbox(15, 4, 3, 16, 4, 4, M.ROPE);                               // lano
+  iceBlocks(C, 2, 4, ice, 4);
+  return C.done();
+}
+// Model fúrika ('furik') či saní ('sane') s ice kusmi ľadu (obdobie ich nemení – ostávajú farebné aj v zime)
+export function vehicleModel(kind: 'furik' | 'sane', ice: number): FineModel {
+  const n = Math.max(0, Math.min(6, ice | 0)), key = kind + '|' + n;
+  let m = vehicleCache.get(key);
+  if (!m) { m = kind === 'sane' ? saneModel(n) : furikModel(n); vehicleCache.set(key, m); }
+  return m;
+}
+
 // Zoznam všetkých jemných modelov pre prehliadač modelov v /debug (#79). Hra ho nepoužíva.
 // build(season, rot) → { sx, sy, sz, data }; stromy, kry a kamene sa otáčajú ako v hre, budovy cez rotateY.
 export const TREE_NAMES: Readonly<Record<TreeKindAll, string>> = { buk: 'Buk', dub: 'Dub', breza: 'Breza', jablon: 'Jabloň', smrek: 'Smrek', borovica: 'Borovica', obor: 'Obor (Les divov)' };
@@ -807,7 +870,9 @@ export const FINE_MODELS: FineModelEntry[] = [
   // Les divov: obrovské stromy (3 tvary, kmeň na 2 × 2 políčkach) a spadnuté kmene
   ...[0, 1, 2].map((v): FineModelEntry => ({ id: 'giant-' + v, name: `Obor, tvar ${v + 1}`, group: 'Les divov', fn: `giantModel(shape = ${v})`, tiles: [2, 2], kind: 'obor', build: (se, rot) => giantModel(se, rot || 0, v) })),
   { id: 'log', name: 'Spadnutý kmeň', group: 'Les divov', fn: 'logModel(shrooms = false)', tiles: [1, 1], build: (se, rot) => logModel(se, rot || 0, false) },
-  { id: 'log-shrooms', name: 'Spadnutý kmeň s hubami', group: 'Les divov', fn: 'logModel(shrooms = true)', tiles: [1, 1], build: (se, rot) => logModel(se, rot || 0, true) }
+  { id: 'log-shrooms', name: 'Spadnutý kmeň s hubami', group: 'Les divov', fn: 'logModel(shrooms = true)', tiles: [1, 1], build: (se, rot) => logModel(se, rot || 0, true) },
+  // doprava (#158): fúrik a sane, prázdne a s plným nákladom ľadu
+  ...(['furik', 'sane'] as const).flatMap(k => [0, 6].map((n): FineModelEntry => ({ id: k + (n ? '-ice' : ''), name: (k === 'furik' ? 'Fúrik' : 'Sane') + (n ? ', 6 kusov ľadu' : ''), group: 'Vehicles', fn: `vehicleModel('${k}', ice = ${n})`, tiles: [2, 1], build: turned(() => vehicleModel(k, n)) })))
 ];
 
 // Ktorý druh stromu rastie na políčku (deterministicky); pri babkinej chalúpke je ovocný sad.

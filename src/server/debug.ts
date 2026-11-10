@@ -7,7 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AreaId } from '../shared/data.ts';
-import type { Icehouse, PlayerKey, SavedTile, Weather } from '../shared/save.ts';
+import type { Icehouse, PlayerKey, SavedTile, Vehicles, Weather } from '../shared/save.ts';
 import { isRecord } from '../shared/util.ts';
 import * as E from './engine.ts';
 import type { BatchOut, EngineEvent, JournalEntry, PeriodicDef } from './engine.ts';
@@ -123,6 +123,7 @@ export interface DebugState {
   pomedzieSeed?: number;
   lesSeed?: number;
   icehouse?: Icehouse | null;
+  vehicles?: Vehicles;          // fúrik a sane (#158); staršie uloženia ho nemajú
   [key: string]: unknown;
 }
 export interface Loaded { id: string; source: 'memory' | 'file'; file: { size: number; saved: number } | null; online: { name: string; area: AreaId; player: string }[]; state: DebugState }

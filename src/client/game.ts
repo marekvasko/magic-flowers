@@ -7,6 +7,7 @@ import type { ClientMessage, Emote, ServerMessage, TileView, ToastKind, WebView,
 import type { Contract, WorldMode } from '../shared/save.ts';
 import { entries, isRecord, keys, lookup, must } from '../shared/util.ts';
 import { Art } from './art.ts';
+import { createVehicles } from './vehicles.ts';
 import type { Render3D } from './render3d.ts';
 import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, UiKind } from './state.ts';
 
@@ -50,6 +51,8 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
   };
 
   window.MF = S; // pre ladenie v konzole
+  // fúrik a sane (#158): stav, predpoveď pohybu, okno, riadky v Dielni a miesto v lište
+  const Veh = createVehicles({ S, send, toast, openModal, changed: () => { renderHotbar(); if (S.modal) S.modal.refresh(); } });
 
   // ---------- Zvuky ----------
   let actx: AudioContext | null = null;
@@ -151,7 +154,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       case 'market': S.market = m; if (S.modal) S.modal.refresh(); break;
       case 'board': S.board = m.list; if (S.modal) S.modal.refresh(); break;
       case 'tile': S.tiles[m.i] = m.v; break;
-      case 'pos': S.me.x = m.x; S.me.y = m.y; stopWalk(); break; // server pohyb odmietol (neprechodná zem) – späť na potvrdené miesto
+      case 'pos': S.me.x = m.x; S.me.y = m.y; stopWalk(); Veh.resync(); break; // server pohyb odmietol (neprechodná zem) – späť na potvrdené miesto; spolujazdca vezie fúrik
       case 'tiles': S.tiles = m.tiles; S.tilesGen++; findAnchors(); break;
       case 'time':
         // Server posiela celé číslo kroku; deň a minúta sa z neho odvodia, medzi krokmi len plynulo dopočítame.
@@ -175,7 +178,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
         renderSleep();
         break;
       }
-      case 'toast': toast(m.text, m.kind); if (m.kind === 'magic') sfx('magic'); else if (m.kind === 'gift') sfx('coin'); break;
+      case 'toast': toast(m.text, m.kind, m.icon && Veh.icon(m.icon)); if (m.kind === 'magic') sfx('magic'); else if (m.kind === 'gift') sfx('coin'); break;
       case 'chat': chatLine(m.name, m.text); S.bubbles[m.id] = { text: m.text, until: performance.now() + Math.min(10000, 4000 + m.text.length * 60) }; break;
       case 'fx': spawnFx(m); break;
       case 'webs': setWebs(m.webs, m.homes); break;
@@ -195,6 +198,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       case 'shove': S.me.x = m.x; S.me.y = m.y; stopWalk(); break; // stará pradlena odhodila hráča za okraj čistiny
       case 'brewed': S.brewed = m.k; S.brewHint = m.hint ?? null; S.cauldron = []; sfx(m.k === 'sliz' ? 'bad' : 'magic'); if (S.modal) S.modal.refresh(); break;
       case 'error': alert(m.text); S.joined = false; $('conn').classList.add('hidden'); break;
+      case 'vehicles': Veh.onList(m.list); break; // fúrik a sane (#158)
     }
   }
 
@@ -249,8 +253,8 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     const nfx: NonNullable<ClientState['areaFx']> = S.areaFx = { phase: 'out', msg: m, queue: [] };
     nfx.timer = setTimeout(() => {
       applyArea(nfx.msg); // svet sa prestavia za čiernou
+      showAreaName(nfx); // už nie 'out' – odložené správy sa vybavia (inak by sa znova odložili a stratili: hlásenie o príchode, fúriky)
       for (const q of nfx.queue.splice(0)) onMsg(q);
-      showAreaName(nfx);
     }, reducedMotion() ? 0 : AREA_FADE);
   }
   // Počká, kým 3D pohľad postaví a nakreslí svet novej plochy (najviac 4 s), potom ukáže meno a nechá ho svietiť AREA_HOLD.
@@ -315,11 +319,12 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     return { x: Math.floor(S.me.x) + d[0], y: Math.floor(S.me.y) + d[1] };
   }
 
-  function toast(text: string, kind?: ToastKind): void {
+  function toast(text: string, kind?: ToastKind, icon?: string): void {
     const box = $('toasts');
     const el = document.createElement('div');
     el.className = 'toast ' + (kind || '');
     el.textContent = text;
+    if (icon) el.prepend(Object.assign(document.createElement('img'), { src: icon, alt: '', style: 'height:1.8em;vertical-align:middle;margin:-0.3em 0.3em -0.3em 0' })); // fúrik, sane (#158)
     box.appendChild(el);
     while (box.firstChild && box.children.length > 3) box.removeChild(box.firstChild);
     setTimeout(() => { el.classList.add('out'); }, kind === 'magic' ? 7000 : 4000);
@@ -375,6 +380,8 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
   function ctxAction(tx: number, ty: number): CtxAction | null {
     const t = tileAt(tx, ty);
     if (!t) return null;
+    const veh = Veh.ctxAt(tx, ty); // fúrik či sane na políčku (#158)
+    if (veh) return veh;
     const sel = S.sel;
     if (sel === 'fl_papradie') return { i: '✨', l: 'Želanie', ui: 'wish' };
     const other = playerOn(tx, ty);
@@ -758,6 +765,8 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     const bar = $('hotbar');
     const ids = hotbarIds();
     bar.innerHTML = '';
+    const vs = Veh.hotbarSlot(); // fúrik či sane, kým ich držím alebo v nich sedím (#158)
+    if (vs) bar.appendChild(vs);
     for (const [i, id] of ids.entries()) {
       const d = document.createElement('div');
       d.className = 'slot' + (id === S.sel ? ' on' : '');
@@ -875,6 +884,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     if (kind === 'wish') { openModal('✨ Papraďový kvet', renderWish); return; }
     if (kind === 'icehouse') { openModal('🧊 Ľadovňa', renderIcehouse); return; }
     if (kind === 'dielna') { openModal('🪚 Dielňa', renderDielna); return; }
+    if (kind === 'vehicle') { Veh.open(); return; } // fúrik a sane (#158)
     openModal('🧵 ' + D.MASTER.name, renderMaster); // majster
   }
 
@@ -1243,6 +1253,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
   function renderDielna(body: HTMLElement): void {
     const L = D.DIELNA.loom, lm = S.loom, silk = S.inv.silk || 0;
     body.appendChild(h('p', { style: 'margin:4px 0 10px;font-size:14px' }, 'Spoločná dielňa celej záhrady. Čo sa do nej kúpi, slúži všetkým.'));
+    Veh.dielnaRows(body); // fúrik a sane (#158)
     if (!S.dielna.loom) {
       const lvl = D.repLevel(S.rep), btn = h('button', { class: 'btn', onclick: () => { send({ t: 'buyLoom' }); } }, L.price + '🪙');
       if (S.coins < L.price || lvl < L.rep) btn.disabled = true;
@@ -1417,7 +1428,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
   function update(dt: number): void {
     const me = S.me;
     let vx = S.stick.x, vy = S.stick.y;
-    if (S.asleep || S.areaFx) { vx = vy = 0; S.keys = {}; S.path = null; }
+    if (S.asleep || S.areaFx || Veh.riding()) { vx = vy = 0; S.keys = {}; S.path = null; } // spolujazdca vezie fúrik (#158)
     if (S.keys.l) vx -= 1; if (S.keys.r) vx += 1; if (S.keys.u) vy -= 1; if (S.keys.d) vy += 1;
     if (R3 && (vx || vy)) [vx, vy] = R3.screenToWorld(vx, vy); // joystick je vzhľadom na obrazovku, kamera je otočená
     if (vx || vy) stopWalk();
@@ -1462,11 +1473,13 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       // (inak by sa dalo vyliezť, keď sa už rohom dotýka vyššieho ľadu)
       const mid = tileAt(Math.floor(me.x), Math.floor(me.y)), from = me.crawl ? mid : here;
       const free = (x: number, y: number): boolean => corners(x, y).every(([cx, cy]) => !solid(cx, cy, from, lift, me.crawl, overlap))
-        && (!me.crawl || D.level(tileAt(Math.floor(x), Math.floor(y))) === D.level(mid));
+        && (!me.crawl || D.level(tileAt(Math.floor(x), Math.floor(y))) === D.level(mid))
+        && !Veh.blocks(x, y); // fúrik, ktorý tlačím, musí tiež prejsť (#158)
       const nx = me.x + vx * sp;
       if (free(nx, me.y)) me.x = nx;
       const ny = me.y + vy * sp;
       if (free(me.x, ny)) me.y = ny;
+      Veh.moved(ox, oy); // predpoveď fúrika (#158)
       face(vx, vy);
       me.a = Math.atan2(vy, vx); // presný smer pre 8-smerový sprite
       me.phase += dt * (me.crawl ? 7 : 11);
@@ -1478,7 +1491,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     // odoslanie pozície
     const now = performance.now();
     const key = me.x.toFixed(2) + ',' + me.y.toFixed(2) + ',' + me.dir + ',' + (me.a != null ? me.a.toFixed(1) : '') + ',' + me.crawl + ',' + (S.sel === 'lamp');
-    if (key !== S.lastSent && now - S.sentAt > 90) { send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq }); S.lastSent = key; S.sentAt = now; }
+    if (key !== S.lastSent && now - S.sentAt > 90 && !Veh.riding()) { send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq }); S.lastSent = key; S.sentAt = now; }
     // ostatní hráči
     for (const o of S.others.values()) {
       const dx = o.tx - o.x, dy = o.ty - o.y;
@@ -1487,6 +1500,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       o.phase = Math.hypot(dx, dy) > 0.02 ? o.phase + dt * (o.cr ? 7 : 11) : 0;
       if (o.jz > 0 || o.jv > 0) { o.jz += o.jv * dt; o.jv -= JUMP_G * dt; if (o.jz <= 0) o.jz = o.jv = 0; }
     }
+    Veh.update(dt); // fúrik a sane: plynulé polohy, spolujazdci sedia vo fúriku (#158)
     // pavúky
     for (const o of S.spiders.values()) {
       const k = Math.min(1, dt * 12), x0 = o.x, y0 = o.y, z0 = o.z || 0;
