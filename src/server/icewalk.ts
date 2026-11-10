@@ -122,8 +122,11 @@ export function move(s: GameSlices, d: PosData, ctx: GameCtx, area: AreaId, from
     const c = tileAt(req.x, req.y);
     if (IW.isHole(c, se)) { if (careful) ctx.reject(null); return fallIn(idx(req.x, req.y)); }
     if (!IW.isIce(c, se)) return done(req, undefined, false);
-    // vstup na ľad: hybnosť z kroku, ktorý práve urobil (najviac plná rýchlosť)
-    const [vx, vy] = IW.clampInput((req.x - from.x) / dt, (req.y - from.y) / dt, ICE.speed * (careful ? ICE.crouch : 1));
+    // vstup na ľad: hybnosť z chôdze – vstup × rýchlosť (na zemi ide klient presne takto, bez rozbehu); starší klient
+    // bez vstupu: z kroku, ktorý práve urobil (skok ďalej – prechod, oprava – bez hybnosti)
+    const cap = careful ? ICE.crouch : 1, jump = Math.hypot(req.x - from.x, req.y - from.y) > ICE.speed * dt * 1.5;
+    const [vx, vy] = d.ix !== undefined && d.iy !== undefined ? IW.clampInput(num(d.ix) * ICE.speed, num(d.iy) * ICE.speed, ICE.speed * cap)
+      : jump ? [0, 0] : IW.clampInput((req.x - from.x) / dt, (req.y - from.y) / dt, ICE.speed * cap);
     return done(req, stamp({ vx: r3(vx), vy: r3(vy) }), false);
   }
   // na ľade: server počíta sám – hybnosť, náraz do prekážky po osiach (ako klient), poloha klienta platí, ak je blízko

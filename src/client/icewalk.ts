@@ -6,7 +6,7 @@ import type { IceTile } from '../shared/icewalk.ts';
 import type { MsgOf } from './state.ts';
 
 // Stav vlastnej postavičky: do kedy leží (performance.now ms), či pláva, či už dostala radu o čupnutí
-export interface IceClient { fallUntil: number; swim: boolean; hinted: boolean }
+export interface IceClient { fallUntil: number; swim: boolean; hinted: boolean; lastT?: number }
 export type IceMode = 'fall' | 'swim' | 'ice' | null;
 // Postavička, ktorej sa krok týka (S.me): poloha a hybnosť
 interface Body { x: number; y: number; vx?: number | undefined; vy?: number | undefined }
@@ -34,6 +34,13 @@ export function mode(st: IceClient, here: IceTile | null | undefined, season: nu
 // Póza vlastnej postavičky (kreslenie): leží, pláva, alebo nič
 export function pose(st: IceClient, now: number): 'fall' | 'swim' | null { return st.swim ? 'swim' : st.fallUntil > now ? 'fall' : null; }
 
+// Skutočný čas od minulého snímku (s, najviac ICE.dtMax): fyzika ľadu ide v reálnom čase ako na serveri (ten počíta
+// z času klienta), aj keď hra pri pomalom snímkovaní krok snímku oreže
+export function realDt(st: IceClient, now: number, frameDt: number): number {
+  const d = st.lastT === undefined ? frameDt : (now - st.lastT) / 1000;
+  st.lastT = now;
+  return Math.max(0, Math.min(IW.ICE.dtMax, d));
+}
 // Krok na ľade: hybnosť sa blíži k vstupu (ix, iy – smer × spomalenie) a vráti posun za dt
 export function slide(me: Body, ix: number, iy: number, dt: number): [number, number] {
   const [vx, vy] = IW.accelerate(me.vx || 0, me.vy || 0, ix, iy, dt);

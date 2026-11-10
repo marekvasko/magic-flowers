@@ -1445,7 +1445,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     const ice = iceSt(), nowI = performance.now(), se = season();
     const iceMode = IceC.mode(ice, tileAt(Math.floor(me.x), Math.floor(me.y)), se, nowI);
     if (iceMode === 'fall') { vx = vy = 0; stopWalk(); }
-    if (iceMode !== 'ice') { me.vx = 0; me.vy = 0; }
+    const iceDt = IceC.realDt(ice, nowI, dt);
     me.pose = IceC.pose(ice, nowI);
     me.crouch = !S.asleep && (!!S.crouchKey || !!S.crouchTgl) && !me.jz && !me.pose;
     if (iceMode === 'ice' && !ice.hinted) {
@@ -1483,7 +1483,9 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       const free = (x: number, y: number): boolean => corners(x, y).every(([cx, cy]) => !solid(cx, cy, from, lift, me.crawl, overlap, swim))
         && (!me.crawl || D.level(tileAt(Math.floor(x), Math.floor(y))) === D.level(mid))
         && (swim || !careful || !IW.isHole(tileAt(Math.floor(x), Math.floor(y)), se));
-      const [dx, dy] = iceMode === 'ice' ? IceC.slide(me, vx * ik, vy * ik, dt) : [vx * sp, vy * sp];
+      // na zemi: hybnosť = vstup × rýchlosť (tak ju pri vstupe na ľad prevezme aj server); na ľade fyzika v reálnom čase
+      if (iceMode !== 'ice') { me.vx = iceMode ? 0 : vx * ik * IW.ICE.speed; me.vy = iceMode ? 0 : vy * ik * IW.ICE.speed; }
+      const [dx, dy] = iceMode === 'ice' ? IceC.slide(me, vx * ik, vy * ik, iceDt) : [vx * sp, vy * sp];
       const nx = me.x + dx;
       if (free(nx, me.y)) me.x = nx; else me.vx = 0;
       const ny = me.y + dy;
@@ -1497,7 +1499,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
         if (Math.hypot(me.x - ox, me.y - oy) < sp * 0.1) { S.stuckT += dt; if (S.stuckT > 0.6) stopWalk(); }
         else S.stuckT = 0;
       }
-    } else me.phase = 0;
+    } else { me.phase = 0; me.vx = 0; me.vy = 0; }
     // odoslanie pozície
     const now = performance.now();
     const iceIn = me.moving && S.iceIn ? S.iceIn : [0, 0];
