@@ -62,5 +62,5 @@ export default function world(query: URLSearchParams, tools: Pick<Tools, 'load'>
     if (pa !== area || typeof sv.x !== 'number' || typeof sv.y !== 'number') continue;
     players.push({ id: key, name: o ? o.name : null, online: !!o, x: sv.x, y: sv.y, look: sv.look || null });
   }
-  return { room: r.id, source: r.source, seed: area === 'les' ? st.lesSeed : st.pomedzieSeed, area, w, h, tick: st.tick || 0, weather: st.weather || 'sun', tiles: areaTiles(st, area), players, vehicles: Vehicles.debugView(st.vehicles, area) };
+  return { room: r.id, source: r.source, seed: area === 'les' ? st.lesSeed : st.pomedzieSeed, area, w, h, tick: st.tick || 0, weather: st.weather || 'sun', tiles: areaTiles(st, area), players, vehicles: Vehicles.debugView(st.vehicles, area, st.tick || 0) };
 }

@@ -1746,11 +1746,10 @@ void main() {
     // Les divov (temná plocha): ťuknutie prechádza cez všetky objekty (stromy, kmene, kry…) na zem pod prstom –
     // ťukať sa bude len na vyslovene hracie objekty (a na hráčov), premietnutie na stromy by prekáželo
     const objects: THREE.Object3D[] = D.isDark(S.area) ? [] : [...fineMeshes.filter(m => m.visible && m.fade > 0.5), ...fineMeshes.flatMap(m => m.solidPart ? [m.solidPart] : [])];
-    const hits = ray.intersectObjects([...sprites, ...(mesh ? [mesh] : []), ...(glacierMesh ? [glacierMesh] : []), ...(waterMesh ? [waterMesh] : []), ...objects, ...vehicles3d.pickables()], false);
+    sprites.push(...vehicles3d.pickables()); // fúrik a sane (#158): ťuknutie na obrázok = ich políčko
+    const hits = ray.intersectObjects([...sprites, ...(mesh ? [mesh] : []), ...(glacierMesh ? [glacierMesh] : []), ...(waterMesh ? [waterMesh] : []), ...objects], false);
     for (const h of hits) {
       const o = h.object;
-      const vt = vehicles3d.tileOf(o); // fúrik či sane (#158): ťuknutie kamkoľvek na model = jeho políčko
-      if (vt) return vt;
       if (o instanceof TileSprite || o instanceof THREE.Sprite) return o instanceof TileSprite && o.tile ? { ...o.tile } : null; // sprite bez políčka (pavúk) nič nevyberie
       if (o instanceof TileMesh && o.tile) return { ...o.tile };
       if (!h.face) continue;
@@ -1839,7 +1838,7 @@ void main() {
     }
     for (const o of chars.values()) o.alive = false;
     const me = S.me;
-    vehicles3d.update(dt, se); // fúrik a sane (#158); spolujazdec v nich sedí – vyššie a skrčený (seat)
+    vehicles3d.update(dt, lights); // fúrik a sane (#158); spolujazdec je nakreslený v nich (jeho postavička sa skryje, meno ostane)
     const seatMe = vehicles3d.seat('me');
     const meO = api.noPlayer ? null : drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : dirAngle(me.dir), seatMe ? 0 : S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz + seatMe, crawl: me.crawl || seatMe > 0, dig: api.searching({ si: S.mySi }) ? t : 0, lamp: S.sel === 'lamp' && lampState, web: S.webLeft ? S.webLeft() : 0 }, dt);
     for (const o of S.others.values()) { const seat = vehicles3d.seat(o.id); drawChar(o.id, o.x, o.y, o.look, o.a != null ? o.a : dirAngle(o.dir || 0), seat ? 0 : o.e === 'dance' ? t * 4 : o.phase, { dance: o.e === 'dance', jz: o.jz + seat, crawl: o.cr || seat > 0, dig: api.searching(o) ? t : 0, lamp: o.lp && lampState, web: o.wb || 0 }, dt); }
@@ -1865,6 +1864,7 @@ void main() {
       if (dark && id !== 'me' && o.seen > 0.02 && hiddenByTree(o)) o.seen = 0; // za kmeňom nevidno ani meno
       o.sp.visible = o.shadow.visible = o.seen > 0.02;
       o.ghost.visible = !dark || id === 'me';
+      if (vehicles3d.seat(id)) o.sp.visible = o.ghost.visible = o.shadow.visible = false; // spolujazdec je nakreslený vo fúriku (#158)
     }
     spiders3d.update(dt, t, lights); // pavučiny, nory a pavúky (#57)
 
@@ -1959,7 +1959,7 @@ void main() {
   const particles = createParticles({ scene, camera, renderer, S, ripple });
   const particleObjs = scene.children.filter(o => !sceneBefore.has(o)); // objekty častíc (ladiaca stránka ich vie skryť)
   const spiders3d = createSpiders3d({ THREE, scene, S, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, renderer, world: worldU, maxLights: MAX_LIGHTS, fine: () => grid && grid.fine });
-  const vehicles3d = createVehicles3d({ THREE, scene, S, groundY, meshFine, bakedTex, material: fineMats.main, vox: voxUniforms, shadow: blobShadow }); // fúrik a sane (#158)
+  const vehicles3d = createVehicles3d({ THREE, scene, S, groundY, makeSprite, spriteTex, lightAt, shadow: blobShadow, dir8, yaw: () => yaw }); // fúrik a sane (#158)
   // stred ohniska pod kotlíkom (model má okraj FM minikociek, ohnisko je v strede políčka nad zemou)
   function fireCenter(): { x: number; y: number; z: number } | null {
 

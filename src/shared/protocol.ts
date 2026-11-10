@@ -104,6 +104,8 @@ export interface VehicleView {
   y: number;
   a: number;
   ice: number;
+  u?: boolean;            // dá sa teraz používať (obdobie)
+  mt?: number | null;     // krok, keď sa roztopí najstarší ľad (null = žiadny ľad)
   d: number | string | null;
   r: number | string | null;
   dn?: string | null;

@@ -10,6 +10,7 @@ import type { SpeciesId } from '../../shared/data.ts';
 import { keys, must } from '../../shared/util.ts';
 import type { TabCtx, TabInstance, h as H } from '../ui.ts';
 import { errText } from '../ui.ts';
+import { drawVehicle } from '../../client/vehicleart.ts';
 
 export const CSS = `
 body.dbg-wide aside { display: none; }
@@ -86,7 +87,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
   Promise.all([loadWorld3D(), loadArt().catch(() => null)]).then(([w, a]) => {
     if (gone) return;
     W = w; Art = a;
-    if (st.model !== 'flowers' && !W.FINE_MODELS.some(m => m.id === st.model)) st.model = must(W.FINE_MODELS[0]).id;
+    if (st.model !== 'flowers' && st.model !== 'vehicles' && !W.FINE_MODELS.some(m => m.id === st.model)) st.model = must(W.FINE_MODELS[0]).id;
     el.replaceChildren(root);
     build(w);
   }).catch((e: unknown) => { if (!gone) el.replaceChildren(h('div', { class: 'as-err' }, 'Cannot load models: ' + errText(e))); });
@@ -113,7 +114,8 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
   listEl.append(pick, search, items);
   function renderList(W: typeof World3D): void {
     const all = W.FINE_MODELS.map(m => ({ id: m.id, name: m.name, group: m.group, sub: String(m.kind || m.id) }))
-      .concat([{ id: 'flowers', name: 'Flower gallery', group: 'Flowers (2D, art.js)', sub: Object.keys(ctx.D.SPECIES).length + ' species' }]);
+      .concat([{ id: 'flowers', name: 'Flower gallery', group: 'Flowers (2D, art.js)', sub: Object.keys(ctx.D.SPECIES).length + ' species' },
+        { id: 'vehicles', name: 'Fúrik a sane, 8 smerov', group: 'Vehicles (2D, vehicleart.ts)', sub: '#158' }]);
     const list = all.filter(m => !q || (m.name + ' ' + m.id + ' ' + m.group + ' ' + m.sub).toLowerCase().includes(q));
     const groups = [...new Set(list.map(m => m.group))];
     items.replaceChildren(...groups.flatMap(g => [h('h4', null, g), ...list.filter(m => m.group === g).map(m =>
@@ -125,7 +127,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
 
   // ---------- ovládanie ----------
   function renderBar(W: typeof World3D): void {
-    const flowers = st.model === 'flowers';
+    const flowers = st.model === 'flowers' || st.model === 'vehicles'; // 2D galérie: bez obdobia a otočenia
     barEl.replaceChildren(
       seg(h, SEASONS, st.grid ? -1 : st.season, i => { st.season = i; st.grid = false; save(); renderBar(W); show(W); }, flowers),
       seg(h, ROTS, st.grid ? -1 : st.rot, i => { st.rot = i; st.grid = false; save(); renderBar(W); show(W); }, flowers),
@@ -135,11 +137,11 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
 
   // ---------- zobrazenie ----------
   function show(W: typeof World3D): void {
-    if (st.model === 'flowers') {
+    if (st.model === 'flowers' || st.model === 'vehicles') {
       if (viewer) { viewer.dispose(); viewer = null; }
       viewEl.style.display = 'none';
       infoEl.replaceChildren();
-      galEl.replaceChildren(...flowerGallery());
+      galEl.replaceChildren(...(st.model === 'vehicles' ? vehicleGallery() : flowerGallery()));
       return;
     }
     viewEl.style.display = '';
@@ -196,6 +198,32 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
         keys(D.SPECIES).map(k => h('tr', null,
           h('td', null, h('b', null, D.SPECIES[k].name), h('br'), h('small', { class: 'muted mono' }, `${k} · ${D.SPECIES[k].shape}${D.SPECIES[k].magic ? ' · magic' : ''}`)),
           cols.map(([, stage, o]) => h('td', null, cell(k, stage, o)))))))
+    ];
+  }
+
+  // Fúrik a sane (#158): 8 smerov ako postavička (art.ts char), prázdne, s ľadom a so spolujazdcom; vedľa hráč na porovnanie
+  function vehicleGallery(): HTMLElement[] {
+    const A = Art;
+    const DIRS = ['0 down', '1 left', '2 right', '3 up', '4 down-left', '5 down-right', '6 up-left', '7 up-right'];
+    const rows: readonly (readonly ['furik' | 'sane', number, boolean, string])[] = [
+      ['furik', 0, false, 'Fúrik, empty'], ['furik', 3, false, 'Fúrik, 3 ice'], ['furik', 6, false, 'Fúrik, 6 ice'], ['furik', 2, true, 'Fúrik, passenger + 2 ice'],
+      ['sane', 0, false, 'Sane, empty'], ['sane', 3, false, 'Sane, 3 ice'], ['sane', 6, false, 'Sane, 6 ice'], ['sane', 2, true, 'Sane, passenger + 2 ice']];
+    const cell = (id: 'furik' | 'sane', ice: number, rider: boolean, dir: number, player: boolean): HTMLCanvasElement => {
+      const c = h('canvas', { width: player ? 200 : 128, height: 160 });
+      const g = must(c.getContext('2d') ?? undefined);
+      g.fillStyle = '#cfe7b8'; g.fillRect(0, 0, c.width, 160);
+      g.fillStyle = 'rgba(0,0,0,.18)'; g.beginPath(); g.ellipse(64, 124, 44, 14, 0, 0, 7); g.fill();
+      drawVehicle(g, id, 64, 124, 100, dir, ice, rider ? { look: { shirt: '#e05a5a', hair: '#e8c36a', hat: false } } : null);
+      if (player && A) A.char(g, 160, 128, 100, { shirt: '#4a90d9', hair: '#5b3a1a', hat: true }, 0, 0, {}); // hráč na porovnanie veľkosti
+      return c;
+    };
+    return [
+      h('h2', null, 'Fúrik a sane (vehicleart.ts)'),
+      h('div', { class: 'muted', style: 'margin-bottom:8px' }, 'drawVehicle(ctx, id, x, y, size, dir, ice, rider) – the same 2D sprite the 3D game shows (100 px = 1 block, like the player), the Dielňa dialog, the hotbar and toasts. dir = the player sprite\'s 8 directions.'),
+      h('div', { class: 'as-gal' }, h('table', null,
+        h('tr', null, h('th', null, ''), DIRS.map(d => h('th', null, d)), h('th', null, 'size vs player')),
+        rows.map(([id, ice, rider, label]) => h('tr', null, h('td', null, h('b', null, label)),
+          DIRS.map((_, dir) => h('td', null, cell(id, ice, rider, dir, false))), h('td', null, cell(id, ice, rider, 5, true))))))
     ];
   }
 

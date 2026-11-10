@@ -52,7 +52,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
 
   window.MF = S; // pre ladenie v konzole
   // fúrik a sane (#158): stav, predpoveď pohybu, okno, riadky v Dielni a miesto v lište
-  const Veh = createVehicles({ S, send, toast, openModal, changed: () => { renderHotbar(); if (S.modal) S.modal.refresh(); } });
+  const Veh = createVehicles({ S, send, toast, openModal, changed: () => { renderHotbar(); if (S.modal) S.modal.refresh(); }, left: t => fmtLeft(t) });
 
   // ---------- Zvuky ----------
   let actx: AudioContext | null = null;

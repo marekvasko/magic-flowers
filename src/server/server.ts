@@ -303,7 +303,7 @@ function getRoom(id: string): Room {
       return t;
     }),
     hory: Ice.loadHory(savedHory), pomedzie: [], les: [],
-    vehicles: Vehicles.loadVehicles(st.vehicles), // fúrik a sane (#158): staršie uloženia ich nemajú – predvolené, bez zmeny verzie
+    vehicles: Vehicles.loadVehicles(st.vehicles, st.tick), // fúrik a sane (#158): staršie uloženia ich nemajú – predvolené, bez zmeny verzie
     inbox: [], inSeq: 0, trace: null, spSent: {}, day: 0, min: 0
   });
   if (!Number.isInteger(room.pomedzieSeed)) room.pomedzieSeed = Areas.newSeed();
@@ -488,7 +488,7 @@ function velocity(p: Player): { vx: number; vy: number } {
 function playerByKey(room: Room, key: string | undefined): Player | null { for (const p of room.players.values()) if (p.key === key) return p; return null; }
 
 const SIM: E.Spec<Room, Presence, Msg> = {
-  proposers: { ...Events.PROPOSERS, ...Actions.PROPOSERS, ...Spiders.PROPOSERS, ...Cheats.PROPOSERS, ...Vehicles.PROPOSERS }, periodic: Events.PERIODIC.concat(Spiders.PERIODIC), presence: presenceOf, clock,
+  proposers: { ...Events.PROPOSERS, ...Actions.PROPOSERS, ...Spiders.PROPOSERS, ...Cheats.PROPOSERS, ...Vehicles.PROPOSERS, ...Vehicles.EVENTS }, periodic: Events.PERIODIC.concat(Spiders.PERIODIC, Vehicles.PERIODIC), presence: presenceOf, clock,
   slice: (world, key) => { const s = Spiders.slice(world, key); return s === undefined ? E.sliceOf(world, key) : s; }, // pavúky: spider:<id>, kz:<plocha>
   // denník najprv (nech záznam nechýba), potom správy hráčom; chyba pri posielaní nesmie zhodiť simuláciu ani server;
   // nakoniec záznam pre ladiacu stránku (kto dávku spustil, rozhodnutia filtra, časy častí)

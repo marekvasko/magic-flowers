@@ -175,7 +175,8 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
         h('div', { class: 'row' }, v.bought
           ? h('button', { onclick: () => { go({ act: 'remove' }, `${v.name} removed (back to not bought).`); } }, 'Remove')
           : h('button', { onclick: () => { go({ act: 'buy' }, `${v.name} bought (free), in front of the Dielňa.`); } }, 'Buy (free)'),
-        h('button', { disabled: v.bought && (v.driver || v.passenger) ? null : 'disabled', onclick: () => { go({ act: 'release' }, `${v.name} released.`); } }, 'Release driver + passenger')),
+        h('button', { disabled: v.bought && (v.driver || v.passenger) ? null : 'disabled', onclick: () => { go({ act: 'release' }, `${v.name} released.`); } }, 'Release driver + passenger'),
+        h('button', { onclick: () => { go({ act: 'usable' }, `${v.name}: usable toggled (until the next season starts).`); } }, v.usable === false ? 'Make usable' : 'Make unusable')),
         v.bought ? h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Ice'), ice,
           h('button', { onclick: () => { go({ act: 'ice', n: val(ice), set: true }, `${v.name}: ice set to ${Math.min(V.VEHICLE_ICE, val(ice))}.`); } }, 'Set')) : null,
         v.bought ? h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Teleport'), area, x, y,

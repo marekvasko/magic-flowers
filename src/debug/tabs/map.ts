@@ -3,7 +3,7 @@
 // Výpočty sú v map-core.ts (bez DOM, testované), tu je len ovládanie a kreslenie.
 import { kindOf, isSeeded, randomSeed, parseSeed, buildTiles, heightBlocks, arrivals, playersOn, areaStats, tileInfo } from './map-core.ts';
 import type { AreaMap, MapError, MapPlayer, MapTile } from './map-core.ts';
-import { vehiclesOf, vehicleText, drawVehicle, VEHICLE_COLOR } from './vehicles-core.ts';
+import { vehiclesOf, vehicleText, drawVehicle, nextToggle, VEHICLE_COLOR } from './vehicles-core.ts';
 import type { DebugVehicle } from './vehicles-core.ts';
 import type { Kid, TabCtx, TabInstance } from '../ui.ts';
 import { lookup, must } from '../../shared/util.ts';
@@ -70,7 +70,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
   let seed = parseSeed(ctx.param('mapseed'));
   if (seed == null) { seed = randomSeed(); ctx.setParam('mapseed', seed); }
   let layers = ctx.param('maplayers') ?? DEFAULT_LAYERS;
-  let vehicles: DebugVehicle[] = [], names = new Map<string, string>(); // fúrik a sane (#158)
+  let vehicles: DebugVehicle[] = [], names = new Map<string, string>(), toggleAt: number | null = null; // fúrik a sane (#158)
   let map: AreaMap | MapError | null = null, players: MapPlayer[] = [], hover: Pt | null = null, sel: Pt | null = null, T = 16, shownArea: string | null = null;
   const on = (id: string): boolean => layers.includes(id);
   const source = (): 'room' | 'seed' => {
@@ -137,7 +137,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     if (src === 'room' && snap) {
       map = buildTiles(D, ctx.area, { state: snap.state });
       players = playersOn(D, ctx.area, snap);
-      vehicles = vehiclesOf(snap.state); names = new Map(snap.online.map(o => [o.player, o.name]));
+      vehicles = vehiclesOf(snap.state); names = new Map(snap.online.map(o => [o.player, o.name])); toggleAt = nextToggle(snap.state);
       msg = map.error
         ? `Room ${ctx.room} has no seed for ${name} yet; it gets one the next time the world loads. Switch to Seed to look at any seed.`
         : `Room ${ctx.room} (${snap.source === 'memory' ? 'loaded, live state' : 'read from file'})${seeded ? `, seed ${String(map.seed)}` : ''}: its planted beds, tilled soil, ice and players.`;
@@ -361,7 +361,8 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
       map.source === 'room' && s.holes ? ['Ice holes', String(s.holes)] : null,
       map.source === 'room' && (s.tilled || map.area === 'garden') ? ['Beds', `${s.tilled} tilled, ${s.planted} planted`] : null,
       map.source === 'room' ? ['Players here', `${on_} online, ${players.length - on_} offline`] : null,
-      ...(map.source === 'room' ? vehicles.map((v): [string, Kid] => [v.name, vehicleText(v, names)]) : [])
+      ...(map.source === 'room' ? vehicles.map((v): [string, Kid] => [v.name, vehicleText(v, names)]) : []),
+      map.source === 'room' ? ['Vehicle season', toggleAt == null ? 'vehSeason not scheduled' : `next toggle (vehSeason) ${ctx.fmt.when(toggleAt)} · tick ${String(toggleAt)}`] : null
     ]));
   }
 
