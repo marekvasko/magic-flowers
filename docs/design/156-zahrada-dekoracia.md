@@ -83,12 +83,9 @@ Today `lotIdx()` in `ice.ts` and `dielna.ts` hard-codes the 2×2 lots. With the 
 - A tile carries **either** soil (`t.s`, one flower) **or** an arrangement object, never both.
 - The permit counts `tiles with soil + arrangement objects`. `plotsUsedOf()` and the `plotsUsed` counter add up both;
   park blocks, paths and lots count 0.
-- **Open question A:** what happens when a záhon is placed on an already tilled tile? Proposal: it *converts* the
-  tile (soil disappears, a flower on it moves to the middle spot, and the slot stays the same). The alternative is
-  to refuse ("Najprv zarovnaj motykou").
-- **Open question B:** watering per object or per flower? Proposal: **per object**: one pour of the krhla waters the
-  whole záhon (`w` on the object). One slot means one unit of care, it is quick on a phone, and the work grows with
-  the number of objects, not of flowers. The compost (`r`) works the same way.
+- **Placing on a tilled tile is refused** (agreed): "Najprv zarovnaj motykou." A záhon only goes on grass without soil or another object.
+- **Watering per object** (agreed): one pour of the krhla waters the whole záhon (`w` on the object). This is one of the
+  advantages of a záhon over single tilled tiles. The compost (`r`) works the same way.
 
 ## 5. Spacing inside an arrangement object
 
