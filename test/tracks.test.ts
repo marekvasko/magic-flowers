@@ -328,6 +328,8 @@ test('server: stopy hráča vidia všetci na ploche, kto príde neskôr, dostane
     assert.ok(demo.add.some(t => t[3] === 2) && demo.add.some(t => t[3] <= 1), 'šľapaje, pavúk aj sane');
     assert.strictEqual((await request(port, 'POST', '/api/debug/cheat', { room: 'snih', op: 'tracks', do: 'clear' }, KEY)).code, 200);
     assert.deepStrictEqual((await cyril.wait('tracks', m => m.full && !m.add.length)).add, []);
+    const after = parseJson<TracksView>((await request(port, 'GET', '/api/debug/tracks?room=snih&area=garden')).text);
+    assert.strictEqual(after.counts.garden, 0, 'vyčistené aj ukážkové stopy');
     assert.strictEqual((await request(port, 'POST', '/api/debug/cheat', { room: 'snih', op: 'tracks', do: 'nic' }, KEY)).code, 400);
   } finally {
     for (const c of all) c.ws.close();
