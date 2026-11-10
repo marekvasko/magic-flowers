@@ -3,7 +3,7 @@
 import type { AreaId, BrewHint, Ground, ItemId, Look, MasterPos, PotionId, SpeciesId } from '../shared/data.ts';
 import type { WebOverrides } from '../shared/webs.ts';
 import type { Other } from '../shared/players.ts';
-import type { BatchesView, CornerView, PlayerView, ServerMessage, SpiderKind, TileView, WebView } from '../shared/protocol.ts';
+import type { BatchesView, CornerView, PlayerView, ServerMessage, SpiderKind, TileView, VehicleView, WebView } from '../shared/protocol.ts';
 import type { Contract, Icehouse, Weather, WorldMode } from '../shared/save.ts';
 import type { FadeConfig, FadeOverrides, Render3D } from './render3d.ts';
 
@@ -34,7 +34,7 @@ export interface ScreenFx { k: 'rainbow' | 'gold'; life: number; max: number; co
 // Prechod do inej plochy (game.ts areaChange)
 export interface AreaFx { phase: 'out' | 'build' | 'named'; msg: MsgOf<'area'>; queue: ServerMessage[]; timer?: ReturnType<typeof setTimeout>; tok?: symbol }
 // Kontextová akcia na políčku: ikona, popis, okno (ui), len informácia, kde je majster…
-export type UiKind = 'shop' | 'cauldron' | 'babka' | 'book' | 'menu' | 'help' | 'storage' | 'house' | 'wish' | 'icehouse' | 'dielna' | 'majster';
+export type UiKind = 'shop' | 'cauldron' | 'babka' | 'book' | 'menu' | 'help' | 'storage' | 'house' | 'wish' | 'icehouse' | 'dielna' | 'majster' | 'vehicle';
 export interface CtxAction { i: string; l: string; ui?: UiKind; info?: boolean; only?: boolean; ma?: MasterPos }
 export type Dir = 'u' | 'd' | 'l' | 'r';
 
@@ -60,6 +60,7 @@ export interface ClientState {
   spiders: Map<string, Spider>; slowK: number; slowUntil: number; web: { start: number; stuck: number; end: number; k: number } | null;
   webLeft?: () => number; // koľko pavučiny je ešte na mne (1 → 0); na ladiacej stránke chýba
   r3: Render3D | null; // 3D pohľad (pre ladenie v konzole: MF.r3.pick(x, y))
+  vehicles?: VehicleView[]; // fúrik a sane (#158): polohy na kreslenie (plynulo dobiehajú server, ktorý hráč tlačí, ten predpovedá)
 }
 
 // Stav, ktorý kreslí 3D pohľad (render3d.ts, spiders3d.ts, particles3d.ts): hra mu dá celé S, ladiaca stránka /debug
@@ -67,7 +68,7 @@ export interface ClientState {
 export type ViewOther = Pick<OtherPlayer, 'x' | 'y' | 'name' | 'look' | 'a' | 'dir' | 'e' | 'phase' | 'jz' | 'cr' | 'lp' | 'si' | 'wb'> & { id: number | string };
 export type ViewState = Pick<ClientState, 'W' | 'H' | 'tiles' | 'area' | 'tilesGen' | 'tick' | 'day' | 'weather' | 'me' | 'look' | 'name' | 'id'
   | 'myEmote' | 'sel' | 'anchors' | 'fx' | 'screenFx' | 'bubbles' | 'tapMark' | 'webs' | 'homes' | 'websGen' | 'corner' | 'cornerGen' | 'spiders'>
-  & Partial<Pick<ClientState, 'icehouse' | 'dielna' | 'webLeft' | 'kbd' | 'mySi' | 'worldGen'>>
+  & Partial<Pick<ClientState, 'icehouse' | 'dielna' | 'webLeft' | 'kbd' | 'mySi' | 'worldGen' | 'vehicles'>>
   & { others: ReadonlyMap<number | string, ViewOther> };
 
 // Ladiace prepínače z konzoly (README): čítajú sa za behu, hra ich sama nenastavuje

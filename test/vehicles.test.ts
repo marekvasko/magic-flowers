@@ -14,6 +14,7 @@ import * as D from '../src/shared/data.ts';
 import type { ServerMessage } from '../src/shared/protocol.ts';
 import type { PlayerSave, SaveFile, Vehicle, VehicleId } from '../src/shared/save.ts';
 import * as V from '../src/shared/vehicles.ts';
+import * as W from '../src/shared/world3d.ts';
 import * as E from '../src/server/engine.ts';
 import * as Econ from '../src/server/economy.ts';
 import * as Events from '../src/server/events.ts';
@@ -309,6 +310,24 @@ test('pohyb: predpoveď klienta a server počítajú to isté (zdieľaný výpo�
   for (const [x, y] of steps) { p = V.follow('furik', p, from, { x, y }); from = { x, y }; }
   assert.ok(Math.abs(Math.hypot(p.x - 5.5, p.y - 5.8) - V.PUSH_L) < 1e-9, 'vždy PUSH_L pred hráčom');
   assert.ok(p.a > 0 && p.a < Math.PI / 2 + 1e-9, 'natočil sa smerom na juh');
+});
+
+test('modely: fúrik a sane (prázdne aj s ľadom) sú v prehliadači modelov; náklad je vidieť ako kocky ľadu', () => {
+  for (const id of ['furik', 'furik-ice', 'sane', 'sane-ice']) assert.ok(W.FINE_MODELS.some(m => m.id === id && m.group === 'Vehicles'), id);
+  const ice = (f: W.FineModel): number => f.data.filter(m => m === W.M.ICE).length;
+  for (const k of ['furik', 'sane'] as const) {
+    assert.strictEqual(ice(W.vehicleModel(k, 0)), 0, k);
+    assert.ok(ice(W.vehicleModel(k, 3)) > 0 && ice(W.vehicleModel(k, 6)) > ice(W.vehicleModel(k, 3)), k + ': viac ľadu = viac kociek');
+    assert.strictEqual(W.vehicleModel(k, 9), W.vehicleModel(k, 6), 'najviac 6 (model z pamäte)');
+  }
+});
+
+test('ladiaca stránka: World dostane kúpené fúriky plochy aj s vodičom a spolujazdcom (načítanie hry ich maže)', () => {
+  const saved = { furik: { ...V.newVehicle('furik'), bought: true, driver: 'ana', passenger: 'bob', ice: 2 }, sane: { ...V.newVehicle('sane'), bought: true, area: 'hory' } };
+  assert.deepStrictEqual(Vehicles.debugView(saved, 'garden').map(v => [v.id, v.d, v.r, v.ice]), [['furik', 'ana', 'bob', 2]]);
+  assert.deepStrictEqual(Vehicles.debugView(saved, 'hory').map(v => v.id), ['sane']);
+  assert.deepStrictEqual(Vehicles.debugView(undefined, 'garden'), [], 'staré uloženie: nič');
+  assert.strictEqual(Vehicles.loadVehicles(saved).furik.driver, null);
 });
 
 // ---------- Server: staré uloženie, správa vehicles ----------

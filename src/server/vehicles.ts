@@ -29,7 +29,9 @@ const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 // ---------- Načítanie a uloženie ----------
 // Uloženie bez fúrikov (staršie svety) alebo poškodené → predvolené (nekúpené pred Dielňou). Kto ich držal a kto
 // v nich sedel, sa zabudne: po reštarte servera nie je nikto pripojený (fúrik ostane stáť, kde bol).
-export function loadVehicles(saved: unknown): Vehicles {
+export function loadVehicles(saved: unknown): Vehicles { return parseVehicles(saved, false); }
+// keep = nechať aj vodiča a spolujazdca (ladiaca stránka ukazuje uložený stav, ako je)
+export function parseVehicles(saved: unknown, keep: boolean): Vehicles {
   const out = V.newVehicles(), src = isRecord(saved) ? saved : {};
   for (const id of V.VEHICLE_IDS) {
     const v = src[id];
@@ -41,6 +43,8 @@ export function loadVehicles(saved: unknown): Vehicles {
     const p = Areas.clampPos(t.area, num('x', t.x), num('y', t.y));
     t.x = p.x; t.y = p.y; t.a = num('a', t.a);
     t.ice = Math.max(0, Math.min(V.VEHICLE_ICE, Math.round(num('ice', 0))));
+    const dr = v['driver'], ps = v['passenger'];
+    if (keep) { t.driver = typeof dr === 'string' ? dr : null; t.passenger = typeof ps === 'string' ? ps : null; }
   }
   return out;
 }
@@ -55,6 +59,16 @@ export function view(vs: Vehicles, who: (key: PlayerKey) => { id: number; name: 
   return V.VEHICLE_IDS.map(id => {
     const v = vs[id], d = v.driver ? who(v.driver) : null, r = v.passenger ? who(v.passenger) : null;
     return { id, bought: v.bought, area: v.area, x: v.x, y: v.y, a: +v.a.toFixed(3), ice: v.ice, d: d ? d.id : null, r: r ? r.id : null, dn: d ? d.name : null, rn: r ? r.name : null };
+  });
+}
+
+// Pre ladiacu stránku (/debug → World): kúpené fúriky plochy area z uloženého stavu; vodič a spolujazdec sú kľúče hráčov
+// (odpoveď ladiacej stránky ich nahradí odtlačkom, rovnakým ako pri hráčoch)
+export function debugView(saved: unknown, area: AreaId): VehicleView[] {
+  const vs = parseVehicles(saved, true);
+  return V.VEHICLE_IDS.filter(id => vs[id].bought && vs[id].area === area).map(id => {
+    const v = vs[id];
+    return { id, bought: true, area: v.area, x: v.x, y: v.y, a: v.a, ice: v.ice, d: v.driver, r: v.passenger };
   });
 }
 
@@ -147,8 +161,8 @@ export const PROPOSERS: { [T in keyof VehicleInputs]: GameProposer<VehicleInputs
       v.driver = d.key;
       v.a = V.round3(V.grabAngle(d.id, v, me));
       ctx.emit(toast$(d.key, X.push
-        ? `🛞 Chytil(a) si fúrik. Tlač ho pred sebou – ľad doňho naložíš ťuknutím naň. Pustíš ho tlačidlom na lište.`
-        : `🛷 Chytil(a) si sane. Ťaháš ich za sebou – ľad na ne naložíš ťuknutím na ne. Pustíš ich tlačidlom na lište.`, 'info', d.id));
+        ? `🛞 Chytil(a) si fúrik. Tlač ho pred sebou – ľad doňho naložíš ťuknutím naň. Pustíš ho v lište dole (ťukni na fúrik).`
+        : `🛷 Chytil(a) si sane. Ťaháš ich za sebou – ľad na ne naložíš ťuknutím na ne. Pustíš ich v lište dole (ťukni na sane).`, 'info', d.id));
     }
   },
   // pustiť: fúrik ostane stáť, kde je (aj so spolujazdcom)
@@ -223,7 +237,7 @@ export const PROPOSERS: { [T in keyof VehicleInputs]: GameProposer<VehicleInputs
       v.passenger = d.key;
       carry(s, v, ctx);
       const driver = ctx.presence?.find(p => p.key === v.driver);
-      ctx.emit(toast$(d.key, `${X.icon} Naskočil(a) si ${d.id === 'sane' ? 'na sane' : 'do fúrika'}${driver ? ` – vezie ťa ${driver.name}` : ''}. Vystúpiš tlačidlom na lište.`, 'info', d.id));
+      ctx.emit(toast$(d.key, `${X.icon} Naskočil(a) si ${d.id === 'sane' ? 'na sane' : 'do fúrika'}${driver ? ` – vezie ťa ${driver.name}` : ''}. Vystúpiš v lište dole (ťukni na obrázok).`, 'info', d.id));
       if (v.driver) ctx.emit(toast$(v.driver, `${nameOf(ctx, d.key)} ti naskočil(a) ${d.id === 'sane' ? 'na sane' : 'do fúrika'}! ${X.icon}`, 'info', d.id));
     }
   },

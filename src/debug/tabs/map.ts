@@ -3,6 +3,8 @@
 // Výpočty sú v map-core.ts (bez DOM, testované), tu je len ovládanie a kreslenie.
 import { kindOf, isSeeded, randomSeed, parseSeed, buildTiles, heightBlocks, arrivals, playersOn, areaStats, tileInfo } from './map-core.ts';
 import type { AreaMap, MapError, MapPlayer, MapTile } from './map-core.ts';
+import { vehiclesOf, vehicleText, drawVehicle, VEHICLE_COLOR } from './vehicles-core.ts';
+import type { DebugVehicle } from './vehicles-core.ts';
 import type { Kid, TabCtx, TabInstance } from '../ui.ts';
 import { lookup, must } from '../../shared/util.ts';
 
@@ -55,9 +57,9 @@ function heightColor(b: number): string {
 }
 const LAYERS: readonly { id: string; label: string; room?: boolean }[] = [
   { id: 'h', label: 'Heights' }, { id: 'p', label: 'Paths' }, { id: 'o', label: 'Objects' }, { id: 'g', label: 'Grid' },
-  { id: 'b', label: 'Beds', room: true }, { id: 'u', label: 'Players', room: true }
+  { id: 'b', label: 'Beds', room: true }, { id: 'u', label: 'Players', room: true }, { id: 'v', label: 'Vehicles', room: true }
 ];
-const DEFAULT_LAYERS = 'hpobu';
+const DEFAULT_LAYERS = 'hpobuv';
 
 export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
   let ctx = ctx0;
@@ -68,6 +70,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
   let seed = parseSeed(ctx.param('mapseed'));
   if (seed == null) { seed = randomSeed(); ctx.setParam('mapseed', seed); }
   let layers = ctx.param('maplayers') ?? DEFAULT_LAYERS;
+  let vehicles: DebugVehicle[] = [], names = new Map<string, string>(); // fúrik a sane (#158)
   let map: AreaMap | MapError | null = null, players: MapPlayer[] = [], hover: Pt | null = null, sel: Pt | null = null, T = 16, shownArea: string | null = null;
   const on = (id: string): boolean => layers.includes(id);
   const source = (): 'room' | 'seed' => {
@@ -134,12 +137,13 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     if (src === 'room' && snap) {
       map = buildTiles(D, ctx.area, { state: snap.state });
       players = playersOn(D, ctx.area, snap);
+      vehicles = vehiclesOf(snap.state); names = new Map(snap.online.map(o => [o.player, o.name]));
       msg = map.error
         ? `Room ${ctx.room} has no seed for ${name} yet; it gets one the next time the world loads. Switch to Seed to look at any seed.`
         : `Room ${ctx.room} (${snap.source === 'memory' ? 'loaded, live state' : 'read from file'})${seeded ? `, seed ${String(map.seed)}` : ''}: its planted beds, tilled soil, ice and players.`;
     } else {
       map = buildTiles(D, ctx.area, { seed });
-      players = [];
+      players = []; vehicles = [];
       msg = src === 'room' ? 'Loading the room…' : seeded ? `${name} generated from seed ${seed}, as a new world with this seed would get it.` : `${name} has a fixed layout: every world has the same one, the seed doesn’t change it.`;
       if (!ctx.room && ctx.param('mapsrc') === 'room') msg = 'No room selected, showing the seed. ' + msg;
     }
@@ -253,6 +257,8 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     for (const gt of lookup(D.GATES, m.area) || []) tri(g, gt.x + 0.5, gt.y + 0.5, D.gateSide(m.area, gt), 0.42);
     g.lineWidth = 0.08;
     for (const a of arrivals(D, m.area)) { g.beginPath(); g.arc(a.x, a.y, 0.22, 0, 7); g.stroke(); }
+    // fúrik a sane (#158): značka natočená za smerom, bodky = ľad, ružová bodka = kto ho drží
+    if (m.source === 'room' && on('v')) for (const v of vehicles) if (v.bought && v.area === m.area) drawVehicle(g, v);
     // hráči sveta (online plné s menom, offline krúžok na poslednom mieste)
     if (m.source === 'room' && on('u')) {
       for (const p of players) {
@@ -313,7 +319,8 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     ];
     if (map && !map.error && map.source === 'room') items.push(
       ['b', 'Tilled soil · plant (darker = watered)', g => { g.fillStyle = COL.soil; g.fillRect(0.1, 0.1, 0.8, 0.8); g.fillStyle = '#f2c94c'; g.beginPath(); g.arc(0.5, 0.5, 0.22, 0, 7); g.fill(); }],
-      ['u', 'Player online · last place offline', g => { g.fillStyle = COL.player; g.strokeStyle = '#fff'; g.lineWidth = 0.1; g.beginPath(); g.arc(0.5, 0.5, 0.32, 0, 7); g.fill(); g.stroke(); }]);
+      ['u', 'Player online · last place offline', g => { g.fillStyle = COL.player; g.strokeStyle = '#fff'; g.lineWidth = 0.1; g.beginPath(); g.arc(0.5, 0.5, 0.32, 0, 7); g.fill(); g.stroke(); }],
+      ['v', 'Fúrik (red) · sane (wood), dots = ice', g => { g.fillStyle = VEHICLE_COLOR.furik; g.fillRect(0.1, 0.25, 0.8, 0.5); g.fillStyle = '#bfe6fb'; g.fillRect(0.2, 0.35, 0.2, 0.2); }]);
     legendL.replaceChildren(h('h4', null, 'Layers'), h('ul', { class: 'map-leg' },
       ...items.map(([l, label, fn]) => h('li', { style: l && !on(l) ? 'opacity:.45' : null, title: l && !on(l) ? 'Layer hidden' : null }, swatch(fn), label))));
   }
@@ -335,7 +342,8 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
       i.cut ? ['Ice hole', 'cut today'] : null,
       i.soil ? ['Soil', `${i.soil}${i.wet ? ', watered' : ''}`] : null,
       i.plant ? ['Plant', `${i.plant.name}${i.plant.wild ? ' (wild)' : ''}, stage ${i.plant.stage}${i.plant.dead ? ', dead' : ''}`] : null,
-      here.length ? ['Players', here.map(q => q.online ? q.name : `${q.id} (offline)`).join(', ')] : null
+      here.length ? ['Players', here.map(q => q.online ? q.name : `${q.id} (offline)`).join(', ')] : null,
+      ...vehicles.filter(v => v.bought && v.area === map?.area && Math.floor(v.x) === p.x && Math.floor(v.y) === p.y).map((v): [string, Kid] => [v.name, vehicleText(v, names)])
     ]));
   }
   function renderArea(): void {
@@ -352,7 +360,8 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
       s.iceTop ? ['Glacier ice', `${s.ice} / ${s.iceTop} layers`] : null,
       map.source === 'room' && s.holes ? ['Ice holes', String(s.holes)] : null,
       map.source === 'room' && (s.tilled || map.area === 'garden') ? ['Beds', `${s.tilled} tilled, ${s.planted} planted`] : null,
-      map.source === 'room' ? ['Players here', `${on_} online, ${players.length - on_} offline`] : null
+      map.source === 'room' ? ['Players here', `${on_} online, ${players.length - on_} offline`] : null,
+      ...(map.source === 'room' ? vehicles.map((v): [string, Kid] => [v.name, vehicleText(v, names)]) : [])
     ]));
   }
 

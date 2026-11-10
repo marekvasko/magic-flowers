@@ -15,6 +15,7 @@ import { Art } from './art.ts';
 import type { CharOpts } from './art.ts';
 import { createParticles } from './particles3d.ts';
 import { createSpiders3d } from './spiders3d.ts';
+import { createVehicles3d } from './vehicles3d.ts';
 import type { CtxAction, Pt, ViewState } from './state.ts';
 
 type V3 = [number, number, number];
@@ -1836,8 +1837,10 @@ void main() {
     }
     for (const o of chars.values()) o.alive = false;
     const me = S.me;
-    const meO = api.noPlayer ? null : drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : dirAngle(me.dir), S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz, crawl: me.crawl, dig: api.searching({ si: S.mySi }) ? t : 0, lamp: S.sel === 'lamp' && lampState, web: S.webLeft ? S.webLeft() : 0 }, dt);
-    for (const o of S.others.values()) drawChar(o.id, o.x, o.y, o.look, o.a != null ? o.a : dirAngle(o.dir || 0), o.e === 'dance' ? t * 4 : o.phase, { dance: o.e === 'dance', jz: o.jz, crawl: o.cr, dig: api.searching(o) ? t : 0, lamp: o.lp && lampState, web: o.wb || 0 }, dt);
+    vehicles3d.update(dt, se); // fúrik a sane (#158); spolujazdec v nich sedí – vyššie a skrčený (seat)
+    const seatMe = vehicles3d.seat('me');
+    const meO = api.noPlayer ? null : drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : dirAngle(me.dir), seatMe ? 0 : S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz + seatMe, crawl: me.crawl || seatMe > 0, dig: api.searching({ si: S.mySi }) ? t : 0, lamp: S.sel === 'lamp' && lampState, web: S.webLeft ? S.webLeft() : 0 }, dt);
+    for (const o of S.others.values()) { const seat = vehicles3d.seat(o.id); drawChar(o.id, o.x, o.y, o.look, o.a != null ? o.a : dirAngle(o.dir || 0), seat ? 0 : o.e === 'dance' ? t * 4 : o.phase, { dance: o.e === 'dance', jz: o.jz + seat, crawl: o.cr || seat > 0, dig: api.searching(o) ? t : 0, lamp: o.lp && lampState, web: o.wb || 0 }, dt); }
     if (S.area !== 'garden') babka = null; // babka býva v záhrade (bez alive ju upratovanie nižšie odstráni)
     else if (!babka) babka = drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, 0, { babka: true }, 1);
     else { babka.alive = true; if (Math.floor(t) !== babka.lastT) { babka.lastT = Math.floor(t); drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, Math.sin(t) * 0.3, { babka: true }, 1); } }
@@ -1954,6 +1957,7 @@ void main() {
   const particles = createParticles({ scene, camera, renderer, S, ripple });
   const particleObjs = scene.children.filter(o => !sceneBefore.has(o)); // objekty častíc (ladiaca stránka ich vie skryť)
   const spiders3d = createSpiders3d({ THREE, scene, S, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, renderer, world: worldU, maxLights: MAX_LIGHTS, fine: () => grid && grid.fine });
+  const vehicles3d = createVehicles3d({ THREE, scene, S, groundY, meshFine, bakedTex, material: fineMats.main, vox: voxUniforms, shadow: blobShadow }); // fúrik a sane (#158)
   // stred ohniska pod kotlíkom (model má okraj FM minikociek, ohnisko je v strede políčka nad zemou)
   function fireCenter(): { x: number; y: number; z: number } | null {
 
@@ -1975,6 +1979,7 @@ void main() {
   function invalidateShadows(): void { shadowDirty = true; }
   function dispose(): void {
     spiders3d.dispose();
+    vehicles3d.dispose();
     scene.traverse(o => {
       const g: unknown = 'geometry' in o ? o.geometry : null, mat: unknown = 'material' in o ? o.material : null;
       if (g instanceof THREE.BufferGeometry) g.dispose();

@@ -322,6 +322,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
       helpersDirty = true;
     }
     syncPlayers(w.players);
+    S.vehicles = w.vehicles; // fúrik a sane (#158): render3d ich nakreslí, spolujazdec v nich sedí
     if (changed) { if (camFromHash) camFromHash = false; else cam.reset = true; }
     if (!r3) start();
     if (cam.reset && r3) { cam.reset = false; resetCam(); }

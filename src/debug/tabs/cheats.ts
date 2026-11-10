@@ -6,6 +6,8 @@ import type { PlayerSave } from '../../shared/save.ts';
 import type { RoomSnapshot } from '../../server/debug.ts';
 import type { TabCtx, TabInstance } from '../ui.ts';
 import { errText } from '../ui.ts';
+import { vehiclesOf, vehicleText } from './vehicles-core.ts';
+import * as V from '../../shared/vehicles.ts';
 
 const CSS = `
 .ch { max-width: 980px; }
@@ -162,6 +164,29 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
         h('button', { onclick: () => { void act({ op: 'ice', n: val(ice), set: true }, `Icehouse ice set to ${Math.min(D.ICEHOUSE.cap, val(ice))}.`); } }, 'Set')));
   }
 
+  // Fúrik a sane (#158): kúpiť / odstrániť, pustiť (vodič aj spolujazdec), náklad ľadu, premiestniť (záhrada, hory)
+  function vehiclesBox(w: RoomSnapshot['state'], online: Map<string, string>): HTMLElement {
+    const row = (v: ReturnType<typeof vehiclesOf>[number]): HTMLElement => {
+      const ice = numIn(v.ice, 0), area = h('select', null, V.VEHICLE_AREAS.map(a => h('option', { value: a, selected: a === v.area ? 'selected' : null }, D.AREA_NAMES[a])));
+      const x = h('input', { type: 'number', value: v.x.toFixed(1), step: 0.5 }), y = h('input', { type: 'number', value: v.y.toFixed(1), step: 0.5 });
+      const go = (body: Record<string, string | number | boolean | null>, done: string): void => { void act({ op: 'vehicle', id: v.id, ...body }, done); };
+      const IL = D.ICEHOUSE.lot, home = V.VEHICLE_HOME[v.id];
+      return h('div', { class: 'pl' }, h('div', null, h('b', null, v.name), ' ', h('span', { class: 'inv' }, vehicleText(v, online))),
+        h('div', { class: 'row' }, v.bought
+          ? h('button', { onclick: () => { go({ act: 'remove' }, `${v.name} removed (back to not bought).`); } }, 'Remove')
+          : h('button', { onclick: () => { go({ act: 'buy' }, `${v.name} bought (free), in front of the Dielňa.`); } }, 'Buy (free)'),
+        h('button', { disabled: v.bought && (v.driver || v.passenger) ? null : 'disabled', onclick: () => { go({ act: 'release' }, `${v.name} released.`); } }, 'Release driver + passenger')),
+        v.bought ? h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Ice'), ice,
+          h('button', { onclick: () => { go({ act: 'ice', n: val(ice), set: true }, `${v.name}: ice set to ${Math.min(V.VEHICLE_ICE, val(ice))}.`); } }, 'Set')) : null,
+        v.bought ? h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Teleport'), area, x, y,
+          h('button', { onclick: () => { go({ act: 'tp', area: area.value, x: Number(x.value), y: Number(y.value) }, `${v.name} moved.`); } }, 'Move'),
+          h('button', { onclick: () => { go({ act: 'tp', area: 'garden', x: home.x, y: home.y }, `${v.name} is back at the Dielňa.`); } }, 'To the Dielňa'),
+          h('button', { onclick: () => { go({ act: 'tp', area: 'garden', x: IL.x1 + 1.6, y: IL.y0 + 1 }, `${v.name} is at the icehouse.`); } }, 'To the icehouse')) : null);
+    };
+    return h('section', null, h('h4', null, 'Vehicles (fúrik, sane)'), vehiclesOf(w).map(row),
+      h('div', { class: 'muted' }, `Shared by the garden. Fúrik: spring–autumn, sane: winter only; garden and mountains only; at most ${V.VEHICLE_ICE} ice. Moving or removing a vehicle releases its driver and passenger.`));
+  }
+
   function render(): void {
     if (!ctx.room) { root.replaceChildren(h('div', { class: 'empty' }, 'Select a room on the left.')); return; }
     if (disabled) { root.replaceChildren(h('section', null, h('h4', null, 'Cheats are off on this server'), h('div', { class: 'muted' }, 'Set DEBUG_CHEATS_KEY in the server environment (deploy: GitHub secret) to turn them on.'))); return; }
@@ -169,7 +194,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     if (status && snap) {
       const saves = Object.entries(snap.state.saves || {}).filter((e): e is [string, PlayerSave] => !!e[1]);
       const online = new Map(snap.online.map(o => [o.player, o.name]));
-      out.push(playersBox(saves, online), itemsBox(saves, online, snap.state));
+      out.push(playersBox(saves, online), itemsBox(saves, online, snap.state), vehiclesBox(snap.state, online));
     }
     root.replaceChildren(...out);
   }
