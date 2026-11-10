@@ -142,7 +142,14 @@ Following AGENTS.md (proposers read and write through `sl()` / `put()` / `maybe(
 | ![A](../mockups/156/a-detail.png) | ![B](../mockups/156/b-zoom.png) |
 | A panel over the game with a flat 8×8 grid; the 3D view stays as it is. Simple, works with the existing overlay, readable on any phone. | The 3D camera zooms onto the tile and the grid is drawn on the tile itself. Prettier and more "in the world", but needs a camera mode and touch picking. |
 
-  Proposal: **build A first** (cheap, testable, accessible), then try B on top of it as a polish step.
+  **Decided: B, the zoomed tile view** (it looks nicer). What it needs:
+  - a camera mode in `render3d.ts` that flies to one tile, keeps the rest of the garden blurred or dimmed, and
+    returns with **Späť**;
+  - touch / mouse picking of a spot on the tile (ray → tile plane → sx, sy), with a highlight of the picked spot and
+    greyed spots that break the spacing;
+  - the hotbar stays at the bottom with the actions (zasadiť, poliať, zrezať, presunúť);
+  - rotating the view in steps works as today (the ⟲ ⟳ buttons), so no new gestures are needed.
+  Mockup A stays in the repo for reference only.
 - Moving a lot or a park block: the **"Presunúť"** button in the detail panel, then walk to the new place and press E.
   No drag gestures needed.
 
@@ -157,7 +164,7 @@ Following AGENTS.md (proposers read and write through `sl()` / `put()` / `maybe(
 
 ```mermaid
 flowchart LR
-  P1["1. Objects layer + v12 + movable lots"] --> P2["2. Záhon + 8×8 + detail view"]
+  P1["1. Objects layer + v12 + movable lots"] --> P2["2. Záhon + 8×8 + zoomed tile view"]
   P2 --> P3["3. Kvetináč, skalka, vyvýšený záhon"]
   P3 --> P4["4. Park blocks + paths"]
   P2 --> P5["5. Bouquets + arrangement table"]
@@ -168,7 +175,7 @@ flowchart LR
 
 1. **Objects layer + v12 migration + movable lots.** No new object kinds yet, but it touches every layer (save,
    slices, protocol, 3D, input) with the least game-design risk.
-2. **Záhon + 8×8 spots + detail view (A).** The first decorative planting.
+2. **Záhon + 8×8 spots + zoomed tile view (B).** The first decorative planting.
 3. **Kvetináč, skalka, vyvýšený záhon** (spot masks, levels).
 4. **Park blocks + path types.**
 5. **Bouquets** on the aranžovací stôl (rules from #156 Q10).
