@@ -464,3 +464,52 @@ test('zíde z ľadu na breh: od chvíle, keď je stredom na zemi, platí poloha 
   const r = E.commitBatch(w, [act('pos', 'ana', { x: x0 + 0.25, y: y0, ix: 0, iy: 0, ts: 30100, in: [[29900, 0, 0]] })], spec);
   assert.deepStrictEqual([pos(w)[0], iw(w), r.outbox.filter(m => m.t === 'iw').length], [x0 + 0.25, undefined, 0]);
 });
+
+// ---- Roztopenie rozhoduje server (udalosť iceMelt) ----
+
+test('roztopenie na serveri: hráč, ktorý na ľade jazierka nič neposiela (aj odpojený), je po prechode zo zimy na jar vo vode – denník sa prehrá rovnako', () => {
+  const lastWinter = (WINTER_DAY - 1 + D.DAYS_PER_SEASON - 1) * TPD + 22 * D.TICKS_PER_HOUR; // posledný zimný večer
+  const melt: Spec = { ...spec, proposers: { ...spec.proposers, ...IceWalk.PROPOSERS }, periodic: must(spec.periodic).concat(IceWalk.PERIODIC) };
+  const setup = (): { w: W; cx: number; cy: number } => {
+    const { w, cx, cy } = iceWorld(22);
+    w.tick = lastWinter;
+    w.icewalk = { ana: { vx: 0, vy: 0, t: 1000 } }; // ana stojí na ľade a nič neposiela
+    w.presence = (w.presence || []).filter(p => p.key !== 'ana'); // je odpojená
+    return { w, cx, cy };
+  };
+  const play = (w: W, j: Journal): void => {
+    const s: Spec = { ...melt, onBatch: (_w, o) => { j.push(o.entry); } };
+    E.reconcile(w, s);
+    assert.ok(w.events.some(e => e.key === 'iceMelt' && e.at === (WINTER_DAY - 1 + D.DAYS_PER_SEASON) * TPD + IceWalk.MELT_TICK), 'udalosť je vo fronte na začiatku dňa');
+    E.advanceTo(w, lastWinter + 3 * D.TICKS_PER_HOUR, s); // cez polnoc do jari, bez jediného pohybu
+  };
+  const { w: a, cx, cy } = setup(), ja: Journal = [];
+  play(a, ja);
+  assert.strictEqual(D.seasonOf(D.dayOfTick(a.tick)), 0);
+  assert.deepStrictEqual(pos(a), [cx, cy], 'ostala, kde stála');
+  assert.strictEqual(must(iw(a)).sw, 1, 'je vo vode a pláva');
+  const ev = ja.find(e => e.proposals.some(p => p.type === 'iceMelt' && p.writes.includes('iw:ana')));
+  assert.ok(ev && ev.outbox.some(m => m.t === 'iw' && m.why === 'melt' && m.sw === 1), 'v denníku: udalosť, kľúče, správa');
+  // bob stojí na tráve: udalosť ho nedeklaruje ani nemení
+  assert.ok(!must(ev).proposals.some(p => p.writes.includes('iw:bob')));
+  // prehranie denníka na rovnakom začiatočnom svete
+  const { w: b } = setup(), jb: Journal = [];
+  E.reconcile(b, melt);
+  const n = E.replay(b, parseJson<Journal>(json(ja)), { ...melt, onBatch: (_w, o) => { jb.push(o.entry); } });
+  E.advanceTo(b, a.tick, melt);
+  assert.strictEqual(n, ja.length);
+  assert.strictEqual(json(b), json(a));
+  assert.strictEqual(json(jb), json(ja));
+});
+
+test('roztopenie na serveri: kto už pláva alebo stojí na pevnom ľade (zima pokračuje), toho udalosť nechá tak', () => {
+  const { w, i, cx, cy } = iceWorld(23);
+  must(w.tiles[i + 2]).cut = 1;
+  Object.assign(save(w, 'bob'), { x: cx + 2, y: cy, area: 'garden' }); // bob pláva v otvore
+  w.icewalk = { bob: { vx: 0, vy: 0, sw: 1 } };
+  const melt: Spec = { ...spec, proposers: { ...spec.proposers, ...IceWalk.PROPOSERS }, periodic: must(spec.periodic).concat(IceWalk.PERIODIC) };
+  E.reconcile(w, melt);
+  E.advanceTo(w, w.tick + TPD, melt); // ďalší zimný deň
+  assert.strictEqual(iw(w), undefined, 'ana na ľade ostáva na ľade');
+  assert.deepStrictEqual(iw(w, 'bob'), { vx: 0, vy: 0, sw: 1 }, 'bob pláva ďalej bez zmeny');
+});

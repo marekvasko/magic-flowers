@@ -24,6 +24,7 @@ import * as I from '../src/server/items.ts';
 import * as Ice from '../src/server/ice.ts';
 import * as Areas from '../src/server/areas.ts';
 import * as Spiders from '../src/server/spiders.ts';
+import * as IceWalk from '../src/server/icewalk.ts';
 import * as Dielna from '../src/server/dielna.ts';
 import type { GameCtx, GameWorld, Msg } from '../src/server/game.ts';
 import type { Presence, Tile } from '../src/server/world.ts';
@@ -619,7 +620,7 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
   const world = Object.assign(room, { les });
   const live: GameCtx = E.liveCtx(world, 'ekonomika');
   Econ.initEconomy(world, live); Spiders.load(world, live);
-  E.replay(world, entries, { proposers: { ...SPEC.proposers, ...Spiders.PROPOSERS }, periodic: must(SPEC.periodic).concat(Spiders.PERIODIC), onError: rethrow,
+  E.replay(world, entries, { proposers: { ...SPEC.proposers, ...Spiders.PROPOSERS, ...IceWalk.PROPOSERS }, periodic: must(SPEC.periodic).concat(Spiders.PERIODIC, IceWalk.PERIODIC), onError: rethrow,
     slice: (w, k) => { const sl = Spiders.slice(w, k); return sl === undefined ? E.sliceOf(w, k) : sl; } });
   // mimo denníka sú len prítomnosť a polohy (join/move): porovnáme svet bez nich
   const strip = (st: unknown): JsonRecord => {
@@ -674,7 +675,7 @@ test('uloženie v8 (288 krokov za deň) sa prevedie na v9: každý krok ×40 –
   assert.strictEqual(s.v, 11);
   assert.strictEqual(s.tick, old.tick * K);
   assert.deepStrictEqual([D.dayOfTick(s.tick), D.minOfTick(s.tick)], [3, 450], 'deň 3, 7:30 ako predtým');
-  assert.deepStrictEqual(s.events.filter(e => e.key !== 'dawn' && !/^(delivery|npc_|fest|spider:|kz:|kriziakTrip|webDawn|weave:)/.test(e.key ?? '')).map(e => [e.key, e.at]).sort(), [['cDue:1', 1000 * K], ['hourly', 666 * K], ['vilyEnd:eva', 700 * K]]);
+  assert.deepStrictEqual(s.events.filter(e => e.key !== 'dawn' && !/^(delivery|npc_|fest|spider:|kz:|kriziakTrip|webDawn|weave:|iceMelt)/.test(e.key ?? '')).map(e => [e.key, e.at]).sort(), [['cDue:1', 1000 * K], ['hourly', 666 * K], ['vilyEnd:eva', 700 * K]]);
   const eva = must(s.saves['eva']), fb = must(must(eva.fb?.[`fl_${SP}`])[0]);
   assert.deepStrictEqual([eva.vily, fb.a, fb.at], [700 * K, 30 * K, 600 * K]);
   assert.ok((eva.lastTick ?? 0) >= 650 * K, 'lastTick preškálovaný (a pri odchode obnovený)');

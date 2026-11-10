@@ -15,7 +15,7 @@ import { isRecord, must } from '../shared/util.ts';
 import * as E from './engine.ts';
 import * as Areas from './areas.ts';
 import { maybe, put, savesOf, sl } from './game.ts';
-import type { GameCtx, GameSlices, GameWorld, Keys, Msg, To } from './game.ts';
+import type { GameCtx, GamePeriodic, GameProposer, GameSlices, GameWorld, Keys, Msg, To } from './game.ts';
 import type { Tile } from './world.ts';
 
 // Čo k pohybu pridá klient (správa move): vstup (smer × spomalenie, dĺžka ≤ 1), čupnutie, plazenie a jeho čas (ms)
@@ -198,6 +198,47 @@ export function segsOf(v: unknown): IW.Seg[] {
   }
   return out.sort((a, b) => a[0] - b[0]);
 }
+
+// ---------- Roztopenie: rozhoduje server, aj keď hráč nič neposiela ----------
+// Udalosť iceMelt (periodická, plánuje ju engine) ide na začiatku každého dňa – vtedy sa mení obdobie, takže pri
+// prechode zo zimy na jar presne vo chvíli, keď sa ľad roztopí. Kto stojí na vode, ktorá už nie je ľad (aj otvor
+// vysekaný pod ním), a nepláva, prepadne sa na mieste a pláva – pripojený aj odpojený. Klient to predpovedá sám (pohyb).
+export const MELT_TICK = 1;
+export const PERIODIC: GamePeriodic[] = [{ key: 'iceMelt', type: 'iceMelt', next: E.daily(MELT_TICK) }];
+// Kľúče: len hráči, ktorých stred je na vode (pos, políčko pod ním; zápis iw)
+function meltKeys(w: GameWorld): Keys {
+  const reads: string[] = ['daySeconds'], writes: string[] = [];
+  for (const [k, sv] of Object.entries(savesOf(w))) {
+    if (!sv || !Number.isFinite(sv.x) || !Number.isFinite(sv.y)) continue;
+    const area = sv.area && D.AREAS.includes(sv.area) ? sv.area : 'garden', { w: aw } = D.areaSize(area), i = Math.floor(sv.y) * aw + Math.floor(sv.x);
+    const list: readonly Tile[] | undefined = Areas.areaTiles(w, area);
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- čiastočné svety v testoch nemajú všetky plochy
+    if (!list || list[i]?.g !== 'water') continue;
+    reads.push(`pos:${k}`, `tile:${area}:${i}`);
+    writes.push(`iw:${k}`);
+  }
+  return { reads, writes };
+}
+export const PROPOSERS: { iceMelt: GameProposer<null> } = {
+  iceMelt: {
+    keys: (_d, w) => meltKeys(w),
+    run(s, _d, ctx) {
+      const se = season(ctx.tick);
+      for (const k of Object.keys(s)) {
+        if (!k.startsWith('iw:')) continue;
+        const key = k.slice(3), pos = sl(s, `pos:${key}`), st = sl(s, `iw:${key}`);
+        if (!pos || (st && st.sw)) continue;
+        const area = pos.area && D.AREAS.includes(pos.area) ? pos.area : 'garden', { w: aw } = D.areaSize(area);
+        if (!IW.openWater(sl(s, `tile:${area}:${Math.floor(pos.y) * aw + Math.floor(pos.x)}`), se)) continue;
+        const next: IceWalk = { vx: 0, vy: 0, sw: 1, fall: ctx.tick + IW.ticksOf(ICE.splashS, s.daySeconds) };
+        put(s, `iw:${key}`, next);
+        ctx.emit(toast$(key, MSG.melt));
+        ctx.emit({ to: E.area(area), t: 'fx', k: 'splash', x: pos.x, y: pos.y });
+        ctx.emit(msgOf(key, next, ctx.tick, s.daySeconds, { x: pos.x, y: pos.y }, null, 'melt'));
+      }
+    }
+  }
+};
 
 // ---------- Správy a pohľad ----------
 // Stav pre hráča (správa iw): hybnosť, koľko ms ešte leží, či pláva a (pri oprave) poloha, kde naozaj je
