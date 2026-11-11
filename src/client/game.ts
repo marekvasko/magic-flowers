@@ -52,7 +52,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
 
   window.MF = S; // pre ladenie v konzole
   // fúrik a sane (#158): stav, predpoveď pohybu, okno, riadky v Dielni a miesto v lište
-  const Veh = createVehicles({ S, send, toast, openModal, changed: () => { renderHotbar(); if (S.modal) S.modal.refresh(); }, left: t => fmtLeft(t) });
+  const Veh = createVehicles({ S, send, toast, openModal, changed: () => { renderHotbar(); if (S.modal) S.modal.refresh(); }, left: t => fmtLeft(t), findPath: goal => findPath(goal) });
 
   // ---------- Zvuky ----------
   let actx: AudioContext | null = null;
@@ -669,7 +669,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
   const GROUND = new Set(['Zarovnať', 'Kopať', 'Poliať', 'Sadiť', 'Pohnojiť', 'Vyčistiť', 'Použiť', 'Vysekať ľad']);
   const REACH = 1.7;
   function inReach(tx: number, ty: number): boolean { return Math.hypot(S.me.x - (tx + 0.5), S.me.y - (ty + 0.5)) <= REACH; }
-  function stopWalk(): void { S.path = null; S.pendingAct = null; }
+  function stopWalk(): void { S.path = null; S.pendingAct = null; Veh.cancelWalk(); } // aj chôdza k fúriku (#158)
   // Zabalený do pavučiny: najprv stojí (stuck), potom sa rýchlosť s pavučinou, ktorá sa zodiera, vracia od k k plnej
   function webSpeed(now: number): number {
     const w = S.web;
@@ -721,6 +721,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     const a = ctxAction(tgt.x, tgt.y);
     S.tapMark = { x: tgt.x, y: tgt.y, t: performance.now(), act: !!a };
     stopWalk();
+    if (a && a.ui === 'vehicle' && !inReach(tgt.x, tgt.y) && Veh.walkTo()) return; // fúrik z diaľky: dôjde k nemu (aj za idúcim) a otvorí ho (#158)
     if (a && (inReach(tgt.x, tgt.y) || a.ui === 'wish' || a.info)) {
       face(tgt.x + 0.5 - S.me.x, tgt.y + 0.5 - S.me.y);
       doAction(tgt.x, tgt.y);
@@ -1432,6 +1433,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     if (S.keys.l) vx -= 1; if (S.keys.r) vx += 1; if (S.keys.u) vy -= 1; if (S.keys.d) vy += 1;
     if (R3 && (vx || vy)) [vx, vy] = R3.screenToWorld(vx, vy); // joystick je vzhľadom na obrazovku, kamera je otočená
     if (vx || vy) stopWalk();
+    Veh.walkStep(); // chôdza k fúriku: dorazil (otvorí ho), alebo nová cesta za ním (#158)
     if (S.path) {
       const pa = S.pendingAct;
       if (pa && !pa.onTile && inReach(pa.x, pa.y) && S.path.length <= 1) {

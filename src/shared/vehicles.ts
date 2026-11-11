@@ -98,3 +98,19 @@ export function ridden(vs: Partial<Vehicles> | null | undefined, key: string): V
   for (const id of VEHICLE_IDS) if (vs?.[id]?.bought && vs[id].passenger === key) return id;
   return null;
 }
+
+// ---- Chôdza k fúriku (klient, #158) ----
+// Ťuknutie na fúrik či sane z diaľky: hráč k nim dôjde (aj keď ich niekto vezie – cieľ sa priebežne posúva) a potom
+// ich použije ako pri ťuknutí zblízka. Server nič nové nerieši – klient len dôjde a pošle obyčajnú akciu.
+export const WALK_ARRIVE = 1.3;   // tak blízko stredu vozidla je hráč „pri ňom“ (server dovolí do VEHICLE_REACH)
+export const WALK_GOAL = 1.0;     // cieľ cesty: políčko, ktorého stred je takto blízko stredu vozidla
+export const WALK_REPATH = 0.45;  // o toľko sa musí vozidlo pohnúť, aby sa cesta prepočítala
+// Čo robiť pri chôdzi k vozidlu v: dorazil(arrive), vzdať (gone – nie je kúpené alebo je na inej ploche),
+// prepočítať cestu (repath – ešte žiadna, dokončená alebo sa vozidlo pohlo od posledného cieľa), alebo ísť ďalej (keep)
+export function approach(me: { x: number; y: number }, area: AreaId, v: { bought: boolean; area: AreaId; x: number; y: number } | null | undefined,
+  aimed: { x: number; y: number } | null, walking: boolean): 'arrive' | 'gone' | 'repath' | 'keep' {
+  if (!v || !v.bought || v.area !== area) return 'gone';
+  if (Math.hypot(me.x - v.x, me.y - v.y) <= WALK_ARRIVE) return 'arrive';
+  if (!aimed || !walking || Math.hypot(v.x - aimed.x, v.y - aimed.y) > WALK_REPATH) return 'repath';
+  return 'keep';
+}

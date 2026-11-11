@@ -17,6 +17,7 @@ export interface VehiclesDeps {
   openModal: (title: string, render: (body: HTMLElement) => void) => void;
   changed: () => void;          // stav fúrikov sa zmenil (lišta, otvorené okno)
   left: (ticks: number) => string;   // „o 3 h“ – kedy sa roztopí ľad
+  findPath: (goal: (x: number, y: number) => boolean) => { x: number; y: number }[] | null;   // cesta ťuknutím (game.ts)
 }
 export interface ClientVehicles {
   onList: (list: VehicleView[]) => void;
@@ -31,6 +32,9 @@ export interface ClientVehicles {
   dielnaRows: (body: HTMLElement) => void;
   hotbarSlot: () => HTMLElement | null;
   icon: (id: VehicleId, ice?: number) => string;
+  walkTo: () => boolean;        // ťuknutie z diaľky na fúrik (ctxAt ho vybral): dôjsť k nemu, potom otvoriť jeho okno
+  walkStep: () => void;         // každú snímku pred chôdzou po ceste: dorazil? posunul sa? (cesta za idúcim fúrikom)
+  cancelWalk: () => void;       // nové ťuknutie, joystick, klávesy
 }
 
 type Kid = Node | string | null | undefined | false;
@@ -176,7 +180,7 @@ export function createVehicles(dp: VehiclesDeps): ClientVehicles {
     else if (v.d != null && !iDrive && v.r == null) btns.push(button('Naskočiť', () => { send({ t: 'veh', op: 'in', id }); }, !!other || !near(v)));
     body.appendChild(el('div', { class: 'row' }, el('div', { class: 'info' }, el('b', null, iDrive ? (id === 'sane' ? 'Ťaháš sane' : 'Tlačíš fúrik') : X.name),
       el('small', null, why || (iDrive ? (id === 'sane' ? 'Ťaháš ich za sebou na lane. Keď ' + it + ' pustíš, ostanú stáť, kde sú.' : 'Tlačíš ho pred sebou. Keď ho pustíš, ostane stáť, kde je.')
-        : !near(v) ? `Podíď bližšie k ${id === 'sane' ? 'saniam' : 'fúriku'}.` : v.d != null ? 'Keď ' + (id === 'sane' ? 'ich' : 'ho') + ' niekto ' + (id === 'sane' ? 'ťahá' : 'tlačí') + ', môžeš si doň naskočiť a viezť sa.' : X.desc))),
+        : !near(v) ? `Podíď bližšie k ${id === 'sane' ? 'saniam' : 'fúriku'}.` : v.d != null ? 'Keď ' + (id === 'sane' ? 'ich' : 'ho') + ' niekto ' + (id === 'sane' ? 'ťahá' : 'tlačí') + ', môžeš si ' + (id === 'sane' ? 'na ne' : 'doň') + ' naskočiť a viezť sa.' : X.desc))),
       el('div', { class: 'btns' }, ...btns)));
     // ľad: naložiť z batohu, vyložiť do batohu, do ľadovne
     const load = button(myIce ? `Naložiť (${String(Math.min(myIce, V.VEHICLE_ICE - v.ice))})` : 'Nemáš ľad', () => { send({ t: 'veh', op: 'load', id, n: 0 }); }, !myIce || v.ice >= V.VEHICLE_ICE || !near(v));
@@ -220,5 +224,33 @@ export function createVehicles(dp: VehiclesDeps): ClientVehicles {
     return d;
   }
 
-  return { onList, update, blocks, moved, resync, riding: () => ridingIn() !== null, driving, ctxAt, open, dielnaRows, hotbarSlot, icon };
+  // ---- Chôdza k fúriku z diaľky (aj za idúcim) ----
+  let walk: { id: VehicleId; aimed: { x: number; y: number } | null; at: number } | null = null;
+  const NAMES = (id: VehicleId): string => (id === 'sane' ? 'K saniam' : 'K fúriku');
+  function giveUp(id: VehicleId, why: string): void { walk = null; S.path = null; S.pendingAct = null; dp.toast(`${NAMES(id)} sa ${why}. ${V.VEHICLES[id].icon}`); }
+  function walkTo(): boolean {
+    if (!target || ridingIn()) return false;
+    walk = { id: target, aimed: null, at: 0 };
+    walkStep();
+    return true;
+  }
+  function walkStep(): void {
+    if (!walk) return;
+    const v = srv.get(walk.id), now = performance.now(), sh = shown.get(walk.id);
+    const r = V.approach(S.me, S.area, v && sh ? { ...v, x: sh.x, y: sh.y } : v, walk.aimed, !!S.path);
+    if (r === 'gone') { giveUp(walk.id, v && v.bought ? 'teraz nedostaneš – je inde' : 'nedostaneš'); return; }
+    if (r === 'arrive') { const id = walk.id; walk = null; S.path = null; S.pendingAct = null; open(id); return; }
+    if (r === 'keep' || now - walk.at < 250 || !v) return; // nanovo najviac 4× za sekundu
+    walk.at = now;
+    const gx = sh ? sh.x : v.x, gy = sh ? sh.y : v.y;
+    const path = dp.findPath((x, y) => Math.hypot(x + 0.5 - gx, y + 0.5 - gy) <= V.WALK_GOAL);
+    if (!path) { giveUp(walk.id, 'odtiaľto nedostaneš – niet tam cesty'); return; }
+    const p0 = path[0];
+    if (path.length > 1 && p0 && Math.hypot(p0.x - S.me.x, p0.y - S.me.y) < 0.6) path.shift();
+    S.path = path; S.pendingAct = null; S.stuckT = 0;
+    walk.aimed = { x: gx, y: gy };
+  }
+  function cancelWalk(): void { walk = null; }
+
+  return { walkTo, walkStep, cancelWalk, onList, update, blocks, moved, resync, riding: () => ridingIn() !== null, driving, ctxAt, open, dielnaRows, hotbarSlot, icon };
 }
