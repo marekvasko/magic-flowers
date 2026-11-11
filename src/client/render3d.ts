@@ -426,6 +426,7 @@ export interface CharObj {
   shadow: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
   h: number | null; vh: number; vis: number; seenArea: string; alive?: boolean; seen?: number;
   lastT?: number; wasWalking?: boolean; wx?: number; wz?: number; rippleAt?: number;
+  pose?: { dir: number; phase: number; o: CharOpts };   // posledná kresba (smer, fáza chôdze, póza) – ruka pre lano saní (#158)
 }
 type CharId = number | string; // id hráča (na ladiacej stránke odtlačok kľúča) alebo 'me', 'babka', 'master'
 // Lúč slnka nad čistinou: sieť, jej jas a kde stojí (k = sila)
@@ -1475,7 +1476,9 @@ void main() {
     stepHeight(o, groundY(x, z), dt);
     const jz = opts.jz || 0;
     o.ctx.clearRect(0, 0, 96, 128);
-    Art.char(o.ctx, 48, 124, 100, look || {}, opts.dance ? 0 : dir8(a), phase, Object.assign({ noShadow: true }, opts, { jz: 0 }));
+    const pose = { dir: opts.dance ? 0 : dir8(a), phase, o: Object.assign({ noShadow: true }, opts, { jz: 0 }) };
+    o.pose = pose;
+    Art.char(o.ctx, 48, 124, 100, look || {}, pose.dir, pose.phase, pose.o);
     if (opts.web && opts.web > 0) Art.cocoon(o.ctx, 48, 124, 100, opts.web, typeof id === 'number' ? id : 7); // zabalený do pavučiny – zodiera sa
     o.tex.needsUpdate = true;
     const h = o.h ?? 0;
@@ -1865,7 +1868,9 @@ void main() {
       o.sp.visible = o.shadow.visible = o.seen > 0.02;
       o.ghost.visible = !dark || id === 'me';
       if (vehicles3d.seat(id)) o.sp.visible = o.ghost.visible = o.shadow.visible = false; // spolujazdec je nakreslený vo fúriku (#158)
+      o.sp.renderOrder = vehicles3d.tows(id) ? 1 : 0; // kto ťahá sane, kreslí sa až po lane – lano je vždy za ním (#158)
     }
+    vehicles3d.ropes(); // lano saní do ruky ťahajúceho – až po nakreslení postavičiek (ich poloha a póza z tejto snímky)
     spiders3d.update(dt, t, lights); // pavučiny, nory a pavúky (#57)
 
     const fading = updateFades(dt, meO ? meO.h ?? 1 : 1);
@@ -1959,7 +1964,17 @@ void main() {
   const particles = createParticles({ scene, camera, renderer, S, ripple });
   const particleObjs = scene.children.filter(o => !sceneBefore.has(o)); // objekty častíc (ladiaca stránka ich vie skryť)
   const spiders3d = createSpiders3d({ THREE, scene, S, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, renderer, world: worldU, maxLights: MAX_LIGHTS, fine: () => grid && grid.fine });
-  const vehicles3d = createVehicles3d({ THREE, scene, S, groundY, makeSprite, spriteTex, lightAt, shadow: blobShadow, dir8, yaw: () => yaw }); // fúrik a sane (#158)
+  // Ruka postavičky vo svete (lano saní, #158): bod, ktorý Art.handAt vráti pre jej poslednú kresbu, na rovine spritu
+  // (sprite: 100 px = 1 blok, chodidlá v (48, 124) plátna 96 × 128, kotva 3 % od spodku)
+  const handRight = new THREE.Vector3(), handUp = new THREE.Vector3();
+  function handOf(charId: CharId): THREE.Vector3 | null {
+    const o = chars.get(charId);
+    if (!o || !o.pose || !o.alive) return null;
+    const h = Art.handAt(48, 124, 100, o.pose.dir, o.pose.phase, o.pose.o);
+    handRight.setFromMatrixColumn(camera.matrixWorld, 0); handUp.setFromMatrixColumn(camera.matrixWorld, 1);
+    return o.sp.position.clone().addScaledVector(handRight, (h.x - 48) / 100).addScaledVector(handUp, (128 * 0.97 - h.y) / 100);
+  }
+  const vehicles3d = createVehicles3d({ THREE, scene, S, groundY, makeSprite, spriteTex, lightAt, shadow: blobShadow, dir8, yaw: () => yaw, hand: handOf }); // fúrik a sane (#158)
   // stred ohniska pod kotlíkom (model má okraj FM minikociek, ohnisko je v strede políčka nad zemou)
   function fireCenter(): { x: number; y: number; z: number } | null {
 

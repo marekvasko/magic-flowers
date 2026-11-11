@@ -9,6 +9,7 @@ import { SEAT_Y, vehicleParts } from '../shared/vehicleshape.ts';
 import type { Part, V3 } from '../shared/vehicleshape.ts';
 import { must } from '../shared/util.ts';
 import { Art } from './art.ts';
+import { TOW_L } from '../shared/vehicles.ts';
 
 type C2 = CanvasRenderingContext2D;
 type Pt2 = [number, number];
@@ -81,6 +82,33 @@ export function drawVehicle(c: C2, id: VehicleId, x: number, y: number, s: numbe
   items.sort((a, b) => a.d - b.d);
   for (const it of items) it.draw();
   c.restore();
+}
+
+// Bod predmetu (bloky, stred na zemi, „dopredu“ +x) na plátne – pre obrázok vozidla v smere dir so stredom v (x, y)
+export function project(x: number, y: number, s: number, dir: number, p: V3): Pt2 {
+  const th = SCREEN_ANGLE[dir] ?? 0, ct = Math.cos(th), st = Math.sin(th);
+  const vx = p[0] * ct - p[2] * st, vz = p[0] * st + p[2] * ct;
+  return [x + vx * s, y - p[1] * Math.cos(PITCH) * s + vz * Math.sin(PITCH) * s];
+}
+export const ROPE_AT: V3 = [0.42, 0.18, 0];   // kde je lano priviazané na saniach (priečka vpredu)
+// Lano z bodu a do ruky b (mierne previsnuté)
+export function drawRope(c: C2, a: Pt2, b: Pt2, s: number): void {
+  const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2 + Math.hypot(b[0] - a[0], b[1] - a[1]) * 0.12;
+  c.save(); c.lineCap = 'round';
+  for (const [col, w] of [['#7a5a2a', s * 0.03], ['#d8c08a', s * 0.016]] as const) {
+    c.strokeStyle = col; c.lineWidth = w; c.beginPath(); c.moveTo(a[0], a[1]); c.quadraticCurveTo(mx, my, b[0], b[1]); c.stroke();
+  }
+  c.restore();
+}
+// Sane ťahané hráčom (ladiaca stránka): hráč ide v smere dir na lane TOW_L pred saňami; lano končí v ruke, ktorú
+// nakreslí char() (Art.handAt) a je vždy ZA hráčom – kreslí sa pred ním; sane prekryjú hráča, len keď sú bližšie k divákovi
+export function drawTow(c: C2, x: number, y: number, s: number, dir: number, ice: number, look: Partial<Look> | null, phase: number): void {
+  const [px, py] = project(x, y, s, dir, [TOW_L, 0, 0]), hand = Art.handAt(px, py, s, dir, phase), rope = project(x, y, s, dir, ROPE_AT);
+  const playerFront = (SCREEN_ANGLE[dir] ?? 0) !== 0 && Math.sin(SCREEN_ANGLE[dir] ?? 0) > 0; // hráč bližšie k divákovi než sane
+  const sled = (): void => { drawVehicle(c, 'sane', x, y, s, dir, ice); };
+  const player = (): void => { Art.char(c, px, py, s, look, dir, phase, {}); };
+  if (playerFront) { sled(); drawRope(c, rope, [hand.x, hand.y], s); player(); }
+  else { drawRope(c, rope, [hand.x, hand.y], s); player(); sled(); }
 }
 
 // Obrázok do okna, lišty a hlásení: size × size px, pohľad spredu zboku (smer 5 – vpravo dole); data URL v pamäti
