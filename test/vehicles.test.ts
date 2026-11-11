@@ -458,3 +458,16 @@ test('server: uloženie bez fúrikov sa načíta bez zmeny verzie, kúpený fúr
     await new Promise(r => setTimeout(r, 300));
   } finally { await stopServer(proc); fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('chôdza k fúriku (klient): dorazí, keď je pri ňom; za idúcim prepočíta cestu; na inej ploche to vzdá', () => {
+  const v = { bought: true, area: 'garden' as const, x: 10, y: 10 };
+  assert.strictEqual(V.approach({ x: 10, y: 11.2 }, 'garden', v, null, false), 'arrive', 'blízko – použije ho');
+  assert.ok(V.VEHICLE_REACH - V.WALK_ARRIVE > 0.2, 'pri príchode ho server pustí k nemu (s rezervou)');
+  assert.strictEqual(V.approach({ x: 3, y: 3 }, 'garden', v, null, false), 'repath', 'ešte žiadna cesta');
+  assert.strictEqual(V.approach({ x: 3, y: 3 }, 'garden', v, { x: 10, y: 10 }, true), 'keep', 'ide za ním');
+  assert.strictEqual(V.approach({ x: 3, y: 3 }, 'garden', { ...v, x: 10.6 }, { x: 10, y: 10 }, true), 'repath', 'pohol sa – nová cesta');
+  assert.strictEqual(V.approach({ x: 3, y: 3 }, 'garden', v, { x: 10, y: 10 }, false), 'repath', 'cesta skončila, ešte tam nie je');
+  assert.strictEqual(V.approach({ x: 3, y: 3 }, 'garden', { ...v, area: 'hory' }, null, true), 'gone', 'odišiel do hôr');
+  assert.strictEqual(V.approach({ x: 3, y: 3 }, 'garden', { ...v, bought: false }, null, true), 'gone');
+  assert.strictEqual(V.approach({ x: 3, y: 3 }, 'garden', null, null, true), 'gone');
+});
