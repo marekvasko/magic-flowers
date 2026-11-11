@@ -3,6 +3,7 @@ import * as D from '../shared/data.ts';
 import type { Ground, Look, SpeciesId } from '../shared/data.ts';
 import type { SoilView } from '../shared/protocol.ts';
 import { must } from '../shared/util.ts';
+import { charPose, handAt, handsOf } from '../shared/charpose.ts';
 
 type C2 = CanvasRenderingContext2D;
 // Voľby kreslenia rastliny (plant): zahynutá, v noci (papraď svieti), odkvitá, pripravená na zber (trblietka)
@@ -239,23 +240,11 @@ export const Art = (() => {
     c.fillRect(x - w * 0.04, y + h * 0.3, w * 0.08, h * 0.5); // priečka
   }
 
-  function char(c: C2, x: number, y: number, s: number, look: Partial<Look> | null, dir: number, phase: number, o: CharOpts = {}): void {
+  function char(c: C2, x: number, y: number, s: number, look: Partial<Look> | null, dir: number, phase0: number, o0: CharOpts = {}): void {
     look = look || {};
     const skin = '#f2c9a0';
-    let d = dir;
-    if (o.dig) { o = Object.assign({}, o, { crawl: true }); phase = 0; }
-    let bob = Math.abs(Math.sin(phase)) * s * 0.04;
-    if (o.dance) { d = Math.floor(phase * 1.2) % 4; bob = Math.abs(Math.sin(phase * 3)) * s * 0.12; }
-    // uhlopriečne smery kreslíme ako pohľad dole/hore natočený do strany
-    const side = d === 4 || d === 6 ? -1 : d === 5 || d === 7 ? 1 : 0;
-    if (d >= 4) d = d <= 5 ? 0 : 3;
+    const P = charPose(y, s, dir, phase0, o0), { o, d, side, yb, step, fx, kn } = P;
     if (!o.noShadow) ell(c, x, y, s * 0.24, s * 0.08, 0, 'rgba(0,0,0,0.25)');
-    const yb = y - bob;
-    const step = Math.sin(phase) * s * 0.06;
-    // plazenie: kolená pokrčené (kratšie nohy), trup sa predkloní v bokoch smerom pohybu;
-    // pri pohľade spredu/zozadu predklon nevidno do strany, tak sa hlava len prikrčí k telu
-    const fx = d === 1 ? -1 : d === 2 ? 1 : side;
-    const kn = o.crawl ? s * 0.08 : 0;
     if (o.crawl) { c.save(); c.translate(-fx * s * 0.08, 0); } // ťažisko dozadu, nech sa postavička zmestí do spritu
     // nohy
     c.fillStyle = o.babka ? '#5b3a6b' : '#3b4a6b';
@@ -277,15 +266,16 @@ export const Art = (() => {
     if (o.babka) { c.fillStyle = '#f5f0e0'; c.fillRect(x - s * 0.12, yb - s * 0.4, s * 0.24, s * 0.3); c.fillStyle = '#e57373'; for (let i = 0; i < 3; i++) circ(c, x - s * 0.06 + i * s * 0.06, yb - s * 0.2, s * 0.02, '#e57373'); }
     else { c.fillStyle = 'rgba(0,0,0,0.12)'; c.fillRect(x - s * 0.19, yb - s * 0.26, s * 0.38, s * 0.06); }
     // ruky
-    const sw = o.dance ? Math.sin(phase * 3) * s * 0.15 : step;
+    const sw = P.sw;
     if (o.dig) { // obe ruky dole pred telom, jemne a striedavo hrabú
       const k1 = Math.sin(o.dig * 8), k2 = Math.sin(o.dig * 8 + Math.PI);
       const reach = (k: number): number => fx ? fx * s * (0.18 + 0.04 * k) : 0;
       circ(c, x + (fx ? reach(k1) - fx * s * 0.06 : -s * 0.15 + k1 * s * 0.015), yb - s * 0.2 + k1 * s * 0.03, s * 0.065, skin);
       circ(c, x + (fx ? reach(k2) : s * 0.15 - k2 * s * 0.015), yb - s * 0.2 + k2 * s * 0.03, s * 0.065, skin);
     } else {
-      circ(c, x - s * 0.22, yb - s * 0.36 + (d === 1 || d === 2 ? 0 : sw), s * 0.065, skin);
-      circ(c, x + s * 0.22, yb - s * 0.36 - (d === 1 || d === 2 ? 0 : sw), s * 0.065, skin);
+      const hands = handsOf(x, s, P); // tie isté body vracia handAt (lano saní)
+      circ(c, hands.l[0], hands.l[1], s * 0.065, skin);
+      circ(c, hands.r[0], hands.r[1], s * 0.065, skin);
       // lampáš visí z pravej ruky (pri pohľade doľava ho zakryje telo – kreslíme ho pred telo k ľavej ruke)
       if (o.lamp) {
         const lx = d === 1 ? x - s * 0.22 : x + s * 0.22, ly = yb - s * 0.36 + (d === 1 ? sw : d === 2 ? 0 : -sw);
@@ -730,6 +720,6 @@ export const Art = (() => {
     c.textBaseline = 'alphabetic';
   }
 
-  return { plant, char, ground, soil, shroom, icon, hash, circ, bubble, web, cocoon };
+  return { plant, char, handAt, ground, soil, shroom, icon, hash, circ, bubble, web, cocoon };
 })();
 

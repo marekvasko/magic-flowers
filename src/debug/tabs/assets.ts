@@ -10,7 +10,7 @@ import type { SpeciesId } from '../../shared/data.ts';
 import { keys, must } from '../../shared/util.ts';
 import type { TabCtx, TabInstance, h as H } from '../ui.ts';
 import { errText } from '../ui.ts';
-import { drawVehicle } from '../../client/vehicleart.ts';
+import { drawTow, drawVehicle } from '../../client/vehicleart.ts';
 
 export const CSS = `
 body.dbg-wide aside { display: none; }
@@ -208,6 +208,13 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
     const rows: readonly (readonly ['furik' | 'sane', number, boolean, string])[] = [
       ['furik', 0, false, 'Fúrik, empty'], ['furik', 3, false, 'Fúrik, 3 ice'], ['furik', 6, false, 'Fúrik, 6 ice'], ['furik', 2, true, 'Fúrik, passenger + 2 ice'],
       ['sane', 0, false, 'Sane, empty'], ['sane', 3, false, 'Sane, 3 ice'], ['sane', 6, false, 'Sane, 6 ice'], ['sane', 2, true, 'Sane, passenger + 2 ice']];
+    const tow = (dir: number, phase: number): HTMLCanvasElement => {
+      const c = h('canvas', { width: 260, height: 260 });
+      const g = must(c.getContext('2d') ?? undefined);
+      g.fillStyle = '#eef4f6'; g.fillRect(0, 0, 260, 260);
+      drawTow(g, 130, 165, 100, dir, 3, { shirt: '#4a90d9', hair: '#5b3a1a', hat: true }, phase);
+      return c;
+    };
     const cell = (id: 'furik' | 'sane', ice: number, rider: boolean, dir: number, player: boolean): HTMLCanvasElement => {
       const c = h('canvas', { width: player ? 200 : 128, height: 160 });
       const g = must(c.getContext('2d') ?? undefined);
@@ -223,7 +230,12 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
       h('div', { class: 'as-gal' }, h('table', null,
         h('tr', null, h('th', null, ''), DIRS.map(d => h('th', null, d)), h('th', null, 'size vs player')),
         rows.map(([id, ice, rider, label]) => h('tr', null, h('td', null, h('b', null, label)),
-          DIRS.map((_, dir) => h('td', null, cell(id, ice, rider, dir, false))), h('td', null, cell(id, ice, rider, 5, true))))))
+          DIRS.map((_, dir) => h('td', null, cell(id, ice, rider, dir, false))), h('td', null, cell(id, ice, rider, 5, true)))))),
+      h('h2', { style: 'margin-top:16px' }, 'Sane ťahané hráčom (lano v ruke, vždy za hráčom)'),
+      h('div', { class: 'muted', style: 'margin-bottom:8px' }, 'drawTow – the rope ends in the hand that Art.char draws (Art.handAt, with the walking arm swing) and is always drawn behind the player. Two walk phases per direction.'),
+      h('div', { class: 'as-gal' }, h('table', null,
+        h('tr', null, h('th', null, ''), DIRS.map(d => h('th', null, d))),
+        [0, 1.4].map(phase => h('tr', null, h('td', null, h('b', null, `phase ${String(phase)}`)), DIRS.map((_, dir) => h('td', null, tow(dir, phase)))))))
     ];
   }
 
