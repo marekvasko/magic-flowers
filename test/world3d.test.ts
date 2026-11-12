@@ -16,7 +16,8 @@ test('svet z kociek je deterministický a má správne výšky', () => {
   assert.strictEqual(W.surfaceY(a, rock % D.W, Math.floor(rock / D.W)), 1.5);
   assert.strictEqual(W.surfaceY(a, grass % D.W, Math.floor(grass / D.W)), 1);
   // budovy sú jemné modely; v hrubej mriežke majú neviditeľnú náhradu (chalupa babky stojí na (14,2))
-  assert.deepStrictEqual(a.fine.filter(f => f.type !== 'tree' && f.type !== 'rock').map(f => f.type).sort(), ['cauldron', 'house', 'hut', 'stall', 'well']);
+  assert.deepStrictEqual(a.fine.filter(f => f.type !== 'tree' && f.type !== 'rock' && f.type !== 'edge').map(f => f.type).sort(), ['cauldron', 'house', 'hut', 'stall', 'well']);
+  assert.strictEqual(a.fine.filter(f => f.type === 'edge').length, D.POND_EDGE.length, 'kolíky s bójkami na okraji jazierka (#160)');
   assert.strictEqual(W.get(a, 30, 3, 5), W.M.INVIS);
 });
 
@@ -74,7 +75,7 @@ test('chalupa, kotlík, trh a studňa z minikociek majú svoje detaily', () => {
   for (const m of [W.M.AWN_RED, W.M.AWN_WHITE, W.M.SIGN, W.M.ORN, W.M.SACK, W.M.LANTERN]) assert.ok(has('stall', m), 'trh: ' + m);
   for (const m of [W.M.WATER_DEEP, W.M.ROPE, W.M.HANDLE, W.M.SHINGLE]) assert.ok(has('well', m), 'studňa: ' + m);
   // ťuknutie na model vyberie políčko, ku ktorému objekt patrí
-  for (const f of g.fine) assert.strictEqual(at(f.tile.y * D.W + f.tile.x), f.type === 'rock' ? 'boulder' : f.type);
+  for (const f of g.fine) assert.strictEqual(at(f.tile.y * D.W + f.tile.x), f.type === 'rock' ? 'boulder' : f.type === 'edge' ? 'water' : f.type);
   // babkina chalupa vrhá tieň na sever (na les)
   assert.ok(W.sunHours(g, 15, 1, 1) < W.sunHours(g, 12, 15, 1) - 4);
   // v zime sneh na slamenej streche
@@ -111,19 +112,53 @@ test('kamene z minikociek: všetky tvary, mach mimo zimy, sneh v zime, tieň v h
   assert.ok(!sum.m.includes(W.M.DARKSTONE), 'hrubé balvany sa už nestavajú');
 });
 
-test('voda: hladina 1/8 bloku pod zemou, maska, lekná a najbližšia voda', () => {
+test('voda: hladina 1/8 bloku pod zemou, maska, lekná (len pleso v horách) a najbližšia voda', () => {
   assert.strictEqual(W.WATER_Y, 0.875);
   const q = W.waterQuads(tiles), mask = W.waterMask(tiles);
   assert.strictEqual(q.length, tiles.filter(t => t.g === 'water').length);
   for (const w of q) assert.strictEqual(mask[w.y * D.W + w.x], D.waterZone(tiles, w.y * D.W + w.x, D.W) === 'deep' ? 255 : W.WATER_SHORE);
-  assert.deepStrictEqual([mask.filter(v => v === 255).length, mask.filter(v => v === W.WATER_SHORE).length], [9, 12], 'hĺbka a breh jazierka (#38)');
+  assert.deepStrictEqual([mask.filter(v => v === 255).length, mask.filter(v => v === W.WATER_SHORE).length], [47, 36], 'hĺbka a breh jazierka (#38; väčšie jazierko #160)');
   assert.strictEqual(mask.filter(v => v).length, q.length);
-  // lekná len na vode a v zime žiadne
-  for (const p of W.lilyPads(tiles, 1)) assert.strictEqual(at(p.y * D.W + p.x), 'water');
-  assert.strictEqual(W.lilyPads(tiles, 3).length, 0);
+  // v jazierku v záhrade lekná nie sú (#160); na plese v horách áno, len na vode a v zime žiadne
+  assert.deepStrictEqual(W.lilyPads(tiles, 1, D.W, 'garden'), []);
+  const hory = D.buildMountains().map(g => ({ g })), pads = W.lilyPads(hory, 1, D.W, 'hory');
+  assert.ok(pads.length > 0, 'pleso v horách lekná má');
+  for (const p of pads) assert.strictEqual(must(hory[p.y * D.W + p.x]).g, 'water');
+  assert.strictEqual(W.lilyPads(hory, 3, D.W, 'hory').length, 0);
   // z piesku vedľa vody je voda blízko, z lúky ďaleko nie
   const shore = must(q.find(w => at(w.y * D.W + w.x + 1) === 'sand'));
   const n = W.nearestWater(tiles, shore.x + 1.3, shore.y + 0.5, 0.6);
   assert.ok(n && Math.abs(n.x - (shore.x + 1)) < 1e-9 && n.d < 0.31);
   assert.strictEqual(W.nearestWater(tiles, 20.5, 5.5, 0.6), null);
+});
+
+test('mólo (#160): pod mólom je hladina, lávka v prirodzenej výške zeme, kolíky okraja sa neprekrývajú', () => {
+  const t = D.buildMap().map(g => ({ g }));
+  for (const p of D.DOCK.tiles) must(t[p.y * D.W + p.x]).g = 'dock';
+  const g = W.buildGrid(t, 1), p0 = must(D.DOCK.tiles[0]);
+  assert.strictEqual(W.surfaceY(g, p0.x, p0.y), 1, 'po lávke sa chodí vo výške zeme');
+  assert.ok(W.waterQuads(t).some(q => q.x === p0.x && q.y === p0.y), 'hladina aj pod mólom');
+  assert.strictEqual(must(W.waterMask(t)[p0.y * D.W + p0.x]), 255);
+  assert.deepStrictEqual(W.lilyPads(t, 1, D.W, 'garden'), [], 'v záhrade (ani pri móle) lekná nie sú');
+  const dock = must(g.fine.find(f => f.type === 'dock'));
+  assert.deepStrictEqual(dock.tile, { x: p0.x, y: p0.y });
+  for (const m of [W.M.PLANK, W.M.LOG, W.M.ROPE]) assert.ok(dock.data.includes(m), 'mólo: ' + m);
+  // lávka je v prirodzenej výške: vrch dosiek presne vo výške zeme (v jednej rovine s pieskom brehu – kto sa kreslí
+  // navrchu, rozhoduje priorita plôch v render3d, src/shared/zorder.ts, nie posun geometrie)
+  let top = 0;
+  for (let i = 0; i < dock.data.length; i++) if (dock.data[i] === W.M.PLANK || dock.data[i] === W.M.PLANK_DARK) top = Math.max(top, Math.floor(i / dock.sx) % dock.sy + 1);
+  assert.strictEqual(dock.oy + top / W.FINE, 1, 'vrch lávky vo výške zeme');
+  assert.strictEqual(dock.oy, 0.5, 'mólo stojí na dne jazierka');
+  assert.ok(must(W.buildGrid(t, 3).fine.find(f => f.type === 'dock')).data.includes(W.M.SNOW), 'v zime sneh na móle');
+  // kolíky s bójkami na okraji: žiadna minikocka dvoch susedných modelov na tom istom mieste
+  const seen = new Set<string>();
+  for (const e of g.fine.filter(f => f.type === 'edge')) for (let i = 0; i < e.data.length; i++) {
+    if (!e.data[i]) continue;
+    const x = i % e.sx, y = Math.floor(i / e.sx) % e.sy, z = Math.floor(i / (e.sx * e.sy));
+    const k = `${Math.round((e.ox * W.FINE + x) * 1)}|${y}|${Math.round(e.oz * W.FINE + z)}`;
+    assert.ok(!seen.has(k), 'kolíky okraja sa prekrývajú: ' + k);
+    seen.add(k);
+  }
+  for (const id of ['dock', 'pond-edge']) assert.ok(W.FINE_MODELS.some(f => f.id === id), 'prehliadač modelov: ' + id);
+  assert.ok(!W.FINE_MODELS.some(f => f.id.startsWith('boat')), 'loďka už nie je z minikociek (2D obrázok, art.ts)');
 });

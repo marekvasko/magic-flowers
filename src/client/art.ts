@@ -4,12 +4,18 @@ import type { Ground, Look, SpeciesId } from '../shared/data.ts';
 import type { SoilView } from '../shared/protocol.ts';
 import { must } from '../shared/util.ts';
 import { charPose, handAt, handsOf } from '../shared/charpose.ts';
+import { BOAT2D, boatHalfW, boatScreen } from '../shared/boat2d.ts';
+export { BOAT2D, boatHalfW, boatNear, boatScreen } from '../shared/boat2d.ts';
 
 type C2 = CanvasRenderingContext2D;
 // Voľby kreslenia rastliny (plant): zahynutá, v noci (papraď svieti), odkvitá, pripravená na zber (trblietka)
 export interface PlantOpts { dead?: boolean; night?: boolean; wilting?: boolean; ready?: boolean }
 // Voľby postavičky (char): plazí sa, tancuje, hrabe v tráve (dig = čas v s), babka, lampáš v ruke ('lit' = svieti), bez tieňa
 export interface CharOpts { crawl?: boolean; dance?: boolean; dig?: number; babka?: boolean; lamp?: 'lit' | 'on' | boolean; noShadow?: boolean }
+// Voľby loďky (boat, #160): prevrátená dnom hore (zima na móle), so snehom, posádka (vzhľad sediacich, poradie = miesta:
+// 0 vesluje, 1 sa vezie; null = miesto prázdne), t = čas v s (veslovanie), rowing = veslár práve vesluje
+export interface BoatOpts { flip?: boolean; snow?: boolean; crew?: readonly (Partial<Look> | null)[]; t?: number; rowing?: boolean; noShadow?: boolean }
+// Tvar loďky (rozmery, premietanie, 8 smerov) je v src/shared/boat2d.ts – zdieľa ho kreslenie, 3D pohľad aj testy
 // Prechod na okraji plochy: strana, kam vedie, a ikona cieľovej plochy
 export interface GateInfo { side: 'n' | 's' | 'w' | 'e'; icon: string }
 export const Art = (() => {
@@ -328,14 +334,15 @@ export const Art = (() => {
   const bySeason = (list: Seasonal, se: number): string => list[se & 3] ?? list[0];
 
   // gate = { side: 'n'|'s'|'w'|'e', icon } – na ktorú stranu prechod vedie a ikona cieľovej plochy (inak podľa riadku)
-  function ground(c: C2, g: Ground, x: number, y: number, s: number, se: number, t: number, tx: number, ty: number, gate: GateInfo | null): void {
+  // area = plocha (lekná sú len na plese v horách – D.LILY_AREAS; v záhrade nie sú, #160)
+  function ground(c: C2, g: Ground, x: number, y: number, s: number, se: number, t: number, tx: number, ty: number, gate: GateInfo | null, area = 'garden'): void {
     const h = hash(tx, ty);
     let base: string;
     switch (g) {
       case 'path': case 'majster': base = se === 3 ? '#e0dccf' : '#d9b77e'; break;
       case 'sand': base = se === 3 ? '#efece0' : '#ecd9a0'; break;
       case 'rock': case 'boulder': base = se === 3 ? '#d8dcde' : '#a9a39a'; break;
-      case 'water': base = se === 3 ? '#a9d4ec' : '#4aa3df'; break;
+      case 'water': case 'dock': base = se === 3 ? '#a9d4ec' : '#4aa3df'; break; // pod mólom je voda (#160)
       case 'forest': case 'ring': case 'shroom': case 'tree': case 'fern': case 'bush': base = bySeason(FOREST, se); break;
       case 'meadow': base = bySeason(MEADOW, se); break;
       case 'moss': case 'fungi': case 'giant': case 'trunk': case 'log': base = bySeason(MOSS, se); break;
@@ -405,7 +412,7 @@ export const Art = (() => {
         const wy = y + s * (0.3 + i * 0.4), off = Math.sin(t * 1.5 + tx + i * 2) * s * 0.1;
         c.beginPath(); c.moveTo(x + s * 0.2 + off, wy); c.quadraticCurveTo(x + s * 0.4 + off, wy - s * 0.08, x + s * 0.6 + off, wy); c.stroke();
       }
-      if (h < 0.12 && se !== 3) { ell(c, x + s * 0.5, y + s * 0.5, s * 0.2, s * 0.14, 0, '#5fae4a'); circ(c, x + s * 0.55, y + s * 0.45, s * 0.06, '#ffb6d9'); }
+      if (h < 0.12 && se !== 3 && D.LILY_AREAS.includes(area)) { ell(c, x + s * 0.5, y + s * 0.5, s * 0.2, s * 0.14, 0, '#5fae4a'); circ(c, x + s * 0.55, y + s * 0.45, s * 0.06, '#ffb6d9'); }
       return;
     }
     if (g === 'path' || g === 'sand') {
@@ -525,6 +532,134 @@ export const Art = (() => {
     circ(c, x - s * 0.07, y - s * 0.27, s * 0.03, '#fff'); circ(c, x + s * 0.06, y - s * 0.3, s * 0.025, '#fff'); circ(c, x + s * 0.01, y - s * 0.23, s * 0.02, '#fff');
   }
 
+  // ---- Loďka (#160) ----
+  // Loďka so stredom na hladine v (x, y) plátna, s pixelov na blok, smer dir (0–7 ako postavička). Kreslí sa ako 3D teleso:
+  // dosky trupu so svetlom zľava zhora, vnútro, lavičky, veslá, posádka (od pása nahor – zvyšok zakryje bok loďky)
+  // a vlnky na hladine; prevrátená (flip) leží dnom hore, so snehom na dne (snow).
+  function boat(c: C2, x: number, y: number, s: number, dir: number, o: BoatOpts = {}): void {
+    const B = BOAT2D, flip = !!o.flip, N = 18, a = (B.angle[dir & 7] ?? 0) * Math.PI / 180, sn = Math.sin(a), cs = Math.cos(a);
+    const SP = Math.sin(B.pitch), CP = Math.cos(B.pitch);
+    const P = (u: number, v: number, h: number): [number, number] => { const q = boatScreen(dir, u, v, h); return [x + q[0] * s, y + q[1] * s]; };
+    const cam: [number, number, number] = [sn * CP, cs * CP, SP]; // smer ku kamere v súradniciach loďky
+    const lx = -0.5 * sn - 0.6 * cs, ly = -0.5 * cs + 0.6 * sn; // svetlo zľava zhora na obrazovke (vodorovná zložka v súradniciach loďky)
+    const light = ((): [number, number, number] => { const l = Math.hypot(lx, ly, 1.2); return [lx / l, ly / l, 1.2 / l]; })();
+    const dot = (p: readonly number[], q: readonly number[]): number => (p[0] ?? 0) * (q[0] ?? 0) + (p[1] ?? 0) * (q[1] ?? 0) + (p[2] ?? 0) * (q[2] ?? 0);
+    const poly = (pts: readonly [number, number][], fill: string, stroke?: string, lw?: number): void => {
+      c.beginPath(); pts.forEach(([px, py], i) => { if (i) c.lineTo(px, py); else c.moveTo(px, py); }); c.closePath();
+      c.fillStyle = fill; c.fill();
+      if (stroke) { c.strokeStyle = stroke; c.lineWidth = lw ?? s * 0.012; c.lineJoin = 'round'; c.stroke(); }
+    };
+    const line = (pts: readonly [number, number][], col: string, lw: number): void => { c.beginPath(); pts.forEach(([px, py], i) => { if (i) c.lineTo(px, py); else c.moveTo(px, py); }); c.strokeStyle = col; c.lineWidth = lw; c.lineCap = 'round'; c.lineJoin = 'round'; c.stroke(); };
+    // stanice trupu: okraj (gunwale) a dno pri hladine; v prevrátenej loďke je okraj dole na móle a dno hore
+    const us = Array.from({ length: N + 1 }, (_, i) => -B.L + 2 * B.L * i / N);
+    const sheer = (u: number): number => 0.07 * Math.pow(Math.max(0, (u - 0.1) / (B.L - 0.1)), 2) + 0.025 * Math.pow(Math.max(0, (-u - 0.5) / (B.L - 0.5)), 2);
+    const top = (u: number, side: number): [number, number, number] => flip ? [u, side * boatHalfW(u), 0] : [u, side * boatHalfW(u), B.H + sheer(u)];
+    const bot = (u: number, side: number): [number, number, number] => { const ub = u * 0.93; return flip ? [ub, side * 0.6 * boatHalfW(u), B.H + 0.04] : [ub, side * 0.7 * boatHalfW(u), 0]; };
+    const S2 = (p: readonly [number, number, number]): [number, number] => P(p[0], p[1], p[2]);
+    // tieň farby podľa svetla (k 0–1)
+    const shadeCol = (hex: string, n: readonly number[]): string => shade(hex, Math.max(-0.3, Math.min(0.22, (dot(n, light) - 0.15) * 0.6)));
+    // bočné dosky (vonkajšie): štvoruholník medzi dvoma stanicami, normála von zo strany side
+    interface Face { pts: [number, number, number][]; n: [number, number, number]; depth: number }
+    const faces: Face[] = [];
+    for (const side of [-1, 1]) for (let i = 0; i < N; i++) {
+      const u0 = must(us[i]), u1 = must(us[i + 1]), g0 = top(u0, side), g1 = top(u1, side), b0 = bot(u0, side), b1 = bot(u1, side);
+      const e1 = [g1[0] - g0[0], g1[1] - g0[1], g1[2] - g0[2]], e2 = [b0[0] - g0[0], b0[1] - g0[1], b0[2] - g0[2]];
+      let n: [number, number, number] = [(e1[1] ?? 0) * (e2[2] ?? 0) - (e1[2] ?? 0) * (e2[1] ?? 0), (e1[2] ?? 0) * (e2[0] ?? 0) - (e1[0] ?? 0) * (e2[2] ?? 0), (e1[0] ?? 0) * (e2[1] ?? 0) - (e1[1] ?? 0) * (e2[0] ?? 0)];
+      const l = Math.hypot(...n) || 1; n = [n[0] / l, n[1] / l, n[2] / l];
+      if (n[1] * side < 0) n = [-n[0], -n[1], -n[2]];
+      const pts = [g0, g1, b1, b0], mid = [(u0 + u1) / 2, side * boatHalfW((u0 + u1) / 2), 0];
+      faces.push({ pts, n, depth: dot(mid, cam) });
+    }
+    const front = faces.filter(f => dot(f.n, cam) > 0.01).sort((p, q) => p.depth - q.depth);
+    const nearSide = Math.abs(cs) < 0.01 ? 0 : Math.sign(cs); // bok bližšie ku kamere (+v ide na obrazovke dolu, keď cos > 0); 0 = loďka mieri ku kamere / od nej
+    const BLUE = '#3a6ea5', CREAM = '#f3ecdc', WOOD = '#a8743f', WOOD_IN = '#8a5a2f', RIM = '#6b4226', FLOOR = '#c48f55';
+    // zadná doska (kormidlo) – kreslí sa, keď je natočená ku kamere
+    const transom = (): void => {
+      const n = [-1, 0, 0];
+      if (dot(n, cam) <= 0.01) return;
+      const u = -B.L, w = boatHalfW(u);
+      const g = [top(u, -1), top(u, 1)], b = [bot(u, 1), bot(u, -1)];
+      poly([g[0], g[1], b[0], b[1]].map(p => S2(p as [number, number, number])), shadeCol(flip ? CREAM : BLUE, n), 'rgba(40,30,20,0.35)');
+      if (!flip) poly([S2(top(u, -1)), S2(top(u, 1)), S2([u, w * 0.9, B.H * 0.62]), S2([u, -w * 0.9, B.H * 0.62])], shadeCol(CREAM, n));
+    };
+    const sideFace = (f: Face): void => {
+      const [g0, g1, b1, b0] = f.pts.map(S2) as [[number, number], [number, number], [number, number], [number, number]];
+      // modrý trup pri hladine, krémový pás pod okrajom (v prevrátenej naopak); medzi nimi šev dosky
+      const k = flip ? 0.38 : 0.62, mix = (p: [number, number], q: [number, number]): [number, number] => [q[0] + (p[0] - q[0]) * k, q[1] + (p[1] - q[1]) * k];
+      const m0 = mix(g0, b0), m1 = mix(g1, b1);
+      poly([m0, m1, b1, b0], shadeCol(BLUE, f.n));
+      poly([g0, g1, m1, m0], shadeCol(CREAM, f.n));
+      line([m0, m1], 'rgba(30,40,60,0.35)', s * 0.008);
+      const q0 = mix(m0, b0), q1 = mix(m1, b1); line([q0, q1], 'rgba(20,30,50,0.25)', s * 0.006);
+    };
+    // posádka: postavička od pása nahor, pás na lavičke (zvyšok zakryje bok loďky)
+    const crewAt = (k: number): void => {
+      const look = o.crew?.[k];
+      if (look === undefined || look === null) return;
+      const [px, py] = P(B.seats[k] ?? 0, 0, B.bench), cut = py + s * 0.02;
+      c.save(); c.beginPath(); c.rect(px - s, py - s * 1.5, s * 2, cut - (py - s * 1.5)); c.clip();
+      const ph = k === 0 && o.rowing ? (o.t ?? 0) * 5 : 0;
+      char(c, px, py + s * 0.22, s * 0.95, look, dir, ph, { noShadow: true });
+      c.restore();
+    };
+    const oar = (side: number): void => {
+      const u = B.seats[0] + 0.04, w = boatHalfW(u), sw = o.rowing ? Math.sin((o.t ?? 0) * 5) * 0.18 : 0;
+      const lock = P(u, side * w, B.H + sheer(u)), hand = P(u + 0.05, side * w * 0.35, B.bench + 0.28), tip = P(u - 0.22 + sw, side * (w + 0.62), -0.02);
+      line([hand, lock, tip], RIM, s * 0.035);
+      const bl = P(u - 0.3 + sw, side * (w + 0.72), -0.02);
+      c.save(); c.translate((tip[0] + bl[0]) / 2, (tip[1] + bl[1]) / 2); c.rotate(Math.atan2(bl[1] - tip[1], bl[0] - tip[0]));
+      ell(c, 0, 0, s * 0.11, s * 0.04, 0, WOOD, RIM); c.restore();
+      if (!o.flip) { c.strokeStyle = 'rgba(255,255,255,0.6)'; c.lineWidth = s * 0.01; c.beginPath(); c.ellipse(bl[0], bl[1] + s * 0.01, s * 0.13, s * 0.04, 0, 0, TAU); c.stroke(); }
+    };
+    if (!flip) {
+      // vlnky a odraz pod loďkou
+      if (!o.noShadow) ell(c, x, y + s * 0.02, s * (B.L * 0.95 * Math.abs(cs) + B.W * Math.abs(sn) + 0.1), s * (B.L * 0.95 * Math.abs(sn) + B.W * Math.abs(cs) + 0.1) * SP, 0, 'rgba(20,60,110,0.28)');
+      // vlnky pri boku na hladine (vzdialenejšie zakryje trup)
+      c.strokeStyle = 'rgba(255,255,255,0.65)'; c.lineWidth = s * 0.012;
+      for (const side of [-1, 1]) for (const u of [-0.55, 0.05, 0.6]) { const [px, py] = P(u, side * (boatHalfW(u) * 0.7 + 0.1), 0); c.beginPath(); c.ellipse(px, py, s * 0.08, s * 0.022, 0, 0, TAU); c.stroke(); }
+      // vnútro: okraj ako mnohouholník (tmavé bočné dosky zvnútra), na ňom dlážka
+      const rim = [...us.map(u => S2(top(u, 1))), ...[...us].reverse().map(u => S2(top(u, -1)))];
+      poly(rim, WOOD_IN, RIM, s * 0.02);
+      const fl = us.filter(u => u > -B.L * 0.86 && u < B.L * 0.7);
+      poly([...fl.map(u => P(u, 0.62 * boatHalfW(u), 0.05)), ...[...fl].reverse().map(u => P(u, -0.62 * boatHalfW(u), 0.05))], FLOOR);
+      for (const v of [-0.3, 0, 0.3]) line([P(-B.L * 0.8, v * 0.55, 0.05), P(B.L * 0.6, v * 0.55, 0.05)], 'rgba(90,55,25,0.35)', s * 0.008);
+      // lavičky (od najvzdialenejšej)
+      const benches = [...B.seats, 0.62].map(u => ({ u, d: P(u, 0, B.bench)[1] })).sort((p, q) => p.d - q.d);
+      const farOar = nearSide === 0 ? 1 : -nearSide;
+      if (nearSide !== 0) oar(farOar);
+      const crewOrder = [0, 1].sort((p, q) => P(B.seats[p] ?? 0, 0, B.bench)[1] - P(B.seats[q] ?? 0, 0, B.bench)[1]);
+      for (const b of benches) {
+        const w = boatHalfW(b.u) * 0.97, t = 0.06;
+        poly([P(b.u - t, -w, B.bench), P(b.u + t, -w, B.bench), P(b.u + t, w, B.bench), P(b.u - t, w, B.bench)], '#d9a86a', 'rgba(90,55,25,0.5)');
+        const fu = b.u + t * (sn >= 0 ? 1 : -1); // hrana lavičky otočená ku kamere
+        poly([P(fu, -w, B.bench), P(fu, w, B.bench), P(fu, w, B.bench - 0.04), P(fu, -w, B.bench - 0.04)], WOOD);
+        for (const k of crewOrder) if (Math.abs((B.seats[k] ?? 9) - b.u) < 1e-6) crewAt(k);
+      }
+      transom();
+      for (const f of front) sideFace(f);
+      // okraj na bližšej strane a prova
+      for (const side of [-1, 1]) if (nearSide === 0 || side === nearSide) line(us.map(u => S2(top(u, side))), RIM, s * 0.03);
+      line([S2(top(B.L, 1)), S2(bot(B.L, 1))], RIM, s * 0.025);
+      oar(nearSide === 0 ? -1 : nearSide);
+      if (nearSide === 0) oar(1);
+    } else {
+      // prevrátená na móle: bližšie boky, dno navrchu (v zime so snehom)
+      if (!o.noShadow) ell(c, x, y + s * 0.01, s * (B.L * Math.abs(cs) + B.W * Math.abs(sn)), s * (B.L * Math.abs(sn) + B.W * Math.abs(cs)) * SP, 0, 'rgba(0,0,0,0.22)');
+      transom();
+      for (const f of front) sideFace(f);
+      const bt = [...us.map(u => S2(bot(u, 1))), ...[...us].reverse().map(u => S2(bot(u, -1)))];
+      poly(bt, shade(BLUE, -0.12), 'rgba(20,30,50,0.45)');
+      line([S2(bot(-B.L, 0)), S2(bot(B.L, 0))], shade(BLUE, -0.35), s * 0.025); // kýl
+      if (o.snow) {
+        const sk = us.filter((_, i) => i % 2 === 0).map(u => u * 0.97);
+        const up = (p: [number, number], k: number): [number, number] => [p[0], p[1] - s * (0.025 + 0.02 * k)];
+        // čiapka snehu na dne: nerovný okraj, uprostred vyššia
+        poly([...sk.map((u, i) => up(P(u * 0.9, 0.5 * boatHalfW(u), B.H + 0.05), hash(i, 3))), ...[...sk].reverse().map((u, i) => up(P(u * 0.9, -0.5 * boatHalfW(u), B.H + 0.05), hash(i, 7)))], '#f4f7f9', 'rgba(150,170,190,0.6)');
+        ell(c, ...P(0.1, 0, B.H + 0.09), s * 0.18, s * 0.05, 0, '#ffffff');
+      }
+    }
+  }
+
   // ---- Ikony ----
   const iconCache = new Map<string, string>();
   function icon(id: string): string {
@@ -577,6 +712,13 @@ export const Art = (() => {
       c.setLineDash([]);
       c.strokeStyle = 'rgba(255,255,255,0.9)'; c.lineWidth = 2; c.beginPath(); c.moveTo(18, 19); c.quadraticCurveTo(26, 17, 34, 18); c.stroke();
       c.fillStyle = '#b48a5a'; c.fillRect(30, 14, 4, 44); // stužka
+    } else if (id === 'dock') { // mólo s loďkou (#160, Vylepšiť): voda, drevená lávka na kolíkoch a tá istá loďka ako v hre
+      c.fillStyle = '#4aa3df'; c.beginPath(); c.roundRect(2, 14, 60, 48, 8); c.fill();
+      c.strokeStyle = 'rgba(255,255,255,0.45)'; c.lineWidth = 2;
+      for (const [x, y] of [[8, 54], [40, 56], [14, 20]] as const) { c.beginPath(); c.moveTo(x, y); c.quadraticCurveTo(x + 5, y - 3, x + 10, y); c.stroke(); }
+      for (const x of [44, 58]) for (const y of [24, 40, 56]) { c.fillStyle = '#5a3d24'; c.fillRect(x, y, 3, 8); }
+      for (let i = 0; i < 7; i++) { c.fillStyle = i % 2 ? '#c9a77a' : '#b08a5c'; c.fillRect(42, 14 + i * 7, 20, 6); }
+      boat(c, 24, 40, 26, 5, { crew: [{ shirt: '#e05a5a', hair: '#5b3a1a', hat: true }, null] });
     } else if (/^wild_[0-3]$/.test(id)) { // divé semienko: hrsť semien v tráve s otáznikom
       for (let i = 0; i < 7; i++) leaf(c, 10 + i * 7, 58, 14 + (i % 3) * 4, -Math.PI / 2 + (i - 3) * 0.12, i % 2 ? '#7cb342' : '#558b2f');
       ell(c, 30, 40, 7, 4, 0.5, '#8d6e3f'); ell(c, 38, 44, 6, 3.5, -0.4, '#a1824a'); ell(c, 26, 47, 5, 3, 0.2, '#7a5a30');
@@ -720,6 +862,6 @@ export const Art = (() => {
     c.textBaseline = 'alphabetic';
   }
 
-  return { plant, char, handAt, ground, soil, shroom, icon, hash, circ, bubble, web, cocoon };
+  return { plant, char, handAt, ground, soil, shroom, icon, hash, circ, bubble, web, cocoon, boat };
 })();
 

@@ -15,6 +15,8 @@ import * as Ice from './ice.ts';
 import * as Econ from './economy.ts';
 import * as Vehicles from './vehicles.ts';
 import type { VehicleCheat } from './vehicles.ts';
+import * as Dock from './dock.ts';
+import type { DockCheat } from './dock.ts';
 import { ROOM_RE } from './debug.ts';
 import { sl } from './game.ts';
 import type { GameCtx, GameProposer, GameSlices } from './game.ts';
@@ -28,7 +30,8 @@ export type CheatData =
   | ({ op: 'rep'; key: PlayerKey } & Amount)
   | ({ op: 'item'; key: PlayerKey | null; id: ItemId } & Amount)
   | ({ op: 'ice' } & Amount)
-  | ({ op: 'vehicle' } & VehicleCheat);   // fúrik a sane (#158): kúpiť, odstrániť, premiestniť, náklad, pustiť
+  | ({ op: 'vehicle' } & VehicleCheat)   // fúrik a sane (#158): kúpiť, odstrániť, premiestniť, náklad, pustiť
+  | DockCheat; // mólo a loďka (#160): postaviť / zbúrať, loďku inam, hráča do loďky (z nej), prevrátiť na zimu
 
 // Nová hodnota: celé číslo, nie záporné
 export const target = (have: number, a: Amount): number => Math.max(0, Math.round(a.set ? a.n : have + a.n));
@@ -42,13 +45,14 @@ export function setCount(c: Container, id: ItemId, want: number, tick: number): 
 const saveOf = (s: GameSlices, key: PlayerKey, ctx: GameCtx): PlayerSave => sl(s, `save:${key}`) || ctx.reject('no such player');
 export const PROPOSERS: { cheat: GameProposer<CheatData> } = {
   cheat: {
-    keys: d => {
+    keys: (d, w) => {
       switch (d.op) {
         case 'coins': return { writes: [`save:${d.key}`] };
         case 'rep': return { writes: ['save:*', 'maxRep'] }; // najvyššia reputácia záhrady sa prepočíta zo všetkých hráčov
         case 'item': return d.key === null ? { writes: ['storage'], reads: ['icehouse'] } : { writes: [`save:${d.key}`] };
         case 'ice': return { writes: ['icehouse', 'storage'] };
         case 'vehicle': return Vehicles.cheatKeys();
+        case 'dock': case 'boat': case 'seat': case 'boatFlip': return Dock.cheatKeys(d, w);
       }
     },
     run(s, d, ctx) {
@@ -67,6 +71,7 @@ export const PROPOSERS: { cheat: GameProposer<CheatData> } = {
         }
         case 'ice': Ice.setIce(s.icehouse, s.storage, ctx.tick, target(s.icehouse.ice, d)); return;
         case 'vehicle': Vehicles.cheatRun(s, d, ctx); return;
+        case 'dock': case 'boat': case 'seat': case 'boatFlip': Dock.cheatRun(s, d, ctx); return;
       }
     }
   }
@@ -121,6 +126,10 @@ export function parseCheat(room: CheatRoom, b: JsonRecord, keyId: (k: PlayerKey)
     }
     case 'ice': return { op: 'ice', ...amount(b) };
     case 'vehicle': { const v = Vehicles.parseCheat(b); if (typeof v === 'string') throw new Bad(400, v); return { op: 'vehicle', ...v }; }
+    case 'dock': return { op: 'dock', built: b['built'] === true };
+    case 'boat': return { op: 'boat', x: num(b['x'], 'x'), y: num(b['y'], 'y') };
+    case 'seat': return { op: 'seat', key: playerKey(room, b['player'], keyId), on: b['on'] !== false };
+    case 'boatFlip': return { op: 'boatFlip', flip: b['flip'] === true };
     case 'jump': case 'jumpStop': case 'speed': case 'status': return null;
     default: throw new Bad(400, 'unknown op');
   }

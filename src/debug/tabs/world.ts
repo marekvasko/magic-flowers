@@ -313,6 +313,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     world = w; worldKey = key;
     const sig = JSON.stringify(w.tiles);
     S.tick = w.tick; S.day = D.dayOfTick(w.tick); S.weather = w.weather;
+    if (w.dock) S.dock = w.dock; else delete S.dock; // mólo a loďka (#160)
     if (sig !== tilesSig || S.area !== w.area) {
       tilesSig = sig;
       S.area = w.area; S.W = w.w; S.H = w.h; S.tiles = w.tiles; S.tilesGen++;

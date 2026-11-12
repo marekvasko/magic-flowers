@@ -16,6 +16,7 @@ import * as E from './engine.ts';
 import * as I from './items.ts';
 import * as Ice from './ice.ts';
 import * as Areas from './areas.ts';
+import * as Dock from './dock.ts';
 import * as Dielna from './dielna.ts';
 import { savesOf, sl } from './game.ts';
 import type { GameCtx, GamePeriodic, GameProposer, GameSlices, GameWorld, Msg, To } from './game.ts';
@@ -167,9 +168,10 @@ export const PROPOSERS: { [T in keyof VehicleInputs]: GameProposer<VehicleInputs
   },
   // chytiť: fúrik (alebo sane) drží naraz len jeden hráč; mimo obdobia sa nedá
   vehGrab: {
-    keys: () => ({ writes: ['vehicles'] }),
+    keys: () => ({ writes: ['vehicles'], reads: ['dock'] }), // loďka (#160)
     run(s, d, ctx) {
       const me = who(ctx), vs = all(s, ctx), v = bought(s, d.id, ctx), X = VEHICLES[d.id];
+      if (Dock.inBoat(s, d.key)) ctx.reject('Z loďky fúrik ani sane nechytíš – najprv vystúp na breh. 🛶'); // #160
       if (v.driver === d.key) ctx.reject(d.id === 'sane' ? 'Sane už ťaháš. 🛷' : 'Fúrik už tlačíš. 🛞');
       if (v.driver) ctx.reject(d.id === 'sane' ? 'Sane práve ťahá niekto iný.' : 'Fúrik práve tlačí niekto iný.');
       if (V.ridden(vs, d.key)) ctx.reject('Najprv vystúp. Kým sa vezieš, nič neťaháš.');
@@ -248,9 +250,10 @@ export const PROPOSERS: { [T in keyof VehicleInputs]: GameProposer<VehicleInputs
   },
   // naskočiť: len keď fúrik niekto tlačí (sane ťahá) a nikto v ňom nesedí
   vehIn: {
-    keys: d => ({ writes: ['vehicles', `pos:${d.key}`] }),
+    keys: d => ({ writes: ['vehicles', `pos:${d.key}`], reads: ['dock'] }), // loďka (#160)
     run(s, d, ctx) {
       const me = who(ctx), vs = all(s, ctx), v = bought(s, d.id, ctx), X = VEHICLES[d.id];
+      if (Dock.inBoat(s, d.key)) ctx.reject('Z loďky do fúrika nenaskočíš – najprv vystúp na breh. 🛶'); // #160
       if (v.passenger === d.key) ctx.reject('Už sa vezieš.');
       if (V.drivenBy(vs, d.key)) ctx.reject(`Najprv pusti ${VEHICLES[V.drivenBy(vs, d.key) ?? d.id].acc}. Sám sa neodvezieš.`);
       if (V.ridden(vs, d.key)) ctx.reject('Už sa vezieš.');
@@ -317,7 +320,7 @@ export function onPos(s: GameSlices, d: { key: PlayerKey }, ctx: GameCtx, from: 
   const i = V.tileIndex(area, n.x, n.y), to = i >= 0 ? sl(s, `tile:${area}:${i}`) : undefined;
   const fromTile = sl(s, `tile:${area}:${V.tileIndex(area, v.x, v.y)}`);
   const pos = Areas.clampPos(area, n.x, n.y);
-  if (!to || pos.x !== n.x || pos.y !== n.y || !D.canStep(fromTile ?? to, to)) ctx.reject(null);
+  if (!to || pos.x !== n.x || pos.y !== n.y || !D.canStep(fromTile ?? to, to) || to.g === 'dock') ctx.reject(null); // na mólo (#160) fúrik nevojde
   v.x = V.round3(n.x); v.y = V.round3(n.y); v.a = V.round3(n.a);
   carry(s, v, ctx);
 }

@@ -196,6 +196,13 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       }
       case 'webbed': { const now = performance.now(); S.web = { start: now, stuck: m.stuck, end: now + m.ms, k: m.k }; stopWalk(); break; } // pavúk ťa zabalil do pavučiny
       case 'shove': S.me.x = m.x; S.me.y = m.y; stopWalk(); break; // stará pradlena odhodila hráča za okraj čistiny
+      case 'dock': { // mólo a loďka (#160); nastúpenie a vystúpenie posunie postavičku správa pos (server)
+        const was = mySeat();
+        S.dock = { built: m.built, boat: m.boat, seats: m.seats, flip: m.flip };
+        if (was !== mySeat()) { stopWalk(); S.stick.x = S.stick.y = 0; }
+        if (S.modal) S.modal.refresh();
+        break;
+      }
       case 'brewed': S.brewed = m.k; S.brewHint = m.hint ?? null; S.cauldron = []; sfx(m.k === 'sliz' ? 'bad' : 'magic'); if (S.modal) S.modal.refresh(); break;
       case 'error': alert(m.text); S.joined = false; $('conn').classList.add('hidden'); break;
       case 'vehicles': Veh.onList(m.list); break; // fúrik a sane (#158)
@@ -309,6 +316,44 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     if (crawl && D.passable(t) && overlap.has(ty * S.W + tx)) return false;
     return !D.canStep(here, t, lift, crawl);
   }
+  // ---- Loďka (#160) ----
+  // Moje miesto v loďke: 0 = veslujem, 1 = vezie ma kamarát, -1 = nie som v loďke (kľúč ako na serveri: meno malými písmenami)
+  const myKey = (): string => S.name.replace(/[<>*]/g, '').trim().slice(0, 14).toLowerCase();
+  function mySeat(): number { const d = S.dock; return d && d.built && S.area === 'garden' ? d.seats.indexOf(myKey()) : -1; }
+  // Kde je loďka: keď veslujem, idem s ňou ja (predpoveď), inak poloha zo servera
+  function boatPos(): Pt | null { const d = S.dock; if (!d || !d.built) return null; return mySeat() === 0 ? { x: S.me.x, y: S.me.y } : d.boat; }
+  // Ťuknutie na loďku (nastúpiť) alebo – v loďke – na breh či mólo vedľa nej (vystúpiť); rovnako ako server (dock.ts resolveAct)
+  function boatAction(tx: number, ty: number, t: TileView, sel: string): CtxAction | null {
+    const d = S.dock, b = boatPos();
+    if (!d || !d.built || !b || S.area !== 'garden') return null;
+    if (mySeat() >= 0) {
+      if (!D.isLand(t) || t.g === 'gate' || (t.s && sel)) return null;
+      return Math.hypot(tx + 0.5 - b.x, ty + 0.5 - b.y) <= D.DOCK.reach ? { i: '🛶', l: 'Vystúpiť' } : { i: '🛶', l: 'Ďaleko od loďky', info: true };
+    }
+    if (d.flip) return t.g === 'dock' && !sel ? { i: '🛶', l: 'Loďka v zime', info: true } : null;
+    if (t.g !== 'water' || Math.hypot(tx + 0.5 - b.x, ty + 0.5 - b.y) > 1 || (sel && !D.isTool(sel))) return null; // voda pod loďkou (~2 bloky)
+    return { i: '🛶', l: 'Nastúpiť' };
+  }
+  // Cesta loďkou po vode (BFS po políčkach, na ktoré sa loďka celá zmestí) k políčku, ktoré spĺňa podmienku
+  function findBoatPath(goal: (x: number, y: number) => boolean): Pt[] | null {
+    const sx = Math.floor(S.me.x), sy = Math.floor(S.me.y), prev = new Int32Array(S.W * S.H).fill(-2), q = [sy * S.W + sx];
+    prev[sy * S.W + sx] = -1;
+    for (let qi = 0; qi < q.length; qi++) {
+      const i = must(q[qi]), x = i % S.W, y = (i / S.W) | 0;
+      if (goal(x, y)) {
+        const path: Pt[] = [];
+        for (let k = i; k !== -1; k = prev[k] ?? -1) path.unshift({ x: k % S.W + 0.5, y: ((k / S.W) | 0) + 0.5 });
+        return path;
+      }
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = x + dx, ny = y + dy, n = ny * S.W + nx;
+        if (nx < 0 || ny < 0 || nx >= S.W || ny >= S.H || prev[n] !== -2 || !D.boatFits(S.tiles, nx + 0.5, ny + 0.5)) continue;
+        prev[n] = i; q.push(n);
+      }
+    }
+    return null;
+  }
+
   function playerOn(tx: number, ty: number): OtherPlayer | null {
     for (const o of S.others.values()) if (Math.hypot(o.x - (tx + 0.5), o.y - (ty + 0.5)) < 0.8) return o;
     return null;
@@ -384,6 +429,8 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     if (veh) return veh;
     const sel = S.sel;
     if (sel === 'fl_papradie') return { i: '✨', l: 'Želanie', ui: 'wish' };
+    const boat = boatAction(tx, ty, t, sel); // loďka má prednosť pred hráčom, ktorý v nej sedí (ako na serveri)
+    if (boat) return boat;
     const other = playerOn(tx, ty);
     if (other) {
       if (sel === 'po_laska') return { i: '💕', l: 'Darovať' };
@@ -509,6 +556,8 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       else if (a.l === 'Otvor v ľade') toast('Tu už je otvor v ľade. Cez noc zamrzne – skús iné miesto. 🧊');
       else if (a.l === 'Pavučina') toast('S lampášom v ruke hodváb neutrhneš – potrebuješ voľnú ruku. Vyber si v lište niečo iné alebo prázdnu ruku. 🕸️');
       else if (a.l === 'Majster na ceste' && a.ma) toast(D.masterRoadText(a.ma));
+      else if (a.l === 'Ďaleko od loďky') toast('Priveslujte bližšie k brehu – vystúpiť sa dá len hneď vedľa loďky. 🛶');
+      else if (a.l === 'Loďka v zime') toast('V zime leží loďka prevrátená na móle. Na vodu pôjde až na jar. ❄️');
       else if (a.l === 'Miesto majstra') toast(masterNow() ? 'Majster hodvábu je na noc u babky v chalúpke. Ráno o 6:00 sa vráti na trh. 🧵' : 'Tu predáva majster hodvábu – do dedinky chodí len na jar a na jeseň. 🧵');
       else if (a.l === 'Pozemok') toast(onDielnaLot(tx, ty)
         ? `Pozemok pre Dielňu. Postaviť ju môže ktokoľvek zo záhrady na trhu (záložka Vylepšiť) za ${D.DIELNA.price} 🪙 (treba ⭐${D.DIELNA.rep}). 🪚`
@@ -526,7 +575,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
   const JUMP_V = 5.6, JUMP_G = 23, CRAWL_SPEED = 0.45; // výskok ≈ 0,7 políčka, ≈ 0,5 s
   function jump(): void {
     const me = S.me;
-    if (S.asleep || me.jz > 0 || me.crawl) return;
+    if (S.asleep || me.jz > 0 || me.crawl || mySeat() >= 0) return; // v loďke sa neskáče
     me.jv = JUMP_V; me.jz = 0.001;
     send({ t: 'jump' }); sfx('hop');
   }
@@ -726,6 +775,18 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       face(tgt.x + 0.5 - S.me.x, tgt.y + 0.5 - S.me.y);
       doAction(tgt.x, tgt.y);
       if (!a.info || (inReach(tgt.x, tgt.y) && a.l !== 'Ľadovec')) return; // na ľadovec sa dá aj vyjsť
+    }
+    const seat = mySeat();
+    if (seat >= 0) { // v loďke: veslár ťuknutím vesluje po vode k políčku (a ak je tam čo robiť, urobí to), spolujazdec sa len vezie
+      if (seat > 0) return;
+      const bx = tgt.x + 0.5, by = tgt.y + 0.5;
+      const bp = findBoatPath((x, y) => (x === tgt.x && y === tgt.y) || Math.hypot(x + 0.5 - bx, y + 0.5 - by) <= (a ? 1.2 : 0.75));
+      if (!bp) return;
+      const b0 = bp[0];
+      if (bp.length > 1 && b0 && Math.hypot(b0.x - S.me.x, b0.y - S.me.y) < 0.6) bp.shift();
+      S.path = bp; S.stuckT = 0;
+      if (a && !a.info) S.pendingAct = { x: tgt.x, y: tgt.y };
+      return;
     }
     const cx0 = tgt.x + 0.5, cy0 = tgt.y + 0.5;
     // v tme (Les divov) vedie ťuknutie len na miesto, ktoré hráč naozaj vidí (nezahalené tmou – aj vďaka cudziemu lampášu),
@@ -1014,10 +1075,10 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
           body.appendChild(h('div', { class: 'row' }, h('div', { style: 'font-size:30px;width:40px;text-align:center' }, u.icon), info, h('div', { class: 'btns' }, btn)));
         }
         // Náradie (raz na hráča) a spoločná stavba – ľadovňa
-        const buyRow = (icon: string, name: string, desc: string, have: string | null, price: number, rep: number, onclick: () => void): void => {
+        const buyRow = (icon: string, name: string, desc: string, have: string | null, price: number, rep: number, onclick: () => void, art?: string): void => {
           const btn = have ? h('button', { class: 'btn gray', disabled: 'disabled' }, have) : h('button', { class: 'btn', onclick }, price + '🪙');
           if (!have && (S.coins < price || lvl < rep)) btn.disabled = true;
-          body.appendChild(h('div', { class: 'row' }, h('div', { style: 'font-size:30px;width:40px;text-align:center' }, icon),
+          body.appendChild(h('div', { class: 'row' }, art ? h('img', { src: art, style: 'width:40px;height:40px' }) : h('div', { style: 'font-size:30px;width:40px;text-align:center' }, icon),
             h('div', { class: 'info' }, h('b', null, `${icon} ${name}`), h('small', null, desc + (rep ? ` · treba ⭐${rep}` : ''))), h('div', { class: 'btns' }, btn)));
         };
         for (const id of keys(D.TOOLS)) {
@@ -1030,6 +1091,9 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
         const DL = D.DIELNA;
         buyRow(DL.icon, DL.name, `Spoločná stavba vedľa trhu. Kúpiš do nej krosná (${DL.loom.price} 🪙), ktoré zo ${D.BLANKET_SILK} hodvábu utkajú prikrývku na izoláciu ľadovne – bez platenia majstrovi.`,
           S.dielna.built ? 'Stojí' : null, DL.price, DL.rep, () => { send({ t: 'build', id: 'dielna' }); });
+        const DK = D.DOCK; // mólo s loďkou (#160)
+        buyRow(DK.icon, DK.name, 'Spoločná stavba pri jazierku s loďkou pre dvoch. Loďkou sa dostaneš aj tam, kam z brehu nikto nedočiahne. V zime leží prevrátená na móle.',
+          S.dock?.built ? 'Stojí' : null, DK.price, DK.rep, () => { send({ t: 'build', id: 'dock' }); }, Art.icon('dock'));
       } else {
         festivalBanner(body);
         if (!M.news.length) body.appendChild(h('p', null, 'Zatiaľ žiadne správy.'));
@@ -1349,6 +1413,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       <p>🧊 Uneseš najviac ${D.ICE_CARRY} kusov ľadu, ťahá ťa dolu (chodíš pomalšie) a do pol dňa sa ti v batohu roztopí – ponáhľaj sa s ním do ľadovne. V lete ho trh dobre vykúpi, v zime takmer vôbec.</p>
       <p>🧊 <b>Ľadovňa</b> pri domčeku (kúpi ju ktokoľvek na trhu v záložke Vylepšiť) drží ${D.ICEHOUSE.cap} blokov ľadu – nič iné sa do nej nedáva, kvety patria do skladu v domčeku. Kým je v nej ľad, kvety v sklade vädnú 4× pomalšie. Ľad sa topí – v lete rýchlo, v zime vôbec – tak ho dopĺňaj.</p>
       <p>🧶 <b>Izolácia ľadovne:</b> zo ${D.BLANKET_SILK} pavúčieho hodvábu sa dá utkať hodvábna prikrývka – u 🧵 majstra hodvábu hneď za ${D.MASTER.price} 🪙 (chodí len na jar a na jeseň: cez deň stojí pri trhu, na noc ide k babke do chalúpky; keď sú v Dielni krosná, už nepríde), alebo zadarmo na krosnách v 🪚 Dielni (stavba vedľa trhu, kúpi ju ktokoľvek na trhu v záložke Vylepšiť), kde sa tká 2–4 herné hodiny. Ťukni s prikrývkou na ľadovňu: po ${D.ICEHOUSE.blankets.slice(1).join(', ').replace(/, (\d+)$/, ' a $1')} prikrývkach sa ľad topí už len na ${D.ICEHOUSE.insul.slice(1).map(v => Math.round(v * 100) + ' %').join(', ')}.</p>
+      <p>🛶 <b>Mólo a loďka:</b> jazierko pri domčeku je veľké a siaha až k okraju mapy. Mólo s loďkou kúpi ktokoľvek na trhu (záložka Vylepšiť) za ${D.DOCK.price} 🪙 (treba ⭐${D.DOCK.rep}). Ťukni na loďku na móle alebo z brehu hneď vedľa nej a nastúpiš; prvý vesluje (ovláda ju ako chôdzu), druhý sa vezie – viac ako dvaja sa nezmestia. Z loďky dočiahneš aj na hlbokú vodu ďaleko od brehu. Vystúpiš ťuknutím na mólo alebo breh vedľa loďky; loďka ostane, kde ste ju nechali. V zime leží prevrátená na móle.</p>
       <p>🕸️ <b>Les divov a pavúky:</b> medzi kmeňmi visia pavučiny. Postav sa k nej a ťahaj hodváb (nie s lampášom v ruke – potrebuješ voľnú ruku). Každé potiahnutie dá 1 hodváb, ale pavučina sa zachveje a jej majiteľ to môže zacítiť; tretie potiahnutie ju roztrhne. Do pavučiny nevbehni – prilepíš sa. 🕷️ <b>Vlčiak</b> žije v nore pri chodníku a naháňa ťa len po svojom území. Keď ťa chytí, berie ti hodváb – zdvihni lampáš a pustí ťa aj s hodvábom. V tme sa mu lesknú oči. 🕷️ <b>Stará pradlena</b> stráži najvzdialenejšiu čistinu – lampáš ju len pomaly odtláča, tak sa k nej vyber s kamarátom.</p>
       <p>⚙️ V menu sa dá nastaviť, či svet <b>beží ďalej aj bez hráčov</b>, a ako dlho trvá herný deň.</p>
       <p>🎁 Darovať môžeš čokoľvek – vyber vec a ťukni na kamaráta. 💃 Tancovať a mávať môžeš tlačidlami.</p>
@@ -1430,6 +1495,8 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     const me = S.me;
     let vx = S.stick.x, vy = S.stick.y;
     if (S.asleep || S.areaFx || Veh.riding()) { vx = vy = 0; S.keys = {}; S.path = null; } // spolujazdca vezie fúrik (#158)
+    const seat = mySeat(); // v loďke (#160): veslár (0) ňou ide po vode, spolujazdec (1) sa vezie – polohu mu posiela server
+    if (seat > 0) { vx = vy = 0; S.keys = {}; S.path = null; }
     if (S.keys.l) vx -= 1; if (S.keys.r) vx += 1; if (S.keys.u) vy -= 1; if (S.keys.d) vy += 1;
     if (R3 && (vx || vy)) [vx, vy] = R3.screenToWorld(vx, vy); // joystick je vzhľadom na obrazovku, kamera je otočená
     if (vx || vy) stopWalk();
@@ -1452,7 +1519,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     const len = Math.hypot(vx, vy);
     if (len > 1) { vx /= len; vy /= len; }
     me.moving = len > 0.05;
-    me.crawl = !S.asleep && (S.crawlKey || S.crawlTgl) && !me.jz;
+    me.crawl = !S.asleep && (S.crawlKey || S.crawlTgl) && !me.jz && seat < 0;
     if (me.jz > 0 || me.jv > 0) { me.jz += me.jv * dt; me.jv -= JUMP_G * dt; if (me.jz <= 0) me.jz = me.jv = 0; }
     if (me.moving) {
       // ťažký ľad v náručí spomaľuje
@@ -1474,9 +1541,11 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       // plazenie: meria sa od políčka pod stredom postavy a stred nesmie prejsť na inú výšku
       // (inak by sa dalo vyliezť, keď sa už rohom dotýka vyššieho ľadu)
       const mid = tileAt(Math.floor(me.x), Math.floor(me.y)), from = me.crawl ? mid : here;
-      const free = (x: number, y: number): boolean => corners(x, y).every(([cx, cy]) => !solid(cx, cy, from, lift, me.crawl, overlap))
+      const walkFree = (x: number, y: number): boolean => corners(x, y).every(([cx, cy]) => !solid(cx, cy, from, lift, me.crawl, overlap))
         && (!me.crawl || D.level(tileAt(Math.floor(x), Math.floor(y))) === D.level(mid))
         && !Veh.blocks(x, y); // fúrik, ktorý tlačím, musí tiež prejsť (#158)
+      const free = seat === 0 ? (x: number, y: number): boolean => D.boatFits(S.tiles, x, y) : walkFree; // loďka len po vode (#160)
+      if (seat === 0) { vx *= D.DOCK.speed; vy *= D.DOCK.speed; }
       const nx = me.x + vx * sp;
       if (free(nx, me.y)) me.x = nx;
       const ny = me.y + vy * sp;
@@ -1493,7 +1562,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     // odoslanie pozície
     const now = performance.now();
     const key = me.x.toFixed(2) + ',' + me.y.toFixed(2) + ',' + me.dir + ',' + (me.a != null ? me.a.toFixed(1) : '') + ',' + me.crawl + ',' + (S.sel === 'lamp');
-    if (key !== S.lastSent && now - S.sentAt > 90 && !Veh.riding()) { send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq }); S.lastSent = key; S.sentAt = now; }
+    if (seat <= 0 && key !== S.lastSent && now - S.sentAt > 90 && !Veh.riding()) { send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq }); S.lastSent = key; S.sentAt = now; }
     // ostatní hráči
     for (const o of S.others.values()) {
       const dx = o.tx - o.x, dy = o.ty - o.y;

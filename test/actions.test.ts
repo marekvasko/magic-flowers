@@ -26,6 +26,7 @@ import * as Areas from '../src/server/areas.ts';
 import * as Spiders from '../src/server/spiders.ts';
 import * as Vehicles from '../src/server/vehicles.ts';
 import * as Dielna from '../src/server/dielna.ts';
+import * as Dock from '../src/server/dock.ts';
 import type { GameCtx, GameWorld, Msg } from '../src/server/game.ts';
 import type { Presence, Tile } from '../src/server/world.ts';
 import { isMsg, must, parseJson, parseMsg, partial, portOf, readJson, rethrow, testWorld } from './helpers.ts';
@@ -611,17 +612,18 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
   const final = readJson<SaveFile>(path.join(dir, 'room-akcie.json'));
   assert.strictEqual(must(final.saves['ana']).wellFern, 3, 'wellFern sa uloží a načíta bez zmeny verzie uloženia');
   const start = parseJson<SaveFile>(json(save9));
+  Dock.migrate(start); // ako migrácia na v12 (#160): nová voda jazierka, mólo ešte nie je
   const { tiles: savedTiles, hory: savedHory, les: savedLes, ...rest } = start;
   const room = testWorld({ ...rest, tiles: D.buildMap().map((g, i) => ({ g, s: must(savedTiles[i]).s })), hory: Ice.loadHory(savedHory) });
   Ice.applyIcehouse(room.icehouse, room.tiles);
-  room.icehouse.bl = 0; room.dielna = Dielna.newDielna(); room.redeem = {}; // ako migrácia z verzie 10 (#23)
+  room.icehouse.bl = 0; room.dielna = Dielna.newDielna(); room.redeem = start.redeem; // ako migrácia z verzie 10 (#23)
   room.plotsUsed = Econ.plotsUsedOf(room.tiles); room.maxRep = Econ.maxRepOf(room.saves); // ako getRoom: odvodené počítadlá sa pri načítaní prepočítajú
   room.vehicles = Vehicles.loadVehicles(start.vehicles, start.tick); // ako getRoom: fúrik a sane (#158), staršie uloženie ich nemá
   const les = Areas.loadLes(savedLes, start.lesSeed); // ako getRoom: Les divov, trh a nástenka, pavučiny (jeden živý kontext)
   const world = Object.assign(room, { les });
   const live: GameCtx = E.liveCtx(world, 'ekonomika');
   Econ.initEconomy(world, live); Spiders.load(world, live);
-  E.replay(world, entries, { proposers: { ...SPEC.proposers, ...Spiders.PROPOSERS, ...Vehicles.PROPOSERS, ...Vehicles.EVENTS }, periodic: must(SPEC.periodic).concat(Spiders.PERIODIC, Vehicles.PERIODIC), onError: rethrow,
+  E.replay(world, entries, { proposers: { ...SPEC.proposers, ...Spiders.PROPOSERS, ...Vehicles.PROPOSERS, ...Vehicles.EVENTS, ...Dock.PROPOSERS }, periodic: must(SPEC.periodic).concat(Spiders.PERIODIC, Vehicles.PERIODIC, Dock.PERIODIC), onError: rethrow,
     slice: (w, k) => { const sl = Spiders.slice(w, k); return sl === undefined ? E.sliceOf(w, k) : sl; } });
   // mimo denníka sú len prítomnosť a polohy (join/move): porovnáme svet bez nich
   const strip = (st: unknown): JsonRecord => {
@@ -673,10 +675,10 @@ test('uloženie v8 (288 krokov za deň) sa prevedie na v9: každý krok ×40 –
   const proc = await startServer(dir, port);
   try { const c = await client(port, 'stary', 'Eva'); c.ws.close(); await sleep(100); } finally { await stopServer(proc); }
   const s = readJson<SaveFile>(path.join(dir, 'room-stary.json'));
-  assert.strictEqual(s.v, 11);
+  assert.strictEqual(s.v, 12);
   assert.strictEqual(s.tick, old.tick * K);
   assert.deepStrictEqual([D.dayOfTick(s.tick), D.minOfTick(s.tick)], [3, 450], 'deň 3, 7:30 ako predtým');
-  assert.deepStrictEqual(s.events.filter(e => e.key !== 'dawn' && !/^(delivery|npc_|fest|spider:|kz:|kriziakTrip|webDawn|weave:|vehSeason)/.test(e.key ?? '')).map(e => [e.key, e.at]).sort(), [['cDue:1', 1000 * K], ['hourly', 666 * K], ['vilyEnd:eva', 700 * K]]);
+  assert.deepStrictEqual(s.events.filter(e => e.key !== 'dawn' && !/^(delivery|npc_|fest|spider:|kz:|kriziakTrip|webDawn|weave:|vehSeason|boatDay)/.test(e.key ?? '')).map(e => [e.key, e.at]).sort(), [['cDue:1', 1000 * K], ['hourly', 666 * K], ['vilyEnd:eva', 700 * K]]);
   const eva = must(s.saves['eva']), fb = must(must(eva.fb?.[`fl_${SP}`])[0]);
   assert.deepStrictEqual([eva.vily, fb.a, fb.at], [700 * K, 30 * K, 600 * K]);
   assert.ok((eva.lastTick ?? 0) >= 650 * K, 'lastTick preškálovaný (a pri odchode obnovený)');

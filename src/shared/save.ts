@@ -1,7 +1,7 @@
-// Uloženie sveta (data/room-<id>.json) vo verzii SAVE_VERSION 11 – presne tak, ako ho zapíše serialize() v src/server/server.ts.
+// Uloženie sveta (data/room-<id>.json) vo verzii SAVE_VERSION 12 – presne tak, ako ho zapíše serialize() v src/server/server.ts.
 // Typ opisuje existujúci formát, nemení ho (#122, fáza 2). Staršie verzie prevedie migrate() na tento tvar.
 // Kľúč hráča (PlayerKey) je meno malými písmenami; v uloženiach sa ním odkazuje na hráča (saves, vlastník pôdy, zákazky…).
-// test/save-v11.fixture.ts drží uloženie zo skutočného servera a prekladač ho kontroluje voči SaveFile (npm run typecheck).
+// test/save-v12.fixture.ts drží uloženie zo skutočného servera a prekladač ho kontroluje voči SaveFile (npm run typecheck).
 import type { AreaId, Batch, FestivalId, GiverId, ItemId, Look, SpeciesId, TillKind } from './data.ts';
 
 export type PlayerKey = string;
@@ -73,7 +73,7 @@ interface EventBase<T extends string, D> {
   periodic?: true;
 }
 export type SavedEvent =
-  | EventBase<'dawn' | 'hourly' | 'delivery' | 'npc_jano' | 'npc_fero' | 'npc_zuzka' | 'webDawn' | 'kriziakTrip', null>
+  | EventBase<'dawn' | 'hourly' | 'delivery' | 'npc_jano' | 'npc_fero' | 'npc_zuzka' | 'webDawn' | 'kriziakTrip' | 'boatDay', null>
   | EventBase<'festAnnounce' | 'festStart' | 'festEnd', { id: FestivalId }>
   | EventBase<'jano_sell', { sp: SpeciesId; n: number }>
   | EventBase<'cExpire' | 'cDue', { id: number }>
@@ -135,6 +135,14 @@ export interface Dielna {
   job: { key: PlayerKey; at: number } | null;   // kto tká a kedy bude prikrývka hotová
   ready: Partial<Record<PlayerKey, number>>;    // hotové prikrývky čakajúce na tkáča
 }
+// Mólo a loďka (#160): built = mólo stojí (s ním aj loďka); boat = stred loďky a smer prove (uhol v rovine x/y);
+// seats = kto v nej sedí (kľúče hráčov, prvý vesluje); flip = loďka leží prevrátená na móle (zima)
+export interface Dock {
+  built: boolean;
+  boat: { x: number; y: number; a: number };
+  seats: PlayerKey[];
+  flip: boolean;
+}
 // Pavučina zaberá n políčok od (x, y), ax 0 = vodorovne, 1 = zvisle; o = majiteľ (index pavúka);
 // in = kto je práve v pavučine a z ktorej strany prišiel (±1)
 export interface Web {
@@ -173,7 +181,7 @@ export type Vehicles = Record<VehicleId, Vehicle>;
 
 // ---- Celé uloženie ----
 export interface SaveFile {
-  v: 11;
+  v: 12;
   tick: number;
   wall: number;               // reálny čas (ms) k času tick
   mode: WorldMode;
@@ -195,7 +203,8 @@ export interface SaveFile {
   scavSalt: number;
   icehouse: Icehouse;
   dielna: Dielna;
-  redeem: Inventory;          // čo dostane prvý hráč po migrácii v11 (veci z uvoľnených políčok)
+  redeem: Inventory;          // čo dostane prvý hráč po migrácii v11 a v12 (veci z uvoľnených políčok)
+  dock: Dock;
   pomedzieSeed: number;
   up: { plots: number };
   lesSeed: number;

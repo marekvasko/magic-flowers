@@ -50,7 +50,7 @@ test('server: udalosti zo svetu verzie 4 dostanú kľúče, duplicity a odstrán
     ws.close();
   } finally { await stopServer(proc); }
   const saved = readJson<SaveFile & { rng?: unknown }>(path.join(dir, 'room-stary.json'));
-  assert.strictEqual(saved.v, 11);
+  assert.strictEqual(saved.v, 12);
   // v8: semienko sveta a počítadlo kôl namiesto spoločného rng
   assert.ok(/^[0-9a-f]{32}$/.test(saved.seed), 'seed: ' + saved.seed);
   assert.strictEqual(typeof saved.step, 'number');

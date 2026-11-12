@@ -46,7 +46,7 @@ const CSS = `
 // farby mapy (obrázok, rovnaký vo svetlej aj tmavej téme)
 const COL = {
   low: [20, 36, 26] as const, high: [126, 186, 128] as const, flat: '#26412c', path: '#e3a03f', clearing: 'rgba(222, 200, 92, .62)',
-  water: '#4f8fd0', hole: '#16304d', glacier: '#d6ecf7', obj: '#0a100b', gate: '#e2664b', soil: '#7a5432', soilWet: '#563820',
+  water: '#4f8fd0', deep: '#2f6aa8', dock: '#b8875a', boat: '#f4f1e8', edge: '#e2664b', hole: '#16304d', glacier: '#d6ecf7', obj: '#0a100b', gate: '#e2664b', soil: '#7a5432', soilWet: '#563820',
   player: '#ff5ca8', hover: '#ffffff', sel: '#ffd84a', grid: 'rgba(255,255,255,.10)', grid5: 'rgba(255,255,255,.24)'
 };
 const MAX_H = 4, STEPS = 9; // stupnica výšky 0–4 bloky po pol bloku
@@ -57,9 +57,9 @@ function heightColor(b: number): string {
 }
 const LAYERS: readonly { id: string; label: string; room?: boolean }[] = [
   { id: 'h', label: 'Heights' }, { id: 'p', label: 'Paths' }, { id: 'o', label: 'Objects' }, { id: 'g', label: 'Grid' },
-  { id: 'b', label: 'Beds', room: true }, { id: 'u', label: 'Players', room: true }, { id: 'v', label: 'Vehicles', room: true }
+  { id: 'd', label: 'Deep water' }, { id: 'b', label: 'Beds', room: true }, { id: 'u', label: 'Players', room: true }, { id: 'v', label: 'Vehicles', room: true }, { id: 'k', label: 'Boat', room: true }
 ];
-const DEFAULT_LAYERS = 'hpobuv';
+const DEFAULT_LAYERS = 'hpobudvk';
 
 export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
   let ctx = ctx0;
@@ -188,8 +188,10 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     // voda a ľadovec (terén, vždy)
     for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) {
       const t = tl(x, y);
-      if (t.g === 'water') {
-        g.fillStyle = COL.water; g.fillRect(x, y, 1.02, 1.02);
+      if (t.g === 'water' || t.g === 'dock') {
+        g.fillStyle = on('d') && m.deep.has(y * w + x) ? COL.deep : COL.water; g.fillRect(x, y, 1.02, 1.02);
+        if (t.g === 'dock') { g.fillStyle = COL.dock; g.fillRect(x + 0.18, y, 0.64, 1.02); g.fillStyle = 'rgba(0,0,0,.25)'; for (let k = 1; k < 4; k++) g.fillRect(x + 0.18, y + k / 4, 0.64, 0.04); } // mólo: lávka
+        if (on('d') && m.deep.has(y * w + x)) { g.fillStyle = 'rgba(255,255,255,.35)'; for (const [dx, dy] of [[0.3, 0.3], [0.7, 0.7]] as const) { g.beginPath(); g.arc(x + dx, y + dy, 0.06, 0, 7); g.fill(); } }
         if (t.cut) { g.strokeStyle = COL.hole; g.lineWidth = 0.12; g.beginPath(); g.arc(x + 0.5, y + 0.5, 0.26, 0, 7); g.stroke(); }
       } else if (t.g === 'glacier') {
         g.globalAlpha = t.top ? 0.25 + 0.7 * (t.ice || 0) / t.top : 0.6;
@@ -259,6 +261,17 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     for (const a of arrivals(D, m.area)) { g.beginPath(); g.arc(a.x, a.y, 0.22, 0, 7); g.stroke(); }
     // fúrik a sane (#158): značka natočená za smerom, bodky = ľad, ružová bodka = kto ho drží
     if (m.source === 'room' && on('v')) for (const v of vehicles) if (v.bought && v.area === m.area) drawVehicle(g, v);
+    // okraj jazierka smerom do Močiara (#160): červená čiarka na okraji mapy
+    if (m.area === 'garden') { g.fillStyle = COL.edge; for (const p of D.POND_EDGE) g.fillRect(p.x, p.y + 0.15, 0.14, 0.7); }
+    // loďka (#160): podlhovastý trup v smere prove; prevrátená (zima) na móle šedá s krížikom
+    if (m.source === 'room' && on('k') && m.boat) {
+      const b = m.boat, last = D.DOCK.tiles[D.DOCK.tiles.length - 1], bx = b.flip && last ? last.x + 0.5 : b.x, by = b.flip && last ? last.y + 0.5 : b.y, a = b.flip ? Math.PI / 2 : b.a;
+      g.save(); g.translate(bx, by); g.rotate(a);
+      g.beginPath(); g.moveTo(0.55, 0); g.quadraticCurveTo(0.2, 0.32, -0.45, 0.26); g.lineTo(-0.45, -0.26); g.quadraticCurveTo(0.2, -0.32, 0.55, 0); g.closePath();
+      g.fillStyle = b.flip ? '#9aa4ad' : COL.boat; g.fill(); g.lineWidth = 0.08; g.strokeStyle = '#3a6ea5'; g.stroke();
+      if (b.flip) { g.beginPath(); g.moveTo(-0.25, -0.15); g.lineTo(0.25, 0.15); g.moveTo(-0.25, 0.15); g.lineTo(0.25, -0.15); g.stroke(); }
+      g.restore();
+    }
     // hráči sveta (online plné s menom, offline krúžok na poslednom mieste)
     if (m.source === 'room' && on('u')) {
       for (const p of players) {
@@ -310,6 +323,8 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
       ['p', 'Path (incl. roots)', g => { g.fillStyle = COL.path; g.fillRect(0, 0.32, 1, 0.36); }],
       ['p', 'Clearing', fill(COL.clearing)],
       [null, 'Water (ring = hole in the ice)', fill(COL.water)],
+      ['d', 'Deep water: out of reach from the shore, boat only', g => { g.fillStyle = COL.deep; g.fillRect(0.12, 0.12, 0.76, 0.76); g.fillStyle = 'rgba(255,255,255,.5)'; g.beginPath(); g.arc(0.35, 0.35, 0.07, 0, 7); g.arc(0.65, 0.65, 0.07, 0, 7); g.fill(); }],
+      [null, 'Dock (built) · pond edge to Močiar', g => { g.fillStyle = COL.water; g.fillRect(0, 0, 1, 1); g.fillStyle = COL.dock; g.fillRect(0.3, 0, 0.4, 1); g.fillStyle = COL.edge; g.fillRect(0, 0.15, 0.14, 0.7); }],
       [null, 'Glacier (paler = less ice)', fill(COL.glacier)],
       ['o', 'Tree · giant tree (2×2) · bush', g => { g.fillStyle = COL.obj; g.beginPath(); g.arc(0.5, 0.5, 0.36, 0, 7); g.fill(); }],
       ['o', 'Log · rock · building', g => { g.fillStyle = COL.obj; g.fillRect(0.2, 0.2, 0.6, 0.6); }],
@@ -319,6 +334,8 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     ];
     if (map && !map.error && map.source === 'room') items.push(
       ['b', 'Tilled soil · plant (darker = watered)', g => { g.fillStyle = COL.soil; g.fillRect(0.1, 0.1, 0.8, 0.8); g.fillStyle = '#f2c94c'; g.beginPath(); g.arc(0.5, 0.5, 0.22, 0, 7); g.fill(); }],
+      ['k', 'Boat (grey with a cross = flipped on the dock, winter)', g => { g.fillStyle = COL.boat; g.strokeStyle = '#3a6ea5'; g.lineWidth = 0.08; g.beginPath(); g.ellipse(0.5, 0.5, 0.42, 0.24, 0, 0, 7); g.fill(); g.stroke(); }],
+
       ['u', 'Player online · last place offline', g => { g.fillStyle = COL.player; g.strokeStyle = '#fff'; g.lineWidth = 0.1; g.beginPath(); g.arc(0.5, 0.5, 0.32, 0, 7); g.fill(); g.stroke(); }],
       ['v', 'Fúrik (red) · sane (wood), dots = ice', g => { g.fillStyle = VEHICLE_COLOR.furik; g.fillRect(0.1, 0.25, 0.8, 0.5); g.fillStyle = '#bfe6fb'; g.fillRect(0.2, 0.35, 0.2, 0.2); }]);
     legendL.replaceChildren(h('h4', null, 'Layers'), h('ul', { class: 'map-leg' },
@@ -340,6 +357,8 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
       i.gateTo ? ['Gate to', D.AREA_NAMES[i.gateTo] || i.gateTo] : null,
       i.ice != null ? ['Ice', `${i.ice} / ${i.iceTop ?? 0} layers`] : null,
       i.cut ? ['Ice hole', 'cut today'] : null,
+      i.deep ? ['Deep water', 'out of reach from the shore (boat only)'] : null,
+      i.boat && map.boat ? ['Boat', `${map.boat.flip ? 'flipped on the dock (winter)' : 'here'}${map.boat.seats.length ? ', seats: ' + map.boat.seats.join(', ') : ', empty'}`] : null,
       i.soil ? ['Soil', `${i.soil}${i.wet ? ', watered' : ''}`] : null,
       i.plant ? ['Plant', `${i.plant.name}${i.plant.wild ? ' (wild)' : ''}, stage ${i.plant.stage}${i.plant.dead ? ', dead' : ''}`] : null,
       here.length ? ['Players', here.map(q => q.online ? q.name : `${q.id} (offline)`).join(', ')] : null,
@@ -362,7 +381,9 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
       map.source === 'room' && (s.tilled || map.area === 'garden') ? ['Beds', `${s.tilled} tilled, ${s.planted} planted`] : null,
       map.source === 'room' ? ['Players here', `${on_} online, ${players.length - on_} offline`] : null,
       ...(map.source === 'room' ? vehicles.map((v): [string, Kid] => [v.name, vehicleText(v, names)]) : []),
-      map.source === 'room' ? ['Vehicle season', toggleAt == null ? 'vehSeason not scheduled' : `next toggle (vehSeason) ${ctx.fmt.when(toggleAt)} · tick ${String(toggleAt)}`] : null
+      map.source === 'room' ? ['Vehicle season', toggleAt == null ? 'vehSeason not scheduled' : `next toggle (vehSeason) ${ctx.fmt.when(toggleAt)} · tick ${String(toggleAt)}`] : null,
+      map.area === 'garden' ? ['Deep water', `${map.deep.size} tiles (boat only)`] : null,
+      map.area === 'garden' && map.source === 'room' ? ['Dock', map.boat ? `built; boat at ${map.boat.x.toFixed(2)}, ${map.boat.y.toFixed(2)}${map.boat.flip ? ' (flipped, winter)' : ''}; seats: ${map.boat.seats.join(', ') || 'empty'}` : 'not built'] : null
     ]));
   }
 

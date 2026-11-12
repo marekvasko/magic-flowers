@@ -10,10 +10,12 @@ import type { DebugState, RoomSnapshot } from '../../server/debug.ts';
 
 type D = typeof Data;
 // Druh kreslenia políčka (pozri KINDS)
-export type Kind = 'ground' | 'path' | 'clearing' | 'water' | 'glacier' | 'tree' | 'giant' | 'trunk' | 'bush' | 'shroom' | 'rock' | 'log' | 'building' | 'lot' | 'gate';
+export type Kind = 'ground' | 'path' | 'clearing' | 'water' | 'glacier' | 'tree' | 'giant' | 'trunk' | 'bush' | 'shroom' | 'rock' | 'log' | 'building' | 'lot' | 'gate' | 'dock';
 // Políčko mapy: zem, na ľadovci ľad a jeho pôvodná výška (top), otvor vo vode, pôda a rastlina (len záhrada)
 export interface MapTile { g: Ground; ice?: number; top?: number; cut?: 1; s?: Soil }
-export interface AreaMap { area: string; w: number; h: number; seed: number | null; seeded: boolean; source: 'seed' | 'room'; tiles: MapTile[]; maxIce: number; error?: undefined }
+// boat = loďka (#160) zo sveta: poloha, smer, kto v nej sedí, prevrátená (zima); deep = políčka vody, kam sa z brehu nedočiahne
+export interface MapBoat { x: number; y: number; a: number; seats: string[]; flip: boolean }
+export interface AreaMap { area: string; w: number; h: number; seed: number | null; seeded: boolean; source: 'seed' | 'room'; tiles: MapTile[]; maxIce: number; boat: MapBoat | null; deep: Set<number>; error?: undefined }
 export interface MapError { area: string; w: number; h: number; seeded: boolean; error: 'no-room-seed' | 'no-seed' }
 // Stav sveta, ako ho mapa číta (snapshot z /api/debug/room); test podstrčí len časť
 export type MapState = Partial<DebugState>;
@@ -30,7 +32,7 @@ export const KINDS: Readonly<Partial<Record<Ground, Kind>>> = {
   tree: 'tree', spruce: 'tree', giant: 'giant', trunk: 'trunk', bush: 'bush', shroom: 'shroom',
   boulder: 'rock', log: 'log',
   hut: 'building', house: 'building', stall: 'building', well: 'building', cauldron: 'building', babka: 'building', icehouse: 'building', dielna: 'building', majster: 'lot',
-  lot: 'lot', gate: 'gate'
+  lot: 'lot', gate: 'gate', dock: 'dock'
 };
 export function kindOf(D: D, g: Ground): Kind { return KINDS[g] || (D.BLOCK[g] ? 'building' : 'ground'); }
 // stromy do štatistiky: obrovský strom (2 × 2) je jeden strom, jeho ďalšie tri políčka ('trunk') sa nerátajú
@@ -96,11 +98,15 @@ export function buildTiles(D: D, area: string, opt?: { state?: MapState | null; 
   }
   const builtOf = (v: unknown): boolean => isRecord(v) && !!v['built'];
   const built = builtOf(field('icehouse')), dbuilt = builtOf(field('dielna'));
+  // mólo a loďka (dock.ts applyDock): políčka móla sú voda, kým mólo nestojí
+  const dock = field('dock'), kbuilt = area === 'garden' && builtOf(dock);
+  const klot = new Set<number>(area === 'garden' ? D.DOCK.tiles.map(p => p.y * w + p.x) : []);
   let maxIce = 0;
   const tiles = base.map((g0, i): MapTile => {
     let g = g0;
     if (lot.has(i)) g = built ? 'icehouse' : 'lot';
     else if (dlot.has(i)) g = dbuilt ? 'dielna' : 'lot';
+    else if (klot.has(i) && kbuilt) g = 'dock';
     const t: MapTile = { g }, raw = sv?.[i], s: JsonRecord = isRecord(raw) ? raw : {};
     if (g === 'glacier') {
       const top = levels?.[i] ?? 0, ice = s['ice'];
@@ -114,7 +120,14 @@ export function buildTiles(D: D, area: string, opt?: { state?: MapState | null; 
     if (soil) t.s = soil; // pôda a rastlina (záhrada, vodné kvety v plese)
     return t;
   });
-  return { area, w, h, seed, seeded, source: st ? 'room' : 'seed', tiles, maxIce };
+  return { area, w, h, seed, seeded, source: st ? 'room' : 'seed', tiles, maxIce, boat: kbuilt ? boatOf(dock) : null, deep: area === 'garden' ? new Set(D.deepWater(tiles, w)) : new Set() };
+}
+// Loďka z uloženého móla (JSON zo sveta)
+function boatOf(dock: unknown): MapBoat | null {
+  if (!isRecord(dock) || !isRecord(dock['boat'])) return null;
+  const b = dock['boat'], x = b['x'], y = b['y'], a = b['a'], seats = dock['seats'];
+  if (typeof x !== 'number' || typeof y !== 'number') return null;
+  return { x, y, a: typeof a === 'number' ? a : 0, seats: Array.isArray(seats) ? seats.filter((k): k is string => typeof k === 'string') : [], flip: !!dock['flip'] };
 }
 
 // Výška povrchu v blokoch nad nulovou zemou (D.level je vo vrstvách po 1/4 bloku, aj s ľadom)
@@ -182,6 +195,7 @@ export interface TileInfo {
   x: number; y: number; g: Ground; kind: Kind; height: number; level: number; walkable: boolean;
   giantAt?: { x: number; y: number }; gateTo?: AreaId; ice?: number | undefined; iceTop?: number | undefined; cut?: boolean;
   soil?: string; wet?: boolean; plant?: { sp: string; name: string; wild: boolean; stage: number; dead: boolean };
+  deep?: boolean; boat?: boolean;
 }
 export function tileInfo(D: D, map: AreaMap, x: number, y: number): TileInfo | null {
   if (x < 0 || y < 0 || x >= map.w || y >= map.h) return null;
@@ -199,6 +213,8 @@ export function tileInfo(D: D, map: AreaMap, x: number, y: number): TileInfo | n
   if (gate) info.gateTo = gate.to;
   if (t.g === 'glacier') { info.ice = t.ice; info.iceTop = t.top; }
   if (t.cut) info.cut = true;
+  if (map.deep.has(y * map.w + x)) info.deep = true; // hlboká voda – len z loďky (#160)
+  if (map.boat && Math.floor(map.boat.x) === x && Math.floor(map.boat.y) === y) info.boat = true;
   if (t.s) {
     info.soil = t.s.k;
     info.wet = !!t.s.w;

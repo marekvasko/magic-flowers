@@ -5,7 +5,9 @@ import { createViewer, loadWorld3D, loadArt, injectCss, modelStats, matName } fr
 import type { Viewer } from './modelview.ts';
 import type * as World3D from '../../shared/world3d.ts';
 import type { FineModel, FineModelEntry } from '../../shared/world3d.ts';
-import type { Art as ArtApi, PlantOpts } from '../../client/art.ts';
+import type { Art as ArtApi, BoatOpts, PlantOpts } from '../../client/art.ts';
+// galérie 2D kresieb z art.ts namiesto 3D modelu
+const GALLERIES: readonly string[] = ['flowers', 'vehicles', 'boat'];
 import type { SpeciesId } from '../../shared/data.ts';
 import { keys, must } from '../../shared/util.ts';
 import type { TabCtx, TabInstance, h as H } from '../ui.ts';
@@ -87,7 +89,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
   Promise.all([loadWorld3D(), loadArt().catch(() => null)]).then(([w, a]) => {
     if (gone) return;
     W = w; Art = a;
-    if (st.model !== 'flowers' && st.model !== 'vehicles' && !W.FINE_MODELS.some(m => m.id === st.model)) st.model = must(W.FINE_MODELS[0]).id;
+    if (!GALLERIES.includes(st.model) && !W.FINE_MODELS.some(m => m.id === st.model)) st.model = must(W.FINE_MODELS[0]).id;
     el.replaceChildren(root);
     build(w);
   }).catch((e: unknown) => { if (!gone) el.replaceChildren(h('div', { class: 'as-err' }, 'Cannot load models: ' + errText(e))); });
@@ -115,7 +117,8 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
   function renderList(W: typeof World3D): void {
     const all = W.FINE_MODELS.map(m => ({ id: m.id, name: m.name, group: m.group, sub: String(m.kind || m.id) }))
       .concat([{ id: 'flowers', name: 'Flower gallery', group: 'Flowers (2D, art.js)', sub: Object.keys(ctx.D.SPECIES).length + ' species' },
-        { id: 'vehicles', name: 'Fúrik a sane, 8 smerov', group: 'Vehicles (2D, vehicleart.ts)', sub: '#158' }]);
+        { id: 'vehicles', name: 'Fúrik a sane, 8 smerov', group: 'Vehicles (2D, vehicleart.ts)', sub: '#158' },
+{ id: 'boat', name: 'Loďka (8 + 8 pohľadov)', group: 'Boat (2D, art.ts)', sub: '16 views' }]);
     const list = all.filter(m => !q || (m.name + ' ' + m.id + ' ' + m.group + ' ' + m.sub).toLowerCase().includes(q));
     const groups = [...new Set(list.map(m => m.group))];
     items.replaceChildren(...groups.flatMap(g => [h('h4', null, g), ...list.filter(m => m.group === g).map(m =>
@@ -127,7 +130,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
 
   // ---------- ovládanie ----------
   function renderBar(W: typeof World3D): void {
-    const flowers = st.model === 'flowers' || st.model === 'vehicles'; // 2D galérie: bez obdobia a otočenia
+    const flowers = GALLERIES.includes(st.model); // 2D galérie: bez obdobia a otočenia
     barEl.replaceChildren(
       seg(h, SEASONS, st.grid ? -1 : st.season, i => { st.season = i; st.grid = false; save(); renderBar(W); show(W); }, flowers),
       seg(h, ROTS, st.grid ? -1 : st.rot, i => { st.rot = i; st.grid = false; save(); renderBar(W); show(W); }, flowers),
@@ -137,11 +140,11 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
 
   // ---------- zobrazenie ----------
   function show(W: typeof World3D): void {
-    if (st.model === 'flowers' || st.model === 'vehicles') {
+    if (GALLERIES.includes(st.model)) {
       if (viewer) { viewer.dispose(); viewer = null; }
       viewEl.style.display = 'none';
       infoEl.replaceChildren();
-      galEl.replaceChildren(...(st.model === 'vehicles' ? vehicleGallery() : flowerGallery()));
+      galEl.replaceChildren(...(st.model === 'boat' ? boatGallery() : st.model === 'vehicles' ? vehicleGallery() : flowerGallery()));
       return;
     }
     viewEl.style.display = '';
@@ -236,6 +239,29 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
       h('div', { class: 'as-gal' }, h('table', null,
         h('tr', null, h('th', null, ''), DIRS.map(d => h('th', null, d))),
         [0, 1.4].map(phase => h('tr', null, h('td', null, h('b', null, `phase ${String(phase)}`)), DIRS.map((_, dir) => h('td', null, tow(dir, phase)))))))
+    ];
+  }
+
+  // 2D loďka z art.ts (#160): 8 smerov na vode (prázdna a s posádkou) a 8 smerov prevrátená so snehom (zima na móle)
+  function boatGallery(): HTMLElement[] {
+    const A = Art;
+    if (!A) return [h('div', { class: 'as-err' }, 'Cannot load the drawings (art.ts)')];
+    const DIRS = ['0 down', '1 left', '2 right', '3 up', '4 down-left', '5 down-right', '6 up-left', '7 up-right'];
+    const crew = [{ shirt: '#e05a5a', hair: '#5b3a1a', hat: true }, { shirt: '#4a90d9', hair: '#e8c36a', hat: false }];
+    const cell = (dir: number, o: BoatOpts, bg: string): HTMLCanvasElement => {
+      const c = h('canvas', { width: 220, height: 170 });
+      const g = must(c.getContext('2d') ?? undefined);
+      g.fillStyle = bg; g.fillRect(0, 0, 220, 170);
+      try { A.boat(g, 110, 112, 100, dir, o); } catch { g.fillStyle = '#c0392b'; g.fillText('error', 10, 20); }
+      return c;
+    };
+    const rows: readonly (readonly [string, BoatOpts, string])[] = [['On the water', {}, '#4aa3df'], ['With the crew (rower, passenger)', { crew }, '#4aa3df'], ['Flipped on the dock, winter (snow)', { flip: true, snow: true }, '#c9a77a']];
+    return [
+      h('h2', null, 'Boat (art.ts)'),
+      h('div', { class: 'muted', style: 'margin-bottom:8px' }, 'Art.boat(ctx, x, y, pixelsPerBlock, dir, { flip, snow, crew, t, rowing }) – the sprite the 3D game shows for the boat (src/client/boat3d.ts) and the Upgrade-menu icon. Directions as Art.char: 0 down, 1 left, 2 right, 3 up, 4–7 diagonals; the game picks one from the boat heading and the camera.'),
+      h('div', { class: 'as-gal' }, h('table', null,
+        h('tr', null, h('th', null, 'View'), DIRS.map(d => h('th', null, d))),
+        rows.map(([label, o, bg]) => h('tr', null, h('td', null, h('b', null, label)), [0, 1, 2, 3, 4, 5, 6, 7].map(d => h('td', null, cell(d, o, bg)))))))
     ];
   }
 

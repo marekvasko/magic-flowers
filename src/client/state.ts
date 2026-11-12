@@ -4,7 +4,7 @@ import type { AreaId, BrewHint, Ground, ItemId, Look, MasterPos, PotionId, Speci
 import type { WebOverrides } from '../shared/webs.ts';
 import type { Other } from '../shared/players.ts';
 import type { BatchesView, CornerView, PlayerView, ServerMessage, SpiderKind, TileView, VehicleView, WebView } from '../shared/protocol.ts';
-import type { Contract, Icehouse, Weather, WorldMode } from '../shared/save.ts';
+import type { Contract, Dock, Icehouse, Weather, WorldMode } from '../shared/save.ts';
 import type { FadeConfig, FadeOverrides, Render3D } from './render3d.ts';
 
 export type MsgOf<T extends ServerMessage['t']> = Extract<ServerMessage, { t: T }>;
@@ -48,6 +48,7 @@ export interface ClientState {
   fb?: BatchesView; fbTick?: number; storageFb?: BatchesView; storageTick?: number;
   sel: ItemId | ''; area: AreaId; areaSeq: number; W: number; H: number; tilesGen: number; worldGen?: number; storageRate: number;
   icehouse: Icehouse; dielna: { built: boolean; loom: boolean }; loom: MsgOf<'me'>['loom']; eternal: boolean; names: string[];
+  dock?: Dock; // mólo a loďka (#160): stavba, poloha loďky, kto v nej sedí, zima
   keys: Partial<Record<Dir, boolean>>; kbd?: boolean; stick: Pt; path: Pt[] | null; pendingAct: (Pt & { onTile?: boolean }) | null;
   tapMark: (Pt & { t: number; act: boolean }) | null; lastSent: string; sentAt: number;
   fx: Fx[]; screenFx: ScreenFx[]; bubbles: Partial<Record<number, { text: string; until: number }>>; modal: { refresh: () => void } | null;
@@ -68,7 +69,7 @@ export interface ClientState {
 export type ViewOther = Pick<OtherPlayer, 'x' | 'y' | 'name' | 'look' | 'a' | 'dir' | 'e' | 'phase' | 'jz' | 'cr' | 'lp' | 'si' | 'wb'> & { id: number | string };
 export type ViewState = Pick<ClientState, 'W' | 'H' | 'tiles' | 'area' | 'tilesGen' | 'tick' | 'day' | 'weather' | 'me' | 'look' | 'name' | 'id'
   | 'myEmote' | 'sel' | 'anchors' | 'fx' | 'screenFx' | 'bubbles' | 'tapMark' | 'webs' | 'homes' | 'websGen' | 'corner' | 'cornerGen' | 'spiders'>
-  & Partial<Pick<ClientState, 'icehouse' | 'dielna' | 'webLeft' | 'kbd' | 'mySi' | 'worldGen' | 'vehicles'>>
+  & Partial<Pick<ClientState, 'icehouse' | 'dielna' | 'dock' | 'webLeft' | 'kbd' | 'mySi' | 'worldGen' | 'vehicles'>>
   & { others: ReadonlyMap<number | string, ViewOther> };
 
 // Ladiace prepínače z konzoly (README): čítajú sa za behu, hra ich sama nenastavuje
@@ -83,6 +84,7 @@ declare global {
     MF_LES_SUN?: 'dapple';
     MF_RAY_K?: number;
     MF_STEP?: 'snap' | 'lerp';
+    MF_ZPRIO?: boolean; // false = vypnúť prioritu plôch (z-fighting, src/shared/zorder.ts) na porovnanie
     webkitAudioContext?: typeof AudioContext;
   }
 }
