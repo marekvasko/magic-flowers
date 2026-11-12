@@ -1,13 +1,15 @@
-// Cheaty z ladiacej stránky (#153): mince, reputácia, predmety (batoh, sklad), ľad v ľadovni, skok v čase a rýchlosť
-// času. Úpravy sveta sú vstupom enginu 'cheat' (bez hráča): idú do denníka, ukáže ich záložka Engine a E.replay ich
+// Cheaty z ladiacej stránky (#153): mince, reputácia, predmety (batoh, sklad), ľad v ľadovni, záhony a rastliny, zem
+// (objekty z generátora) na hocijakom políčku, budovy, skok v čase a rýchlosť času. Úpravy sveta sú vstupom enginu 'cheat' (bez hráča): idú do denníka, ukáže ich záložka Engine a E.replay ich
 // zopakuje. Hráčom sa nič neoznámi – zmenu uvidia len v batohu, sklade či na mape.
 // Každá požiadavka (POST /api/debug/cheat) potrebuje tajný kľúč z prostredia (DEBUG_CHEATS_KEY, v nasadení z tajomstva
 // GitHubu); bez nastaveného kľúča cheaty nejdú vôbec. Kľúč sa porovnáva v konštantnom čase a nikdy sa nezapíše do logu.
 import crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as D from '../shared/data.ts';
-import type { ItemId } from '../shared/data.ts';
-import type { PlayerKey, PlayerSave } from '../shared/save.ts';
+import type { AreaId, Ground, ItemId, SpeciesId } from '../shared/data.ts';
+import type { PlayerKey, PlayerSave, Plant } from '../shared/save.ts';
+import { SPEEDS, isPlaceable, PLANT_STAGES } from '../shared/cheats.ts';
+import type { PlantStage } from '../shared/cheats.ts';
 import { isRecord } from '../shared/util.ts';
 import type { JsonRecord } from '../shared/util.ts';
 import * as I from './items.ts';
@@ -19,10 +21,11 @@ import * as Dock from './dock.ts';
 import type { DockCheat } from './dock.ts';
 import * as Transport from './transport.ts';
 import type { TransportCheat } from './transport.ts';
+import * as Dielna from './dielna.ts';
 import { ROOM_RE } from './debug.ts';
 import { sl } from './game.ts';
 import type { GameCtx, GameProposer, GameSlices } from './game.ts';
-import type { Container } from './world.ts';
+import type { Container, Tile } from './world.ts';
 
 // Zmena čísla: pridať (aj záporné) alebo nastaviť
 interface Amount { n: number; set: boolean }
@@ -34,7 +37,14 @@ export type CheatData =
   | ({ op: 'ice' } & Amount)
   | ({ op: 'vehicle' } & VehicleCheat)   // fúrik a sane (#158): kúpiť, odstrániť, premiestniť, náklad, pustiť
   | TransportCheat // doprava (#161): všetko pustiť, posádku na breh, loďku k mólu
-  | DockCheat; // mólo a loďka (#160): postaviť / zbúrať, loďku inam, hráča do loďky (z nej), prevrátiť na zimu
+  | DockCheat // mólo a loďka (#160): postaviť / zbúrať, loďku inam, hráča do loďky (z nej), prevrátiť na zimu
+  | { op: 'plot'; is: number[]; plot: PlotSpec | null }        // záhony na políčkach záhrady (null = zarovnať)
+  | { op: 'ground'; area: AreaId; is: number[]; g: Ground | null }   // zem políčok (null = vrátiť zem z generátora)
+  | { op: 'building'; what: Building; on: boolean };
+// Záhon: poliaty, pohnojený, kto ho prekopal a rastlina (druh, štádium, kvalita, dni bez vody, uschnutá)
+export interface PlotSpec { w: boolean; r: boolean; o: PlayerKey; plant: { sp: SpeciesId; stage: PlantStage; q: number; dry: number; dead: boolean } | null }
+export type Building = 'icehouse' | 'dielna' | 'loom';
+export const BUILDINGS: readonly Building[] = ['icehouse', 'dielna', 'loom'];
 
 // Nová hodnota: celé číslo, nie záporné
 export const target = (have: number, a: Amount): number => Math.max(0, Math.round(a.set ? a.n : have + a.n));
@@ -45,6 +55,51 @@ export function setCount(c: Container, id: ItemId, want: number, tick: number): 
   else if (want < have) I.removeItems(c, id, have - want, tick);
 }
 
+// Rastlina zo zadania: klíčok (0 dní), rastie (polovica dní), kvitne (všetky dni, kvitne od tohto kroku – ako pri raste)
+export function plantOf(p: NonNullable<PlotSpec['plant']>, tick: number): Plant {
+  const days = D.SPECIES[p.sp].days, out: Plant = { sp: p.sp, prog: p.stage === 'bloom' ? days : p.stage === 'grow' ? days * 0.5 : 0, q: Math.max(0, Math.min(3, Math.round(p.q))), dry: Math.max(0, Math.round(p.dry)) };
+  if (p.stage === 'bloom') out.bt = tick;
+  if (p.dead) { out.d = 1; out.why = 'sucho'; }
+  return out;
+}
+// Pôda na políčkach pozemku budovy sa zarovná (ako by ju hráč musel zarovnať pred stavbou); vráti, koľko záhonov zmizlo
+function clearLot(tiles: readonly Tile[], idx: readonly number[]): number {
+  let n = 0;
+  for (const i of idx) { const t = tiles[i]; if (t && t.s) { t.s = null; n++; } }
+  return n;
+}
+// Zmena jedného políčka: null = zmenené, inak prečo nie
+type TileChange = (i: number) => string | null;
+function each(is: readonly number[], fn: TileChange, ctx: GameCtx): void {
+  let first: string | null = null, ok = 0;
+  for (const i of is) { const why = fn(i); if (why === null) ok++; else first ??= why; }
+  if (!ok) ctx.reject(first || 'nothing to change');
+}
+function plotAt(s: GameSlices, i: number, plot: PlotSpec | null, tick: number): string | null {
+  const t = sl(s, `tile:garden:${i}`);
+  if (!t) return 'no such tile';
+  if (!plot) { if (t.s) { t.s = null; s.plotsUsed = Math.max(0, s.plotsUsed - 1); } return null; }
+  const k = t.g !== 'ring' ? D.TILLABLE[t.g] : undefined;
+  if (!k) return `${t.g} cannot be tilled`;
+  if (!t.s) s.plotsUsed++; // cheat nehľadí na spoločné povolenie záhrady
+  t.s = { k, w: plot.w ? 1 : 0, r: plot.r ? 1 : 0, p: plot.plant ? plantOf(plot.plant, tick) : null, o: plot.o };
+  return null;
+}
+function groundAt(s: GameSlices, areaId: AreaId, i: number, to: Ground | null): string | null {
+  const t = sl(s, `tile:${areaId}:${i}`);
+  if (!t) return 'no such tile';
+  if (areaId === 'garden' && D.DOCK.tiles.some(p => p.y * D.W + p.x === i)) return 'the dock tiles cannot be changed'; // mólo (#160) sa stavia na vodu
+  const area = s.ground[areaId] ??= {}, was = area[String(i)]?.was ?? t.g, kind: string = was;
+  if (!isPlaceable(kind)) { if (!Object.keys(area).length) delete s.ground[areaId]; return `${kind} cannot be changed`; }
+  const g = to ?? was;
+  if (g === was) delete area[String(i)]; else area[String(i)] = { g, was };
+  if (!Object.keys(area).length) delete s.ground[areaId];
+  t.g = g;
+  if (g !== 'water') delete t.cut;
+  const k = D.TILLABLE[g];
+  if (areaId === 'garden' && t.s) { if (k) t.s.k = k; else { t.s = null; s.plotsUsed = Math.max(0, s.plotsUsed - 1); } } // záhon zmizne pod objektom, inak má pôdu novej zeme
+  return null;
+}
 const saveOf = (s: GameSlices, key: PlayerKey, ctx: GameCtx): PlayerSave => sl(s, `save:${key}`) || ctx.reject('no such player');
 export const PROPOSERS: { cheat: GameProposer<CheatData> } = {
   cheat: {
@@ -57,6 +112,9 @@ export const PROPOSERS: { cheat: GameProposer<CheatData> } = {
         case 'vehicle': return Vehicles.cheatKeys();
         case 'dock': case 'boat': case 'seat': case 'boatFlip': return Dock.cheatKeys(d, w);
         case 'transport': return Transport.cheatKeys(w);
+        case 'plot': return { writes: [...d.is.map(i => `tile:garden:${i}`), 'plotsUsed'] };
+        case 'ground': return { writes: [...d.is.map(i => `tile:${d.area}:${i}`), 'ground', ...(d.area === 'garden' ? ['plotsUsed'] : [])] };
+        case 'building': return { writes: ['tile:garden:*', 'icehouse', 'storage', 'dielna', 'plotsUsed'] };
       }
     },
     run(s, d, ctx) {
@@ -77,14 +135,31 @@ export const PROPOSERS: { cheat: GameProposer<CheatData> } = {
         case 'vehicle': Vehicles.cheatRun(s, d, ctx); return;
         case 'dock': case 'boat': case 'seat': case 'boatFlip': Dock.cheatRun(s, d, ctx); return;
         case 'transport': Transport.cheatRun(s, ctx); return;
+        // Viac políčok naraz: políčko, ktoré sa zmeniť nedá (budova, netillable…), sa preskočí; zlyhá, len keď nejde žiadne
+        case 'plot': { each(d.is, i => plotAt(s, i, d.plot, ctx.tick), ctx); return; }
+        case 'ground': { each(d.is, i => groundAt(s, d.area, i, d.g), ctx); return; }
+        case 'building': {
+          const tiles = sl(s, 'tile:garden:*'), dl = s.dielna;
+          if (d.what === 'icehouse') {
+            if (d.on && !s.icehouse.built) { s.plotsUsed = Math.max(0, s.plotsUsed - clearLot(tiles, Ice.lotIdx())); s.icehouse.built = true; s.icehouse.ice = 0; s.icehouse.bl = 0; }
+            if (!d.on && s.icehouse.built) { Ice.setIce(s.icehouse, s.storage, ctx.tick, 0); s.icehouse.built = false; s.icehouse.bl = 0; }
+            Ice.applyIcehouse(s.icehouse, tiles);
+            return;
+          }
+          if (d.on && !dl.built) { s.plotsUsed = Math.max(0, s.plotsUsed - clearLot(tiles, Dielna.lotIdx())); dl.built = true; } // krosná potrebujú Dielňu
+          const stopLoom = (): void => { if (dl.job) ctx.cancel(`loomDone:${dl.job.key}`); dl.job = null; dl.loom = false; };
+          if (d.what === 'loom') { if (d.on) dl.loom = true; else stopLoom(); }
+          else if (!d.on && dl.built) { stopLoom(); dl.built = false; dl.ready = {}; }
+          Dielna.applyDielna(dl, tiles);
+          return;
+        }
       }
     }
   }
 };
 
 // ---- Požiadavky z ladiacej stránky ----
-// Rýchlosti času, ktoré sa dajú nastaviť (len v pamäti servera – po reštarte je zase 1×)
-export const SPEEDS: readonly number[] = [0.25, 0.5, 1, 2, 4, 8];
+export { SPEEDS };
 const sha = (s: string): Buffer => crypto.createHash('sha256').update(s).digest();
 // Zhoduje sa poslaný kľúč s tajomstvom? Bez tajomstva nikdy.
 export function keyOk(given: string | undefined, secret: string | undefined): boolean {
@@ -120,6 +195,33 @@ export function playerKey(room: CheatRoom, who: unknown, keyId: (k: PlayerKey) =
   for (const p of room.players.values()) if (p.name === who && room.saves[p.key]) return p.key;
   throw new Bad(404, 'no such player: ' + who);
 }
+// Indexy políčok plochy: číslo alebo zoznam (x, y sa na index prevedú na stránke); najviac celá plocha, bez opakovaní
+function tileIndexes(area: AreaId, v: unknown): number[] {
+  const { w, h } = D.areaSize(area), list: unknown[] = Array.isArray(v) ? v : [v];
+  if (!list.length || list.length > w * h) throw new Bad(400, 'bad tile list');
+  const out = new Set<number>();
+  for (const x of list) {
+    const i = num(x, 'tile');
+    if (!Number.isInteger(i) || i < 0 || i >= w * h) throw new Bad(400, 'tile outside the area');
+    out.add(i);
+  }
+  return [...out];
+}
+// Záhon z tela požiadavky: { w, r, owner?, sp?, stage?, q?, dry?, dead? } (bez sp = prázdny záhon); vlastník = hráč
+// podľa odtlačku, inak prvý hráč sveta
+function plotSpec(room: CheatRoom, b: JsonRecord, keyId: (k: PlayerKey) => string): PlotSpec {
+  const first = Object.keys(room.saves)[0];
+  const o = b['owner'] != null && b['owner'] !== '' ? playerKey(room, b['owner'], keyId) : first;
+  if (o === undefined) throw new Bad(409, 'the room has no players to own the plot');
+  const sp = b['sp'];
+  let plant: PlotSpec['plant'] = null;
+  if (sp != null && sp !== '') {
+    if (typeof sp !== 'string' || !D.isSpeciesId(sp)) throw new Bad(400, 'unknown species');
+    const stage = PLANT_STAGES.find(x => x === b['stage']) ?? 'seed';
+    plant = { sp, stage, q: b['q'] == null ? 3 : num(b['q'], 'quality'), dry: b['dry'] == null ? 0 : num(b['dry'], 'dry days'), dead: b['dead'] === true };
+  }
+  return { w: b['w'] === true, r: b['r'] === true, o, plant };
+}
 // Telo požiadavky → vstup enginu (null = nejde o úpravu sveta: skok, rýchlosť, stav)
 export function parseCheat(room: CheatRoom, b: JsonRecord, keyId: (k: PlayerKey) => string): CheatData | null {
   switch (b['op']) {
@@ -136,6 +238,18 @@ export function parseCheat(room: CheatRoom, b: JsonRecord, keyId: (k: PlayerKey)
     case 'seat': return { op: 'seat', key: playerKey(room, b['player'], keyId), on: b['on'] !== false };
     case 'boatFlip': return { op: 'boatFlip', flip: b['flip'] === true };
     case 'transport': if (b['act'] !== 'reset') throw new Bad(400, 'unknown transport action'); return { op: 'transport', act: 'reset' };
+    case 'plot': return { op: 'plot', is: tileIndexes('garden', b['i']), plot: b['till'] === false ? null : plotSpec(room, b, keyId) };
+    case 'ground': {
+      const area = D.AREAS.find(a => a === b['area']), g = b['g'];
+      if (!area) throw new Bad(400, 'unknown area');
+      if (g !== null && (typeof g !== 'string' || !isPlaceable(g))) throw new Bad(400, 'this ground cannot be placed');
+      return { op: 'ground', area, is: tileIndexes(area, b['i']), g };
+    }
+    case 'building': {
+      const what = BUILDINGS.find(x => x === b['what']);
+      if (!what) throw new Bad(400, 'unknown building');
+      return { op: 'building', what, on: b['on'] === true };
+    }
     case 'jump': case 'jumpStop': case 'speed': case 'status': return null;
     default: throw new Bad(400, 'unknown op');
   }

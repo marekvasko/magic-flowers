@@ -89,7 +89,7 @@ import type { Kid, TabCtx, TabInstance, TabModule } from './ui.ts';
   }
   // Záložky okrem Room sú samostatné moduly src/debug/tabs/<id>.ts (v balíku samostatné kúsky, načítajú sa až pri otvorení):
   //   export function mount(el, ctx) → { update?(ctx), unmount?() }
-  // ctx: { room, area, snap, rooms, param(k), setParam(k, v), setArea(a), api(path), h, D, fmt }
+  // ctx: { room, area, snap, rooms, param(k), setParam(k, v), setArea(a), refresh(), api(path), h, D, fmt }
   // update(ctx) príde pri zmene sveta, plochy alebo po obnovení; unmount pri prepnutí záložky.
   // Keď modul ešte neexistuje, ukáže sa popis, čo v záložke bude.
   // záložka → modul (esbuild z nich spraví samostatné kúsky balíka)
@@ -107,7 +107,8 @@ import type { Kid, TabCtx, TabInstance, TabModule } from './ui.ts';
       api: <T>(p: string) => api<T>(p),
       param: k => st[k] ?? null,
       setParam: (k, v) => { if (v == null || v === '') delete st[k]; else st[k] = String(v); saveHash(); },
-      setArea: a => { if (isArea(a)) { st.area = a; $as('area', HTMLSelectElement).value = a; saveHash(); render(); } }
+      setArea: a => { if (isArea(a)) { st.area = a; $as('area', HTMLSelectElement).value = a; saveHash(); render(); } },
+      refresh: () => refresh()
     };
   }
   function unmountTab(): void {

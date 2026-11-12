@@ -1,8 +1,9 @@
-// Uloženie sveta (data/room-<id>.json) vo verzii SAVE_VERSION 12 – presne tak, ako ho zapíše serialize() v src/server/server.ts.
+// Uloženie sveta (data/room-<id>.json) vo verzii SAVE_VERSION 13 – presne tak, ako ho zapíše serialize() v src/server/server.ts.
 // Typ opisuje existujúci formát, nemení ho (#122, fáza 2). Staršie verzie prevedie migrate() na tento tvar.
 // Kľúč hráča (PlayerKey) je meno malými písmenami; v uloženiach sa ním odkazuje na hráča (saves, vlastník pôdy, zákazky…).
-// test/save-v12.fixture.ts drží uloženie zo skutočného servera a prekladač ho kontroluje voči SaveFile (npm run typecheck).
-import type { AreaId, Batch, FestivalId, GiverId, ItemId, Look, SpeciesId, TillKind } from './data.ts';
+// test/save-v12.fixture.ts drží uloženie zo skutočného servera a prekladač ho kontroluje voči SaveFile (npm run typecheck);
+// verzia 13 pridala len voliteľné pole ground (#153), uloženie v12 je preto stále platný SaveFile.
+import type { AreaId, Batch, FestivalId, GiverId, Ground, ItemId, Look, SpeciesId, TillKind } from './data.ts';
 
 export type PlayerKey = string;
 export type Weather = 'sun' | 'rain' | 'snow';
@@ -40,6 +41,10 @@ export interface SavedTile {
   s: Soil | null;
   cut?: 1;
 }
+// Ručne zmenená zem políčka (#153, cheat z ladiacej stránky): g = položená zem, was = zem z generátora (na vrátenie).
+// Plocha → index políčka → zmena; verzia 13 (staršie uloženia nemajú = nič zmenené).
+export interface GroundOverride { g: Ground; was: Ground }
+export type GroundOverrides = Partial<Record<AreaId, Partial<Record<string, GroundOverride>>>>;
 // Políčko hôr v uložení: 0 = nič, inak zásoba ľadu (vrstvy), otvor vo vode a vodný kvet v plese (#38, staršie uloženia ho nemajú)
 export type SavedHoryTile = 0 | { ice?: number; cut?: 1; s?: Soil };
 
@@ -216,5 +221,6 @@ export interface SaveFile {
   vehicles?: Vehicles;        // fúrik a sane (#158): staršie uloženia ho nemajú, pri načítaní sa doplní (bez zmeny verzie)
   tiles: SavedTile[];
   hory: SavedHoryTile[];
-  les: string;                // rozloženie Lesa divov, jeden znak na políčko (D.LES_CODE)
+  les: string;                // rozloženie Lesa divov, jeden znak na políčko (D.LES_CODE); políčka zmenené cheatom s pôvodnou zemou
+  ground?: GroundOverrides;   // verzia 12: zem zmenená cheatom (#153); uloženia do verzie 11 ju nemajú
 }

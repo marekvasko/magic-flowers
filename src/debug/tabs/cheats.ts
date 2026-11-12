@@ -1,10 +1,12 @@
-// Ladiaca stránka (#153): záložka Cheats – mince, reputácia a predmety hráčov, sklad, ľad v ľadovni, skok v čase
-// a rýchlosť času; mólo a loďka (#160): postaviť / zbúrať, loďku inam, hráča do loďky, zima. Všetko ide cez POST /api/debug/cheat s tajným kľúčom (drží sa v sessionStorage, kým je karta otvorená).
+// Ladiaca stránka (#153): záložka Cheats – mince, reputácia a predmety hráčov, sklad, ľad v ľadovni, políčko (zem,
+// záhon a rastlina sa upravujú priamo na Mape – tile-editor.ts), budovy, skok v čase a rýchlosť času. Všetko ide cez
+// POST /api/debug/cheat s tajným kľúčom (cheat-api.ts: drží sa v sessionStorage, kým je karta otvorená).
 // Texty po anglicky (nástroj pre správcu), mená predmetov po slovensky ako v hre.
 import type * as DT from '../../shared/data.ts';
 import type { Dock, PlayerSave } from '../../shared/save.ts';
 import { isRecord } from '../../shared/util.ts';
 import type { RoomSnapshot } from '../../server/debug.ts';
+import { cheatKey, setCheatKey } from './cheat-api.ts';
 import type { TabCtx, TabInstance } from '../ui.ts';
 import { errText } from '../ui.ts';
 import { vehiclesOf, vehicleText } from './vehicles-core.ts';
@@ -27,8 +29,7 @@ const CSS = `
 .ch .pl:first-of-type { border-top: none; }
 .ch .lbl { min-width: 110px; }
 `;
-const KEY_STORE = 'mf-cheat-key';
-const SPEEDS = [0.25, 0.5, 1, 2, 4, 8];
+import { SPEEDS } from '../../shared/cheats.ts';
 const speedLabel = (x: number): string => (x === 0.25 ? '¼' : x === 0.5 ? '½' : String(x)) + '×';
 interface Status { tick: number; speed: number; jump: number | null }
 
@@ -47,8 +48,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
   document.head.appendChild(style);
   const root = h('div', { class: 'ch' });
   el.replaceChildren(root);
-  let key = '';
-  try { key = sessionStorage.getItem(KEY_STORE) || ''; } catch { /* súkromné okno */ }
+  let key = cheatKey();
   const msg = h('div', { class: 'msg' });
   const say = (text: string, kind: 'ok' | 'err'): void => { msg.textContent = text; msg.className = 'msg ' + kind; };
   const items = allItems(D);
@@ -87,11 +87,11 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
 
   function keyBox(): HTMLElement {
     const inp = h('input', { type: 'password', placeholder: 'DEBUG_CHEATS_KEY', value: key, autocomplete: 'off' });
-    const saveKey = (): void => { key = inp.value.trim(); try { sessionStorage.setItem(KEY_STORE, key); } catch { /* súkromné okno */ } void reload(); };
+    const saveKey = (): void => { key = inp.value.trim(); setCheatKey(key); void reload(); };
     inp.addEventListener('keydown', e => { if (e.key === 'Enter') saveKey(); });
     return h('section', null, h('h4', null, 'Cheat key'),
       h('div', { class: 'row' }, inp, h('button', { onclick: saveKey }, 'Use key'),
-        key ? h('button', { onclick: () => { key = ''; try { sessionStorage.removeItem(KEY_STORE); } catch { /* súkromné okno */ } status = null; render(); } }, 'Forget') : null),
+        key ? h('button', { onclick: () => { key = ''; setCheatKey(''); status = null; render(); } }, 'Forget') : null),
       h('div', { class: 'muted' }, 'Every cheat needs the secret key of this server (GitHub secret DEBUG_CHEATS_KEY). It is kept only in this browser tab. Players never see a cheat; it shows up only in the Engine and Journal tabs.'));
   }
 
@@ -214,6 +214,20 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
       h('div', { class: 'muted' }, 'The boat must stay on water (the whole boat, not over the dock). At midnight the game flips the boat for winter and back in spring by itself.'));
   }
 
+  function buildingsBox(w: RoomSnapshot['state']): HTMLElement {
+    const ice = w.icehouse, dl = w.dielna;
+    const row = (label: string, what: string, on: boolean, extra: string): HTMLElement => h('div', { class: 'row' },
+      h('span', { class: 'lbl' }, `${label}: ${on ? 'built' : 'not built'}`),
+      h('button', { onclick: () => { void act({ op: 'building', what, on: true }, `${label} built.`); } }, 'Build'),
+      h('button', { onclick: () => { void act({ op: 'building', what, on: false }, `${label} removed.`); } }, 'Remove'),
+      h('span', { class: 'muted' }, extra));
+    return h('section', null, h('h4', null, 'Buildings'),
+      row('Icehouse', 'icehouse', !!(ice && ice.built), 'removing it melts the ice'),
+      row('Dielňa', 'dielna', !!(dl && dl.built), 'removing it drops the loom, weaving and waiting blankets'),
+      row('Loom', 'loom', !!(dl && dl.loom), 'builds the Dielňa if needed'),
+      h('div', { class: 'muted' }, 'Building clears any plots on its lot.'));
+  }
+
   function render(): void {
     if (!ctx.room) { root.replaceChildren(h('div', { class: 'empty' }, 'Select a room on the left.')); return; }
     if (disabled) { root.replaceChildren(h('section', null, h('h4', null, 'Cheats are off on this server'), h('div', { class: 'muted' }, 'Set DEBUG_CHEATS_KEY in the server environment (deploy: GitHub secret) to turn them on.'))); return; }
@@ -221,7 +235,8 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     if (status && snap) {
       const saves = Object.entries(snap.state.saves || {}).filter((e): e is [string, PlayerSave] => !!e[1]);
       const online = new Map(snap.online.map(o => [o.player, o.name]));
-      out.push(playersBox(saves, online), itemsBox(saves, online, snap.state), vehiclesBox(snap.state, online), dockBox(saves, online, snap.state));
+      out.push(playersBox(saves, online), itemsBox(saves, online, snap.state), vehiclesBox(snap.state, online), dockBox(saves, online, snap.state), buildingsBox(snap.state),
+        h('section', null, h('h4', null, 'Tiles'), h('div', { class: 'muted' }, 'Ground objects, plots and plants: open the Map tab (Room), tap a tile and edit it there.')));
     }
     root.replaceChildren(...out);
   }

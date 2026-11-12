@@ -5,6 +5,8 @@
 // sedeli v loďke (preto seats aj polohy v loďke). Prekladač ho kontroluje voči typu SaveFile – ak sa formát uloženia
 // zmení bez úpravy typu (alebo naopak), `npm run typecheck` zlyhá. Pri zmene SAVE_VERSION treba fixtúru obnoviť
 // (staršiu nechať ako vstup testov migrácie).
+// Verzia 13 (#153) pridala len voliteľné pole ground (zem zmenená cheatom) – uloženie v12 je stále platný SaveFile,
+// táto fixtúra preto ostáva aktuálna (migrácia na v13 je testovaná v test/cheats.test.ts).
 import type { SaveFile } from '../src/shared/save.ts';
 
 export const SAVE_V12 = {

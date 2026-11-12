@@ -5,6 +5,8 @@
 import crypto from 'node:crypto';
 import * as D from '../shared/data.ts';
 import type { AreaId } from '../shared/data.ts';
+import type { GroundOverrides } from '../shared/save.ts';
+import { isPlaceable } from '../shared/cheats.ts';
 import { lookup, must } from '../shared/util.ts';
 import type { AreaTilesWorld, Tile } from './world.ts';
 
@@ -18,7 +20,19 @@ export function loadPomedzie(seed: number): Tile[] { return D.buildPomedzie(seed
 // Les divov sa ukladá celý (jeden znak na políčko) – rozloženie sveta ostane rovnaké, aj keď sa generátor neskôr zmení.
 // Neplatné alebo chýbajúce uloženie → rozloženie zo semienka.
 export const LES_CODE = D.LES_CODE;
-export function saveLes(room: Pick<AreaTilesWorld, 'les'>): string { return room.les.map(t => lookup(LES_CODE, t.g) ?? '').join(''); }
+// Políčko zmenené cheatom (#153) sa uloží so zemou z generátora (was) – zmena je zvlášť vo world.ground a dá sa vrátiť.
+export function saveLes(room: Pick<AreaTilesWorld, 'les'> & { ground?: GroundOverrides | undefined }): string {
+  const ov = room.ground && room.ground.les;
+  return room.les.map((t, i) => lookup(LES_CODE, ov?.[String(i)]?.was ?? t.g) ?? '').join('');
+}
+// Zem zmenená cheatom (#153) sa po načítaní plochy položí na jej políčka (neplatné indexy a zem sa preskočia)
+export function applyGround(room: AreaTilesWorld, ground: GroundOverrides | null | undefined): void {
+  for (const area of D.AREAS) {
+    const ov = ground && ground[area], tiles = areaTiles(room, area);
+    if (!ov) continue;
+    for (const [i, o] of Object.entries(ov)) { const t = tiles[Number(i)]; if (t && o && isPlaceable(o.g)) t.g = o.g; }
+  }
+}
 export function loadLes(saved: unknown, seed: number): Tile[] { return (D.decodeLes(saved) || D.buildLes(seed)).map(g => ({ g })); }
 
 // Je políčko (x, y) na ploche?

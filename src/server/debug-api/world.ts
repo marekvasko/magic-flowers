@@ -1,5 +1,5 @@
 // Ladiaca stránka /debug, záložka World (#78): políčka jednej plochy presne tak, ako ich hra pošle hráčovi
-// (základ z generátora + uložená pôda, rastliny, ľad a ľadovňa), a hráči na ploche. Len číta kópiu sveta.
+// (základ z generátora + uložená pôda, rastliny, ľad, ľadovňa, Dielňa a zem zmenená cheatom), a hráči na ploche. Len číta kópiu sveta.
 //   GET /api/debug/world?room=<id>&area=<plocha>  – svet zo zoznamu
 //   GET /api/debug/world?seed=<n>&area=<plocha>   – čerstvý svet len zo semienka (bez hráčov a bez uloženia)
 import * as D from '../../shared/data.ts';
@@ -8,6 +8,7 @@ import type { TileView, VehicleView } from '../../shared/protocol.ts';
 import type { Dock as DockState, Weather } from '../../shared/save.ts';
 import * as Ice from '../ice.ts';
 import * as Dock from '../dock.ts';
+import * as Dielna from '../dielna.ts';
 import * as Areas from '../areas.ts';
 import * as Scav from '../scavenge.ts';
 import * as Vehicles from '../vehicles.ts';
@@ -15,12 +16,14 @@ import { keyId } from '../debug.ts';
 import type { DebugState, Tools } from '../debug.ts';
 import type { Tile } from '../world.ts';
 
-type TileSource = Pick<DebugState, 'tiles' | 'hory' | 'pomedzieSeed' | 'lesSeed' | 'les' | 'icehouse'> & { dock?: unknown };
+type TileSource = Pick<DebugState, 'tiles' | 'hory' | 'pomedzieSeed' | 'lesSeed' | 'les' | 'icehouse' | 'dielna' | 'ground'> & { dock?: unknown };
 // Políčka plochy zo (skopírovaného) stavu sveta – rovnako ako getRoom + tilesView v server.ts
 function areaTiles(state: TileSource, area: AreaId): TileView[] {
-  if (area === 'hory') return Ice.loadHory(state.hory);
-  if (area === 'pomedzie') return Areas.loadPomedzie(Number(state.pomedzieSeed)); // stav zo servera semienko má
-  if (area === 'les') return Areas.loadLes(state.les, Number(state.lesSeed)); // uložené rozloženie, inak zo semienka
+  // zem zmenená cheatom (#153) – na kópiu plochy, ako pri getRoom
+  const ground = (tiles: Tile[]): Tile[] => { const ov = state.ground && state.ground[area]; for (const [i, o] of Object.entries(ov || {})) { const t = tiles[Number(i)]; if (t && o) t.g = o.g; } return tiles; };
+  if (area === 'hory') return ground(Ice.loadHory(state.hory));
+  if (area === 'pomedzie') return ground(Areas.loadPomedzie(Number(state.pomedzieSeed))); // stav zo servera semienko má
+  if (area === 'les') return ground(Areas.loadLes(state.les, Number(state.lesSeed))); // uložené rozloženie, inak zo semienka
   const base = D.buildMap(), saved = state.tiles;
   const room = {
     icehouse: state.icehouse,
@@ -33,7 +36,8 @@ function areaTiles(state: TileSource, area: AreaId): TileView[] {
   };
   Ice.applyIcehouse(room.icehouse, room.tiles);
   Dock.applyDock(Dock.loadDock(state.dock), room.tiles); // mólo (#160)
-  return room.tiles.map(t => Scav.tileView(t)); // druh divej rastliny ostane skrytý ako v hre
+  Dielna.applyDielna(state.dielna, room.tiles);
+  return ground(room.tiles).map(t => Scav.tileView(t)); // druh divej rastliny ostane skrytý ako v hre
 }
 
 export interface WorldPlayer { id: string; name: string | null; online: boolean; x: number; y: number; look: Look | null }

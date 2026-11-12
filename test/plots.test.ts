@@ -154,7 +154,7 @@ test('server: osobné povolenia z verzie 4 prejdú na spoločné povolenie záhr
   } finally { await stopServer(proc); }
   const saved = readJson<SaveFile>(path.join(dir, 'room-pole.json'));
   try {
-    assert.strictEqual(saved.v, 12);
+    assert.strictEqual(saved.v, 13);
     assert.deepStrictEqual(saved.up, { plots: 4 });
     assert.strictEqual('plots' in must(saved.saves['eva']).up, false);
     assert.strictEqual(must(saved.saves['jan']).up.can, 1);

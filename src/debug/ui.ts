@@ -38,6 +38,7 @@ export interface TabCtx {
   param: (k: string) => string | null;
   setParam: (k: string, v: string | number | boolean | null | undefined) => void;
   setArea: (a: string) => void;
+  refresh: () => Promise<void>;   // načíta svet znova (po cheate) a záložka dostane update
 }
 // Záložka: mount(el, ctx) → { update?(ctx), unmount?() }; update príde pri zmene sveta, plochy alebo po obnovení
 export interface TabInstance { update?: (ctx: TabCtx) => void; unmount?: () => void }

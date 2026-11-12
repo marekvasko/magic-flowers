@@ -177,7 +177,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
 // ---------- Svety (miestnosti) ----------
 // Čas je diskrétny: svet má celé počítadlo `tick` (D.TICKS_PER_DAY krokov na deň), deň a minúta sa z neho
 // len odvodzujú. Všetko, čo sa má stať v budúcnosti, je udalosť v plánovači (room.events) a ukladá sa so svetom.
-const SAVE_VERSION = 12; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov; 8: semienko sveta a počítadlo kôl namiesto rng; 9: 11 520 krokov za deň (×40); 10: pavúky a pavučiny; 11: Dielňa, majster hodvábu a izolácia ľadovne; 12: väčšie jazierko, mólo a loďka
+const SAVE_VERSION = 13; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov; 8: semienko sveta a počítadlo kôl namiesto rng; 9: 11 520 krokov za deň (×40); 10: pavúky a pavučiny; 11: Dielňa, majster hodvábu a izolácia ľadovne; 12: väčšie jazierko, mólo a loďka; 13: zem zmenená cheatom (#153)
 const OLD_TPD = 288, OLD_MPT = 5, TICK_SCALE = D.TICKS_PER_DAY / OLD_TPD; // mriežka času do verzie 8
 const TPD = D.TICKS_PER_DAY;
 const DEFAULT_MODE: WorldMode = process.env['DEFAULT_MODE'] === 'paused' ? 'paused' : 'running';
@@ -198,7 +198,8 @@ function newWorldState(): LoadedState {
     weather: 'sun', saves: {}, storage: {}, storageFb: {}, market: null, contracts: null, fairyNight: -1, eternal: false, scav: {}, scavSalt: Areas.newSeed(),
     icehouse: { built: false, ice: 0, bl: 0 }, dielna: Dielna.newDielna(), dock: Dock.newDock(), redeem: {}, hory: null, pomedzieSeed: Areas.newSeed(), up: { plots: 0 }, lesSeed: Areas.newSeed(), les: null,
     glacierFed: -1, // deň, v ktorom ľadovec naposledy dorástol zo zrážok (najviac raz za deň)
-    plotsUsed: 0, maxRep: 0 // odvodené počítadlá (pozri economy.ts); pri načítaní sa prepočítajú
+    plotsUsed: 0, maxRep: 0, // odvodené počítadlá (pozri economy.ts); pri načítaní sa prepočítajú
+    ground: {} // zem zmenená cheatom z ladiacej stránky (#153)
   };
 }
 
@@ -257,6 +258,7 @@ function migrate(saved: JsonRecord): LoadedState {
     if (out.icehouse) out.icehouse.bl = 0;
   }
   if (from < 12) Dock.migrate(out); // väčšie jazierko (#160): čo stálo na novej vode, dostane prvý hráč; kto tam stál, je na brehu
+  if (from < 13) out.ground = {}; // cheaty (#153): zem zmenená z ladiacej stránky – staré svety nemajú nič zmenené
   out.v = SAVE_VERSION; out.migratedFrom = Number(saved['migratedFrom']) || from;
   return out;
 }
@@ -306,7 +308,7 @@ function getRoom(id: string): Room {
     }),
     hory: Ice.loadHory(savedHory), pomedzie: [], les: [],
     vehicles: Vehicles.loadVehicles(st.vehicles, st.tick), // fúrik a sane (#158): staršie uloženia ich nemajú – predvolené, bez zmeny verzie
-    inbox: [], inSeq: 0, trace: null, spSent: {}, day: 0, min: 0
+    inbox: [], inSeq: 0, trace: null, spSent: {}, day: 0, min: 0, ground: isRecord(st.ground) ? st.ground : {}
   });
   if (!Number.isInteger(room.pomedzieSeed)) room.pomedzieSeed = Areas.newSeed();
   room.pomedzie = Areas.loadPomedzie(room.pomedzieSeed);
@@ -320,6 +322,7 @@ function getRoom(id: string): Room {
   room.dock = Dock.loadDock(room.dock); // mólo a loďka (#160): políčka móla, posádka z času pred reštartom vystúpi na breh
   Dock.applyDock(room.dock, room.tiles);
   Dock.load(room);
+  Areas.applyGround(room, room.ground); // zem zmenená cheatom (#153) – až po budovách, ich pozemky cheat nemení
   if (!room.redeem || typeof room.redeem !== 'object') room.redeem = {};
   room.up = room.up || { plots: 0 };
   Object.defineProperty(room, 'day', { get: () => D.dayOfTick(room.tick) });
@@ -360,7 +363,7 @@ function serialize(room: Room): string {
     fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom, scav: room.scav, scavSalt: room.scavSalt, icehouse: room.icehouse, dielna: room.dielna, dock: room.dock, redeem: room.redeem, pomedzieSeed: room.pomedzieSeed, up: room.up, lesSeed: room.lesSeed,
     glacierFed: room.glacierFed, plotsUsed: room.plotsUsed, maxRep: room.maxRep, ...Spiders.save(room),
     ...Vehicles.save(room),
-    tiles: room.tiles.map(t => t.cut ? { s: t.s, cut: 1 } : { s: t.s }), hory: Ice.saveHory(room.hory), les: Areas.saveLes(room)
+    tiles: room.tiles.map(t => t.cut ? { s: t.s, cut: 1 } : { s: t.s }), hory: Ice.saveHory(room.hory), les: Areas.saveLes(room), ground: room.ground
   });
 }
 // Sklad ako výrez { inv, fb } pre items.ts (vo svete sú to dve vlastnosti: storage a storageFb)

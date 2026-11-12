@@ -442,7 +442,7 @@ test('server: uloženie bez fúrikov sa načíta bez zmeny verzie, kúpený fúr
   } finally { await stopServer(proc); }
   const file = path.join(dir, 'room-doprava.json');
   const saved = readJson<SaveFile & { v: number }>(file);
-  assert.strictEqual(saved.v, 12, 'verzia uloženia sa fúrikmi nemení (12 = väčšie jazierko, #160)');
+  assert.strictEqual(saved.v, 13, 'verzia uloženia sa fúrikmi nemení (13 = zem zmenená cheatom, #153)');
   assert.ok(saved.vehicles && !saved.vehicles.furik.bought, 'nový svet ich má nekúpené');
   // staré uloženie bez poľa vehicles a uloženie s kúpeným fúrikom, ktorý niekto držal
   delete saved.vehicles;

@@ -160,3 +160,14 @@ test('mapa: hráči sveta na ploche, online podľa odtlačku kľúča', async ()
   assert.deepStrictEqual(h.map(p => [p.id, p.name, p.online]), [['p-aaaa', 'Anka', true]]);
   assert.deepStrictEqual(M.playersOn(D, 'garden', null), []);
 });
+
+test('mapa: zem zmenená cheatom (#153) je na mape sveta, Dielňa tiež; pozemky budov cheat nemení', async () => {
+  const M = await load(), base = D.buildMap(), i = base.findIndex(g => g === 'grass'), lot = must(Ice.lotIdx()[0]);
+  const map = mapOf(M.buildTiles(D, 'garden', { state: { tick: 0, ground: { garden: { [String(i)]: { g: 'boulder', was: 'grass' } } }, dielna: { built: true, loom: false, job: null, ready: {} } } }));
+  assert.strictEqual(must(map.tiles[i]).g, 'boulder');
+  assert.strictEqual(must(map.tiles[lot]).g, 'lot');
+  assert.ok(map.tiles.some(t => t.g === 'dielna'));
+  const les = Areas.loadLes(null, 9), j = les.findIndex(t => t.g === 'moss');
+  const lm = mapOf(M.buildTiles(D, 'les', { state: { tick: 0, lesSeed: 9, les: Areas.saveLes({ les }), ground: { les: { [String(j)]: { g: 'log', was: 'moss' } } } } }));
+  assert.strictEqual(must(lm.tiles[j]).g, 'log');
+});
