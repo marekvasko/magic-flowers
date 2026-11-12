@@ -679,7 +679,7 @@ test('uloženie v8 (288 krokov za deň) sa prevedie na v9: každý krok ×40 –
   const proc = await startServer(dir, port);
   try { const c = await client(port, 'stary', 'Eva'); c.ws.close(); await sleep(100); } finally { await stopServer(proc); }
   const s = readJson<SaveFile>(path.join(dir, 'room-stary.json'));
-  assert.strictEqual(s.v, 13);
+  assert.strictEqual(s.v, 14);
   assert.strictEqual(s.tick, old.tick * K);
   assert.deepStrictEqual([D.dayOfTick(s.tick), D.minOfTick(s.tick)], [3, 450], 'deň 3, 7:30 ako predtým');
   assert.deepStrictEqual(s.events.filter(e => e.key !== 'dawn' && !/^(delivery|npc_|fest|spider:|kz:|kriziakTrip|webDawn|weave:|vehSeason|boatDay)/.test(e.key ?? '')).map(e => [e.key, e.at]).sort(), [['cDue:1', 1000 * K], ['hourly', 666 * K], ['vilyEnd:eva', 700 * K]]);

@@ -233,7 +233,7 @@ export type Vehicles = Record<VehicleId, Vehicle>;
 
 // ---- Celé uloženie ----
 export interface SaveFile {
-  v: 13;
+  v: 14;
   tick: number;
   wall: number;               // reálny čas (ms) k času tick
   mode: WorldMode;

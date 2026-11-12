@@ -38,7 +38,7 @@ export function initEconomy(world: GameWorld, ctx?: GameCtx): void {
   }
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- uloženia pred verziou 13 knihy nemajú
   const fresh = !Object.keys(world.market.books || {}).length;
-  Mkt.initBooks(world, world.market); // nový trh, uloženie pred v13 alebo nový tovar: knihy a ceny veľkoobchodníka
+  Mkt.initBooks(world, world.market); // nový trh, uloženie pred v14 alebo nový tovar: knihy a ceny veľkoobchodníka
   if (fresh) recordHistory(world.market, world.tick);
   if (!world.contracts) { world.contracts = { list: [], nextId: 1 }; fillBoard(world.contracts, world.tick, maxRepOf(savesOf(world)), live); }
   Mkt.syncPlayerOrders(world, world.market);
