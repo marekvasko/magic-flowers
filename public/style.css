@@ -202,31 +202,55 @@ button { font: inherit; cursor: pointer; border: none; }
 #fps { position: absolute; top: calc(env(safe-area-inset-top) + 66px); left: calc(8px + env(safe-area-inset-left)); background: #000a; color: #e8ffe8; border-radius: 8px; padding: 4px 6px; font: 600 10px/1.3 ui-monospace, Menlo, Consolas, monospace; white-space: pre; pointer-events: none; z-index: 5; }
 #fps canvas { display: block; width: 120px; height: 30px; margin-top: 3px; image-rendering: pixelated; }
 
-/* Trh s knihou objednávok (#112): päť záložiek, riadok tovaru s počítadlom, okamžitý obchod a blok Dopyt / Ponuka */
+/* Trh s knihou objednávok (#112): päť záložiek; riadok tovaru = pás kusov (počet), posuvník ceny s grafom, jedno tlačidlo */
 .tabs.tabs5 { gap: 4px; }
 .tabs.tabs5 button { padding: 9px 2px; font-size: 13px; }
-.item { background: #fff; border: 2px solid #f0dcb0; border-radius: 12px; padding: 8px; margin-bottom: 6px; }
-.item.open { border-color: #6b3fa0; }
+.item { background: #fff; border: 2px solid #f0dcb0; border-radius: 12px; padding: 8px; margin-bottom: 6px; display: flex; flex-direction: column; gap: 6px; }
 .item .top { display: flex; align-items: center; gap: 10px; }
 .item .top img { width: 40px; height: 40px; flex: 0 0 auto; }
 .item .top .info { flex: 1; min-width: 0; }
 .item .top b { display: block; font-size: 14.5px; }
 .item .top small { display: block; color: #7a6a4a; font-size: 12px; }
-.item .who, .item .fr { color: #3c7d3f; font-weight: 700; }
-.ctl { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
-.ctl .grow { flex: 1; }
-.ctl .btn { padding: 9px 10px; }
-.cnt { display: flex; align-items: center; border-radius: 10px; background: #f0dcb0; overflow: hidden; }
-.cnt button { padding: 8px 10px; font-weight: 800; font-size: 14px; background: none; }
-.cnt.off { opacity: .45; }
-.cnt span { min-width: 30px; text-align: center; font-weight: 800; font-size: 15px; background: #fff8e7; padding: 7px 2px; }
-.blk { margin-top: 8px; padding: 8px; border-radius: 10px; background: #f4eefa; }
-.blk .lbl { font-size: 14px; color: #5a4a7a; font-weight: 700; margin-bottom: 4px; }
-.four { display: flex; gap: 6px; }
-.four .btn { flex: 1; padding: 9px 4px; font-size: 15px; }
-.btn.tg { background: #8b5a2b; }
-.btn.tg.on { background: #5e3c1c; box-shadow: inset 0 3px 6px rgba(0, 0, 0, .45); transform: translateY(1px); }
-.btn.g2 { background: #167a2b; } .btn.g1 { background: #22a63d; } .btn.r1 { background: #e03131; } .btn.r2 { background: #a51d1d; }
+.item .fr { color: #3c7d3f; font-weight: 700; }
+/* pás kusov: ťuknutie na k-tý = k kusov, ťahanie pridáva / uberá; zamknutý kus = viac nezaplatíš */
+.qty { display: flex; align-items: center; gap: 8px; }
+.strip { flex: 1; min-width: 0; overflow: hidden; touch-action: pan-y; cursor: pointer; border-radius: 8px; position: relative; }
+.strip:focus-visible { outline: 2px solid #6b3fa0; outline-offset: 2px; }
+.strip.drag { cursor: ew-resize; }
+.strip.fl { -webkit-mask-image: linear-gradient(90deg, transparent, #000 18px); mask-image: linear-gradient(90deg, transparent, #000 18px); }
+.strip.fr { -webkit-mask-image: linear-gradient(270deg, transparent, #000 18px); mask-image: linear-gradient(270deg, transparent, #000 18px); }
+.strip.fl.fr { -webkit-mask-image: linear-gradient(90deg, transparent, #000 18px, #000 calc(100% - 18px), transparent); mask-image: linear-gradient(90deg, transparent, #000 18px, #000 calc(100% - 18px), transparent); }
+.track { display: flex; gap: 2px; width: max-content; padding: 1px 0 4px; }
+.pc { width: 22px; height: 30px; flex: 0 0 22px; border-radius: 7px; display: grid; place-items: center; position: relative; transition: transform .08s; }
+.pc img { width: 19px; height: 19px; filter: grayscale(1); opacity: .3; pointer-events: none; }
+.pc.on { background: #f0dcb0; }
+.pc.on img { filter: none; opacity: 1; }
+.pc.last { transform: translateY(-2px); box-shadow: 0 2px 0 #5e3c1c; }
+.pc.wait::after { content: ""; position: absolute; left: 3px; right: 3px; bottom: -3px; height: 3px; border-radius: 2px; background: #8b5a2b; }
+.pc.lock { box-shadow: inset 0 0 0 1.5px #c9b48a; background: #faf3e2; cursor: not-allowed; }
+.pc.lock img { opacity: .18; }
+.pc .padlock { position: absolute; inset: 0; margin: auto; width: 14px; height: 16px; color: #8b5a2b; }
+.count { flex: 0 0 auto; min-width: 54px; text-align: center; line-height: 1.1; }
+.count b { display: block; font-size: 15px; font-variant-numeric: tabular-nums; }
+.count small { display: block; font-size: 10.5px; color: #7a6a4a; font-weight: 700; min-height: 1.2em; white-space: nowrap; }
+.count small.lbl { min-height: 0; text-transform: uppercase; letter-spacing: .05em; font-size: 9.5px; }
+.count small.max { color: #d23b2f; }
+/* posuvník ceny: graf rozdelenia cien (dole predané, hore v knihe), fialová zóna = hneď; jedno tlačidlo so sumou */
+.trade { display: flex; gap: 8px; align-items: stretch; }
+.slider { position: relative; flex: 1; min-width: 0; height: 76px; }
+.slider canvas { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 9px; }
+.slider input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: grab; touch-action: pan-y; }
+.slider:focus-within canvas { outline: 2px solid #6b3fa0; outline-offset: 2px; }
+.go { flex: 0 0 108px; border-radius: 12px; color: #fff; font-weight: 800; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 6px 4px; }
+.go small { font-size: 11px; font-weight: 700; opacity: .9; }
+.go .amt { font-size: 16px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.go.now { background: #6b3fa0; }
+.go.wait { background: #8b5a2b; box-shadow: inset 0 0 0 2px #5e3c1c; }
+.go:disabled { opacity: .45; }
+.go:active:not(:disabled) { transform: translateY(1px); }
+.hint { font-size: 12.5px; color: #7a6a4a; height: 1.5em; line-height: 1.5em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.hint b { color: #2b2116; }
+.hint .adv { font-weight: 700; }
 .kind { display: inline-block; padding: 1px 7px; border-radius: 8px; font-size: 11px; font-weight: 800; color: #fff; margin-right: 4px; }
 .bar { height: 7px; background: #eee; border-radius: 4px; overflow: hidden; margin-top: 4px; }
 .bar div { height: 100%; background: #6b3fa0; }

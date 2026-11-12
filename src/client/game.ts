@@ -1,6 +1,7 @@
 // Čarovná záhrada – klient (#136: TypeScript, jeden balík esbuild; 3D pohľad sa načíta až po štarte ako ďalší kúsok)
 import * as D from '../shared/data.ts';
 import * as Bk from '../shared/book.ts';
+import * as TR from './traderow.ts';
 import type { Level } from '../shared/book.ts';
 import type { ItemId, Potion, Species, SpeciesId, UpgradeId } from '../shared/data.ts';
 import * as Players from '../shared/players.ts';
@@ -907,11 +908,12 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
   // ---------- Modálne okná ----------
   function openModal(title: string, render: (body: HTMLElement) => void): void {
     $('mTitle').textContent = title;
-    S.modal = { refresh: () => { $('mBody').innerHTML = ''; render($('mBody')); } };
+    // počas ťahania na trhu (pás kusov, posuvník ceny) sa okno neprekreslí – prekreslí sa, keď prst pustí
+    S.modal = { refresh: () => { if (S.modalHold) { S.modalPending = true; return; } $('mBody').innerHTML = ''; render($('mBody')); } };
     S.modal.refresh();
     $('modal').classList.remove('hidden');
   }
-  function closeModal(): void { $('modal').classList.add('hidden'); S.modal = null; S.brewed = null; S.brewHint = null; }
+  function closeModal(): void { $('modal').classList.add('hidden'); S.modal = null; S.modalHold = false; S.modalPending = false; S.brewed = null; S.brewHint = null; }
   $('mClose').onclick = closeModal;
   $('modal').addEventListener('click', e => { if (e.target === $('modal')) closeModal(); });
   $('bBook').onclick = () => { openUI('book'); };
@@ -1009,10 +1011,9 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
   }
 
   // ---- Trh s knihou objednávok (#112) ----
-  // Počítadlo kusov a otvorený blok Dopyt / Ponuka pri položke (kľúč 'buy:<id>' / 'sell:<id>'); pamätá sa, kým je okno otvorené
-  const shopN = new Map<string, number>();
-  let shopOpen: string | null = null;
-  const num = (x: number): string => (Number.isInteger(x) ? String(x) : x.toFixed(1).replace('.', ','));
+  // Riadok tovaru (traderow.ts): pás kusov, posuvník ceny s grafom a jedno tlačidlo. Počet a zvolená cena sa pamätajú
+  // pod kľúčom 'buy:<id>' / 'sell:<id>', kým je okno otvorené (správy zo servera okno prekreslia).
+  const rowState = new Map<string, TR.RowState>();
   // Položka trhu pre tovar s knihou (null = tovar bez knihy: pevná výkupná cena)
   function bookView(id: string): MarketItemView | null {
     const M = S.market;
@@ -1032,60 +1033,21 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       return 1;
     };
   }
-  // Riadok tovaru s počítadlom, okamžitým obchodom a blokom Dopyt / Ponuka. side = čo robí hráč (kúpiť / predať).
+  // Riadok tovaru. side = čo robí hráč (kúpiť / predať).
   function tradeRow(body: HTMLElement, id: ItemId, side: 'buy' | 'sell', info: HTMLElement, q: MarketItemView | null, fixed: number): void {
-    const key = side + ':' + id, have = S.inv[id] ?? 0;
-    const lv = q ? others(side === 'buy' ? q.a : q.b) : [];
-    const avail = lv.reduce((a, l) => a + l.n, 0), fresh = side === 'sell' && id.startsWith('fl_') ? sellFresh(id) : undefined;
-    const total = (k: number): { n: number; total: number; worst: number; first: string | null } => (q ? Bk.walk(lv, k, fresh) : { n: k, total: k * fixed, worst: fixed, first: null });
-    // Najviac kusov: pri nákupe koľko zaplatí (aj nad ponuku – pre dopyt podľa priemernej ceny), pri predaji čo má
-    const ref = (k: number): number => {
-      if (!q) return k * fixed;
-      if (avail >= k) return total(k).total;
-      if (avail > 0) return Math.round(total(avail).total / avail * k);
-      return k * q.p;
-    };
-    const open = shopOpen === key && !!q;
-    let max = side === 'sell' ? have : 0;
-    if (side === 'buy') while (max < 99 && ref(max + 1) <= S.coins) max++;
-    // Bez otvoreného Dopytu / Ponuky ide počítadlo len po to, čo sa dá hneď kúpiť či predať (nič = vypnuté);
-    // viac kusov (nad ponuku v knihe) až pre Dopyt / Ponuku
-    if (q && !open) max = Math.min(max, avail);
-    const locked = max <= 0;
-    const n = Math.max(1, Math.min(shopN.get(key) ?? 1, Math.max(1, max)));
-    const setN = (k: number): void => { shopN.set(key, Math.max(1, Math.min(k, Math.max(1, max)))); refreshModal(); };
-    const now = total(n), avg = ref(n) / n;
-    // riadok s cenou: Ø za kus pre zvolené množstvo, trend, zásoba a kto je prvý protivník
-    const line = h('small', null, (side === 'sell' ? `${have} ks · ` : '') + `Ø ${num(Math.round(avg * 10) / 10)} 🪙/ks `);
+    const key = side + ':' + id, state = rowState.get(key) ?? {};
+    rowState.set(key, state);
+    // pod názvom: zásoba v knihe (nákup) alebo koľko má hráč (predaj) a trend ceny za deň
+    const line = h('small', null, side === 'buy' ? (q ? `na sklade ${others(q.a).reduce((a, l) => a + l.n, 0)} ` : '') : `máš ${S.inv[id] ?? 0} ks `);
     if (q) line.appendChild(priceTrend(q.h, q.p, side === 'sell'));
-    if (q && side === 'buy') line.appendChild(document.createTextNode(avail ? ` · na sklade ${avail}` : ' · VYPREDANÉ'));
-    if (q && side === 'sell' && id.startsWith('fl_')) line.appendChild(document.createTextNode(` · na trhu ${q.st} ks`));
-    const first = lv[0];
-    if (first && first.w) line.appendChild(h('span', { class: 'who' }, side === 'buy' ? ` · 🏷️ ${first.w}` : ` · ${first.w} kúpi za ${first.p}`));
-    info.appendChild(line);
-    if (side === 'buy' && first && first.fr != null) info.appendChild(h('small', { class: 'fr' }, `🌷 čerstvosť ${Math.round(first.fr * 100)} %`));
-    const cnt = h('div', { class: 'cnt' + (locked ? ' off' : '') },
-      h('button', { onclick: () => { setN(n - 1); } }, '−'), h('span', null, String(n)), h('button', { onclick: () => { setN(n + 1); } }, '+'),
-      side === 'buy' ? h('button', { onclick: () => { setN(n + 5); } }, '+5') : h('button', { onclick: () => { setN(have); } }, 'Všetko'));
-    if (locked) for (const b of cnt.querySelectorAll('button')) b.disabled = true;
-    const inst = h('button', { class: 'btn', onclick: () => { send({ t: side, id, n, lim: now.worst }); if (side === 'sell') sfx('coin'); shopN.delete(key); } }, `${now.total} 🪙`);
-    if (now.n < n || !now.total || (side === 'buy' && now.total > S.coins) || (side === 'sell' && have < n)) { inst.disabled = true; inst.textContent = '— 🪙'; }
-    const ctl = h('div', { class: 'ctl' }, cnt, h('div', { class: 'grow' }), inst);
-    if (q) ctl.appendChild(h('button', { class: 'btn tg' + (open ? ' on' : ''), onclick: () => { shopOpen = open ? null : key; refreshModal(); } }, side === 'buy' ? 'Dopyt' : 'Ponuka'));
-    const item = h('div', { class: 'item' + (open ? ' open' : '') }, h('div', { class: 'top' }, img(id), info), ctl);
-    if (open) {
-      // štyri ceny: násobky okamžitej ceny, zelená = lepšie pre hráča, červená = horšie
-      const colors = side === 'buy' ? ['g2', 'g1', 'r1', 'r2'] : ['r2', 'r1', 'g1', 'g2'];
-      const four = h('div', { class: 'four' });
-      Bk.STEPS.forEach((f, i) => {
-        const p = Bk.stepPrice(avg, f), t = p * n;
-        const b = h('button', { class: 'btn ' + (colors[i] ?? ''), title: `${p} 🪙/ks`, onclick: () => { send({ t: 'order', id, side, n, p }); shopOpen = null; shopN.delete(key); } }, `${t} 🪙`);
-        if ((side === 'buy' && t > S.coins) || (side === 'sell' && have < n) || S.orders.length >= S.orderLimit) b.disabled = true;
-        four.appendChild(b);
-      });
-      item.appendChild(h('div', { class: 'blk' }, h('div', { class: 'lbl' }, side === 'buy' ? 'Dopyt' : 'Ponuka'), four));
-    }
-    body.appendChild(item);
+    info.insertBefore(line, info.children[1] ?? null);
+    body.appendChild(TR.tradeRow({
+      id, side, icon: Art.icon(id), info, q, fixed, have: S.inv[id] ?? 0, coins: S.coins,
+      mine: new Set(S.orders.map(o => o.id)), fresh: side === 'sell' && id.startsWith('fl_') ? sellFresh(id) : undefined,
+      orderRoom: S.orders.length < S.orderLimit, state,
+      send: m => { send(m); if (m.t === 'sell') sfx('coin'); },
+      busy: on => { S.modalHold = on; if (!on && S.modalPending) { S.modalPending = false; refreshModal(); } }
+    }));
   }
 
   function openShop(tab: 'buy' | 'sell' | 'mine' | 'up' | 'news'): void {

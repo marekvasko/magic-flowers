@@ -51,7 +51,7 @@ export interface ClientState {
   dock?: Dock; // mólo a loďka (#160): stavba, poloha loďky, kto v nej sedí, zima
   keys: Partial<Record<Dir, boolean>>; kbd?: boolean; stick: Pt; path: Pt[] | null; pendingAct: (Pt & { onTile?: boolean }) | null;
   tapMark: (Pt & { t: number; act: boolean }) | null; lastSent: string; sentAt: number;
-  fx: Fx[]; screenFx: ScreenFx[]; bubbles: Partial<Record<number, { text: string; until: number }>>; modal: { refresh: () => void } | null;
+  fx: Fx[]; screenFx: ScreenFx[]; bubbles: Partial<Record<number, { text: string; until: number }>>; modal: { refresh: () => void } | null; modalHold?: boolean; modalPending?: boolean;
   cauldron: ItemId[]; brewed: PotionId | null; brewHint: BrewHint | null; anchors: Partial<Record<Ground, Pt>>; joined: boolean;
   skyTaps: number[]; tipIdx: number; stuckT: number;
   asleep?: boolean; ff?: boolean; sleepN?: number; sleepTotal?: number; areaFx?: AreaFx | null;

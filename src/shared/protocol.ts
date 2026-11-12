@@ -55,7 +55,7 @@ export type BatchesView = Partial<Record<ItemId, { n: number; age: number }[]>>;
 // Položka trhu: cena, zásoba a posledné ceny
 // Položka trhu: cena veľkoobchodníka (predaj semienok a kompostu / výkup kvetov) pri jeho zásobe st, posledné ceny,
 // kniha objednávok: a = ponuky (od najlepšej), b = dopyty (od najlepšej) – #112
-export interface MarketItemView { p: number; st: number; h: number[]; a: Level[]; b: Level[] }
+export interface MarketItemView { p: number; st: number; h: number[]; a: Level[]; b: Level[]; t: [number, number][] }   // t = obchody za posledné dni: [cena, kusy]
 // Otvorená objednávka hráča (záložka Moje): kúpené / predané q − rem z q, záloha mincí, kedy vyprší, čerstvosť kvetov
 export interface OrderView { id: string; item: ItemId; side: OrderSide; p: number; q: number; rem: number; coins: number; exp: number | null; fr?: number; dead?: number }
 export interface UpcomingFestival {
