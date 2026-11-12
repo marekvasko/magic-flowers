@@ -14,6 +14,7 @@ import type { EconInputs } from './economy.ts';
 import { sl } from './game.ts';
 import type { GamePeriodic, GameProposer, Msg, To } from './game.ts';
 import * as I from './items.ts';
+import * as Mkt from './market.ts';
 import * as Ice from './ice.ts';
 import * as Scav from './scavenge.ts';
 import * as Dielna from './dielna.ts';
@@ -118,6 +119,11 @@ const OWN: { [T in keyof EventInputs]: GameProposer<EventInputs[T]> } = {
         const w = I.wiltSweep(I.playerC(sv), tick);
         const names = Object.entries(w);
         if (names.length) ctx.emit(toast$(key, '🥀 Zvädlo: ' + names.map(([n, k]) => `${String(k)}× ${n}`).join(', ') + '. Zvädnuté kvety sa dajú skompostovať v sklade.'));
+        // kvety, ktoré čakajú na trhu na vyzdvihnutie (#112), vädnú rovnako – zvädnuté ostanú na vyzdvihnutie
+        if (sv.box) {
+          const wb = Object.entries(I.wiltSweep(Mkt.boxC(sv), tick));
+          if (wb.length) ctx.emit(toast$(key, '🥀 Na trhu zvädlo: ' + wb.map(([n, k]) => `${String(k)}× ${n}`).join(', ') + '. Zvädnuté kvety čakajú na vyzdvihnutie v Moje.'));
+        }
         // ľad v batohu sa do pol dňa roztopí
         const k = I.meltSweep(I.playerC(sv), tick);
         if (k) ctx.emit(toast$(key, `💧 V batohu sa ti roztopil ľad (${String(k)}×). Ľad treba rýchlo odniesť do ľadovne.`));

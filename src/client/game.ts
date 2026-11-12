@@ -1066,29 +1066,43 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
         }
       } else if (tab === 'mine') {
         body.appendChild(h('small', { style: 'display:block;color:#7a6a4a;margin-bottom:6px' }, `Otvorené: ${S.orders.length} z ${S.orderLimit} · vyššia reputácia dovolí viac · objednávka platí ${Bk.ORDER_DAYS} dni`));
-        // na vyzdvihnutie: kúpené cez Dopyt, vrátené z vypršanej ponuky, zvädnuté z ponuky
-        const box = entries(S.box).filter(([, k]) => k > 0);
+        // na vyzdvihnutie: kúpené cez Dopyt, vrátené z vypršanej ponuky, zvädnuté z ponuky. Kvety tu starnú ako v batohu
+        // (každý je ten istý kus so svojím vekom) a dožité zvädnú na kôpku zvädnutých; vybrať sa dá len pri stánku.
+        const box = entries(S.box).filter(([, k]) => k > 0).sort((a, b) => Number(a[0] === 'wilted') - Number(b[0] === 'wilted'));
         if (box.length) {
-          body.appendChild(h('b', { style: 'display:block;margin:2px 0 6px' }, '📦 Na vyzdvihnutie'));
+          body.appendChild(h('b', { style: 'display:block;margin:2px 0 2px' }, '📦 Na vyzdvihnutie'));
+          body.appendChild(h('small', { style: 'display:block;color:#7a6a4a;margin-bottom:6px' }, 'Tovar z trhu si zoberieš len tu pri stánku. Kvety tu ďalej starnú a vädnú.'));
           for (const [id, k] of box) {
-            const b = lookup(S.boxFb, id)?.[0], sp = id.slice(3);
-            const fr = b && id.startsWith('fl_') && D.isSpeciesId(sp) ? ` · čerstvosť ${Math.round(D.freshness(sp, b.age) * 100)} %` : '';
-            body.appendChild(h('div', { class: 'row' }, img(id), h('div', { class: 'info' }, h('b', null, D.itemName(id)), h('small', null, `${k} ks${fr}`)),
+            const spId = id.slice(3), sp = speciesOf(spId), list = lookup(S.boxFb, id) ?? [], extra = Math.max(0, S.tick - (S.fbTick ?? S.tick));
+            const sub: string[] = [`${k} ks`];
+            if (id === 'wilted') sub.push('dajú sa skompostovať');
+            else if (id.startsWith('fl_') && sp && list[0] && D.isSpeciesId(spId)) {
+              const age = list[0].age + extra, rem = Math.max(0, 1 - age / (sp.life * TPD));
+              sub.push(`čerstvosť ${Math.round(D.freshness(spId, age) * 100)} %`, `najstaršie zvädnú o ${fmtLeft(Math.max(0, sp.life * TPD - age))}`);
+              if (rem < 0.3) sub.push('⚠️');
+            }
+            body.appendChild(h('div', { class: 'row' + (id === 'wilted' ? ' dead' : '') }, img(id), h('div', { class: 'info' }, h('b', null, D.itemName(id)), h('small', null, sub.join(' · '))),
               h('div', { class: 'btns' }, h('button', { class: 'btn', onclick: () => { send({ t: 'collect', id }); sfx('pop'); } }, 'Vybrať'))));
           }
         }
         if (!S.orders.length) body.appendChild(h('p', null, 'Nemáš žiadne otvorené objednávky. Dopyt alebo Ponuku zadáš pri tovare v Kúpiť a Predať. 🏷️'));
+        else body.appendChild(h('b', { style: 'display:block;margin:8px 0 6px' }, '🏷️ Objednávky'));
+        // objednávka: pruh z troch častí – vybavené (kúpené / predané), čaká v knihe, zvädlo (len ponuka kvetov) – a popis
         for (const o of S.orders) {
-          const buy = o.side === 'buy', dead = o.dead ?? 0, done = o.q - o.rem - dead;
-          const parts = [`${done} z ${o.q} ${buy ? 'kúpené' : 'predané'}`];
-          if (dead) parts.push(`${dead} zvädlo · ${o.rem} ostáva`);
-          parts.push(`${o.p} 🪙/ks`);
+          const buy = o.side === 'buy', dead = o.dead ?? 0, done = Math.max(0, o.q - o.rem - dead), pct = (k: number): string => `${(k / Math.max(1, o.q) * 100).toFixed(1)}%`;
+          const bar = h('div', { class: 'obar', title: `${done} ${buy ? 'kúpené' : 'predané'}, ${o.rem} čaká, ${dead} zvädlo` },
+            h('i', { class: 'done', style: `width:${pct(done)}` }), h('i', { class: 'wait ' + o.side, style: `width:${pct(o.rem)}` }), h('i', { class: 'dead', style: `width:${pct(dead)}` }));
+          const legend = h('div', { class: 'olegend' },
+            h('span', null, h('i', { class: 'done' }), `${done} ${buy ? 'kúpené' : 'predané'}`),
+            h('span', null, h('i', { class: 'wait ' + o.side }), `${o.rem} ${buy ? 'v dopyte' : 'v ponuke'}`));
+          if (dead || o.item.startsWith('fl_') && !buy) legend.appendChild(h('span', null, h('i', { class: 'dead' }), `${dead} zvädlo`));
+          const parts = [`${o.p} 🪙/ks`];
           if (buy) parts.push(`odložené ${o.coins} 🪙`);
-          if (o.exp != null) parts.push(`ešte ${fmtLeft(o.exp - S.tick)}`);
           if (o.fr != null) parts.push(`čerstvosť ${Math.round(o.fr * 100)} %`);
+          if (o.exp != null) parts.push(`platí ešte ${fmtLeft(o.exp - S.tick)}`);
           body.appendChild(h('div', { class: 'row' }, img(o.item),
             h('div', { class: 'info' }, h('b', null, h('span', { class: 'kind', style: `background:${buy ? '#6b3fa0' : '#8b5a2b'}` }, buy ? 'Dopyt' : 'Ponuka'), D.itemName(o.item)),
-              h('small', null, parts.join(' · ')), h('div', { class: 'bar' }, h('div', { style: `width:${Math.round(done / o.q * 100)}%` }))),
+              bar, legend, h('small', null, parts.join(' · '))),
             h('div', { class: 'btns' }, h('button', { class: 'btn gray', onclick: () => { send({ t: 'cancelOrder', id: o.id }); } }, 'Zrušiť'))));
         }
       } else if (tab === 'up') {

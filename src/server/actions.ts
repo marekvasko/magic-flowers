@@ -120,6 +120,9 @@ type Where = Pick<Presence, 'area' | 'x' | 'y'> | null | undefined;
 export const WISH_GOLD = { me: 400, others: 100 } as const;
 export function inRing(p: Where): boolean { if (!p || p.area !== 'garden') return false; const x = Math.floor(p.x), y = Math.floor(p.y); return x >= D.RING.x0 && x <= D.RING.x1 && y >= D.RING.y0 && y <= D.RING.y1; }
 export function nearHouse(p: Where): boolean { return !!p && p.area === 'garden' && Math.hypot(p.x - HOUSE.x, p.y - HOUSE.y) <= 3.5; }
+// Pri trhovom stánku (#112): tovar z trhu (na vyzdvihnutie, záloha zrušenej objednávky) sa dá zobrať len tu
+export const STALL: Point = { x: 12.5, y: 28.5 };
+export function nearStall(p: Where): boolean { return !!p && p.area === 'garden' && Math.hypot(p.x - STALL.x, p.y - STALL.y) <= 3; }
 export function nearIcehouse(p: Where): boolean {
   const L = D.ICEHOUSE.lot;
   return !!p && p.area === 'garden' && Math.hypot(p.x - (L.x0 + L.x1 + 1) / 2, p.y - (L.y0 + L.y1 + 1) / 2) <= 3;
@@ -761,19 +764,22 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
       ctx.emit(toast$(d.key, '🏷️ ' + (now + wait).trim(), 'gift'));
     }
   },
-  // Vyzdvihnutie tovaru z trhu (d: { key, id: tovar }): z Moje → Na vyzdvihnutie do batohu
+  // Vyzdvihnutie tovaru z trhu (d: { key, id: tovar }): z Moje → Na vyzdvihnutie do batohu – len pri stánku
   collect: {
     keys: d => ({ writes: [`save:${d.key}`] }),
     run(s, d, ctx) {
+      if (!nearStall(who(ctx))) { ctx.reject('Tovar si vyzdvihneš pri trhovom stánku – podíď bližšie.'); return; }
       const sv = saveOf(s, d.key, ctx), n = D.isItemId(d.id) ? Mkt.collect(sv, d.id, ctx.tick) : 0;
       if (!n) { ctx.reject('Tu nič nečaká.'); return; }
       ctx.emit(toast$(d.key, `📦 Vyzdvihnuté: ${String(n)}× ${D.itemName(d.id)}`));
     }
   },
-  // Zrušenie vlastnej objednávky (d: { key, id: '<tovar>#<n>' }): len tá objednávka a uloženie hráča
+  // Zrušenie vlastnej objednávky (d: { key, id: '<tovar>#<n>' }): len tá objednávka a uloženie hráča; záloha ide do
+  // batohu, preto len pri stánku
   cancelOrder: {
     keys: d => { const r = Mkt.parseOrderId(d.id); return { writes: r ? [`market:book:${r.item}:${String(r.n)}`, `save:${d.key}`] : [`save:${d.key}`] }; },
     run(s, d, ctx) {
+      if (!nearStall(who(ctx))) { ctx.reject('Objednávku zrušíš pri trhovom stánku – podíď bližšie.'); return; }
       const r = Mkt.parseOrderId(d.id), err = r ? Mkt.cancelOrder(s, d.key, r.item, r.n, ctx) : 'Táto objednávka už nie je otvorená.';
       if (err || !r) { ctx.reject(err); return; }
       ctx.emit(toast$(d.key, `Objednávka zrušená – záloha (${D.itemName(r.item)}) sa ti vrátila.`));
