@@ -130,6 +130,7 @@ export interface Book {
   orders: Partial<Record<string, Order>>;   // číslo → objednávka
   vo: NpcAccount;             // pokladňa veľkoobchodníka pre tento tovar (mince na výkup, voľný tovar) – každý tovar zvlášť,
                               // aby sa obchody s rôznym tovarom nikdy nestretli na jednom účte
+  q?: string;                 // čím bol cenník veľkoobchodníka naposledy vypísaný (zásoba, mince, sviatok, obdobie, jeho objednávky) – bez zmeny sa nepočíta znova
   tr?: [number, number, number][];   // posledné obchody [krok, cena za kus, kusy] za Bk.TRADE_DAYS dní (graf pri posuvníku ceny)
 }
 // Účet postavy: voľné mince a tovar (to, čo je v jej objednávkach, je v ich zálohe)
