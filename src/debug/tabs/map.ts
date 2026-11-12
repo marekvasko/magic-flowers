@@ -7,6 +7,7 @@ import { vehiclesOf, vehicleText, drawVehicle, nextToggle, VEHICLE_COLOR } from 
 import type { DebugVehicle } from './vehicles-core.ts';
 import type { Kid, TabCtx, TabInstance } from '../ui.ts';
 import { tileEditor } from './tile-editor.ts';
+import { PLACEABLE } from '../../shared/cheats.ts';
 import { cheat, cheatKey, setCheatKey } from './cheat-api.ts';
 import type { CheatBody } from './cheat-api.ts';
 import { lookup, must } from '../../shared/util.ts';
@@ -86,6 +87,10 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
   // vybrané políčka na úpravu (#153): Shift+klik pridá / uberie, Shift+ťahanie pridá obdĺžnik (na dotyk prepínač „Select several“);
   // sel = naposledy vybrané (ukazuje ho inšpektor)
   let picks: Pt[] = [], several = false, drag: { from: Pt; to: Pt } | null = null, skipClick = false;
+  // štetec (#153): zapnutý štetec maľuje zvolenú zem ťahaním po mape (reset = guma, vráti zem z generátora); ťah ide na server
+  // naraz po pustení; kým sa ukladá, ďalšie ťahy počkajú a pošlú sa spolu
+  const brush = { on: false, g: 'grass' as string, size: 1 };
+  let stroke: { tiles: Set<number>; last: Pt } | null = null, painting = new Set<number>(), waiting = new Set<number>();
   const on = (id: string): boolean => layers.includes(id);
   const source = (): 'room' | 'seed' => {
     const s = ctx.param('mapsrc');
@@ -306,6 +311,9 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     // vybrané a ukázané políčko
     const box = (p: Pt | null, c: string, lw: number): void => { if (!p) return; g.strokeStyle = c; g.lineWidth = lw / T; g.strokeRect(p.x + lw / T / 2, p.y + lw / T / 2, 1 - lw / T, 1 - lw / T); };
     for (const p of picks) box(p, COL.sel, picks.length > 1 ? 2 : 3);
+    // ťah štetca a ťahy, ktoré sa ešte ukladajú
+    g.fillStyle = 'rgba(255,216,74,.45)';
+    for (const set of [stroke ? stroke.tiles : null, painting, waiting]) for (const i of set || []) g.fillRect(i % m.w, Math.floor(i / m.w), 1, 1);
     if (drag) for (const p of rect(drag.from, drag.to)) box(p, COL.hover, 1.5);
     if (hover && !(sel && sel.x === hover.x && sel.y === hover.y)) box(hover, COL.hover, 2);
   }
@@ -402,27 +410,69 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     if (source() !== 'room' || !snap || !map || map.error) { editBox.hidden = true; return; }
     const m = map;
     editBox.hidden = false;
+    const one = picks.length === 1 ? must(picks[0]) : null;
+    const head = h('h4', null, 'Edit tiles', h('span', null, brush.on ? 'brush' : one ? `${one.x}, ${one.y}` : picks.length ? `${picks.length} tiles` : ''));
+    if (!cheatKey()) {
+      const inp = h('input', { type: 'password', class: 'te-key', placeholder: 'cheat key (DEBUG_CHEATS_KEY)', autocomplete: 'off' });
+      const use = (): void => { setCheatKey(inp.value.trim()); renderEdit(); };
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') use(); });
+      editBox.replaceChildren(head, h('p', { class: 'muted' }, 'Enter the cheat key to edit tiles of this room.'), h('div', { class: 'te-row' }, inp, h('button', { onclick: use }, 'Use key')), editMsg);
+      return;
+    }
+    // štetec: zapnúť, materiál, veľkosť
+    const onBox = h('input', { type: 'checkbox' });
+    onBox.checked = brush.on;
+    onBox.addEventListener('change', () => { brush.on = onBox.checked; if (brush.on) picks = []; canvas.style.touchAction = brush.on ? 'none' : ''; selected(); });
+    const mat = h('select', null, PLACEABLE.map(g => h('option', { value: g, selected: g === brush.g ? 'selected' : null }, g)),
+      h('option', { value: 'reset', selected: brush.g === 'reset' ? 'selected' : null }, 'eraser (generated ground)'));
+    mat.addEventListener('change', () => { brush.g = mat.value; });
+    const size = h('select', null, [1, 3, 5].map(n => h('option', { value: n, selected: n === brush.size ? 'selected' : null }, `${n}×${n}`)));
+    size.addEventListener('change', () => { brush.size = Number(size.value) || 1; });
+    const paint = h('div', { class: 'te-row' }, h('label', { title: 'Paint the chosen ground by clicking or dragging over the map' }, onBox, ' 🖌️ Brush'), mat, size);
+    if (brush.on) {
+      editBox.replaceChildren(head, paint, h('p', { class: 'muted' }, 'Click or drag over the map to paint. Buildings, gates, lots, the dock, giant trees, glacier and cliffs are skipped; a plot under a non-tillable object is removed.'), editMsg);
+      return;
+    }
     const sevBox = h('input', { type: 'checkbox' });
     sevBox.checked = several;
     sevBox.addEventListener('change', () => { several = sevBox.checked; });
     const tools = h('div', { class: 'te-row' }, h('label', { title: 'Or hold Shift: click toggles a tile, drag adds a rectangle' }, sevBox, ' Select several'),
       picks.length ? h('button', { onclick: () => { picks = []; selected(); } }, 'Clear selection') : null);
-    const one = picks.length === 1 ? must(picks[0]) : null;
-    const head = h('h4', null, 'Edit tiles', h('span', null, one ? `${one.x}, ${one.y}` : picks.length ? `${picks.length} tiles` : ''));
-    if (!picks.length) { editBox.replaceChildren(head, h('p', { class: 'muted' }, 'Tap a tile to change it. Shift+click or Shift+drag (or “Select several”) to change many at once.'), tools); return; }
-    if (!cheatKey()) {
-      const inp = h('input', { type: 'password', class: 'te-key', placeholder: 'cheat key (DEBUG_CHEATS_KEY)', autocomplete: 'off' });
-      const use = (): void => { setCheatKey(inp.value.trim()); renderEdit(); };
-      inp.addEventListener('keydown', e => { if (e.key === 'Enter') use(); });
-      editBox.replaceChildren(head, h('p', { class: 'muted' }, 'Enter the cheat key to edit tiles of this room.'), h('div', { class: 'te-row' }, inp, h('button', { onclick: use }, 'Use key')), editMsg, tools);
-      return;
-    }
+    const forget = h('div', { class: 'te-row' }, h('button', { class: 'muted', onclick: () => { setCheatKey(''); renderEdit(); } }, 'Forget key'));
+    if (!picks.length) { editBox.replaceChildren(head, paint, h('p', { class: 'muted' }, 'Tap a tile to change it. Shift+click or Shift+drag (or “Select several”) to change many at once.'), editMsg, tools, forget); return; }
     const online = new Map(snap.online.map(o => [o.player, o.name]));
     const owners = Object.keys(snap.state.saves || {}).map(id => ({ id, label: online.get(id) ?? id }));
     const ov = snap.state.ground?.[ctx.area];
     const tiles = picks.flatMap(p => { const i = p.y * m.w + p.x, t = m.tiles[i]; return t ? [{ i, tile: t, changed: !!ov?.[String(i)] }] : []; });
-    editBox.replaceChildren(head, ...tileEditor({ h, D, area: ctx.area, tiles, owners, act }), editMsg, tools,
-      h('div', { class: 'te-row' }, h('button', { class: 'muted', onclick: () => { setCheatKey(''); renderEdit(); } }, 'Forget key')));
+    editBox.replaceChildren(head, paint, ...tileEditor({ h, D, area: ctx.area, tiles, owners, act }), editMsg, tools, forget);
+  }
+  // Štetec: políčka pod štetcom (veľkosť size × size okolo bodu) a ťah – aj medzi vzdialenými bodmi pri rýchlom pohybe
+  function dab(t: Pt): void {
+    if (!stroke || !map || map.error) return;
+    const r = (brush.size - 1) / 2;
+    for (let y = t.y - r; y <= t.y + r; y++) for (let x = t.x - r; x <= t.x + r; x++) if (x >= 0 && y >= 0 && x < map.w && y < map.h) stroke.tiles.add(y * map.w + x);
+  }
+  function strokeTo(t: Pt): void {
+    if (!stroke) return;
+    const a = stroke.last, n = Math.max(Math.abs(t.x - a.x), Math.abs(t.y - a.y));
+    for (let k = 1; k <= n; k++) dab({ x: Math.round(a.x + (t.x - a.x) * k / n), y: Math.round(a.y + (t.y - a.y) * k / n) });
+    stroke.last = t;
+  }
+  // Ťah na server: ak sa ešte ukladá predchádzajúci, počká a pôjde s ďalšími spolu
+  function sendPaint(): void {
+    const room = ctx.room;
+    if (busy || !room || !waiting.size) return;
+    painting = waiting; waiting = new Set();
+    const g = brush.g === 'reset' ? null : brush.g, n = painting.size;
+    busy = true;
+    editMsg.textContent = 'Painting…'; editMsg.className = 'te-msg';
+    void cheat(room, { op: 'ground', area: ctx.area, i: [...painting], g }).then(async r => {
+      busy = false;
+      painting = new Set();
+      if (r.ok) { editMsg.textContent = `${g ?? 'Generated ground'} painted under the brush (${n} tile${n === 1 ? '' : 's'}; protected tiles skipped).`; editMsg.className = 'te-msg ok'; }
+      else { editMsg.textContent = r.error; editMsg.className = 'te-msg err'; }
+      if (waiting.size) sendPaint(); else await ctx.refresh();
+    });
   }
   function renderArea(): void {
     if (!map || map.error) { areaBox.replaceChildren(h('h4', null, 'Area'), h('p', null, 'No map.')); return; }
@@ -462,15 +512,18 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
   function selected(): void { sel = picks[picks.length - 1] ?? null; editMsg.textContent = ''; draw(); renderTile(); renderEdit(); }
   canvas.addEventListener('pointerdown', e => {
     const t = tileAt(e);
+    if (t && brush.on && source() === 'room' && cheatKey()) { stroke = { tiles: new Set(), last: t }; dab(t); canvas.setPointerCapture(e.pointerId); draw(); return; }
     if (t && (e.shiftKey || several) && source() === 'room') { drag = { from: t, to: t }; canvas.setPointerCapture(e.pointerId); }
   });
   canvas.addEventListener('pointermove', e => {
     const t = tileAt(e);
+    if (stroke) { if (t && !same(t, stroke.last)) { strokeTo(t); draw(); } return; }
     if (drag && t && !same(t, drag.to)) { drag.to = t; draw(); return; }
     if (e.pointerType !== 'mouse') return; // na dotyk len ťuknutie
     if (!same(t, hover)) { hover = t; draw(); renderTile(); }
   });
   canvas.addEventListener('pointerup', () => {
+    if (stroke) { for (const i of stroke.tiles) waiting.add(i); stroke = null; skipClick = true; sendPaint(); draw(); return; }
     if (!drag) return;
     const area = rect(drag.from, drag.to);
     drag = null; skipClick = true;
@@ -481,7 +534,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
   });
   canvas.addEventListener('pointerleave', () => { if (hover) { hover = null; draw(); renderTile(); } });
   canvas.addEventListener('click', e => {
-    if (skipClick) { skipClick = false; return; }
+    if (skipClick || brush.on) { skipClick = false; return; }
     const t = tileAt(e);
     picks = !t || (picks.length === 1 && picked(t)) ? [] : [t];
     selected();
