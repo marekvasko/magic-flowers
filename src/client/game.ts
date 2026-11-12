@@ -318,7 +318,8 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
   }
   // ---- Loďka (#160) ----
   // Moje miesto v loďke: 0 = veslujem, 1 = vezie ma kamarát, -1 = nie som v loďke (kľúč ako na serveri: meno malými písmenami)
-  const myKey = (): string => S.name.replace(/[<>*]/g, '').trim().slice(0, 14).toLowerCase();
+  const myKeyOf = (name: string): string => name.replace(/[<>*]/g, '').trim().slice(0, 14).toLowerCase();
+  const myKey = (): string => myKeyOf(S.name);
   function mySeat(): number { const d = S.dock; return d && d.built && S.area === 'garden' ? d.seats.indexOf(myKey()) : -1; }
   // Kde je loďka: keď veslujem, idem s ňou ja (predpoveď), inak poloha zo servera
   function boatPos(): Pt | null { const d = S.dock; if (!d || !d.built) return null; return mySeat() === 0 ? { x: S.me.x, y: S.me.y } : d.boat; }
@@ -432,7 +433,8 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     const boat = boatAction(tx, ty, t, sel); // loďka má prednosť pred hráčom, ktorý v nej sedí (ako na serveri)
     if (boat) return boat;
     const other = playerOn(tx, ty);
-    if (other) {
+    const crewmate = !!other && mySeat() >= 0 && !!S.dock?.seats.includes(myKeyOf(other.name)); // spolujazdec v loďke (#161) – ako na serveri
+    if (other && !crewmate) {
       if (sel === 'po_laska') return { i: '💕', l: 'Darovať' };
       if (!sel || D.isTool(sel)) return { i: '👋', l: 'Zamávať' };
       return { i: '🎁', l: 'Darovať' };

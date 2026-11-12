@@ -17,6 +17,8 @@ import * as Vehicles from './vehicles.ts';
 import type { VehicleCheat } from './vehicles.ts';
 import * as Dock from './dock.ts';
 import type { DockCheat } from './dock.ts';
+import * as Transport from './transport.ts';
+import type { TransportCheat } from './transport.ts';
 import { ROOM_RE } from './debug.ts';
 import { sl } from './game.ts';
 import type { GameCtx, GameProposer, GameSlices } from './game.ts';
@@ -31,6 +33,7 @@ export type CheatData =
   | ({ op: 'item'; key: PlayerKey | null; id: ItemId } & Amount)
   | ({ op: 'ice' } & Amount)
   | ({ op: 'vehicle' } & VehicleCheat)   // fúrik a sane (#158): kúpiť, odstrániť, premiestniť, náklad, pustiť
+  | TransportCheat // doprava (#161): všetko pustiť, posádku na breh, loďku k mólu
   | DockCheat; // mólo a loďka (#160): postaviť / zbúrať, loďku inam, hráča do loďky (z nej), prevrátiť na zimu
 
 // Nová hodnota: celé číslo, nie záporné
@@ -53,6 +56,7 @@ export const PROPOSERS: { cheat: GameProposer<CheatData> } = {
         case 'ice': return { writes: ['icehouse', 'storage'] };
         case 'vehicle': return Vehicles.cheatKeys();
         case 'dock': case 'boat': case 'seat': case 'boatFlip': return Dock.cheatKeys(d, w);
+        case 'transport': return Transport.cheatKeys(w);
       }
     },
     run(s, d, ctx) {
@@ -72,6 +76,7 @@ export const PROPOSERS: { cheat: GameProposer<CheatData> } = {
         case 'ice': Ice.setIce(s.icehouse, s.storage, ctx.tick, target(s.icehouse.ice, d)); return;
         case 'vehicle': Vehicles.cheatRun(s, d, ctx); return;
         case 'dock': case 'boat': case 'seat': case 'boatFlip': Dock.cheatRun(s, d, ctx); return;
+        case 'transport': Transport.cheatRun(s, ctx); return;
       }
     }
   }
@@ -130,6 +135,7 @@ export function parseCheat(room: CheatRoom, b: JsonRecord, keyId: (k: PlayerKey)
     case 'boat': return { op: 'boat', x: num(b['x'], 'x'), y: num(b['y'], 'y') };
     case 'seat': return { op: 'seat', key: playerKey(room, b['player'], keyId), on: b['on'] !== false };
     case 'boatFlip': return { op: 'boatFlip', flip: b['flip'] === true };
+    case 'transport': if (b['act'] !== 'reset') throw new Bad(400, 'unknown transport action'); return { op: 'transport', act: 'reset' };
     case 'jump': case 'jumpStop': case 'speed': case 'status': return null;
     default: throw new Bad(400, 'unknown op');
   }

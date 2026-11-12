@@ -50,6 +50,8 @@ export function applyDock(dock: Pick<Dock, 'built'> | null | undefined, tiles: r
   }
 }
 export const seatOf = (dock: Pick<Dock, 'seats'> | null | undefined, key: PlayerKey): number => (dock ? dock.seats.indexOf(key) : -1);
+// Sedia oba hráči v loďke? (#161: ťuknutie na políčko pod loďkou nepatrí spolujazdcovi)
+export function sameBoat(world: Pick<GameWorld, 'dock'>, a: PlayerKey, b: PlayerKey): boolean { const dock = dockOf(world); return seatOf(dock, a) >= 0 && seatOf(dock, b) >= 0; }
 // Správa pre klientov: celý stav móla a loďky
 export function view(dock: Dock): ServerMessage { return { t: 'dock', built: dock.built, boat: { ...dock.boat }, seats: [...dock.seats], flip: dock.flip }; }
 
@@ -332,7 +334,7 @@ export function cheatKeys(d: DockCheat, w: Pick<GameWorld, 'dock' | 'saves'>): K
   switch (d.op) {
     case 'dock': return { writes: ['dock', 'tile:garden:*', ...(d.built ? [] : Object.keys(savesOf(w)).map(k => `pos:${k}`))] };
     case 'boat': return { writes: ['dock', ...seated], reads: boatTiles(d.x, d.y).map(tileKey) };
-    case 'seat': return { writes: ['dock', `pos:${d.key}`], reads: ['tile:garden:*'] };
+    case 'seat': return { writes: ['dock', `pos:${d.key}`], reads: ['tile:garden:*', 'vehicles'] };
     case 'boatFlip': return { writes: ['dock', ...seated] };
   }
 }
@@ -379,6 +381,7 @@ export function cheatRun(s: GameSlices, d: DockCheat, ctx: GameCtx): void {
         return;
       }
       if (!dock.built || dock.flip) ctx.reject(!dock.built ? 'there is no dock' : 'the boat is flipped (winter)');
+      if (Object.hasOwn(s, 'vehicles') && (V.drivenBy(s.vehicles, d.key) || V.ridden(s.vehicles, d.key))) ctx.reject('the player holds or rides a vehicle – release it first'); // #161
       if (seatOf(dock, d.key) >= 0) ctx.reject('the player is already in the boat');
       if (dock.seats.length >= K.seats) ctx.reject('the boat is full (2 seats)');
       dock.seats.push(d.key);

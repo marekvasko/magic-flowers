@@ -73,7 +73,7 @@ interface EventBase<T extends string, D> {
   periodic?: true;
 }
 export type SavedEvent =
-  | EventBase<'dawn' | 'hourly' | 'delivery' | 'npc_jano' | 'npc_fero' | 'npc_zuzka' | 'webDawn' | 'kriziakTrip' | 'boatDay', null>
+  | EventBase<'dawn' | 'hourly' | 'delivery' | 'npc_jano' | 'npc_fero' | 'npc_zuzka' | 'webDawn' | 'kriziakTrip' | 'boatDay' | 'vehSeason', null>   // vehSeason: fúrik a sane (#158), doplnené pri #161
   | EventBase<'festAnnounce' | 'festStart' | 'festEnd', { id: FestivalId }>
   | EventBase<'jano_sell', { sp: SpeciesId; n: number }>
   | EventBase<'cExpire' | 'cDue', { id: number }>

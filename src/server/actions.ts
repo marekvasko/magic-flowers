@@ -211,8 +211,9 @@ export function resolveAct(world: GameWorld, presence: readonly Presence[] | nul
   if (boat) return boat;
 
   // Iný hráč – darovanie (alebo len zamávanie)
+  // spoluhráč v tej istej loďke (#161) sedí na tom istom mieste – ťuknutie pod loďku (sadenie, voda) mu nič nedaruje
   const other = playerAt(presence, me, x, y);
-  if (other) {
+  if (other && !Dock.sameBoat(world, me.key, other.key)) {
     if (item === 'po_laska') return input('love', { key, to: other.key });
     if (D.isTool(item) || !item) return input('wave', { key, to: other.key });
     return input('gift', { key, to: other.key, item });
