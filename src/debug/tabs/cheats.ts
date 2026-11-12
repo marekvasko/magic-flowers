@@ -1,8 +1,9 @@
 // Ladiaca stránka (#153): záložka Cheats – mince, reputácia a predmety hráčov, sklad, ľad v ľadovni, skok v čase
-// a rýchlosť času. Všetko ide cez POST /api/debug/cheat s tajným kľúčom (drží sa v sessionStorage, kým je karta otvorená).
+// a rýchlosť času; mólo a loďka (#160): postaviť / zbúrať, loďku inam, hráča do loďky, zima. Všetko ide cez POST /api/debug/cheat s tajným kľúčom (drží sa v sessionStorage, kým je karta otvorená).
 // Texty po anglicky (nástroj pre správcu), mená predmetov po slovensky ako v hre.
 import type * as DT from '../../shared/data.ts';
-import type { PlayerSave } from '../../shared/save.ts';
+import type { Dock, PlayerSave } from '../../shared/save.ts';
+import { isRecord } from '../../shared/util.ts';
 import type { RoomSnapshot } from '../../server/debug.ts';
 import type { TabCtx, TabInstance } from '../ui.ts';
 import { errText } from '../ui.ts';
@@ -188,6 +189,31 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
       h('div', { class: 'muted' }, `Shared by the garden. Fúrik: spring–autumn, sane: winter only; garden and mountains only; at most ${V.VEHICLE_ICE} ice. Moving or removing a vehicle releases its driver and passenger.`));
   }
 
+  // Mólo a loďka (#160): stav zo sveta, stavba, poloha loďky, posádka a zima (prevrátená loďka)
+  function dockBox(saves: [string, PlayerSave][], online: Map<string, string>, w: RoomSnapshot['state']): HTMLElement {
+    const raw = w['dock'], b = isRecord(raw) && isRecord(raw['boat']) ? raw['boat'] : null;
+    const d: Dock | null = isRecord(raw) && b ? { built: !!raw['built'], boat: { x: Number(b['x']) || 0, y: Number(b['y']) || 0, a: Number(b['a']) || 0 }, seats: Array.isArray(raw['seats']) ? raw['seats'].filter((k): k is string => typeof k === 'string') : [], flip: !!raw['flip'] } : null;
+    const head = h('h4', null, `${D.DOCK.icon} Dock and boat`);
+    if (!d || !d.built) return h('section', null, head, h('div', { class: 'row' }, h('span', { class: 'muted' }, 'The dock is not built.'),
+      h('button', { onclick: () => { void act({ op: 'dock', built: true }, 'Dock built (with the boat at the dock).'); } }, 'Build the dock')));
+    const name = (k: string): string => online.get(k) ? `${online.get(k) ?? ''} (${k})` : k;
+    const bx = numIn(String(D.DOCK.moor.x)), by = numIn(String(D.DOCK.moor.y));
+    bx.step = by.step = '0.5';
+    const who = h('select', null, saves.map(([id]) => h('option', { value: id }, name(id))));
+    return h('section', null, head,
+      h('div', null, `Boat at ${d.boat.x.toFixed(2)}, ${d.boat.y.toFixed(2)}${d.flip ? ' – flipped on the dock (winter)' : ''} · seats: ${d.seats.length ? d.seats.map((k, i) => (i ? 'passenger ' : 'rower ') + name(k)).join(', ') : 'empty'}`),
+      h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Teleport the boat'), 'x', bx, 'y', by,
+        h('button', { onclick: () => { void act({ op: 'boat', x: Number(bx.value), y: Number(by.value) }, 'Boat moved (with its crew).'); } }, 'Move'),
+        h('button', { onclick: () => { void act({ op: 'boat', x: D.DOCK.moor.x, y: D.DOCK.moor.y }, 'Boat back at the dock.'); } }, 'To the dock')),
+      h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Crew'), who,
+        h('button', { onclick: () => { void act({ op: 'seat', player: who.value, on: true }, 'Player put in the boat.'); } }, 'Into the boat'),
+        h('button', { onclick: () => { void act({ op: 'seat', player: who.value, on: false }, 'Player put on the shore.'); } }, 'Out of the boat')),
+      h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Winter'),
+        h('button', { class: d.flip ? 'on' : null, onclick: () => { void act({ op: 'boatFlip', flip: !d.flip }, d.flip ? 'Boat back on the water.' : 'Boat flipped on the dock (winter); the crew is on the dock.'); } }, d.flip ? 'Back on the water' : 'Force winter (flip)'),
+        h('button', { onclick: () => { void act({ op: 'dock', built: false }, 'Dock removed.'); } }, 'Remove the dock')),
+      h('div', { class: 'muted' }, 'The boat must stay on water (the whole boat, not over the dock). At midnight the game flips the boat for winter and back in spring by itself.'));
+  }
+
   function render(): void {
     if (!ctx.room) { root.replaceChildren(h('div', { class: 'empty' }, 'Select a room on the left.')); return; }
     if (disabled) { root.replaceChildren(h('section', null, h('h4', null, 'Cheats are off on this server'), h('div', { class: 'muted' }, 'Set DEBUG_CHEATS_KEY in the server environment (deploy: GitHub secret) to turn them on.'))); return; }
@@ -195,7 +221,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     if (status && snap) {
       const saves = Object.entries(snap.state.saves || {}).filter((e): e is [string, PlayerSave] => !!e[1]);
       const online = new Map(snap.online.map(o => [o.player, o.name]));
-      out.push(playersBox(saves, online), itemsBox(saves, online, snap.state), vehiclesBox(snap.state, online));
+      out.push(playersBox(saves, online), itemsBox(saves, online, snap.state), vehiclesBox(snap.state, online), dockBox(saves, online, snap.state));
     }
     root.replaceChildren(...out);
   }

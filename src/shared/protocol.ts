@@ -5,7 +5,7 @@
 // Pokyny návrhov len pre server (joined, travel, me, scavStart, scavDone, pullStart, pullDone) klient nedostane;
 // typuje ich engine (fáza 3). Správa webbed ide aj klientovi.
 import type { AreaId, BrewHint, Ground, ItemId, Look, PotionId, SpeciesId, UpgradeId } from './data.ts';
-import type { ActiveFestival, Contract, CornerArea, Icehouse, Plant, Soil, VehicleId, Weather, WorldMode } from './save.ts';
+import type { ActiveFestival, Contract, CornerArea, Dock, Icehouse, Plant, Soil, VehicleId, Weather, WorldMode } from './save.ts';
 
 // ---- Klient → server ----
 export type Emote = 'dance' | 'wave' | 'heart' | 'laugh' | 'flower';
@@ -21,7 +21,7 @@ export type ClientMessage =
   | { t: 'brew'; items: ItemId[] }                          // tri kvety fl_*
   | { t: 'wish'; kind: WishKind }
   | { t: 'buyTool'; id: 'pick' | 'lamp' }
-  | { t: 'build'; id: 'icehouse' | 'dielna' }
+  | { t: 'build'; id: 'icehouse' | 'dielna' | 'dock' }
   | { t: 'icehouse'; n: number }                            // vložiť ľad do ľadovne
   | { t: 'compostWilted' | 'buyLoom' | 'masterWeave' | 'loomStart' | 'loomTake' | 'jump' }
   | { t: 'sleep'; on: boolean }
@@ -148,6 +148,7 @@ export type ServerMessage =
   | { t: 'webbed'; stuck: number; ms: number; k: number; sp: SpiderKind }   // pavúk hráča zabalil do pavučiny
   | { t: 'shove'; x: number; y: number }                   // stará pradlena hráča odhodila
   | { t: 'brewed'; k: PotionId; hint?: BrewHint }        // hint len pri slize (rada kotlíka)
+  | ({ t: 'dock' } & Dock)                                 // mólo a loďka (#160): stavba, poloha loďky, kto v nej sedí, zima
   | { t: 'error'; text: string }
   | { t: 'vehicles'; list: VehicleView[] };                 // fúrik a sane (#158): všetky, pri každej zmene
 export type ServerMessageType = ServerMessage['t'];

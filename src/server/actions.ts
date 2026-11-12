@@ -22,6 +22,7 @@ import * as Spiders from './spiders.ts';
 import type { SpiderInputs } from './spiders.ts';
 import * as Dielna from './dielna.ts';
 import * as Vehicles from './vehicles.ts';
+import * as Dock from './dock.ts';
 import { gardenOf, put, redeemOf, savesOf, sl } from './game.ts';
 import type { GameCtx, GameProposer, GameSlices, GameWorld, Msg, To } from './game.ts';
 import type { MovedBatch, Presence, Tile } from './world.ts';
@@ -86,7 +87,7 @@ export interface ActionInputs {
   compostWilted: { key: PlayerKey };
 }
 // Vstup z rozkladu kliknutia (resolveAct): akcia hráča alebo akcia s pavučinou
-type ActInputs = ActionInputs & Pick<SpiderInputs, 'pullStart' | 'clearWeb'>;
+type ActInputs = ActionInputs & Pick<SpiderInputs, 'pullStart' | 'clearWeb'> & Pick<Dock.DockInputs, 'board' | 'unboard'>;
 export type ActInput = { [T in keyof ActInputs]: { type: T; data: ActInputs[T] } }[keyof ActInputs];
 const input = <T extends keyof ActInputs>(type: T, data: ActInputs[T]): { type: T; data: ActInputs[T] } => ({ type, data });
 
@@ -205,6 +206,9 @@ export function resolveAct(world: GameWorld, presence: readonly Presence[] | nul
   const sv = world.saves[key];
   if (!sv || (item && !(D.isItemId(item) && sv.inv[item]))) return null;
   const i = y * D.areaSize(area).w + x, t = must(tiles[i]);
+  // Loďka (#160): nastúpiť (ťuknutie na loďku), vystúpiť (ťuknutie na breh či mólo vedľa loďky)
+  const boat = Dock.resolveAct(world, me, x, y, item);
+  if (boat) return boat;
 
   // Iný hráč – darovanie (alebo len zamávanie)
   const other = playerAt(presence, me, x, y);
@@ -289,7 +293,7 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
         for (const i of bodyTiles(area, p.x, p.y)) reads.add(`tile:${area}:${i}`);
         reads.add(`tile:${area}:${Math.floor(p.y) * aw + Math.floor(p.x)}`);
       }
-      return E.mergeKeys({ writes: [`pos:${d.key}`], reads: [...reads] }, Spiders.posKeys(d, w), Vehicles.posKeys(d, w)); // pavučiny v lese, pavúky, fúrik (#158)
+      return E.mergeKeys({ writes: [`pos:${d.key}`], reads: [...reads] }, Spiders.posKeys(d, w), Vehicles.posKeys(d, w), Dock.posKeys(d, w)); // pavučiny v lese, pavúky, fúrik (#158), loďka (#160)
     },
     run(s, d, ctx) {
       const pos = sl(s, `pos:${d.key}`) || ctx.reject(null);
@@ -297,6 +301,7 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
       const from = { area, x: pos.x, y: pos.y };
       if (!(Number.isFinite(d.x) && Number.isFinite(d.y))) ctx.reject(null);
       const p = Areas.clampPos(area, d.x, d.y);
+      if (Dock.onRow(s, d, ctx, pos, p)) return; // v loďke: veslár ňou pohne po vode (#160)
       const body = bodyTiles(area, p.x, p.y);
       for (const i of body) if (!D.passable(sl(s, `tile:${area}:${i}`))) ctx.reject(null);
       pos.x = p.x; pos.y = p.y; pos.lastTick = ctx.tick;
@@ -322,8 +327,8 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
   // hráč je pripojený (každých 15 s) / odišiel: „naposledy videný“ (d: { key })
   seen: { keys: d => ({ writes: [`pos:${d.key}`] }), run(s, d, ctx) { const pos = sl(s, `pos:${d.key}`) || ctx.reject(null); pos.lastTick = ctx.tick; } },
   leave: {
-    keys: (d, w) => E.mergeKeys({ writes: [`pos:${d.key}`] }, Vehicles.leaveKeys(d, w)), // kto držal fúrik, pustí ho; spolujazdec vystúpi (#158)
-    run(s, d, ctx) { const pos = sl(s, `pos:${d.key}`) || ctx.reject(null); pos.lastTick = ctx.tick; Vehicles.onLeave(s, d); }
+    keys: (d, w) => E.mergeKeys({ writes: [`pos:${d.key}`] }, Vehicles.leaveKeys(d, w), Dock.leaveKeys(d, w)), // fúrik pustí, spolujazdec vystúpi (#158); z loďky na breh (#160)
+    run(s, d, ctx) { const pos = sl(s, `pos:${d.key}`) || ctx.reject(null); pos.lastTick = ctx.tick; Vehicles.onLeave(s, d); Dock.onLeave(s, d, ctx, pos); }
   },
   // pripojenie (d: { key, name, look, start: { coins, rep }, quick }): nové alebo prevedené uloženie, vzhľad, uvítanie;
   // server po vykonaní pošle hráčovi svet (pokyn joined). quick = rýchle znovupripojenie (bez hlásení)
@@ -342,9 +347,9 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
       const days = d.quick || !pos || pos.lastTick == null ? 0 : Math.max(0, Math.floor((ctx.tick - pos.lastTick) / TPD));
       if (days) ctx.emit(toast$(d.key, `Kým si bol(a) preč, ubehlo ${days} ${days === 1 ? 'deň' : days < 5 ? 'dni' : 'dní'}. Pozri sa, čo sa v záhrade zmenilo. 🌱`, 'day'));
       Spiders.onJoin(s, d, ctx, area); // pripojil sa priamo v Lese divov – pavúky sa zobudia
-      if (s.redeem) { // to, čo v záhrade stálo na pozemku Dielne pred jej príchodom (#23), dostane prvý hráč, ktorý príde
+      if (s.redeem) { // to, čo v záhrade stálo na pozemku Dielne (#23) či na novej vode jazierka (#160), dostane prvý hráč, ktorý príde
         const got = Dielna.handRedeem(s.redeem, sv, ctx.tick);
-        if (got.length) ctx.emit(toast$(d.key, `🪚 Na mieste pri trhu je teraz pozemok pre Dielňu a stojí tam majster hodvábu. Čo tam rástlo, dostávaš ty: ${got.map(([id, n]) => `${n}× ${D.itemName(id)}`).join(', ')}. 🎁`, 'gift'));
+        if (got.length) ctx.emit(toast$(d.key, `🎁 Záhrada sa zmenila: pri trhu je pozemok pre Dielňu s majstrom hodvábu a jazierko pri domčeku sa zväčšilo. Čo rástlo na týchto miestach, dostávaš ty: ${got.map(([id, n]) => `${n}× ${D.itemName(id)}`).join(', ')}. 🎁`, 'gift'));
       }
       if (!sv.talked) { sv.talked = true; ctx.emit(toast$(d.key, 'Vitaj! Začínaš s pár semienkami a prázdnym vreckom. Pri babke na severe je nástenka so zákazkami. 👵', 'gift')); }
     }

@@ -20,6 +20,7 @@ import * as I from './items.ts';
 import * as Scav from './scavenge.ts';
 import * as Ice from './ice.ts';
 import * as Dielna from './dielna.ts';
+import * as Dock from './dock.ts';
 import * as Areas from './areas.ts';
 import * as P from './presence.ts';
 import * as Debug from './debug.ts';
@@ -176,7 +177,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
 // ---------- Svety (miestnosti) ----------
 // Čas je diskrétny: svet má celé počítadlo `tick` (D.TICKS_PER_DAY krokov na deň), deň a minúta sa z neho
 // len odvodzujú. Všetko, čo sa má stať v budúcnosti, je udalosť v plánovači (room.events) a ukladá sa so svetom.
-const SAVE_VERSION = 11; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov; 8: semienko sveta a počítadlo kôl namiesto rng; 9: 11 520 krokov za deň (×40); 10: pavúky a pavučiny; 11: Dielňa, majster hodvábu a izolácia ľadovne
+const SAVE_VERSION = 12; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov; 8: semienko sveta a počítadlo kôl namiesto rng; 9: 11 520 krokov za deň (×40); 10: pavúky a pavučiny; 11: Dielňa, majster hodvábu a izolácia ľadovne; 12: väčšie jazierko, mólo a loďka
 const OLD_TPD = 288, OLD_MPT = 5, TICK_SCALE = D.TICKS_PER_DAY / OLD_TPD; // mriežka času do verzie 8
 const TPD = D.TICKS_PER_DAY;
 const DEFAULT_MODE: WorldMode = process.env['DEFAULT_MODE'] === 'paused' ? 'paused' : 'running';
@@ -195,7 +196,7 @@ function newWorldState(): LoadedState {
     v: SAVE_VERSION, tick: D.DAWN_TICK + 6, wall: Date.now(), mode: DEFAULT_MODE, daySeconds: DAY_SECONDS,
     seed: E.newSeed(), step: 0, seq: 0, events: [],
     weather: 'sun', saves: {}, storage: {}, storageFb: {}, market: null, contracts: null, fairyNight: -1, eternal: false, scav: {}, scavSalt: Areas.newSeed(),
-    icehouse: { built: false, ice: 0, bl: 0 }, dielna: Dielna.newDielna(), redeem: {}, hory: null, pomedzieSeed: Areas.newSeed(), up: { plots: 0 }, lesSeed: Areas.newSeed(), les: null,
+    icehouse: { built: false, ice: 0, bl: 0 }, dielna: Dielna.newDielna(), dock: Dock.newDock(), redeem: {}, hory: null, pomedzieSeed: Areas.newSeed(), up: { plots: 0 }, lesSeed: Areas.newSeed(), les: null,
     glacierFed: -1, // deň, v ktorom ľadovec naposledy dorástol zo zrážok (najviac raz za deň)
     plotsUsed: 0, maxRep: 0 // odvodené počítadlá (pozri economy.ts); pri načítaní sa prepočítajú
   };
@@ -255,6 +256,7 @@ function migrate(saved: JsonRecord): LoadedState {
     out.redeem = Dielna.clearForDielna(out.tiles);
     if (out.icehouse) out.icehouse.bl = 0;
   }
+  if (from < 12) Dock.migrate(out); // väčšie jazierko (#160): čo stálo na novej vode, dostane prvý hráč; kto tam stál, je na brehu
   out.v = SAVE_VERSION; out.migratedFrom = Number(saved['migratedFrom']) || from;
   return out;
 }
@@ -315,6 +317,9 @@ function getRoom(id: string): Room {
   Ice.applyIcehouse(room.icehouse, room.tiles);
   room.dielna = Dielna.loadDielna(room.dielna);
   Dielna.applyDielna(room.dielna, room.tiles);
+  room.dock = Dock.loadDock(room.dock); // mólo a loďka (#160): políčka móla, posádka z času pred reštartom vystúpi na breh
+  Dock.applyDock(room.dock, room.tiles);
+  Dock.load(room);
   if (!room.redeem || typeof room.redeem !== 'object') room.redeem = {};
   room.up = room.up || { plots: 0 };
   Object.defineProperty(room, 'day', { get: () => D.dayOfTick(room.tick) });
@@ -352,7 +357,7 @@ function serialize(room: Room): string {
     v: SAVE_VERSION, tick: room.tick, wall: room.wall, mode: room.mode, daySeconds: room.daySeconds,
     seed: room.seed, step: room.step, seq: room.seq, events: room.events,
     weather: room.weather, saves: room.saves, storage: room.storage, storageFb: room.storageFb, market: room.market, contracts: room.contracts,
-    fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom, scav: room.scav, scavSalt: room.scavSalt, icehouse: room.icehouse, dielna: room.dielna, redeem: room.redeem, pomedzieSeed: room.pomedzieSeed, up: room.up, lesSeed: room.lesSeed,
+    fairyNight: room.fairyNight, eternal: room.eternal, migratedFrom: room.migratedFrom, scav: room.scav, scavSalt: room.scavSalt, icehouse: room.icehouse, dielna: room.dielna, dock: room.dock, redeem: room.redeem, pomedzieSeed: room.pomedzieSeed, up: room.up, lesSeed: room.lesSeed,
     glacierFed: room.glacierFed, plotsUsed: room.plotsUsed, maxRep: room.maxRep, ...Spiders.save(room),
     ...Vehicles.save(room),
     tiles: room.tiles.map(t => t.cut ? { s: t.s, cut: 1 } : { s: t.s }), hory: Ice.saveHory(room.hory), les: Areas.saveLes(room)
@@ -488,7 +493,7 @@ function velocity(p: Player): { vx: number; vy: number } {
 function playerByKey(room: Room, key: string | undefined): Player | null { for (const p of room.players.values()) if (p.key === key) return p; return null; }
 
 const SIM: E.Spec<Room, Presence, Msg> = {
-  proposers: { ...Events.PROPOSERS, ...Actions.PROPOSERS, ...Spiders.PROPOSERS, ...Cheats.PROPOSERS, ...Vehicles.PROPOSERS, ...Vehicles.EVENTS }, periodic: Events.PERIODIC.concat(Spiders.PERIODIC, Vehicles.PERIODIC), presence: presenceOf, clock,
+  proposers: { ...Events.PROPOSERS, ...Actions.PROPOSERS, ...Spiders.PROPOSERS, ...Dock.PROPOSERS, ...Cheats.PROPOSERS, ...Vehicles.PROPOSERS, ...Vehicles.EVENTS }, periodic: Events.PERIODIC.concat(Spiders.PERIODIC, Vehicles.PERIODIC, Dock.PERIODIC), presence: presenceOf, clock,
   slice: (world, key) => { const s = Spiders.slice(world, key); return s === undefined ? E.sliceOf(world, key) : s; }, // pavúky: spider:<id>, kz:<plocha>
   // denník najprv (nech záznam nechýba), potom správy hráčom; chyba pri posielaní nesmie zhodiť simuláciu ani server;
   // nakoniec záznam pre ladiacu stránku (kto dávku spustil, rozhodnutia filtra, časy častí)
@@ -540,7 +545,7 @@ function notify(room: Room, out: BatchOut<Presence, Msg>): void {
   room.dirty = true;
   const tiles = new Map<string, Set<number>>(), me = new Set<string>(), whole = new Set<string>();
   for (const a of D.AREAS) tiles.set(a, new Set());
-  let info = false, time = false, plots = false, everyone = false, webs = false, corners = false, vehicles = false;
+  let info = false, time = false, plots = false, everyone = false, webs = false, corners = false, vehicles = false, dock = false;
   for (const p of out.entry.proposals) {
     if (p.outcome !== 'applied') continue;
     for (const key in p.changes) {
@@ -560,6 +565,7 @@ function notify(room: Room, out: BatchOut<Presence, Msg>): void {
       else if (key === 'webs') webs = true;
       else if (key === 'corners') corners = true;
       else if (key === 'vehicles') vehicles = true; // fúrik a sane (#158): poloha, náklad, kto ich drží
+      else if (key === 'dock') dock = true; // mólo a loďka: všetkým (aj mimo záhrady – uvidia ju, keď sa vrátia)
       else if (key === 'up') { plots = true; everyone = true; } // spoločné vylepšenie: každému nové limity v me
     }
   }
@@ -578,6 +584,7 @@ function notify(room: Room, out: BatchOut<Presence, Msg>): void {
     else if (body.t === 'scavStart') pl.scav = { i: body.i, n: body.n, px: pl.x, py: pl.y, seeds: body.seeds };
     else if (body.t === 'pullStart') pl.pull = { id: body.id, n: body.n, px: pl.x, py: pl.y };
     else if (body.t === 'pullDone') pl.pull = null;
+    else if (body.t === 'aboard') { pl.x = body.x; pl.y = body.y; send(pl.ws, { t: 'pos', x: body.x, y: body.y }); } // loďka (spolujazdec, nastúpenie, vystúpenie): prítomnosť aj klient idú s ňou
     else if (body.t === 'webbed') { pl.web = { at: Date.now(), ms: body.ms }; pl.pull = null; send(pl.ws, body); } // zabalený do pavučiny – vidia to aj ostatní (pl)
     else if (body.t === 'travel') arrived(pl, body.from, body.area);
     else if (body.t === 'joined') { joined(pl); me.add(to); }
@@ -589,6 +596,7 @@ function notify(room: Room, out: BatchOut<Presence, Msg>): void {
   if (plots) broadcast(room, plotsMsg(room));
   if (webs) broadcastArea(room, 'les', Spiders.websView(room));
   if (corners) for (const a of D.CORNER_AREAS) if (a === 'garden' || a === 'hory') broadcastArea(room, a, Spiders.cornerView(room, a));
+  if (dock) broadcast(room, Dock.view(room.dock));
   if (info) broadcast(room, roomInfo(room));
   if (time) broadcast(room, timeMsg(room));
   if (vehicles) broadcast(room, vehiclesMsg(room));
@@ -711,6 +719,7 @@ function joined(pl: Player): void {
   send(pl.ws, timeMsg(room));
   send(pl.ws, Econ.marketView(must(room.market ?? undefined), room.tick, room.events));
   send(pl.ws, Econ.boardView(must(room.contracts ?? undefined)));
+  send(pl.ws, Dock.view(room.dock));
   broadcast(room, roomInfo(room));
   broadcast(room, sleepMsg(room));
   send(pl.ws, vehiclesMsg(room)); // fúrik a sane (#158)
@@ -723,6 +732,7 @@ function moveInput(room: Room, pl: Player, e: InboxEntry, inputs: Input[]): Inpu
   if (pl.sleep || pl.joining) return no(pl.sleep ? 'player is asleep' : 'player is still joining'); // spiaci hráč leží v posteli
   if ((Number(m['ar']) | 0) !== pl.areaSeq) return no('sent from the previous area'); // pohyb ešte z predchádzajúcej plochy
   if (V.ridden(room.vehicles, pl.key)) return no('player rides in a vehicle'); // spolujazdca vezie fúrik či sane (#158)
+  if (Dock.seatOf(room.dock, pl.key) > 0) return no('passenger in the boat: the rower steers'); // spolujazdec sa vezie (#160)
   const mx = m['x'], my = m['y'];
   if (!(typeof mx === 'number' && typeof my === 'number' && isFinite(mx) && isFinite(my))) return no('invalid position');
   const sv = must(pl.save);
@@ -779,7 +789,7 @@ function toInput(room: Room, pl: Player, e: InboxEntry, presence: Presence[], in
     case 'store': case 'unstore': return mk(m.t, { id: String(m['id']), n: count(1, 999) });
     case 'compostWilted': return mk('compostWilted', {});
     case 'buyTool': return mk('buyTool', { id: String(m['id']) });
-    case 'build': return m['id'] === 'icehouse' || m['id'] === 'dielna' ? mk('build', { id: m['id'] }) : null;
+    case 'build': return m['id'] === 'icehouse' || m['id'] === 'dielna' ? mk('build', { id: m['id'] }) : m['id'] === 'dock' ? mk('buildDock', {}) : null;
     case 'icehouse': return mk('fillIce', { n: Number(m['n']) | 0 });
     case 'buyLoom': case 'masterWeave': case 'loomStart': case 'loomTake': return mk(m.t, {});
     case 'veh': { const v = Vehicles.toInput(m); return v ? mk(v.type, v.data) : no('invalid vehicle message'); } // fúrik a sane (#158)

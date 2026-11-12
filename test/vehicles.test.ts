@@ -158,13 +158,13 @@ test('ťahanie: sane stoja, kým je lano voľné, potom idú za hráčom', () =>
   const w = makeWorld(WINTER);
   buy(w, 'sane');
   const s = veh(w, 'sane');
-  Object.assign(s, { x: 8.5, y: 20.5 });
-  place(w, 'ana', 8.5, 21.2);
+  Object.assign(s, { x: 12.5, y: 20.5 });
+  place(w, 'ana', 12.5, 21.2);
   run(w, act('vehGrab', 'ana', { id: 'sane' }));
-  move(w, 'ana', 8.5, 21.4);
-  assert.deepStrictEqual([s.x, s.y], [8.5, 20.5], 'lano je voľné');
-  move(w, 'ana', 8.5, 22.4);
-  assert.ok(Math.abs(Math.hypot(s.x - 8.5, s.y - 22.4) - V.TOW_L) < 1e-3, 'za hráčom na lane');
+  move(w, 'ana', 12.5, 21.4);
+  assert.deepStrictEqual([s.x, s.y], [12.5, 20.5], 'lano je voľné');
+  move(w, 'ana', 12.5, 22.4);
+  assert.ok(Math.abs(Math.hypot(s.x - 12.5, s.y - 22.4) - V.TOW_L) < 1e-3, 'za hráčom na lane');
   assert.ok(s.y < 22.4, 'za hráčom (sever)');
 });
 
@@ -234,8 +234,8 @@ test('spolujazdec: naskočí, len keď fúrik niekto tlačí; jedno miesto; vezi
   const w = makeWorld();
   buy(w, 'furik');
   const f = veh(w, 'furik');
-  Object.assign(f, { x: 8.5, y: 20.5 });
-  place(w, 'ana', 8.5, 21.4); place(w, 'bob', 9.2, 20.5); place(w, 'cyril', 7.8, 20.5);
+  Object.assign(f, { x: 12.5, y: 20.5 });
+  place(w, 'ana', 12.5, 21.4); place(w, 'bob', 13.2, 20.5); place(w, 'cyril', 11.8, 20.5);
   assert.match(reason(run(w, act('vehIn', 'bob', { id: 'furik' }))), /len keď fúrik niekto tlačí/);
   run(w, act('vehGrab', 'ana', { id: 'furik' }));
   assert.match(reason(run(w, act('vehIn', 'ana', { id: 'furik' }))), /Najprv pusti fúrik/);
@@ -244,7 +244,7 @@ test('spolujazdec: naskočí, len keď fúrik niekto tlačí; jedno miesto; vezi
   assert.strictEqual(f.passenger, 'bob');
   assert.ok(must(r.applied[0]).outbox.some(m => m.to === 'ana' && m.t === 'toast' && /naskočil\(a\)/.test(m.text)), 'vodič sa to dozvie');
   // vezie sa: poloha spolujazdca je poloha fúrika; sám chodiť nemôže
-  const t = move(w, 'ana', 8.5, 22.0);
+  const t = move(w, 'ana', 12.5, 22.0);
   assert.deepStrictEqual([save(w, 'bob').x, save(w, 'bob').y], [f.x, f.y]);
   assert.ok(must(t.applied[0]).outbox.some(m => m.to === 'bob' && m.t === 'pos' && m.x === f.x && m.y === f.y), 'spolujazdec dostane polohu');
   assert.strictEqual(move(w, 'bob', 3, 3).rejected.length, 1, 'spolujazdec sám nechodí');
@@ -265,11 +265,11 @@ test('odchod hráča: fúrik ostane stáť, kde ho pustil; spolujazdec vystúpi;
   const w = makeWorld();
   buy(w, 'furik');
   const f = veh(w, 'furik');
-  Object.assign(f, { x: 8.5, y: 20.5 });
-  place(w, 'ana', 8.5, 21.4); place(w, 'bob', 9.2, 20.5);
+  Object.assign(f, { x: 12.5, y: 20.5 });
+  place(w, 'ana', 12.5, 21.4); place(w, 'bob', 13.2, 20.5);
   run(w, act('vehGrab', 'ana', { id: 'furik' }));
   run(w, act('vehIn', 'bob', { id: 'furik' }));
-  move(w, 'ana', 8.5, 23.0);
+  move(w, 'ana', 12.5, 23.0);
   const at = { x: f.x, y: f.y };
   run(w, act('leave', 'ana'), act('leave', 'bob'));
   assert.deepStrictEqual([f.driver, f.passenger, f.x, f.y], [null, null, at.x, at.y]);
@@ -371,8 +371,8 @@ test('obdobie: udalosť vehSeason na začiatku obdobia vypne fúrik a pustí vod
   const w = makeWorld();
   buy(w, 'furik'); buy(w, 'sane');
   const f = veh(w, 'furik');
-  Object.assign(f, { x: 8.5, y: 20.5 });
-  place(w, 'ana', 8.5, 21.4); place(w, 'bob', 9.2, 20.5);
+  Object.assign(f, { x: 12.5, y: 20.5 });
+  place(w, 'ana', 12.5, 21.4); place(w, 'bob', 13.2, 20.5);
   run(w, act('vehGrab', 'ana', { id: 'furik' }));
   run(w, act('vehIn', 'bob', { id: 'furik' }));
   const r = season(w, WINTER);
@@ -442,7 +442,7 @@ test('server: uloženie bez fúrikov sa načíta bez zmeny verzie, kúpený fúr
   } finally { await stopServer(proc); }
   const file = path.join(dir, 'room-doprava.json');
   const saved = readJson<SaveFile & { v: number }>(file);
-  assert.strictEqual(saved.v, 11, 'verzia uloženia sa nemení');
+  assert.strictEqual(saved.v, 12, 'verzia uloženia sa fúrikmi nemení (12 = väčšie jazierko, #160)');
   assert.ok(saved.vehicles && !saved.vehicles.furik.bought, 'nový svet ich má nekúpené');
   // staré uloženie bez poľa vehicles a uloženie s kúpeným fúrikom, ktorý niekto držal
   delete saved.vehicles;

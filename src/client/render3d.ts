@@ -16,6 +16,9 @@ import type { CharOpts } from './art.ts';
 import { createParticles } from './particles3d.ts';
 import { createSpiders3d } from './spiders3d.ts';
 import { createVehicles3d } from './vehicles3d.ts';
+import { createBoat3d } from './boat3d.ts';
+import * as Z from '../shared/zorder.ts';
+import type { SurfaceKind } from '../shared/zorder.ts';
 import type { CtxAction, Pt, ViewState } from './state.ts';
 
 type V3 = [number, number, number];
@@ -412,6 +415,7 @@ export class FineMesh extends TileMesh {
   box = new THREE.Box3();
   depthTwin: THREE.Mesh | null = null;
   solidPart: TileMesh | null = null;
+  base: THREE.Material | null = null; // plný materiál modelu (s prioritou plochy, #160); null = fineMats.main
 }
 // Sprite (rastlina, postavička, pavúk): políčko, kľúč aktuálnej kresby a naposledy spočítané svetlo
 export class TileSprite extends THREE.Sprite {
@@ -497,7 +501,7 @@ export function create(api: Render3DApi): Render3D {
   }
   function drawTile(i: number, se: number, t: number): void {
     const tl = must(S.tiles[i]), x = i % S.W, y = (i / S.W) | 0;
-    Art.ground(gctx, tl.g, x * GT, y * GT, GT, se, t, x, y, tl.g === 'gate' ? gateInfo(x, y) : null);
+    Art.ground(gctx, tl.g, x * GT, y * GT, GT, se, t, x, y, tl.g === 'gate' ? gateInfo(x, y) : null, S.area);
     if (tl.s) Art.soil(gctx, tl.s, x * GT, y * GT, GT, se);
   }
   function refreshGround(se: number, t: number, force: boolean): void {
@@ -545,6 +549,30 @@ export function create(api: Render3DApi): Render3D {
     depth: new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: 'void main() { gl_FragColor = vec4(0.0); }', defines: { VOX: 1 }, uniforms: voxUniforms, transparent: true, depthWrite: true, colorWrite: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 }),
     refl: new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { VOX: 1, SHADOW_TAPS: 4 }, uniforms: voxUniforms })
   };
+  // Priorita plôch (#160, src/shared/zorder.ts): plochy v jednej rovine rozhodne druh plochy cez posun hĺbky
+  // (polygonOffset), nie posun geometrie. Zem je bez posunu, hladina a jemné modely s druhom (mólo, kolíky) majú
+  // vlastný plný materiál so zdieľanými uniformami. window.MF_ZPRIO = false priority vypne (porovnanie na ladenie).
+  const zprio = (): boolean => window.MF_ZPRIO !== false;
+  const biasedMats: [THREE.Material, SurfaceKind][] = [];
+  function biased<M extends THREE.Material>(m: M, kind: SurfaceKind): M {
+    const b = Z.depthBias(kind);
+    m.polygonOffsetFactor = b.factor; m.polygonOffsetUnits = b.units;
+    biasedMats.push([m, kind]);
+    applyZPrio();
+    return m;
+  }
+  // zapne / vypne posun hĺbky podľa window.MF_ZPRIO (volá sa aj každú snímku – prepínač z konzoly platí hneď)
+  function applyZPrio(): void {
+    for (const [m, kind] of biasedMats) { const b = Z.depthBias(kind), on = zprio() && (b.factor !== 0 || b.units !== 0); if (m.polygonOffset !== on) { m.polygonOffset = on; m.needsUpdate = true; } }
+  }
+  const fineByKind = new Map<SurfaceKind, THREE.ShaderMaterial>();
+  function fineMain(type: string): THREE.ShaderMaterial {
+    const kind = Z.fineSurface(type);
+    if (!kind) return fineMats.main;
+    let m = fineByKind.get(kind);
+    if (!m) { m = biased(new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { VOX: 1 }, uniforms: voxUniforms }), kind); fineByKind.set(kind, m); voxMats.add(m); }
+    return m;
+  }
   // materiály jemných modelov (define VOX) – pred ich vykreslením treba nastaviť vypečené obrázky modelu
   const voxMats = new Set<THREE.Material>(Object.values(fineMats));
   const isVox = (m: THREE.Material): m is THREE.ShaderMaterial => voxMats.has(m);
@@ -571,7 +599,7 @@ export function create(api: Render3DApi): Render3D {
     fan: false,        // zoslabovať aj zem pred hráčom v smere pohľadu (len v tme, pozri dark)
     // Čo sa nezoslabí nikdy (typy jemných modelov): všetko do výšky hráča – kamene, kry, spadnuté kmene.
     // Zoslabujú sa budovy (domček, chalúpka, trh, studňa, kotlík, ľadovňa) a stromy; obrovský strom len korunou (kmeň ostane).
-    solid: ['rock', 'bush', 'log'],
+    solid: ['rock', 'bush', 'log', 'dock', 'edge'], // aj mólo a kolíky na okraji jazierka (#160)
     // v tmavom lese (aj v celom Lese divov): zoslabenie rovnaké ako všade (min, rýchlosť), len fan = zoslabovať aj zem
     // pred hráčom v smere pohľadu (vypnuté – všade sa zoslabí len to, čo zakrýva hráča; skúsiť: MF_FADE = { dark: { fan: true } })
     dark: { fan: false },
@@ -706,6 +734,12 @@ export function create(api: Render3DApi): Render3D {
   function fineGeometry(f: FineModel, se: number, old: Map<Uint8Array, FineGeo>): FineGeo {
     let e = fineGeos.get(f.data) || old.get(f.data);
     if (e && e.se === se) { fineGeos.set(f.data, e); return e; }
+    e = makeFineGeo(f, se);
+    fineGeos.set(f.data, e);
+    return e;
+  }
+  // Sieť a vypečené obrázky jemného modelu (bez zdieľanej pamäte sveta – tú pri prestavbe uvoľní buildMesh)
+  function makeFineGeo(f: FineModel, se: number): FineGeo {
     const b = meshFine(f, se);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(b.P, 3));
@@ -719,10 +753,9 @@ export function create(api: Render3DApi): Render3D {
     color.magFilter = color.minFilter = THREE.NearestFilter; // farby stien bez interpolácie
     const ao = bakedTex(b.ao, THREE.RedFormat);
     ao.magFilter = ao.minFilter = THREE.LinearFilter; // zatienenie plynulo medzi rohmi
-    e = { se, geo, color, ao };
-    fineGeos.set(f.data, e);
-    return e;
+    return { se, geo, color, ao };
   }
+
   function buildFine(f: FineInfo, se: number, old: Map<Uint8Array, FineGeo>): FineMesh {
     let solidPart: TileMesh | null = null;
     if (f.type === 'giant') {
@@ -738,7 +771,8 @@ export function create(api: Render3DApi): Render3D {
       f = Object.assign({}, f, { data: parts.crown.data }); // ďalej sa stavia (a zoslabuje) len koruna
     }
     const { geo, color, ao } = fineGeometry(f, se, old);
-    const fmesh = new FineMesh(geo, fineMats.main);
+    const base = fineMain(f.type), fmesh = new FineMesh(geo, base);
+    fmesh.base = base === fineMats.main ? null : base;
     fmesh.solidPart = solidPart;
     fmesh.position.set(f.ox, f.oy, f.oz);
     fmesh.updateMatrixWorld();
@@ -867,7 +901,7 @@ void main() {
     ripples: uni(Array.from({ length: RIPPLES }, () => new THREE.Vector4())),
     waterMask: uni<THREE.Texture | null>(null), mapSize: uni(new THREE.Vector2(S.W, S.H))
   };
-  const waterMaterial = new THREE.ShaderMaterial({ vertexShader: WATER_VERT, fragmentShader: WATER_FRAG, uniforms: waterU });
+  const waterMaterial = biased(new THREE.ShaderMaterial({ vertexShader: WATER_VERT, fragmentShader: WATER_FRAG, uniforms: waterU }), 'water'); // priorita plochy (#160)
   let maskTex: THREE.DataTexture | null = null;
   // maska vody má veľkosť plochy – pri inak veľkej ploche sa vytvorí nová
   function sizeMask(): THREE.DataTexture {
@@ -973,7 +1007,8 @@ void main() {
   // v zime namiesto nich otvory vysekané do ľadu (tmavá voda s bielym okrajom).
   // Zasadené vodné kvety z hĺbky (#38) tu majú svoje listy (viac a väčších s rastom); kvet nad nimi je sprite.
   function buildPads(se: number, y: number): THREE.Mesh | null {
-    const pads = W.lilyPads(S.tiles, se, S.W).filter(p => !S.tiles[p.y * S.W + p.x]?.s); // ozdobné len na voľnej vode
+    // ozdobné lekná len na voľnej vode plesa v horách (v záhrade nie sú, #160); zasadené vodné kvety (#38) všade
+    const pads = W.lilyPads(S.tiles, se, S.W, S.area).filter(p => !S.tiles[p.y * S.W + p.x]?.s);
     const planted = se === 3 ? [] : S.tiles.flatMap((t, i) => { const lp = lilyPlant(t); return lp ? [{ x: i % S.W, y: (i / S.W) | 0, ...lp }] : []; });
     const holes = se === 3 ? S.tiles.flatMap((t, i) => t.cut && t.g === 'water' ? [{ x: i % S.W, y: (i / S.W) | 0 }] : []) : [];
     if (!pads.length && !holes.length && !planted.length) return null;
@@ -1471,9 +1506,11 @@ void main() {
     } else o.vh = 0;
   }
   // opts.jz: výška skoku (políčka), opts.crawl: plazenie
-  function drawChar(id: CharId, x: number, z: number, look: Partial<Look> | null, a: number, phase: number, opts: CharOpts & { jz?: number; web?: number }, dt: number): CharObj {
+  // opts.seat: hráč sedí v loďke (#160) – stojí na lavičke (seat.y), po pás ho zakryje bok loďky
+  function drawChar(id: CharId, x: number, z: number, look: Partial<Look> | null, a: number, phase: number, opts: CharOpts & { jz?: number; web?: number; seat?: { x: number; z: number; y: number } | null }, dt: number): CharObj {
     const o = charObj(id);
-    stepHeight(o, groundY(x, z), dt);
+    if (opts.seat) { x = opts.seat.x; z = opts.seat.z; }
+    stepHeight(o, opts.seat ? opts.seat.y : groundY(x, z), dt);
     const jz = opts.jz || 0;
     o.ctx.clearRect(0, 0, 96, 128);
     const pose = { dir: opts.dance ? 0 : dir8(a), phase, o: Object.assign({ noShadow: true }, opts, { jz: 0 }) };
@@ -1632,7 +1669,7 @@ void main() {
       const step = dt * cfg.speed, cur = m.fade;
       const f = m.fade = Math.abs(target - cur) <= step ? target : cur + Math.sign(target - cur) * step;
       const fading = f < 0.98;
-      m.material = fading ? fineMats.fade : fineMats.main;
+      m.material = fading ? fineMats.fade : m.base ?? fineMats.main;
       if (m.depthTwin) m.depthTwin.visible = fading && m.visible;
       if (fading) { any = true; fadingList.push(m); }
     }
@@ -1782,6 +1819,7 @@ void main() {
     const now = performance.now(), dt = Math.min(0.1, (now - last) / 1000); last = now;
     if (statsOn) renderer.info.reset();
     const min = api.curMin(), se = api.season(), night = D.isNight(min);
+    applyZPrio();
     // prestavba sveta: nové obdobie, iná plocha (záhrada / hory) alebo nová stavba
     if (builtSeason !== se || builtGen !== S.tilesGen || builtState !== stateSig()) { builtGen = S.tilesGen; builtState = stateSig(); buildMesh(se); holesSig = null; refreshGround(se, t, true); }
     S.worldGen = builtGen; // svet tejto verzie políčok je postavený (prechod medzi plochami čaká, kým je, a až potom ukáže meno)
@@ -1842,9 +1880,11 @@ void main() {
     for (const o of chars.values()) o.alive = false;
     const me = S.me;
     vehicles3d.update(dt, lights); // fúrik a sane (#158); spolujazdec je nakreslený v nich (jeho postavička sa skryje, meno ostane)
+    boat3d.update(dt, t); // loďka (#160) – pred postavičkami, ktoré v nej sedia (sú nakreslené v jej obrázku)
     const seatMe = vehicles3d.seat('me');
-    const meO = api.noPlayer ? null : drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : dirAngle(me.dir), seatMe ? 0 : S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz + seatMe, crawl: me.crawl || seatMe > 0, dig: api.searching({ si: S.mySi }) ? t : 0, lamp: S.sel === 'lamp' && lampState, web: S.webLeft ? S.webLeft() : 0 }, dt);
-    for (const o of S.others.values()) { const seat = vehicles3d.seat(o.id); drawChar(o.id, o.x, o.y, o.look, o.a != null ? o.a : dirAngle(o.dir || 0), seat ? 0 : o.e === 'dance' ? t * 4 : o.phase, { dance: o.e === 'dance', jz: o.jz + seat, crawl: o.cr || seat > 0, dig: api.searching(o) ? t : 0, lamp: o.lp && lampState, web: o.wb || 0 }, dt); }
+    const meSeat = api.noPlayer ? null : boat3d.seat(null), seated = new Set<CharId>(meSeat ? ['me'] : []);
+    const meO = api.noPlayer ? null : drawChar('me', me.x, me.y, S.look, me.a != null ? me.a : dirAngle(me.dir), seatMe || meSeat ? 0 : S.myEmote === 'dance' ? t * 4 : me.phase, { dance: S.myEmote === 'dance', jz: me.jz + seatMe, crawl: me.crawl || seatMe > 0, dig: api.searching({ si: S.mySi }) ? t : 0, lamp: S.sel === 'lamp' && lampState, web: S.webLeft ? S.webLeft() : 0, seat: meSeat }, dt);
+    for (const o of S.others.values()) { const seat = vehicles3d.seat(o.id), os = boat3d.seat(o); if (os) seated.add(o.id); drawChar(o.id, o.x, o.y, o.look, o.a != null ? o.a : dirAngle(o.dir || 0), seat || os ? 0 : o.e === 'dance' ? t * 4 : o.phase, { dance: o.e === 'dance', jz: o.jz + seat, crawl: o.cr || seat > 0, dig: api.searching(o) ? t : 0, lamp: o.lp && lampState, web: o.wb || 0, seat: os }, dt); }
     if (S.area !== 'garden') babka = null; // babka býva v záhrade (bez alive ju upratovanie nižšie odstráni)
     else if (!babka) babka = drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, 0, { babka: true }, 1);
     else { babka.alive = true; if (Math.floor(t) !== babka.lastT) { babka.lastT = Math.floor(t); drawChar('babka', D.BABKA.x + 0.5, D.BABKA.y + 0.75, { shirt: '#7b4a9e', hair: '#eee' }, Math.PI / 2, Math.sin(t) * 0.3, { babka: true }, 1); } }
@@ -1871,6 +1911,8 @@ void main() {
       o.sp.renderOrder = vehicles3d.tows(id) ? 1 : 0; // kto ťahá sane, kreslí sa až po lane – lano je vždy za ním (#158)
     }
     vehicles3d.ropes(); // lano saní do ruky ťahajúceho – až po nakreslení postavičiek (ich poloha a póza z tejto snímky)
+    // kto sedí v loďke, je nakreslený v jej obrázku – vlastná postavička, tieň aj röntgen sa skryjú (meno ostane)
+    for (const id of seated) { const o = chars.get(id); if (o) o.sp.visible = o.shadow.visible = o.ghost.visible = false; }
     spiders3d.update(dt, t, lights); // pavučiny, nory a pavúky (#57)
 
     const fading = updateFades(dt, meO ? meO.h ?? 1 : 1);
@@ -1963,6 +2005,7 @@ void main() {
   const sceneBefore = new Set(scene.children);
   const particles = createParticles({ scene, camera, renderer, S, ripple });
   const particleObjs = scene.children.filter(o => !sceneBefore.has(o)); // objekty častíc (ladiaca stránka ich vie skryť)
+  const boat3d = createBoat3d({ THREE, scene, camera, S, dir8, yaw: () => yaw, light: (x, y, z) => lightAt(x, y, z, lastLights, lastLights.length) });
   const spiders3d = createSpiders3d({ THREE, scene, S, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, renderer, world: worldU, maxLights: MAX_LIGHTS, fine: () => grid && grid.fine });
   // Ruka postavičky vo svete (lano saní, #158): bod, ktorý Art.handAt vráti pre jej poslednú kresbu, na rovine spritu
   // (sprite: 100 px = 1 blok, chodidlá v (48, 124) plátna 96 × 128, kotva 3 % od spodku)
@@ -1997,6 +2040,7 @@ void main() {
   function dispose(): void {
     spiders3d.dispose();
     vehicles3d.dispose();
+    boat3d.dispose();
     scene.traverse(o => {
       const g: unknown = 'geometry' in o ? o.geometry : null, mat: unknown = 'material' in o ? o.material : null;
       if (g instanceof THREE.BufferGeometry) g.dispose();

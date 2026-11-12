@@ -10,7 +10,7 @@ export type Season = 0 | 1 | 2 | 3;
 // Typ zeme na políčku (záhrada, hory, Les na pomedzí, Les divov)
 export type Ground =
   | 'grass' | 'tree' | 'forest' | 'shroom' | 'ring' | 'hut' | 'babka' | 'cauldron' | 'gate' | 'path' | 'water' | 'sand'
-  | 'rock' | 'boulder' | 'stall' | 'well' | 'house' | 'lot' | 'majster' | 'icehouse' | 'dielna'
+  | 'rock' | 'boulder' | 'stall' | 'well' | 'house' | 'lot' | 'majster' | 'icehouse' | 'dielna' | 'dock'
   | 'alp' | 'snow' | 'scree' | 'spruce' | 'cliff' | 'glacier'
   | 'meadow' | 'bush' | 'fern'
   | 'moss' | 'roots' | 'fungi' | 'glade' | 'giant' | 'trunk' | 'log';
@@ -775,6 +775,12 @@ export function buildMap(): Ground[] {
     if (d < 1) set(x, y, 'water');
     else if (d < 2.3) set(x, y, 'sand');
   }
+  // Väčšie jazierko pri domčeku (#160): nová časť siaha k západnému okraju mapy, s pôvodným jazierkom ju spája prieliv
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const p = newPond(x, y), i = y * W + x;
+    if (p === 'water') g[i] = 'water';
+    else if (p === 'sand' && g[i] === 'grass') g[i] = 'sand';
+  }
   // Skalka
   for (let y = 17; y <= 23; y++) for (let x = 14; x < W; x++) set(x, y, 'rock');
   set(15, 18, 'boulder'); set(18, 19, 'boulder'); set(16, 22, 'boulder'); set(19, 23, 'boulder');
@@ -793,6 +799,67 @@ export function buildMap(): Ground[] {
   set(MASTER.x, MASTER.y, 'majster');
   return g;
 }
+
+// ---- Väčšie jazierko, mólo a loďka (#160) ----
+// Nová časť jazierka: elipsa pri domčeku orezaná západným okrajom mapy (cez ten okraj sa raz loďkou pôjde do Močiara)
+// a prieliv do pôvodného jazierka. Len políčka x ≤ 9 – chodník (x = 10) a všetko za ním ostáva. Okolo je piesok,
+// ale len tam, kde bola tráva. Políčka novej vody (NEW_POND) migrácia v12 uvoľní (server/dock.ts).
+const POND2 = { cx: 2.5, cy: 21.5, rx: 7, ry: 4, sand: 1.7, maxX: 9 };
+const CHANNEL: readonly (readonly [number, number])[] = [[2, 17], [3, 17], [4, 17]];
+export function newPond(x: number, y: number): 'water' | 'sand' | null {
+  if (x < 0 || y < 0 || x >= W || y >= H || x > POND2.maxX) return null;
+  if (CHANNEL.some(([cx, cy]) => cx === x && cy === y)) return 'water';
+  const dx = (x + 0.5 - POND2.cx) / POND2.rx, dy = (y + 0.5 - POND2.cy) / POND2.ry, d = dx * dx + dy * dy;
+  return d < 1 ? 'water' : d < POND2.sand ? 'sand' : null;
+}
+// Indexy políčok záhrady, ktoré sú vo v12 novou vodou (predtým tráva alebo piesok pôvodného jazierka)
+export const NEW_POND: readonly number[] = Array.from({ length: W * H }, (_, i) => i).filter(i => newPond(i % W, Math.floor(i / W)) === 'water');
+// Mólo: spoločná stavba (ako Dielňa) na južnom brehu novej časti jazierka. Kým nie je postavené, jeho políčka sú voda,
+// potom 'dock' (drevené mólo, dá sa po ňom chodiť). Loďka kotví pri konci móla (moor), v zime leží prevrátená na móle.
+export const DOCK = {
+  name: 'Mólo', icon: '🛶', price: 800, rep: 2,
+  tiles: [{ x: 6, y: 23 }, { x: 6, y: 24 }] as readonly Point[],
+  moor: { x: 6.5, y: 21.9 } as Point,   // kde loďka kotví (stred loďky), za koncom móla (loďka je dlhá ~2 bloky)
+  land: { x: 6.5, y: 25.4 } as Point,   // kam vystúpi posádka, keď loďku v zime vytiahnu na mólo (breh pri móle – na lávke leží loďka)
+  seats: 2,
+  reach: 1.7,                            // nastúpiť sa dá, keď je stred loďky najviac takto ďaleko od hráča
+  r: 0.45,                               // polovičná šírka loďky (štvorec) – celá musí byť na vode
+  speed: 0.8                             // loďka ide takto rýchlo oproti chôdzi
+};
+export const DOCK_BOAT = { name: 'Loďka', icon: '🛶' };
+// Polohy rohov loďky so stredom (x, y): celá loďka musí byť nad vodou (nie nad mólom ani na brehu)
+export function boatCorners(x: number, y: number): [number, number][] {
+  const r = DOCK.r;
+  return [[x - r, y - r], [x + r, y - r], [x - r, y + r], [x + r, y + r]];
+}
+// Môže loďka stáť na (x, y)? tiles = políčka záhrady (W × H)
+export function boatFits(tiles: readonly (GroundTile | null | undefined)[], x: number, y: number): boolean {
+  return boatCorners(x, y).every(([cx, cy]) => cx >= 0 && cy >= 0 && cx < W && cy < H && tiles[Math.floor(cy) * W + Math.floor(cx)]?.g === 'water');
+}
+// Pevná zem, na ktorej môže stáť hráč (aj mólo, nie voda)
+export function isLand(t: GroundTile | null | undefined): t is GroundTile { return passable(t) && t.g !== 'water'; }
+// Dosiahne hráč stojaci na brehu na políčko vody i? Hráč siaha do vzdialenosti REACH od stredu postavy (resolveAct)
+// a jeho telo (BODY) musí byť celé na jednom políčku pevnej zeme. Hlboká voda = políčka, na ktoré z brehu nedosiahne nik.
+export const REACH = 2.4;
+export function reachableFromLand(tiles: readonly (GroundTile | null | undefined)[], i: number, w = W): boolean {
+  const h = tiles.length / w, x = i % w, y = Math.floor(i / w);
+  for (let ty = Math.max(0, y - 3); ty <= Math.min(h - 1, y + 3); ty++) for (let tx = Math.max(0, x - 3); tx <= Math.min(w - 1, x + 3); tx++) {
+    if (!isLand(tiles[ty * w + tx])) continue;
+    const px = Math.min(tx + 1 - BODY.rx, Math.max(tx + BODY.rx, x + 0.5)), py = Math.min(ty + 1 - BODY.ry, Math.max(ty + BODY.ry, y + 0.5));
+    if (Math.hypot(px - x - 0.5, py - y - 0.5) <= REACH) return true;
+  }
+  return false;
+}
+export function deepWater(tiles: readonly (GroundTile | null | undefined)[], w = W): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < tiles.length; i++) if (tiles[i]?.g === 'water' && !reachableFromLand(tiles, i, w)) out.push(i);
+  return out;
+}
+// Plochy s ozdobnými leknami na vode (textúra aj 3D): len pleso v horách. V jazierku v záhrade nie sú – skutočné
+// vodné kvety prinesie #38.
+export const LILY_AREAS: readonly string[] = ['hory'];
+// Okraj mapy, cez ktorý raz loďka pôjde do Močiara: políčka vody na západnom okraji záhrady (zatiaľ len označené)
+export const POND_EDGE: readonly Point[] = NEW_POND.filter(i => i % W === 0).map(i => ({ x: 0, y: Math.floor(i / W) }));
 
 // ---- Hory: druhá hracia plocha (rovnaká veľkosť ako záhrada) ----
 // Hore skalné steny a ľadovec, v strede sutina s plesom, dole horská lúka so smrekmi a chodník do záhrady.

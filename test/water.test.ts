@@ -52,12 +52,12 @@ function plantIn(w: W, area: AreaId, i: number, sp: SpeciesId): string | null | 
   return r.rejected[0]?.reject;
 }
 
-test('zóny vody: breh má súš aspoň z jednej zo 4 strán – jazierko 12 + 9, pleso 10 + 6; inde voda na sadenie nie je', () => {
+test('zóny vody: breh má súš aspoň z jednej zo 4 strán – jazierko 36 + 47 (väčšie jazierko, #160), pleso 10 + 6; inde voda na sadenie nie je', () => {
   const count = (area: AreaId): [number, number] => {
     const g = D.buildArea(area, 0), z = g.map((t, i) => D.waterSpot(area, i)?.zone);
     return [z.filter(v => v === 'shore').length, z.filter(v => v === 'deep').length];
   };
-  assert.deepStrictEqual(count('garden'), [12, 9]);
+  assert.deepStrictEqual(count('garden'), [36, 47]);
   assert.deepStrictEqual(count('hory'), [10, 6]);
   assert.deepStrictEqual(D.waterSpot('garden', idx(3, 14)), { body: 'jazierko', zone: 'deep' }, 'stred jazierka');
   assert.deepStrictEqual(D.waterSpot('hory', idx(5, 16)), { body: 'pleso', zone: 'deep' });

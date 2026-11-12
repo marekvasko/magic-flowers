@@ -92,7 +92,7 @@ export const groundHeight = D.terrainH;
 // skalné steny majú rôznu výšku podľa políčka (zubaté hrebene)
 function tileHeight(g: Ground, tx: number, ty: number): number { return g === 'cliff' ? 7 + Math.floor(hash(tx, ty, 5) * 4) : groundHeight(g); }
 function topMaterial(g: Ground): MatId {
-  if (g === 'water') return M.WATER;
+  if (g === 'water' || g === 'dock') return M.WATER; // pod mólom je voda (#160)
   if (g === 'path' || g === 'gate' || g === 'lot' || g === 'majster') return M.PATH; // majster: udupané miesto majstra hodvábu pri trhu
   if (g === 'sand') return M.SAND;
   if (g === 'rock' || g === 'boulder') return M.STONE;
@@ -594,6 +594,40 @@ function dielnaModel(season: number, loom?: number | boolean): FineModel {
   return C.done();
 }
 
+// ---- Mólo a loďka (#160) ----
+// Mólo (1 × 2 polia, dĺžka v smere z): drevená lávka na kolíkoch nad vodou, na severnom konci vyšší kolík s lanom
+// (tam kotví loďka). Model stojí na dne jazierka (oy = výška dna), lávka je presne vo výške okolitej zeme.
+// V zime sneh na lávke.
+export const DOCK_DECK = 3; // minikocka lávky nad dnom (dno 0,5 bloku + 4/8 = výška zeme 1,0)
+function dockModel(season: number): FineModel {
+  const C = fineCanvas(1, 2, 10), { put, fbox } = C;
+  fbox(1, DOCK_DECK, -2, 6, DOCK_DECK, 17, (x, y, z) => (z % 3 === 0 ? M.PLANK_DARK : M.PLANK)); // dosky naprieč (kúsok na breh)
+  fbox(1, DOCK_DECK - 1, -2, 1, DOCK_DECK - 1, 15, M.LOG_DARK); fbox(6, DOCK_DECK - 1, -2, 6, DOCK_DECK - 1, 15, M.LOG_DARK); // nosníky (nad vodou)
+  for (const z of [0, 7, 14]) for (const x of [0, 7]) fbox(x, 0, z, x, DOCK_DECK + (z === 0 ? 3 : 1), z, M.LOG); // kolíky
+  put(0, DOCK_DECK + 4, 0, M.LOG_DARK); put(7, DOCK_DECK + 4, 0, M.LOG_DARK);
+  fbox(0, DOCK_DECK + 2, 1, 0, DOCK_DECK + 2, 2, M.ROPE); put(1, DOCK_DECK + 1, 2, M.ROPE); // lano na kolíku
+  fbox(1, DOCK_DECK + 1, 14, 2, DOCK_DECK + 1, 15, M.SACK); put(5, DOCK_DECK + 1, 15, M.POT); // vrecko a kanvička pri brehu
+  if (season === 3) C.snow([M.PLANK, M.PLANK_DARK, M.SACK, M.LOG], DOCK_DECK);
+  return C.done();
+}
+// Značka okraja mapy pri jazierku (1 pole): kolík s červeno-bielou bójkou a lanom – tadiaľto raz loďka pôjde do Močiara
+function edgeModel(season: number): FineModel {
+  const C = fineCanvas(1, 1, 12), { put, fbox } = C;
+  fbox(0, 0, 3, 0, 8, 4, M.LOG);
+  fbox(-1, 9, 3, 1, 9, 4, M.ROOF_RED); fbox(-1, 10, 3, 1, 10, 4, M.WALL_WHITE); put(0, 11, 3, M.ROOF_RED); put(0, 11, 4, M.ROOF_RED);
+  fbox(0, 5, 5, 0, 5, 10, M.ROPE); // lano k ďalšiemu kolíku (o políčko južnejšie) – susedné značky sa tak nikde neprekrývajú
+  if (season === 3) C.snow([M.ROOF_RED, M.WALL_WHITE]);
+  return C.done();
+}
+// Modely móla a značky okraja sa stavajú raz pre obdobie – sieť v render3d sa tak počíta len raz
+const pondCache = new Map<string, FineModel>();
+function pondModel(kind: 'dock' | 'edge', season: number): FineModel {
+  const key = kind + '|' + season;
+  let m = pondCache.get(key);
+  if (!m) { m = kind === 'dock' ? dockModel(season) : edgeModel(season); pondCache.set(key, m); }
+  return m;
+}
+
 // Otočenie dát modelu o 90° okolo zvislej osi (pôdorys je štvorcový)
 function rotate90(f: FineModel): FineModel {
   const { sx, sy, sz, data } = f, out = new Uint8Array(data.length);
@@ -797,6 +831,8 @@ export const FINE_MODELS: FineModelEntry[] = [
   ...[1, 2, 3].map((l): FineModelEntry => ({ id: 'icehouse-' + l, name: `Ľadovňa, izolácia ${l}`, group: 'Buildings', fn: `icehouseModel(ins = ${l})`, tiles: [2, 2], build: turned(se => icehouseModel(se, l)) })),
   { id: 'dielna', name: 'Dielňa', group: 'Buildings', fn: 'dielnaModel', tiles: [2, 2], build: turned(se => dielnaModel(se, false)) },
   { id: 'dielna-loom', name: 'Dielňa s krosnami', group: 'Buildings', fn: 'dielnaModel(loom = true)', tiles: [2, 2], build: turned(se => dielnaModel(se, true)) },
+  { id: 'dock', name: 'Mólo', group: 'Buildings', fn: 'dockModel', tiles: [1, 2], build: turned(dockModel) },
+  { id: 'pond-edge', name: 'Značka okraja jazierka (Močiar)', group: 'Objects', fn: 'edgeModel', tiles: [1, 1], build: turned(edgeModel) },
   { id: 'stall', name: 'Trh', group: 'Objects', fn: 'marketStall', tiles: [3, 1], build: turned(marketStall) },
   { id: 'well', name: 'Studňa', group: 'Objects', fn: 'wellModel', tiles: [1, 1], build: turned(wellModel) },
   { id: 'cauldron', name: 'Čarovný kotlík', group: 'Objects', fn: 'cauldronModel', tiles: [1, 1], build: turned(cauldronModel) },
@@ -857,6 +893,17 @@ function fineModels(tiles: readonly GroundTile[], season: number, w: number, are
     const tx = i % w, ty = (i / w) | 0;
     const m = buildingModel(ft, season, ft.v ? ft.v(st) : 0);
     out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: ft.g, ox: tx - FM / FINE, oy: groundHeight('grass') / R, oz: ty - FM / FINE, tile: { x: tx + ft.tile[0], y: ty + ft.tile[1] } });
+  }
+  // mólo (#160): model na prvom políčku móla, stojí na dne jazierka; ťuknutie vyberie koniec móla pri loďke
+  const di = tiles.findIndex(t => t.g === 'dock');
+  if (di >= 0) {
+    const m = pondModel('dock', season), tx = di % w, ty = (di / w) | 0;
+    out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'dock', ox: tx - FM / FINE, oy: groundHeight('water') / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.6 });
+  }
+  if (area === 'garden') for (const p of D.POND_EDGE) { // okraj mapy pri jazierku: kolíky s bójkami (cesta do Močiara)
+    if (tiles[p.y * w + p.x]?.g !== 'water') continue;
+    const m = pondModel('edge', season);
+    out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'edge', ox: p.x - FM / FINE, oy: groundHeight('water') / R, oz: p.y - FM / FINE, tile: { x: p.x, y: p.y }, invis: 0.9 });
   }
   for (let i = 0; i < tiles.length; i++) {
     const g = must(tiles[i]).g;
@@ -920,8 +967,8 @@ export function buildGrid(tiles: readonly GroundTile[], season: number, w?: numb
   const h = tiles.length / w, g = makeGrid(w, h);
   g.area = area || 'garden';
   for (let ty = 0; ty < h; ty++) for (let tx = 0; tx < w; tx++) {
-    const gt = must(tiles[ty * w + tx]).g, th = tileHeight(gt, tx, ty);
-    g.heights[ty * w + tx] = th;
+    const gt = must(tiles[ty * w + tx]).g, th = gt === 'dock' ? groundHeight('water') : tileHeight(gt, tx, ty);
+    g.heights[ty * w + tx] = gt === 'dock' ? groundHeight('grass') : th; // mólo: pod lávkou voda, stojí sa vo výške zeme
     for (let y = 0; y < th; y++) for (let z = ty * R; z <= ty * R + 1; z++) for (let x = tx * R; x <= tx * R + 1; x++) set(g, x, y, z, y === th - 1 ? topMaterial(gt) : subMaterial(gt, x, y, z));
   }
   g.fine = fineModels(tiles, season, w, g.area, state);
@@ -1004,23 +1051,25 @@ export const WATER_Y = groundHeight('grass') / R - 1 / 8;  // hladina je 1/8 blo
 // w = šírka plochy v políčkach (predvolene záhrada); výška = tiles.length / w
 const isWater = (tiles: readonly GroundTile[], x: number, y: number, w: number): boolean => x >= 0 && y >= 0 && x < w && y < tiles.length / w && tiles[y * w + x]?.g === 'water';
 // Maska vody pre shader – z nej sa v každom pixeli hladiny počíta vzdialenosť k brehu. 0 = súš, WATER_SHORE = breh
-// (voda so súšou z niektorej zo 4 strán, #38: tam rastú brehové vodné kvety), 255 = hĺbka; w = šírka plochy
+// (voda so súšou z niektorej zo 4 strán, #38: tam rastú brehové vodné kvety), 255 = hĺbka; w = šírka plochy.
+// Pod mólom je hladina tiež (#160): políčko móla sa ráta ako voda (aj pre zónu susedov).
 export const WATER_SHORE = 160;
 export function waterMask(tiles: readonly GroundTile[], w?: number): Uint8Array {
-  const m = new Uint8Array(tiles.length);
-  for (let i = 0; i < tiles.length; i++) { const z = D.waterZone(tiles, i, w || D.W); m[i] = z === 'deep' ? 255 : z ? WATER_SHORE : 0; }
+  const m = new Uint8Array(tiles.length), wet = tiles.map(t => (t.g === 'dock' ? { g: 'water' as const } : t));
+  for (let i = 0; i < tiles.length; i++) { const z = D.waterZone(wet, i, w || D.W); m[i] = z === 'deep' ? 255 : z ? WATER_SHORE : 0; }
   return m;
 }
 // Štvorce hladiny: jeden na každé políčko vody
 export function waterQuads(tiles: readonly GroundTile[], w?: number): { x: number; y: number }[] {
   w = w || D.W;
   const out = [];
-  for (let y = 0; y < tiles.length / w; y++) for (let x = 0; x < w; x++) if (isWater(tiles, x, y, w)) out.push({ x, y });
+  for (let y = 0; y < tiles.length / w; y++) for (let x = 0; x < w; x++) if (isWater(tiles, x, y, w) || tiles[y * w + x]?.g === 'dock') out.push({ x, y });
   return out;
 }
-// Lekná – rovnaké políčka ako lekná v textúre zeme z art.js (hash < 0,12), v zime nie sú
-export function lilyPads(tiles: readonly GroundTile[], season: number, w?: number): { x: number; y: number }[] {
-  if (season === 3) return [];
+// Lekná – rovnaké políčka ako lekná v textúre zeme z art.js (hash < 0,12), v zime nie sú. Len na plese v horách:
+// v jazierku v záhrade ozdobné lekná nie sú (#160) – skutočné vodné kvety tam prinesie #38 (D.LILY_AREAS).
+export function lilyPads(tiles: readonly GroundTile[], season: number, w: number | undefined, area: string): { x: number; y: number }[] {
+  if (season === 3 || !D.LILY_AREAS.includes(area)) return [];
   w = w || D.W;
   const out = [];
   for (let y = 0; y < tiles.length / w; y++) for (let x = 0; x < w; x++) if (isWater(tiles, x, y, w) && hash(x, y) < 0.12) out.push({ x, y });

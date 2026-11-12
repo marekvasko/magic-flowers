@@ -131,7 +131,7 @@ export function createVehicles(dp: VehiclesDeps): ClientVehicles {
     const i = V.tileIndex(S.area, p.x, p.y);
     if (i < 0 || p.x < 0.2 || p.y < 0.2 || p.x > S.W - 0.2 || p.y > S.H - 0.2) return true;
     const from = S.tiles[V.tileIndex(S.area, pred.x, pred.y)], to = S.tiles[i];
-    return !D.canStep(from ?? to, to);
+    return !D.canStep(from ?? to, to) || to?.g === 'dock'; // na mólo (#160) fúrik nevojde, ako na serveri
   }
   function moved(fromX: number, fromY: number): void {
     if (!pred || pred.area !== S.area) return;

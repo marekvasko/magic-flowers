@@ -2,7 +2,7 @@
 // Engine (engine.ts) je všeobecný; tu sa dosadí, čo je herný svet, prítomnosť a správa.
 import type { AreaId } from '../shared/data.ts';
 import type { ServerMessage } from '../shared/protocol.ts';
-import type { Contracts, Dielna, Icehouse, Inventory, Market, PlayerKey, PlayerSave, SaveFile, Vehicles, Weather, Webs, WorldMode } from '../shared/save.ts';
+import type { Contracts, Dielna, Dock, Icehouse, Inventory, Market, PlayerKey, PlayerSave, SaveFile, Vehicles, Weather, Webs, WorldMode } from '../shared/save.ts';
 import type { Ctx, EngineWorld, Keys, PeriodicDef, Proposer, Slices, Spec } from './engine.ts';
 import type { Scav } from './scavenge.ts';
 import type { AreaTilesWorld, Presence, StorageSlice, Tile } from './world.ts';
@@ -23,6 +23,7 @@ export interface GameWorld extends EngineWorld, AreaTilesWorld {
   scavSalt: number;
   icehouse: Icehouse;
   dielna: Dielna;
+  dock: Dock;
   redeem: Inventory;
   pomedzieSeed: number;
   up: { plots: number };
@@ -103,7 +104,8 @@ export type Directive =
   | { t: 'scavStart'; i: number; n: string; seeds: boolean }
   | { t: 'scavDone' }
   | { t: 'pullStart'; id: number; n: string }
-  | { t: 'pullDone' };
+  | { t: 'pullDone' }
+  | { t: 'aboard'; x: number; y: number };   // spolujazdec v loďke: prítomnosť ide s loďkou (#160)
 // Adresát: kľúč hráča, E.ALL = všetkým, E.area(plocha) = hráčom na ploche
 export type To = PlayerKey | { readonly all: true } | { readonly area: AreaId };
 export type Msg = { to: To } & (ServerMessage | Directive);
@@ -116,6 +118,7 @@ export interface GameSlices extends Slices {
   contracts: Contracts;
   icehouse: Icehouse;
   dielna: Dielna;
+  dock: Dock;
   redeem?: Inventory;   // join ho deklaruje, len keď je čo odovzdať
   scav: Scav;
   scavSalt: number;
@@ -165,6 +168,7 @@ export function put<K extends string>(s: Slices, key: K, v: KeyedSlice<K>): void
 export const savesOf = (w: Pick<GameWorld, 'saves'>): GameWorld['saves'] => w.saves || {};
 export const redeemOf = (w: Pick<GameWorld, 'redeem'>): Inventory => w.redeem || {};
 export const gardenOf = (w: Pick<GameWorld, 'tiles'>): Tile[] => w.tiles || [];
+export const dockOf = (w: Pick<GameWorld, 'dock'>): GameWorld['dock'] | undefined => w.dock || undefined;
 /* eslint-enable @typescript-eslint/no-unnecessary-condition -- koniec čiastočných svetov */
 
 // ---- Návrhy ----
