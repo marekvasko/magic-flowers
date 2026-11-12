@@ -376,7 +376,7 @@ All code is TypeScript (#122) in ES modules; the only JavaScript left is the ESL
 - `src/server/items.ts` – inventories and flower batches with an age; `src/server/scavenge.ts` – where wild seeds hide in the grass.
 - `src/server/actions.ts` – player actions as proposals (one per message type: till, water, plant, pick, buy, sell, contracts, storage, icehouse, well, potions, wishes, …), movement (`pos`), joining, leaving, the fairy dance, and `resolveAct`, which turns a tap on a tile into one of them.
 - `src/shared/data.ts` – data shared by the server and the client (flowers, recipes, the maps of all areas, gates between them), strictly typed.
-- `src/shared/save.ts` – the type of the save file (`data/room-*.json`, `SAVE_VERSION` 13), checked by the compiler against a real save (`test/save-v13.fixture.ts`; the v11 and v12 ones stay as migration input); `src/shared/protocol.ts` – every WebSocket message in both directions.
+- `src/shared/save.ts` – the type of the save file (`data/room-*.json`, `SAVE_VERSION` 14), checked by the compiler against a real save (`test/save-v14.fixture.ts`; the v11 and v12 ones stay as migration input); `src/shared/protocol.ts` – every WebSocket message in both directions.
 - `src/server/areas.ts` – areas: tiles of each area, sizes, gates and arrival points, saving Les divov's layout.
 - `src/server/ice.ts` – mountains, ice digging and the icehouse (with its insulation).
 - `src/server/dielna.ts` – the Dielňa, the loom, the silk master and blankets, and the v11 migration of their tiles.

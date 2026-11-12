@@ -318,7 +318,7 @@ test('server: uloženie v11 sa prevedie na v12 – záhon na novej vode dostane 
     await new Promise(r => setTimeout(r, 300));
   } finally { await stopServer(proc); }
   const s = readJson<SaveFile>(path.join(dir, 'room-dock.json'));
-  assert.strictEqual(s.v, 13);
+  assert.strictEqual(s.v, 14);
   assert.strictEqual(s.migratedFrom, 11);
   assert.deepStrictEqual(s.redeem, {}, 'odovzdané');
   assert.ok(got.some(t => /2|3× Tulipán|Tulipán/.test(t)), got.join(' | '));

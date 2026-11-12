@@ -258,7 +258,7 @@ test('cheat na serveri: kľúč, mince hráčovi podľa odtlačku, skok v čase,
     const saved = readJson<SaveFile>(path.join(dir, 'room-test.json'));
     assert.strictEqual(saved.saves['ana']?.coins, coins + 100);
     assert.ok(saved.tick >= until);
-    assert.strictEqual(saved.v, 13);
+    assert.strictEqual(saved.v, 14);
     assert.deepStrictEqual(saved.ground, { garden: { [String(grass)]: { g: 'boulder', was: 'grass' } } });
     assert.strictEqual(saved.tiles[grass2]?.s?.p?.sp, 'mak');
     const srv2 = await startServer(dir, port, KEY);

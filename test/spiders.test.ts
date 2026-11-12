@@ -597,7 +597,7 @@ test('server: svet z verzie 9 dostane pavučiny; v lese sa ťahá hodváb, s lam
     ws.close();
   } finally { await stopServer(proc); }
   const saved = readJson<SaveFile & { sps?: unknown; kz?: unknown }>(path.join(dir, 'room-sp.json'));
-  assert.strictEqual(saved.v, 13);
+  assert.strictEqual(saved.v, 14);
   assert.strictEqual(saved.migratedFrom, 9);
   assert.ok(saved.webs.list.length >= 15);
   assert.ok(saved.corners.garden.length >= 1);
