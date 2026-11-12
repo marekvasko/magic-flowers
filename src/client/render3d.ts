@@ -617,17 +617,19 @@ export function create(api: Render3DApi): Render3D {
   let mesh: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial> | null = null, grid: Grid | null = null, builtSeason = -1, builtGen = -1;
   const G = (): Grid => must(grid ?? undefined); // svet je postavený (volá sa až po buildMesh)
 
-  // Sieť zo zlúčených stien (Mesher.greedy): bunka má veľkosť 1/scale bloku; look(q) → { col, em, tex } pre materiál steny
-  function quadsGeometry(quads: readonly Quad[], scale: number, look: (q: Quad) => { col: Readonly<V3>; em: number; tex: boolean }): THREE.BufferGeometry {
+  // Sieť zo zlúčených stien (Mesher.greedy): bunka má veľkosť 1/scale bloku; look(q) → { col, em, tex } pre materiál steny,
+  // top = výška horného okraja steny v blokoch, ak má byť iná než mriežka (stena vody siaha až k hladine, #173)
+  function quadsGeometry(quads: readonly Quad[], scale: number, look: (q: Quad) => { col: Readonly<V3>; em: number; tex: boolean; top?: number | undefined }): THREE.BufferGeometry {
     const n = quads.length;
     const P = new Float32Array(n * 12), C = new Float32Array(n * 12), A = new Float32Array(n * 4), E = new Float32Array(n * 4),
       T = new Float32Array(n * 4), U = new Float32Array(n * 8), N = new Float32Array(n * 12);
     const I = new (n * 4 > 65535 ? Uint32Array : Uint16Array)(n * 6);
     quads.forEach((q, k) => {
-      const { col, em, tex } = look(q), shade = must(FACE_SHADE[MS.faceIndex(q)]);
-      MS.quadCorners(q).forEach((p, j) => {
+      const { col, em, tex, top } = look(q), shade = must(FACE_SHADE[MS.faceIndex(q)]), corners = MS.quadCorners(q);
+      const yMax = Math.max(...corners.map(p => p[1]));
+      corners.forEach((p, j) => {
         const i = k * 4 + j;
-        P.set([p[0] / scale, p[1] / scale, p[2] / scale], i * 3);
+        P.set([p[0] / scale, top != null && p[1] === yMax ? top : p[1] / scale, p[2] / scale], i * 3);
         C.set([col[0] * shade, col[1] * shade, col[2] * shade], i * 3);
         N[i * 3 + q.ax] = q.sg;
         A[i] = must(AO_CURVE[must(q.ao[j])]); E[i] = em; T[i] = tex ? 1 : 0;
@@ -664,7 +666,9 @@ export function create(api: Render3DApi): Render3D {
     const colOf = (m: number): V3 => { let c = cols.get(m); if (!c) { c = toLin(hex(W.colorOf(m, se))); cols.set(m, c); } return c; };
     const geo = quadsGeometry(quads, R, q => {
       const textured = q.m < 16 && q.ax === 1 && q.sg > 0; // vrch terénu nesie kresbu zeme
-      return { col: textured ? [1, 1, 1] : colOf(q.m), em: W.EMISSIVE[q.m] ? 1 : 0, tex: textured };
+      // bočná stena vody je len na okraji mapy (voda je najnižší terén) – siaha až k hladine, inak by pod ňou presvitala obloha (#173)
+      const top = q.m === W.M.WATER && q.ax !== 1 ? W.WATER_Y : undefined;
+      return { col: textured ? [1, 1, 1] : colOf(q.m), em: W.EMISSIVE[q.m] ? 1 : 0, tex: textured, top };
     });
     if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); }
     mesh = new THREE.Mesh(geo, material);
