@@ -681,18 +681,26 @@ test('v hre už nie je zapisovač cez Proxy, návrh (draft) ani náhoda zo sveta
   }
 });
 
-test('dobiehanie: 30 dní s plnou záhradou (rýchlosť sa vypíše; stráž proti regresii: pod 150 µs na udalosť, zapisovač fázy 1 mal ≈200)', () => {
-  const w = makeWorld(24, D.DAWN_TICK + 6);
-  w.up.plots = 4;
-  const sp = Econ.PLANTABLE.filter(k => !D.SPECIES[k].strict);
-  tillable(w).slice(0, 96).forEach((i, n) => { at(w, i).s = { k: must(D.TILLABLE[at(w, i).g]), w: 1, r: 0, o: 'ana', p: { sp: must(sp[n % sp.length]), prog: 0, q: 3, dry: 0 } }; });
-  w.plotsUsed = Econ.plotsUsedOf(w.tiles);
-  give(save(w, 'ana'), `fl_${SP}`, 3, w.tick); give(save(w, 'bob'), `fl_${SP}`, 3, w.tick);
-  const spec: Spec = { ...SPEC, onBatch() {} }; // ako na serveri: so zmenami pre denník
-  E.advanceTo(w, w.tick + 2 * TPD, spec);
-  const t0 = process.hrtime.bigint();
-  const n = E.advanceTo(w, w.tick + 30 * TPD, spec);
-  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  console.log(`  dobiehanie 30 dní: ${n} udalostí za ${ms.toFixed(1)} ms (${(ms / n * 1000).toFixed(1)} µs/udalosť)`);
-  assert.ok(n > 900 && ms / n * 1000 < 150, `${(ms / n * 1000).toFixed(1)} µs/udalosť`);
+// Stráž meria najlepší z niekoľkých behov (#166): node --test púšťa súbory súbežne a zdieľaný runner na GitHube býva
+// chvíľami niekoľkokrát pomalší (namerané 154–163 µs pri bežných 37–90). Skutočné spomalenie slučky je pomalé v každom behu,
+// šum len v niektorom – preto najlepší beh, nie zvýšená hranica.
+test('dobiehanie: 30 dní s plnou záhradou (rýchlosť sa vypíše; stráž proti regresii: najlepší z 3 behov pod 150 µs na udalosť, zapisovač fázy 1 mal ≈200)', () => {
+  const run = (): { n: number; us: number } => {
+    const w = makeWorld(24, D.DAWN_TICK + 6);
+    w.up.plots = 4;
+    const sp = Econ.PLANTABLE.filter(k => !D.SPECIES[k].strict);
+    tillable(w).slice(0, 96).forEach((i, n) => { at(w, i).s = { k: must(D.TILLABLE[at(w, i).g]), w: 1, r: 0, o: 'ana', p: { sp: must(sp[n % sp.length]), prog: 0, q: 3, dry: 0 } }; });
+    w.plotsUsed = Econ.plotsUsedOf(w.tiles);
+    give(save(w, 'ana'), `fl_${SP}`, 3, w.tick); give(save(w, 'bob'), `fl_${SP}`, 3, w.tick);
+    const spec: Spec = { ...SPEC, onBatch() {} }; // ako na serveri: so zmenami pre denník
+    E.advanceTo(w, w.tick + 2 * TPD, spec);
+    const t0 = process.hrtime.bigint();
+    const n = E.advanceTo(w, w.tick + 30 * TPD, spec);
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    console.log(`  dobiehanie 30 dní: ${n} udalostí za ${ms.toFixed(1)} ms (${(ms / n * 1000).toFixed(1)} µs/udalosť)`);
+    return { n, us: ms / n * 1000 };
+  };
+  let best = run();
+  for (let k = 1; k < 3 && best.us >= 150; k++) { const r = run(); if (r.us < best.us) best = r; } // ďalší beh len pri prekročení
+  assert.ok(best.n > 900 && best.us < 150, `${best.us.toFixed(1)} µs/udalosť (najlepší z behov)`);
 });
