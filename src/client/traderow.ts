@@ -2,11 +2,13 @@
 //  - Pás kusov: každý kus je ikona; ťuknutím na k-tú vyberieš k kusov, ťahaním prstom pridávaš / uberáš (relatívne – posun
 //    o šírku ikony = 1 kus), prst za okrajom pásu pridáva / uberá sám. Pri nákupe najviac to, čo zaplatíš (ďalší kus
 //    je zamknutý), pri predaji to, čo máš. Kusy nad tým, čo kniha vezme hneď, majú hnedú lištu – počkajú v Dopyte / Ponuke.
-//  - Posuvník ceny: stred = trhová cena (priemer okamžitého obchodu pre zvolený počet), na oboch stranách rovnaký počet
-//    mincí podľa 10. a 90. percentilu cien obchodov; každá minca má skoro rovnakú dĺžku (kde sa veľa obchodovalo,
-//    najviac asi 2× dlhšiu). V pozadí kusy: dole predané za posledné dni, hore to, čo je práve v knihe (s počtom).
-//    Fialová zóna = obchod sa vybaví hneď. Predvolená cena je tá, za ktorú sa celý počet vybaví naraz.
-//  - Tlačidlo: Kúpiť hneď / Predať hneď (okamžitý príkaz) alebo Dopyt / Ponuka (limitná objednávka) a suma.
+//  - Posuvník ceny: stred = trhová cena (najlepšia cena v knihe za 1 kus – nemení sa s počtom), na oboch stranách rovnaký
+//    počet mincí podľa 10. a 90. percentilu cien obchodov (a celej knihy); každá minca má skoro rovnakú dĺžku (kde sa veľa
+//    obchodovalo, najviac asi 2× dlhšiu). V grafe stĺpiky likvidity: kusy v knihe za každú cenu; kusy, ktoré si objednávka
+//    zoberie, sa zafarbia farbou ceny zhora nadol. Fialová zóna = obchod sa vybaví hneď. Pod čiarou trhu šípka trendu
+//    ceny za posledné dni. Úchyt s cenou a šípkami ‹ › je nad grafom; ťahá sa kdekoľvek po posuvníku.
+//    Predvolená cena je tá, za ktorú sa celý počet vybaví naraz.
+//  - Tlačidlo: Kúpiť hneď / Predať hneď (okamžitý príkaz) alebo Dopyt / Ponuka (limitná objednávka), suma a cena za kus.
 // Tovar bez knihy (elixíry, ľad, zvädnuté kvety…) má len pás kusov a tlačidlo – trh ho vykúpi za pevnú cenu.
 import * as Bk from '../shared/book.ts';
 import type { Level } from '../shared/book.ts';
@@ -33,7 +35,8 @@ export interface RowInput {
   busy(on: boolean): void;         // počas ťahania sa okno neprekresľuje
 }
 
-const COL = { ink: '#2b2116', muted: '#7a6a4a', violet: '#6b3fa0', violetSoft: '#ece3f7', edge: '#8b5a2b', bars: '#c9b48a', plot: '#faf3e2' };
+const COL = { ink: '#2b2116', muted: '#7a6a4a', violet: '#6b3fa0', violetSoft: '#ece3f7', violetPale: 'rgba(107,63,160,.32)', bars: '#c9b48a', plot: '#faf3e2' };
+const HANDLE = 30;   // výška pásu s úchytom nad grafom
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 const W = 24; // šírka ikony v páse aj s medzerou
 
@@ -87,6 +90,17 @@ function advColor(sc: Scale, price: number, side: Side): string {
   return `rgb(${a.map((v, i) => Math.round(v + ((b[i] ?? v) - v) * t)).join(',')})`;
 }
 
+// Trend ceny za posledné dni (TREND_DAYS denných cien späť): sklon šípky podľa veľkosti pohybu (rovno do 3 %, potom
+// plynulo až skoro kolmo pri 20 %) a farba od sivohnedej po sýtu zelenú (pohyb hráčovi pomáha: pri nákupe zlacnenie,
+// pri predaji zdraženie) alebo červenú
+const TREND_DAYS = 3;
+export function trend(hist: readonly number[], cur: number, side: Side): { angle: number; color: string } {
+  const old = hist[Math.max(0, hist.length - 1 - TREND_DAYS)] ?? cur, pct = old ? (cur - old) / old : 0, a = Math.abs(pct);
+  if (a < 0.03) return { angle: 0, color: 'rgb(138,122,98)' };
+  const good = side === 'buy' ? pct < 0 : pct > 0, k = Math.min(1, a / 0.2) ** 0.7, from = [138, 122, 98], to = good ? [30, 150, 60] : [210, 45, 35];
+  return { angle: Math.min(80, 15 + a / 0.2 * 65) * Math.sign(pct), color: `rgb(${from.map((v, i) => Math.round(v + ((to[i] ?? v) - v) * k)).join(',')})` };
+}
+
 export function tradeRow(r: RowInput): HTMLElement {
   const { id, side, q } = r;
   const lv: Level[] = q ? (side === 'buy' ? q.a : q.b).filter(l => !l.id || !r.mine.has(l.id)) : [];
@@ -126,22 +140,20 @@ export function tradeRow(r: RowInput): HTMLElement {
   // posuvník ceny (len tovar s knihou), tlačidlo, riadok s cenou
   const trade = el('div', 'trade'), go = el('button', 'go');
   go.type = 'button';
-  let slider: HTMLDivElement | null = null, cv: HTMLCanvasElement | null = null, inp: HTMLInputElement | null = null;
+  let slider: HTMLDivElement | null = null, cv: HTMLCanvasElement | null = null;
   if (q) {
-    slider = el('div', 'slider'); cv = el('canvas'); inp = el('input');
-    inp.type = 'range'; inp.min = '0'; inp.max = '1000'; inp.id = `cena-${side}-${id}`; inp.setAttribute('aria-label', 'Cena za kus');
-    slider.append(cv, inp); trade.append(slider);
+    slider = el('div', 'slider'); cv = el('canvas'); cv.setAttribute('aria-hidden', 'true');
+    slider.tabIndex = 0; slider.setAttribute('role', 'slider'); slider.setAttribute('aria-label', 'Cena za kus');
+    slider.append(cv); trade.append(slider);
   }
   trade.append(go); row.append(trade);
   const hint = el('div', 'hint'); hint.setAttribute('aria-live', 'polite');
   if (q) row.append(hint);
 
   let sc: Scale = scaleOf(1, []), price = 1;
-  const marketOf = (k: number): number => {
-    if (!q) return r.fixed;
-    const kk = Math.min(k, bookAvail);
-    return kk > 0 ? Math.round(walk(kk, side === 'buy' ? 1e9 : 0).total / kk) : q.p;
-  };
+  // trhová cena: najlepšia cena v knihe za 1 kus (pri nákupe najlacnejšia ponuka, pri predaji najvyšší dopyt) – nezávisí
+  // od zvoleného počtu, takže stred posuvníka a čiara trhu pri zmene počtu stoja na mieste
+  const market = (): number => (q ? lv[0]?.p ?? q.p : r.fixed);
   const trades = (): [number, number][] => {
     if (!q) return [];
     if (q.t.length) return q.t;
@@ -192,76 +204,106 @@ export function tradeRow(r: RowInput): HTMLElement {
     const g = cv.getContext('2d');
     if (!g) return;
     g.scale(dpr, dpr);
-    const x = (p: number): number => 6 + sc.toX(p) * (w - 12), base = h - 16;
-    g.fillStyle = COL.plot; g.fillRect(0, 0, w, h);
-    // fialová zóna: odtiaľ sa celý počet vybaví hneď
-    const best = n <= bookAvail ? thresh(n) : null;
-    if (best != null) { g.fillStyle = COL.violetSoft; if (side === 'buy') g.fillRect(x(best), 0, w - x(best), base); else g.fillRect(0, 0, x(best), base); }
-    // dole: predané kusy za cenu za posledné dni
-    const tr = trades(), max = Math.max(1, ...tr.map(t => t[1]));
-    for (const [p, k] of tr) {
-      if (p < sc.lo || p > sc.hi) continue;
-      const bw = Math.max(2, Math.min(7, (x(p + 0.5) - x(p - 0.5)) * 0.7)), hh = (k / max) * (base - 30);
-      g.fillStyle = COL.bars; g.fillRect(x(p) - bw / 2, base - hh, bw, hh);
+    // hore pás s úchytom (mimo pozadia grafu), pod ním graf po os (base), pod osou ceny
+    const x = (p: number): number => 6 + sc.toX(p) * (w - 12), base = h - 16, top = HANDLE;
+    g.fillStyle = COL.plot; g.beginPath(); g.roundRect(0, top, w, h - top, 9); g.fill();
+    // fialová zóna: odtiaľ sa celý počet vybaví hneď (presne od ceny, za ktorú sa vybaví posledný potrebný kus)
+    const best = n <= bookAvail ? thresh(n) : null, edgeX = best == null ? null : x(best);
+    if (edgeX != null) {
+      g.fillStyle = COL.violetSoft; g.beginPath();
+      if (side === 'buy') g.roundRect(edgeX, top, w - edgeX, base - top, [0, 9, 0, 0]); else g.roundRect(0, top, edgeX, base - top, [9, 0, 0, 0]);
+      g.fill();
+      g.setLineDash([2, 2]); g.strokeStyle = COL.violet; g.lineWidth = 1.2;
+      g.beginPath(); g.moveTo(edgeX, top); g.lineTo(edgeX, base); g.stroke(); g.setLineDash([]);
     }
-    // hore: kusy v knihe za každú cenu (všetky objednávky spolu), s počtom
-    const inBook = new Map<number, number>();
-    for (const l of lv) inBook.set(l.p, (inBook.get(l.p) ?? 0) + l.n);
-    const topMax = Math.max(1, ...inBook.values()), bookCol = side === 'buy' ? COL.violet : COL.edge, labels: [string, number, number][] = [];
-    let lastLabel = -1e9;
-    for (const p of [...inBook.keys()].sort((a, b) => a - b)) {
-      if (p < sc.lo || p > sc.hi) continue;
-      const k = inBook.get(p) ?? 0, bw = Math.max(4, Math.min(8, (x(p + 0.5) - x(p - 0.5)) * 0.7)), hh = 3 + (k / topMax) * 13;
-      g.fillStyle = bookCol; g.globalAlpha = 0.75; g.fillRect(x(p) - bw / 2, 1, bw, hh); g.globalAlpha = 1;
-      if (x(p) - lastLabel >= 11) { labels.push([String(k), x(p), hh + 2]); lastLabel = x(p); }
-    }
-    // os, značky percentilov (trh má prednosť, popisy sa neprekrývajú), čiarkovaný stred
+    // os a značky percentilov (bez popisu trhu – ten nesie šípka trendu), čiarkovaná čiara trhu
     g.strokeStyle = COL.bars; g.lineWidth = 1; g.beginPath(); g.moveTo(6, base + 0.5); g.lineTo(w - 6, base + 0.5); g.stroke();
     g.font = `700 10px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'top';
     const shownAt = [x(sc.market)];
-    for (const i of [3, 1, 5, 2, 4]) {
+    for (const i of [1, 5, 2, 4]) {
       const p = sc.P[i] ?? sc.market, at = x(p);
-      g.fillStyle = i === 3 ? COL.ink : COL.muted;
-      g.fillRect(at - 0.5, base, 1, 4);
-      if (i !== 3 && shownAt.some((v, k) => Math.abs(v - at) < (k === 0 ? 32 : 24))) continue;
-      if (i !== 3) shownAt.push(at);
-      g.fillText(i === 3 ? `${p} trh` : String(p), at, base + 4);
+      g.fillStyle = COL.muted; g.fillRect(at - 0.5, base, 1, 4);
+      if (shownAt.some((v, k) => Math.abs(v - at) < (k === 0 ? 16 : 24))) continue;
+      shownAt.push(at); g.fillText(String(p), at, base + 4);
     }
     g.setLineDash([3, 3]); g.strokeStyle = COL.ink; g.globalAlpha = 0.5;
-    g.beginPath(); g.moveTo(x(sc.market) + 0.5, 0); g.lineTo(x(sc.market) + 0.5, base); g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
-    // jazdec: čiara cez graf, kruh s cenou dole
-    const px = x(price), ky = base - 15, col = advColor(sc, price, side);
-    g.fillStyle = col; g.fillRect(px - 1.5, 0, 3, base);
-    g.beginPath(); g.arc(px, ky, 11, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#fff'; g.font = `800 11px ${FONT}`; g.textBaseline = 'middle'; g.fillText(String(price), px, ky + 0.5);
-    g.font = `800 9px ${FONT}`; g.textBaseline = 'top'; g.fillStyle = bookCol;
-    for (const [t, lx, ly] of labels) g.fillText(t, lx, ly);
+    g.beginPath(); g.moveTo(x(sc.market) + 0.5, top); g.lineTo(x(sc.market) + 0.5, base); g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
+    // šípka trendu pod osou na konci čiary trhu
+    {
+      const t = trend(q.h, q.p, side), a = -t.angle * Math.PI / 180, cx = x(sc.market) + 0.5, cy = base + 8.5, rr = 5.5;
+      const dx = Math.cos(a) * rr, dy = Math.sin(a) * rr, an = Math.atan2(dy, dx), hh = 4;
+      g.strokeStyle = t.color; g.lineWidth = 2.2; g.lineCap = 'round'; g.lineJoin = 'round';
+      g.beginPath(); g.moveTo(cx - dx, cy - dy); g.lineTo(cx + dx, cy + dy);
+      g.moveTo(cx + dx - hh * Math.cos(an - 0.65), cy + dy - hh * Math.sin(an - 0.65)); g.lineTo(cx + dx, cy + dy);
+      g.lineTo(cx + dx - hh * Math.cos(an + 0.65), cy + dy - hh * Math.sin(an + 0.65)); g.stroke();
+    }
+    // jazdec: čiara od úchytu po os, úchyt nad grafom (cena a šípky ‹ ›). Pri okraji sa úchyt nevycentruje nad cenou –
+    // jeho dolný roh na strane hrotu je vtedy skoro ostrý a hrot z neho plynule vychádza
+    const px = x(price), col = advColor(sc, price, side);
+    g.fillStyle = col; g.fillRect(px - 1.5, top - 4, 3, base - top + 4);
+    {
+      const hw = 58, hh = 24, hx = Math.max(1, Math.min(w - hw - 1, px - hw / 2)), hy = 1, cy = hy + hh / 2;
+      const nearL = px - hx < 17, nearR = hx + hw - px < 17, tipX = Math.max(hx + 5, Math.min(hx + hw - 5, px));
+      g.save(); g.shadowColor = 'rgba(60,40,20,.25)'; g.shadowBlur = 4; g.shadowOffsetY = 1.5;
+      g.fillStyle = col; g.beginPath(); g.roundRect(hx, hy, hw, hh, [12, 12, nearR ? 2 : 12, nearL ? 2 : 12]); g.fill(); g.restore();
+      g.fillStyle = col; g.beginPath(); g.moveTo(tipX - 5, hy + hh - 1); g.lineTo(tipX + 5, hy + hh - 1); g.lineTo(px, hy + hh + 5); g.closePath(); g.fill();
+      g.strokeStyle = 'rgba(255,255,255,.9)'; g.lineWidth = 2; g.lineCap = 'round'; g.lineJoin = 'round';
+      g.beginPath(); g.moveTo(hx + 12, cy - 4.5); g.lineTo(hx + 7.5, cy); g.lineTo(hx + 12, cy + 4.5); g.stroke();
+      g.beginPath(); g.moveTo(hx + hw - 12, cy - 4.5); g.lineTo(hx + hw - 7.5, cy); g.lineTo(hx + hw - 12, cy + 4.5); g.stroke();
+      g.fillStyle = '#fff'; g.font = `800 12px ${FONT}`; g.textBaseline = 'middle'; g.textAlign = 'center'; g.fillText(String(price), hx + hw / 2, cy + 0.5);
+    }
+    // stĺpiky likvidity nad jazdcom: kusy v knihe za každú cenu (všetky objednávky spolu), bledofialové; kusy, ktoré si
+    // objednávka s touto cenou a počtom zoberie (od najlepšej ceny), sa zafarbia farbou ceny zhora nadol
+    const inBook = new Map<number, number>(), taken = new Map<number, number>();
+    for (const l of lv) inBook.set(l.p, (inBook.get(l.p) ?? 0) + l.n);
+    let left = n;
+    for (const l of lv) {
+      if (left <= 0 || (side === 'buy' ? l.p > price : l.p < price)) break;
+      const k = Math.min(l.n, left); taken.set(l.p, (taken.get(l.p) ?? 0) + k); left -= k;
+    }
+    const topMax = Math.max(1, ...inBook.values()), hMax = base - top - 12;
+    for (const [p, k] of inBook) {
+      if (p < sc.lo || p > sc.hi) continue;
+      const bw = Math.max(3, Math.min(6, (x(p + 0.5) - x(p - 0.5)) * 0.7)), hh = Math.max(3, (k / topMax) * hMax), th = hh * Math.min(1, (taken.get(p) ?? 0) / k);
+      g.fillStyle = COL.violetPale; g.fillRect(x(p) - bw / 2, base - hh + th, bw, hh - th);
+      if (th > 0) { g.fillStyle = advColor(sc, p, side); g.fillRect(x(p) - bw / 2, base - hh, bw, th); }
+    }
   }
 
   // prepočet riadku; resetPrice = cena späť na predvolenú (celý počet hneď)
   function render(resetPrice: boolean, center = false): void {
     st.n = n;
     if (q) {
-      sc = scaleOf(marketOf(n), trades(), [defPrice(n), ...(st.price != null ? [st.price] : [])]);
+      // na posuvníku musí byť predvolená cena, zvolená cena a kniha až kúsok za to, čo by objednávka mohla zobrať
+      const reach: number[] = []; let got = 0;
+      for (const l of lv) { if (got > n * 2 + 3) break; reach.push(l.p + (side === 'buy' ? 1 : -1)); got += l.n; }
+      sc = scaleOf(market(), trades(), [defPrice(n), ...reach, ...(st.price != null ? [st.price] : [])]);
       if (resetPrice || st.price == null) { st.price = null; price = defPrice(n); }
       else price = st.price;
       price = Math.max(1, Math.round(price));
-      if (inp) inp.value = String(Math.round(sc.toX(price) * 1000));
+      if (slider) {
+        slider.setAttribute('aria-valuenow', String(price)); slider.setAttribute('aria-valuetext', `${String(price)} mincí za kus`);
+        slider.setAttribute('aria-valuemin', String(sc.lo)); slider.setAttribute('aria-valuemax', String(sc.hi));
+      }
     } else price = r.fixed;
     fillStrip(center);
     const { now, total } = quote(n, price);
     const verb = now ? (side === 'buy' ? 'Kúpiť hneď' : 'Predať hneď') : (side === 'buy' ? 'Dopyt' : 'Ponuka');
     go.className = 'go ' + (now ? 'now' : 'wait');
     go.innerHTML = '';
-    go.append(el('small', '', !now && !r.orderRoom ? 'Plno objednávok' : verb), el('span', 'amt', `${String(total)} 🪙`));
+    // pod sumou cena za kus: pri okamžitom obchode cez viac cien priemer (≈), inak presne
+    const each = total / Math.max(1, n);
+    go.append(el('small', '', !now && !r.orderRoom ? 'Plno objednávok' : verb), el('span', 'amt', `${String(total)} 🪙`),
+      el('small', 'each', `${Number.isInteger(each) ? '' : '≈ '}${String(Math.round(each))} 🪙/ks`));
     go.disabled = (side === 'buy' ? need(n, price) > r.coins : n > r.have) || (!now && !r.orderRoom);
     if (q) {
-      const better = side === 'buy' ? price < sc.market : price > sc.market, diff = Math.round(Math.abs(price / sc.market - 1) * 100);
+      // porovnanie s trhovou cenou a koľko kusov je v knihe za túto cenu alebo lepšiu (na všetko to objednávka dosiahne);
+      // cena za kus je na úchyte
+      const diff = Math.round(Math.abs(price / sc.market - 1) * 100);
       hint.innerHTML = '';
-      hint.append(el('b', '', `${String(price)} 🪙/ks`), document.createTextNode(' · '));
       if (price === sc.market || !diff) hint.append(el('b', '', 'trhová cena'));
-      else { const s = el('span', 'adv', `${String(diff)} % ${side === 'buy' ? (better ? 'lacnejšie' : 'drahšie') : (better ? 'drahšie' : 'lacnejšie')}`); s.style.color = advColor(sc, price, side); hint.append(s); }
-      const k = lv.filter(l => l.p === price).reduce((a, l) => a + l.n, 0);
+      else { const s = el('span', 'adv', `${String(diff)} % ${price > sc.market ? 'nad' : 'pod'} trhom`); s.style.color = advColor(sc, price, side); hint.append(s); }
+      const k = lv.filter(l => (side === 'buy' ? l.p <= price : l.p >= price)).reduce((a, l) => a + l.n, 0);
       hint.append(document.createTextNode(' · ' + (side === 'buy' ? (k ? `${String(k)} ks v ponuke` : 'žiadna ponuka') : (k ? `${String(k)} ks v dopyte` : 'žiadny dopyt'))));
     }
     draw();
@@ -302,11 +344,22 @@ export function tradeRow(r: RowInput): HTMLElement {
   });
 
   // ---- posuvník ceny ----
-  if (inp) {
-    const input = inp;
-    input.addEventListener('input', () => { st.price = Math.max(1, Math.round(sc.toP(Number(input.value) / 1000))); render(false); });
-    input.addEventListener('pointerdown', () => { r.busy(true); });
-    for (const ev of ['pointerup', 'pointercancel', 'change'] as const) input.addEventListener(ev, () => { r.busy(false); });
+  // vlastné ťahanie (skrytý <input type=range> na mobile reagoval len pri chytení neviditeľného palca): ťuknutie kamkoľvek
+  // posunie jazdca pod prst, ťahanie ho vedie; cena = mince pod prstom. touch-action: pan-y – zvislý pohyb posúva okno.
+  if (slider && cv) {
+    const sl = slider, canvas = cv;
+    const priceAt = (cx: number): number => { const rc = canvas.getBoundingClientRect(); return Math.round(sc.toP(Math.max(0, Math.min(1, (cx - rc.left - 6) / Math.max(1, rc.width - 12))))); };
+    const setPrice = (p: number): void => { const v = Math.max(Math.max(1, sc.lo), Math.min(sc.hi, p)); if (v !== price) { st.price = v; render(false); } };
+    let held = false;
+    sl.addEventListener('pointerdown', e => { if (e.button > 0) return; held = true; sl.setPointerCapture(e.pointerId); sl.classList.add('drag'); r.busy(true); setPrice(priceAt(e.clientX)); });
+    sl.addEventListener('pointermove', e => { if (held) setPrice(priceAt(e.clientX)); });
+    const release = (): void => { if (!held) return; held = false; sl.classList.remove('drag'); r.busy(false); };
+    for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture'] as const) sl.addEventListener(ev, release);
+    sl.addEventListener('keydown', e => {
+      const d = ({ ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1, PageUp: 5, PageDown: -5 } as Partial<Record<string, number>>)[e.key];
+      if (d) { e.preventDefault(); setPrice(price + d); }
+      else if (e.key === 'Home') { e.preventDefault(); setPrice(sc.lo); } else if (e.key === 'End') { e.preventDefault(); setPrice(sc.hi); }
+    });
   }
 
   go.addEventListener('click', () => {

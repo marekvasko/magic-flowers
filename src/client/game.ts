@@ -965,32 +965,6 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     return (d ? d + ' d ' : '') + (hh || !d ? hh + ' h' : '');
   }
   function fmtTick(t: number): string { const m = Math.floor(D.minOfTick(t)); return `deň ${D.dayOfTick(t)}, ${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; }
-  // Trend ceny za posledný deň ako ikonka: vždy 3 šípky natesno nad sebou, farebné sú
-  // 1 (malá zmena), 2 (veľká) alebo 3 (veľmi veľká), zvyšok je sivý. Bez zmeny = všetky sivé.
-  // upIsGood: pri predaji je rast ceny dobrý (zelený), pri nákupe zlý (červený).
-  function priceTrend(hist: readonly number[] | undefined, cur: number, upIsGood: boolean): HTMLElement {
-    const hh = hist || [];
-    const prev = (hh.length >= 2 ? hh[hh.length - 2] : hh[0]) ?? cur;
-    const pct = prev ? (cur - prev) / prev : 0;
-    const a = Math.abs(pct), up = pct > 0;
-    const n = a < 0.03 ? 0 : a < 0.15 ? 1 : a < 0.35 ? 2 : 3;
-    const col = n ? ((up === upIsGood) ? '#2e8b3a' : '#c0392b') : null;
-    const GRAY = '#d9d1c1';
-    // šípky sa vyfarbujú v smere pohybu: pri raste odspodu, pri poklese zhora
-    let paths = '';
-    for (let i = 0; i < 3; i++) {
-      const y = 2 + i * 6;
-      const lit = n && (up ? i >= 3 - n : i < n);
-      // bez zmeny tri vodorovné čiarky, inak šípky hore / dole
-      const d = !n ? `M3 ${y + 2.5}L13 ${y + 2.5}` : up ? `M2 ${y + 5}L8 ${y}L14 ${y + 5}` : `M2 ${y}L8 ${y + 5}L14 ${y}`;
-      paths += `<path d="${d}" fill="none" stroke="${lit && col ? col : GRAY}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>`;
-    }
-    const el = document.createElement('span');
-    el.className = 'tr';
-    el.title = n ? `${up ? 'Rast' : 'Pokles'} o ${Math.round(a * 100)} % za deň` : 'Cena sa za deň takmer nezmenila';
-    el.innerHTML = `<svg width="16" height="21" viewBox="0 0 16 21">${paths}</svg>`;
-    return el;
-  }
   function marketSellPrice(id: string): number {
     const M = S.market;
     if (!M) return D.sellPrice(id);
@@ -1037,9 +1011,8 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
   function tradeRow(body: HTMLElement, id: ItemId, side: 'buy' | 'sell', info: HTMLElement, q: MarketItemView | null, fixed: number): void {
     const key = side + ':' + id, state = rowState.get(key) ?? {};
     rowState.set(key, state);
-    // pod názvom: zásoba v knihe (nákup) alebo koľko má hráč (predaj) a trend ceny za deň
-    const line = h('small', null, side === 'buy' ? (q ? `na sklade ${others(q.a).reduce((a, l) => a + l.n, 0)} ` : '') : `máš ${S.inv[id] ?? 0} ks `);
-    if (q) line.appendChild(priceTrend(q.h, q.p, side === 'sell'));
+    // pod názvom: zásoba v knihe (nákup) alebo koľko má hráč (predaj); trend ceny je šípka pod čiarou trhu v posuvníku
+    const line = h('small', null, side === 'buy' ? (q ? `na sklade ${others(q.a).reduce((a, l) => a + l.n, 0)}` : '') : `máš ${S.inv[id] ?? 0} ks`);
     info.insertBefore(line, info.children[1] ?? null);
     body.appendChild(TR.tradeRow({
       id, side, icon: Art.icon(id), info, q, fixed, have: S.inv[id] ?? 0, coins: S.coins,
