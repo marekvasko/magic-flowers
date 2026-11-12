@@ -92,15 +92,52 @@ export function mkOf(s: GameSlices, ctx: MkCtx, actor: PlayerKey | null): Mk {
 // Kľúče udalosti postáv (návšteva, dodávka, Jano s kvetmi): knihy a zásoby tovaru items, účty postáv npcs, správy –
 // a účty všetkých vlastníkov objednávok v týchto knihách (hráčov aj postáv – s nikým iným sa spárovať nedá)
 export function npcEventKeys(world: Pick<GameWorld, 'market'>, items: readonly ItemId[], npcs: readonly Trader[], extra: readonly string[] = []): string[] {
-  const set = new Set<string>(['market:news', ...extra]);
+  // zásoby veľkoobchodníka všetkého tovaru (malé položky – stratégia postáv ich číta), knihy len vybraného tovaru
+  const set = new Set<string>(['market:news', 'market:seed_*', 'market:fl_*', 'market:compost', ...extra]);
   for (const id of npcs) set.add(`market:npc:${id}`);
   for (const item of items) {
-    set.add(`market:book:${item}:*`); set.add(stockKey(item));
+    set.add(`market:book:${item}:*`);
     const b = world.market ? world.market.books[item] : undefined;
     for (const o of Object.values(b ? b.orders : {})) if (o && o.npc !== 'vo') set.add(ownerKey(item, o));
   }
   return [...set];
 }
+// Tovar, v ktorom má postava objednávky
+export function npcOrderItems(m: Market, npc: Trader): ItemId[] {
+  return BOOK_ITEMS.filter(item => Object.values(m.books[item]?.orders ?? {}).some(o => o?.npc === npc));
+}
+// Cena veľkoobchodníka (najlacnejší kus) pri zásobe stock
+export const wholesaleAskAt = (item: ItemId, stock: number, tick: number): number => P.buyQuote(partAt(item, stock, undefined), tick, item)?.price ?? 0;
+// Jano: semienko s najlepším očakávaným ziskom za deň (z dostupných, nie príliš drahých); stock = zásoba veľkoobchodníka
+export function janoPick(stock: (item: ItemId) => number, tick: number): { sp: SpeciesId; p: number } | null {
+  const se = P.season(tick);
+  const cands = P.PLANTABLE.filter(sp => !D.SPECIES[sp].strict && !D.isAqua(sp) && stock(`seed_${sp}`) >= 3 && P.phase(sp, se) !== 'off') // jazierko nemá (#38)
+    .map(sp => { const sc = D.SPECIES[sp], p = wholesaleAskAt(`seed_${sp}`, stock(`seed_${sp}`), tick); return { sp, p, score: (sc.sell * 2 - p) / sc.days, cheap: p <= sc.seed * 1.25 }; })
+    .filter(c => c.cheap && c.score > 0).sort((a, b) => b.score - a.score);
+  return cands[0] ?? null;
+}
+// Fero: semienka na ďalšie obdobie, ktorých je dosť a sú lacné
+export function feroCands(stock: (item: ItemId) => number, tick: number): SpeciesId[] {
+  const se = P.season(tick);
+  return P.PLANTABLE.filter(sp => !D.SPECIES[sp].strict && P.phase(sp, se) === 'next' && stock(`seed_${sp}`) >= 8 && wholesaleAskAt(`seed_${sp}`, stock(`seed_${sp}`), tick) <= D.SPECIES[sp].seed * 1.05);
+}
+// Zuzka: kvety, ktoré chce (v sezóne, počas sviatku sviatočné), od sviatočných a najdrahších
+export function zuzkaWanted(tick: number, festMult: Partial<Record<SpeciesId, number>> | null): SpeciesId[] {
+  const se = P.season(tick);
+  return P.PLANTABLE.filter(sp => (festMult && festMult[sp]) || D.SPECIES[sp].seasons.includes(se))
+    .sort((a, b) => Number(!!(festMult && festMult[b])) - Number(!!(festMult && festMult[a])) || D.SPECIES[b].sell - D.SPECIES[a].sell);
+}
+// Knihy, ktorých sa návšteva postavy môže dotknúť (kľúče jej udalosti): kde má objednávky, čo drží, čo jej stratégia vyberie
+export function visitItems(m: Market, npc: Trader, tick: number): ItemId[] {
+  const set = new Set<ItemId>(npcOrderItems(m, npc)), a = m.npcs[npc];
+  const stock = (item: ItemId): number => { const sp = speciesOf(item); return !sp ? m.compost.stock : (item.startsWith('seed_') ? m.seeds[sp] : m.flowers[sp])?.stock ?? 0; };
+  for (const item of keys(a.inv)) if (B.isBookItem(item)) set.add(item);
+  if (npc === 'jano') { const c = janoPick(stock, tick); if (c) set.add(`seed_${c.sp}`); }
+  if (npc === 'fero') for (const sp of feroCands(stock, tick)) set.add(`seed_${sp}`);
+  if (npc === 'zuzka') for (const sp of zuzkaWanted(tick, m.festival ? m.festival.mult : null)) set.add(`fl_${sp}`);
+  return [...set];
+}
+
 // Trh nad celým svetom (založenie a prevod trhu pri načítaní)
 export function mkWorld(world: Pick<GameWorld, 'saves' | 'tick'>, m: Market, ctx: MkCtx | null): Mk {
   return {
@@ -333,8 +370,23 @@ export function ladder(item: ItemId, stock: number, cash: number, fest: number |
 // v novom rebríku ostáva, sa len zmenšia či zväčšia (záloha sa dorovná, číslo a poradie ostanú), ostatné sa stiahnu
 // a chýbajúce pribudnú – tak sa pri zmene zásoby o kus zmení len málo objednávok (a denník ostane malý).
 // Vráti, či sa niečo zmenilo (bez zmeny sa kniha nemusí znova párovať – bola v poriadku).
+// Vstupy cenníka veľkoobchodníka pre tovar (zásoba, mince, sviatok, obdobie) a jeho objednávky v knihe: keď sa od
+// posledného prepočtu nezmenili, cenník je ten istý (ceny z prices.ts závisia len od zásoby, obdobia a sviatku)
+function quoteKey(book: Book, item: ItemId, fest: number | undefined, tick: number): string {
+  const vo = book.vo, cur = Object.values(book.orders).filter((o): o is Order => !!o && o.npc === 'vo').sort((a, b) => a.n - b.n);
+  const text = `${String(vo.inv[item] || 0)}|${String(vo.coins)}|${String(fest ?? 1)}|${String(P.season(tick))}|${cur.map(o => o.side + String(o.p) + 'x' + String(o.rem)).join()}`;
+  let h = 2166136261; // krátky odtlačok (FNV-1a), aby sa do uloženia nepísal celý text
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+  return (h >>> 0).toString(36);
+}
 export function requote(mk: Mk, item: ItemId): boolean {
   const book = mk.book(item), vo = book.vo, c = npcC(vo), entry = mk.entry(item), tick = mk.tick;
+  if (book.q === quoteKey(book, item, entry.fest, tick)) return false;
+  const changed = requoteNow(mk, item, book, vo, c, entry, tick);
+  book.q = quoteKey(book, item, entry.fest, tick);
+  return changed;
+}
+function requoteNow(mk: Mk, item: ItemId, book: Book, vo: NpcAccount, c: Container, entry: { stock: number; fest?: number }, tick: number): boolean {
   const cur = Object.values(book.orders).filter((o): o is Order => !!o && o.npc === 'vo').sort((a, b) => a.n - b.n);
   const stock = (vo.inv[item] || 0) + cur.reduce((a, o) => a + (o.side === 'sell' ? o.rem : 0), 0);
   const cash = vo.coins + cur.reduce((a, o) => a + (o.side === 'buy' ? o.coins : 0), 0);
@@ -506,16 +558,14 @@ const flowerQuote = (mk: Mk, sp: SpeciesId): number => { const e = mk.entry(`fl_
 // Záhradník Jano: stiahne staré objednávky, kvety, ktoré má, ponúkne za 0,8 výkupnej ceny (ako doteraz – tlačí výkup
 // dole), a kúpi semienka s najlepším očakávaným ziskom za deň – dopyt za cenu veľkoobchodníka. Pestuje len to,
 // čo naozaj kúpi (npcBought); zvyšok dopytu čaká v knihe do ďalšej návštevy.
-export function janoVisit(mk: Mk, g: { int(n: number): number }): void {
-  const tick = mk.tick, se = P.season(tick), jano = mk.npc('jano');
-  npcWithdrawAll(mk, 'jano', [...SEED_ITEMS, ...FLOWER_ITEMS]);
+// items = knihy, ktoré návšteva deklarovala (visitItems)
+export function janoVisit(mk: Mk, g: { int(n: number): number }, items: readonly ItemId[]): void {
+  const tick = mk.tick, jano = mk.npc('jano'), has = new Set(items);
+  npcWithdrawAll(mk, 'jano', items);
   I.wiltSweep(npcC(jano), tick); delete jano.inv.wilted;
-  for (const sp of P.PLANTABLE) janoOffer(mk, sp);
-  const cands = P.PLANTABLE.filter(sp => !D.SPECIES[sp].strict && !D.isAqua(sp) && mk.entry(`seed_${sp}`).stock >= 3 && P.phase(sp, se) !== 'off') // jazierko nemá (#38)
-    .map(sp => { const sc = D.SPECIES[sp], p = wholesaleAsk(mk, `seed_${sp}`); return { sp, p, score: (sc.sell * 2 - p) / sc.days, cheap: p <= sc.seed * 1.25 }; })
-    .filter(c => c.cheap && c.score > 0).sort((a, b) => b.score - a.score);
-  const c = cands[0];
-  if (!c) return;
+  for (const sp of P.PLANTABLE) if (has.has(`fl_${sp}`)) janoOffer(mk, sp);
+  const c = janoPick(item => mk.entry(item).stock, tick);
+  if (!c || !has.has(`seed_${c.sp}`)) return;
   const k = Math.min(mk.entry(`seed_${c.sp}`).stock - 1, 2 + g.int(5));
   if (k <= 0) return;
   const before = mk.trades.length, o = npcOrder(mk, 'jano', `seed_${c.sp}`, 'buy', c.p, k);
@@ -542,12 +592,12 @@ export function janoSell(mk: Mk, sp: SpeciesId, n: number): void {
 
 // Špekulant Fero: semienka, ktoré drží, ponúkne lacnejšie než veľkoobchodník, keď sú drahé (≥ 1,5× základnej ceny),
 // mimo sezóny ich predá do výkupu; potom skúpi lacné semienka na ďalšie obdobie (dopyt za cenu veľkoobchodníka).
-export function feroVisit(mk: Mk, g: { int(n: number): number; pick<T>(l: readonly T[]): T | undefined }): void {
-  const tick = mk.tick, se = P.season(tick), fero = mk.npc('fero');
-  npcWithdrawAll(mk, 'fero', SEED_ITEMS);
+export function feroVisit(mk: Mk, g: { int(n: number): number; pick<T>(l: readonly T[]): T | undefined }, items: readonly ItemId[]): void {
+  const tick = mk.tick, se = P.season(tick), fero = mk.npc('fero'), has = new Set(items);
+  npcWithdrawAll(mk, 'fero', items);
   for (const sp of P.PLANTABLE) {
     const item = `seed_${sp}` as const, n = fero.inv[item] || 0;
-    if (!n) continue;
+    if (!n || !has.has(item)) continue;
     const base = D.SPECIES[sp].seed, p = wholesaleAsk(mk, item);
     if (P.phase(sp, se) === 'off') {
       const bid = bestBid(mk, item, 'fero');
@@ -559,8 +609,7 @@ export function feroVisit(mk: Mk, g: { int(n: number): number; pick<T>(l: readon
   }
   const held = P.PLANTABLE.reduce((a, sp) => a + (fero.inv[`seed_${sp}`] || 0), 0);
   if (held >= 20) return;
-  const c = P.PLANTABLE.filter(sp => !D.SPECIES[sp].strict && P.phase(sp, se) === 'next' && mk.entry(`seed_${sp}`).stock >= 8 && wholesaleAsk(mk, `seed_${sp}`) <= D.SPECIES[sp].seed * 1.05);
-  const sp = g.pick(c);
+  const sp = g.pick(feroCands(item => mk.entry(item).stock, tick).filter(x => has.has(`seed_${x}`)));
   if (!sp) return;
   const p = wholesaleAsk(mk, `seed_${sp}`), k = Math.min(3 + g.int(4), mk.entry(`seed_${sp}`).stock - 3);
   if (k <= 0) return;
@@ -572,15 +621,14 @@ export function feroVisit(mk: Mk, g: { int(n: number): number; pick<T>(l: readon
 
 // Kvetinárka Zuzka: kvety z minulých nákupov predala v kyticiach, od zákazníkov má na nové nákupy ZUZKA.budget mincí;
 // dá dopyty o ZUZKA.markup nad výkup veľkoobchodníka na kvety v sezóne, počas sviatku viac na sviatočné druhy.
-export function zuzkaVisit(mk: Mk, festMult: Partial<Record<SpeciesId, number>> | null): void {
-  const z = mk.npc('zuzka'), se = P.season(mk.tick);
-  npcWithdrawAll(mk, 'zuzka', FLOWER_ITEMS);
+export function zuzkaVisit(mk: Mk, festMult: Partial<Record<SpeciesId, number>> | null, items: readonly ItemId[]): void {
+  const z = mk.npc('zuzka'), has = new Set(items);
+  npcWithdrawAll(mk, 'zuzka', items);
   let sold = 0;
   for (const sp of P.PLANTABLE) sold += z.inv[`fl_${sp}`] || 0;
   z.inv = {}; z.fb = {};
   z.coins = Math.max(z.coins, ZUZKA.budget);
-  const wanted = P.PLANTABLE.filter(sp => (festMult && festMult[sp]) || D.SPECIES[sp].seasons.includes(se))
-    .sort((a, b) => Number(!!(festMult && festMult[b])) - Number(!!(festMult && festMult[a])) || D.SPECIES[b].sell - D.SPECIES[a].sell);
+  const wanted = zuzkaWanted(mk.tick, festMult).filter(sp => has.has(`fl_${sp}`));
   const asked: string[] = [];
   for (const sp of wanted) {
     const p = Math.ceil(flowerQuote(mk, sp) * ZUZKA.markup), q = ZUZKA.perSpecies + (festMult && festMult[sp] ? ZUZKA.festExtra : 0);

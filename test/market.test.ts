@@ -274,7 +274,7 @@ test('Jano: dopyt po semienkach vybaví hráč medzi návštevami – Jano pestu
 
 test('Zuzka: hráčov kvet kúpi za svoj limit (podľa čerstvosti), kvet ide do jej účtu', () => {
   const w = makeWorld(21);
-  Mkt.zuzkaVisit(live(w), null);
+  Mkt.zuzkaVisit(live(w), null, Mkt.BOOK_ITEMS);
   const z = must(Mkt.BOOK_ITEMS.map(item => orders(w, item).find(o => o.npc === 'zuzka')).find(o => o));
   const item = must(Mkt.BOOK_ITEMS.find(i => orders(w, i).includes(z)));
   assert.ok(z.p > npcBid(w, item) - 1 && z.p >= Math.max(...orders(w, item).filter(o => o.npc === 'vo').map(o => o.p)), 'Zuzka platí viac než veľkoobchodník');
@@ -302,7 +302,7 @@ test('Fero: jeho ponuka o mincu lacnejšia než veľkoobchodník ide pri okamži
 
 test('postava s postavou: Jano prinesie kvety, Zuzkin čakajúci dopyt ich kúpi za jej limit, zvyšok ide veľkoobchodníkovi', () => {
   const w = makeWorld(23), mk = live(w);
-  Mkt.zuzkaVisit(mk, null);
+  Mkt.zuzkaVisit(mk, null, Mkt.BOOK_ITEMS);
   const z = must(Mkt.BOOK_ITEMS.map(item => orders(w, item).find(o => o.npc === 'zuzka')).find(o => o));
   const item = must(Mkt.BOOK_ITEMS.find(i => orders(w, i).includes(z))), sp = must(D.speciesOfItem(item) ?? undefined), q = z.rem, p = z.p;
   const jano = w.market.npcs.jano.coins;
