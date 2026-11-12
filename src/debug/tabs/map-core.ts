@@ -109,8 +109,9 @@ export function buildTiles(D: D, area: string, opt?: { state?: MapState | null; 
       maxIce = Math.max(maxIce, top);
     }
     if (g === 'water' && s['cut']) t.cut = 1;
-    const soil = soils?.[i]?.s;
-    if (soil) t.s = soil; // pôda a rastlina (len záhrada)
+    const hs = area === 'hory' && g === 'water' ? s['s'] : undefined; // vodný kvet v plese (#38, ako Ice.loadHory)
+    const soil = soils?.[i]?.s ?? (D.isWaterSoil(hs) ? hs : undefined);
+    if (soil) t.s = soil; // pôda a rastlina (záhrada, vodné kvety v plese)
     return t;
   });
   return { area, w, h, seed, seeded, source: st ? 'room' : 'seed', tiles, maxIce };

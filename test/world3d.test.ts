@@ -115,7 +115,8 @@ test('voda: hladina 1/8 bloku pod zemou, maska, lekná a najbližšia voda', () 
   assert.strictEqual(W.WATER_Y, 0.875);
   const q = W.waterQuads(tiles), mask = W.waterMask(tiles);
   assert.strictEqual(q.length, tiles.filter(t => t.g === 'water').length);
-  for (const w of q) assert.strictEqual(mask[w.y * D.W + w.x], 255);
+  for (const w of q) assert.strictEqual(mask[w.y * D.W + w.x], D.waterZone(tiles, w.y * D.W + w.x, D.W) === 'deep' ? 255 : W.WATER_SHORE);
+  assert.deepStrictEqual([mask.filter(v => v === 255).length, mask.filter(v => v === W.WATER_SHORE).length], [9, 12], 'hĺbka a breh jazierka (#38)');
   assert.strictEqual(mask.filter(v => v).length, q.length);
   // lekná len na vode a v zime žiadne
   for (const p of W.lilyPads(tiles, 1)) assert.strictEqual(at(p.y * D.W + p.x), 'water');

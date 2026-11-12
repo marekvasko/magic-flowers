@@ -112,7 +112,7 @@ test('mapa: svet – jeho semienko, pôda a rastliny, ľadovňa, ľad a otvory a
   tiles[bed] = { s: partial<Soil>({ k: 'normal', w: 1, r: 0, p: partial<Plant>({ sp: 'snezienka', prog: 9 }), o: 'p-1234abcd' }) };
   tiles[pond] = { s: null, cut: 1 };
   const savedHory: SavedHoryTile[] = hory.map(() => 0);
-  savedHory[glacier] = { ice: 1 }; savedHory[lake] = { cut: 1 };
+  savedHory[glacier] = { ice: 1 }; savedHory[lake] = { cut: 1, s: { k: 'water', w: 1, r: 0, p: { sp: 'zaruzlie', prog: 2, q: 3, dry: 0 }, o: 'p-1234abcd' } }; // vodný kvet v plese (#38)
   const state = { tiles, hory: savedHory, pomedzieSeed: 991, icehouse: { built: true, ice: 3, bl: 0 }, saves: {}, tick: 0 };
 
   // záhrada ako getRoom v server.ts + applyIcehouse
@@ -133,8 +133,9 @@ test('mapa: svet – jeho semienko, pôda a rastliny, ľadovňa, ľad a otvory a
 
   // hory ako Ice.loadHory
   const hm = mapOf(M.buildTiles(D, 'hory', { state })), real = Ice.loadHory(savedHory);
-  assert.deepStrictEqual(hm.tiles.map(t => [t.g, t.ice, t.cut]), real.map(t => [t.g, t.ice, t.cut]));
+  assert.deepStrictEqual(hm.tiles.map(t => [t.g, t.ice, t.cut, t.s]), real.map(t => [t.g, t.ice, t.cut, t.s]));
   assert.strictEqual(hm.tiles[glacier]?.ice, 1);
+  assert.strictEqual(hm.tiles[lake]?.s?.p?.sp, 'zaruzlie');
   // bez uloženia je ľadovec celý
   const fresh = mapOf(M.buildTiles(D, 'hory', {}));
   assert.deepStrictEqual(fresh.tiles.map(t => t.ice), Ice.loadHory(null).map(t => t.ice));

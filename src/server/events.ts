@@ -22,7 +22,7 @@ import type { Tile } from './world.ts';
 const TPD = D.TICKS_PER_DAY;
 
 // ---------- Rast ----------
-// Ranný rast rastliny na políčku i (tiles = políčka záhrady, se = obdobie, eternal = večná jar)
+// Ranný rast rastliny na políčku i (tiles = políčka záhrady alebo hôr, se = obdobie, eternal = večná jar)
 export function growPlant(tiles: readonly Tile[], i: number, tick: number, se: Season, eternal: boolean): void {
   const t = must(tiles[i]), s = t.s, p = s && s.p;
   if (!s || !p || p.d) return;
@@ -94,10 +94,12 @@ const OWN: { [T in keyof EventInputs]: GameProposer<EventInputs[T]> } = {
     run(s, d, ctx) {
       const tick = ctx.tick, day = D.dayOfTick(tick), se = D.seasonOf(day), tiles = sl(s, 'tile:garden:*');
       for (let i = 0; i < tiles.length; i++) { growPlant(tiles, i, tick, se, s.eternal); revealWild(tiles, sl(s, 'save:*'), i); }
+      const hory = sl(s, 'tile:hory:*'); // vodné kvety v plese (#38)
+      for (let i = 0; i < hory.length; i++) growPlant(hory, i, tick, se, s.eternal);
       Scav.prune(s.scav, tick);
       const r = ctx.rng.rand();
       s.weather = se === 3 ? (r < 0.4 ? 'snow' : 'sun') : (r < (se === 0 ? 0.35 : 0.25) ? 'rain' : 'sun');
-      for (const t of tiles) if (t.s) t.s.w = s.weather === 'rain' ? 1 : 0;
+      for (const t of tiles) if (t.s) t.s.w = s.weather === 'rain' || t.s.k === 'water' ? 1 : 0; // vodné kvety sú vždy poliate
       // otvory vo vode zamrznú, ľadovec sa topí a v daždi/snehu dorastie – najviac raz za deň (dážď z elixíru pred ránom sa ráta)
       Ice.dawnIce(tiles, sl(s, 'tile:hory:*'), se, s.glacierFed === day ? null : s.weather, Ice.occupied(ctx.presence));
       if (lookup(D.GLACIER_GROW, s.weather)) s.glacierFed = day;

@@ -5,7 +5,7 @@
 // Na políčku ľadovca je ice = koľko vrstiev ľadu (po 1/4 bloku) na ňom ešte stojí; cut = 1 → do vody sa dnes už vysekal otvor.
 import * as D from '../shared/data.ts';
 import type { AreaId, Season } from '../shared/data.ts';
-import type { Icehouse, PlayerSave } from '../shared/save.ts';
+import type { Icehouse, PlayerSave, Soil } from '../shared/save.ts';
 import { isArray, isRecord, lookup, must } from '../shared/util.ts';
 import * as I from './items.ts';
 import type { Presence, StorageSlice, Tile } from './world.ts';
@@ -14,7 +14,7 @@ import type { Presence, StorageSlice, Tile } from './world.ts';
 export const LEVELS: readonly number[] = D.glacierLevels(D.buildMountains());
 const levelAt = (i: number): number => must(LEVELS[i]);
 
-// Políčka hôr: typy zeme z generátora, z uloženia len zásoba ľadu a otvory vo vode.
+// Políčka hôr: typy zeme z generátora, z uloženia len zásoba ľadu, otvory vo vode a vodné kvety v plese.
 export function loadHory(saved: unknown): Tile[] {
   const base = D.buildMountains();
   const ok = isArray(saved) && saved.length === base.length;
@@ -22,11 +22,14 @@ export function loadHory(saved: unknown): Tile[] {
     const t: Tile = { g }, v = ok ? saved[i] : undefined, s = isRecord(v) ? v : {};
     if (g === 'glacier') t.ice = s['ice'] == null ? levelAt(i) : Math.max(0, Math.min(levelAt(i), Number(s['ice']) | 0));
     if (g === 'water' && s['cut']) t.cut = 1;
+    if (g === 'water' && D.isWaterSoil(s['s'])) t.s = s['s']; // vodný kvet v plese (#38)
     return t;
   });
 }
 // Políčko hôr na uloženie (JSON vynechá chýbajúce polia – v súbore je to save.ts SavedHoryTile)
-export function saveHory(hory: readonly Tile[]): ({ ice: number | undefined; cut: 1 | undefined } | 0)[] { return hory.map(t => t.ice != null || t.cut ? { ice: t.ice, cut: t.cut } : 0); }
+export function saveHory(hory: readonly Tile[]): ({ ice: number | undefined; cut: 1 | undefined; s: Soil | undefined } | 0)[] {
+  return hory.map(t => t.ice != null || t.cut || t.s ? { ice: t.ice, cut: t.cut, s: t.s || undefined } : 0);
+}
 
 // Pozemok ľadovne v záhrade: kým nie je postavená 'lot', potom 'icehouse'.
 export function lotIdx(): number[] {

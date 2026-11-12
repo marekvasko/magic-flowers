@@ -71,7 +71,7 @@ export function prune(scav: Scav, tick: number): void {
 
 // Druhy, ktoré môžu vyrásť z divého semienka daného obdobia (bez magických a bez tých, čo rastú len na jednej pôde)
 export function wildCandidates(season: Season): SpeciesId[] {
-  return keys(D.SPECIES).filter(k => { const s = D.SPECIES[k]; return !s.magic && !s.strict && s.seasons.includes(season); });
+  return keys(D.SPECIES).filter(k => { const s = D.SPECIES[k]; return !s.magic && !s.strict && !s.aqua && s.seasons.includes(season); });
 }
 // Druh sa vyberie raz, pri sadení: váha = výkupná cena kvetu v tej chvíli ^ C.priceExp (náhoda z g)
 export function pickWild(g: Pick<Rng, 'rand'>, season: Season, priceOf: (sp: SpeciesId) => number): SpeciesId {

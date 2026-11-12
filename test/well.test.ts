@@ -25,8 +25,8 @@ function throwWell(w: W, n: number, stop?: (o: WellOut) => boolean): Record<Well
 }
 test('studňa: tabuľka výsledkov, dážď bez prepadu na papraď, papraď raz za obdobie, vrecúško bez prísnych druhov (#100)', () => {
   // vrecúško: len obyčajné druhy, ktoré rastú kdekoľvek
-  assert.ok(!Actions.WELL_SEEDS.includes('plesnivec') && Actions.WELL_SEEDS.every(sp => !D.SPECIES[sp].magic && !D.SPECIES[sp].strict));
-  assert.strictEqual(Actions.WELL_SEEDS.length, Econ.PLANTABLE.filter(sp => !D.SPECIES[sp].strict).length);
+  assert.ok(!Actions.WELL_SEEDS.includes('plesnivec') && Actions.WELL_SEEDS.every(sp => !D.SPECIES[sp].magic && !D.SPECIES[sp].strict && !D.SPECIES[sp].aqua));
+  assert.strictEqual(Actions.WELL_SEEDS.length, Econ.PLANTABLE.filter(sp => !D.SPECIES[sp].strict && !D.SPECIES[sp].aqua).length); // bez vodných kvetov (#38)
   // tabuľka so semienkom sveta: 4 000 hodov za slnečného jarného rána
   const w = makeWorld(31), sv = save(w, 'ana'); sv.coins = 1e6;
   const c = throwWell(w, 4000), share = (k: WellOut): number => c[k] / 4000;

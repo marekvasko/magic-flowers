@@ -396,7 +396,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       case 'water':
         if (sel === 'pick' && season() === 3) return t.cut ? { i: '🕳️', l: 'Otvor v ľade', info: true } : { i: '🧊', l: 'Vysekať ľad' };
         if (sel === 'can') return season() === 3 && !t.cut ? { i: '🧊', l: 'Zamrznuté', info: true } : { i: '💧', l: 'Načrieť' };
-        return null;
+        return waterAction(t, tx, ty, sel);
       case 'glacier':
         if (sel === 'pick') return t.ice ? { i: '🧊', l: 'Vysekať ľad' } : { i: '🧊', l: 'Ľadovec', info: true };
         return S.inv.pick ? null : { i: '🧊', l: 'Ľadovec', info: true }; // bez krompáča v ruke sa po ľadovci len chodí
@@ -423,6 +423,17 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     if ((sel.startsWith('seed_') || D.isWild(sel)) && s && !p) return { i: '🌱', l: 'Sadiť' };
     if (sel === 'compost' && s && !s.r) return { i: '🟤', l: 'Pohnojiť' };
     if (sel.startsWith('po_')) return { i: '🧪', l: 'Použiť' };
+    if (p && !p.d) return { i: '🔍', l: 'Pozrieť', info: true };
+    return null;
+  }
+
+  // Vodné kvety v jazierku a v plese (#38) – ako waterAct na serveri: zber, odstránenie uhynutej rastliny, sadenie
+  function waterAction(t: NonNullable<ReturnType<typeof tileAt>>, tx: number, ty: number, sel: string): CtxAction | null {
+    if (!D.waterSpot(S.area, ty * S.W + tx)) return null;
+    const p = t.s?.p;
+    if (p && !p.d && D.stageOf(p) === 3) return { i: '🧺', l: 'Zbierať' };
+    if (sel === 'hoe' && p && p.d) return { i: '🧹', l: 'Vyčistiť' };
+    if (sel.startsWith('seed_') && !t.s) return { i: '🌱', l: 'Sadiť' };
     if (p && !p.d) return { i: '🔍', l: 'Pozrieť', info: true };
     return null;
   }
@@ -1115,7 +1126,8 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
           } else {
             card.appendChild(img('fl_' + k));
             card.appendChild(h('div', null, h('b', null, sp.name), h('div', { class: 'latin' }, sp.latin), seasonBadges(sp),
-              h('div', { style: 'font-size:12.5px;margin-top:3px' }, `⏱ ${sp.days} dní · ${'💧'.repeat(sp.water)} · ${({ sun: '☀️ slnko', shade: '🌳 tieň', any: '⛅ hocikde' })[sp.light]}${sp.soil ? ' · ' + ({ sand: '🏖️ piesok', rich: '🟤 výživná pôda', rock: '🪨 len skalka' })[sp.soil] : ''}${sp.perennial ? ' · ♻️ trvalka' : ''} · ✂️ vo váze ${sp.life} ${sp.life === 1 ? 'deň' : sp.life < 5 ? 'dni' : 'dní'}`),
+              h('div', { style: 'font-size:12.5px;margin-top:3px' }, `⏱ ${sp.days} dní · ${sp.aqua ? (sp.aqua.zone === 'deep' ? '🌊 hlboká voda' : '🌿 breh') : `${'💧'.repeat(sp.water)} · ${({ sun: '☀️ slnko', shade: '🌳 tieň', any: '⛅ hocikde' })[sp.light]}`}${sp.soil ? ' · ' + ({ sand: '🏖️ piesok', rich: '🟤 výživná pôda', rock: '🪨 len skalka' })[sp.soil] : ''}${sp.perennial ? ' · ♻️ trvalka' : ''} · ✂️ vo váze ${sp.life} ${sp.life === 1 ? 'deň' : sp.life < 5 ? 'dni' : 'dní'}`),
+              sp.aqua ? h('div', { style: 'font-size:12.5px;margin-top:3px;color:#2f6f9f' }, '💧 ' + D.aquaHint(sp.aqua)) : null,
               h('p', null, sp.fact)));
           }
           body.appendChild(card);

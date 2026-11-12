@@ -321,7 +321,7 @@ function getRoom(id: string): Room {
   I.syncAll(I.storageC(storageOf(room), room.icehouse), room.tick);
   for (const sv of Object.values(room.saves)) if (sv && sv.inv) I.syncAll(I.playerC(sv), room.tick);
   // odvodené počítadlá sa pri načítaní vždy prepočítajú (staré uloženia ich nemajú; chyba by sa sama opravila)
-  room.plotsUsed = Econ.plotsUsedOf(room.tiles);
+  room.plotsUsed = Econ.plotsUsedOf(room.tiles, room.hory);
   room.maxRep = Econ.maxRepOf(room.saves);
   const live = E.liveCtx<Presence, Msg>(room, 'ekonomika'); // jediná akcia nad živým svetom: založenie trhu, nástenky a pavučín
   Econ.initEconomy(room, live);
