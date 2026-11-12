@@ -374,6 +374,8 @@ export function cheatRun(s: GameSlices, d: VehicleCheat, ctx: GameCtx): void {
     case 'tp': {
       if (!v.bought) ctx.reject('not bought');
       const p = Areas.clampPos(d.area, d.x, d.y);
+      // na vodu ani na mólo (#161): fúrik a sane jazdia len po pevnej zemi (políčka móla sú v mape z generátora voda)
+      if (!D.isLand({ g: D.buildArea(d.area, 0)[Math.floor(p.y) * D.areaSize(d.area).w + Math.floor(p.x)] ?? 'water' })) ctx.reject('vehicles stay on land (not on water or the dock)');
       Object.assign(v, { area: d.area, x: V.round3(p.x), y: V.round3(p.y), driver: null, passenger: null });
       return;
     }
