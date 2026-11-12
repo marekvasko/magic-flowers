@@ -35,8 +35,10 @@ export function initEconomy(world: GameWorld, ctx?: GameCtx): void {
     const m = world.market;
     for (const sp of PLANTABLE) { m.seeds[sp] ??= { stock: stock(sp) }; m.flowers[sp] ??= { stock: 0 }; }
   }
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- uloženia pred verziou 12 knihy nemajú
-  if (!Object.keys(world.market.books || {}).length) { Mkt.initBooks(world, world.market); recordHistory(world.market, world.tick); }
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- uloženia pred verziou 13 knihy nemajú
+  const fresh = !Object.keys(world.market.books || {}).length;
+  Mkt.initBooks(world, world.market); // nový trh, uloženie pred v13 alebo nový tovar: knihy a ceny veľkoobchodníka
+  if (fresh) recordHistory(world.market, world.tick);
   if (!world.contracts) { world.contracts = { list: [], nextId: 1 }; fillBoard(world.contracts, world.tick, maxRepOf(savesOf(world)), live); }
   Mkt.syncPlayerOrders(world, world.market);
 }

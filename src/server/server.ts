@@ -179,7 +179,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
 // ---------- Svety (miestnosti) ----------
 // Čas je diskrétny: svet má celé počítadlo `tick` (D.TICKS_PER_DAY krokov na deň), deň a minúta sa z neho
 // len odvodzujú. Všetko, čo sa má stať v budúcnosti, je udalosť v plánovači (room.events) a ukladá sa so svetom.
-const SAVE_VERSION = 13; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov; 8: semienko sveta a počítadlo kôl namiesto rng; 9: 11 520 krokov za deň (×40); 10: pavúky a pavučiny; 11: Dielňa, majster hodvábu a izolácia ľadovne; 12: väčšie jazierko, mólo a loďka; 13: zem zmenená cheatom (#153)
+const SAVE_VERSION = 14; // 3: hory, ľad a ľadovňa; 4: Les na pomedzí; 5: kľúče udalostí (unikátne a periodické); 6: spoločné povolenie na pole; 7: Les divov; 8: semienko sveta a počítadlo kôl namiesto rng; 9: 11 520 krokov za deň (×40); 10: pavúky a pavučiny; 11: Dielňa, majster hodvábu a izolácia ľadovne; 12: väčšie jazierko, mólo a loďka; 13: zem zmenená cheatom (#153); 14: kniha objednávok na trhu (#112)
 const OLD_TPD = 288, OLD_MPT = 5, TICK_SCALE = D.TICKS_PER_DAY / OLD_TPD; // mriežka času do verzie 8
 const TPD = D.TICKS_PER_DAY;
 const DEFAULT_MODE: WorldMode = process.env['DEFAULT_MODE'] === 'paused' ? 'paused' : 'running';
@@ -254,8 +254,6 @@ function migrate(saved: JsonRecord): LoadedState {
   }
   if (from < 9) scaleTicks(out, TICK_SCALE); // jemnejší čas: každý uložený krok ×40 (deň a hodina ostávajú tie isté)
   if (from < 10) { out.webs = null; out.corners = null; } // pavúky (#57): pavučiny sa utkajú pri prvom načítaní, v každej ploche jeden kút
-  if (from < 12) { /* kniha objednávok (#112): trh dostane knihy a účty postáv pri načítaní (initEconomy → Mkt.initBooks) zo
-    zásob veľkoobchodníka a Ferovho skladu; batohy a mince hráčov sa nemenia */ }
   if (from < 11) { // Dielňa a majster hodvábu (#23): ich políčka sa uvoľnia, čo tam rástlo, dostane prvý hráč, ktorý príde
     out.dielna = Dielna.newDielna();
     out.redeem = Dielna.clearForDielna(out.tiles);
@@ -263,6 +261,8 @@ function migrate(saved: JsonRecord): LoadedState {
   }
   if (from < 12) Dock.migrate(out); // väčšie jazierko (#160): čo stálo na novej vode, dostane prvý hráč; kto tam stál, je na brehu
   if (from < 13) out.ground = {}; // cheaty (#153): zem zmenená z ladiacej stránky – staré svety nemajú nič zmenené
+  if (from < 14) { /* kniha objednávok (#112): trh dostane knihy a účty postáv pri načítaní (initEconomy → Mkt.initBooks) zo
+    zásob veľkoobchodníka a Ferovho skladu; batohy a mince hráčov sa nemenia */ }
   out.v = SAVE_VERSION; out.migratedFrom = Number(saved['migratedFrom']) || from;
   return out;
 }

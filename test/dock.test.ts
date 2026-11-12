@@ -12,7 +12,7 @@ import type { Readable } from 'node:stream';
 import WebSocket from 'ws';
 import * as D from '../src/shared/data.ts';
 import type { Ground } from '../src/shared/data.ts';
-import type { PlayerSave, SaveFile, SavedTile } from '../src/shared/save.ts';
+import type { MarketV12, PlayerSave, SaveFile, SavedTile } from '../src/shared/save.ts';
 import * as E from '../src/server/engine.ts';
 import * as Econ from '../src/server/economy.ts';
 import * as Events from '../src/server/events.ts';
@@ -296,7 +296,7 @@ function stopServer(proc: Server): Promise<void> { return new Promise(r => { pro
 test('server: uloženie v11 sa prevedie na v12 – záhon na novej vode dostane prvý hráč, hráč z vody je na brehu, nič iné sa nestratí', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-dock-'));
   const port = await freePort();
-  const old = parseJson<Omit<SaveFile, 'v' | 'dock'> & { v: 11 }>(JSON.stringify(SAVE_V11));
+  const old = parseJson<Omit<SaveFile, 'v' | 'dock' | 'market'> & { v: 11; market: MarketV12 }>(JSON.stringify(SAVE_V11));
   const wet = must(D.NEW_POND[25]), sp = 'tulipan';
   must(old.tiles[wet]).s = { k: 'normal', w: 1, r: 0, p: { sp, prog: D.SPECIES[sp].days, q: 3, dry: 0 }, o: 'ana' };
   Object.assign(must(old.saves['bob']), { x: wet % D.W + 0.5, y: Math.floor(wet / D.W) + 0.5, area: 'garden' });

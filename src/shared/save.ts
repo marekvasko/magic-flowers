@@ -1,8 +1,7 @@
-// Uloženie sveta (data/room-<id>.json) vo verzii SAVE_VERSION 13 – presne tak, ako ho zapíše serialize() v src/server/server.ts.
+// Uloženie sveta (data/room-<id>.json) vo verzii SAVE_VERSION 14 – presne tak, ako ho zapíše serialize() v src/server/server.ts.
 // Typ opisuje existujúci formát, nemení ho (#122, fáza 2). Staršie verzie prevedie migrate() na tento tvar.
 // Kľúč hráča (PlayerKey) je meno malými písmenami; v uloženiach sa ním odkazuje na hráča (saves, vlastník pôdy, zákazky…).
-// test/save-v12.fixture.ts drží uloženie zo skutočného servera a prekladač ho kontroluje voči SaveFile (npm run typecheck);
-// verzia 13 pridala len voliteľné pole ground (#153), uloženie v12 je preto stále platný SaveFile.
+// test/save-v14.fixture.ts drží uloženie zo skutočného servera a prekladač ho kontroluje voči SaveFile (npm run typecheck).
 import type { AreaId, Batch, FestivalId, GiverId, Ground, ItemId, Look, SpeciesId, TillKind } from './data.ts';
 
 export type PlayerKey = string;
@@ -149,6 +148,10 @@ export interface Market {
   books: Partial<Record<ItemId, Book>>;
   npcs: Record<Trader, NpcAccount>;           // postavy (veľkoobchodník má pokladňu v knihe každého tovaru)
 }
+// Trh v uloženiach pred verziou 13 (bez knihy objednávok): vstup migrácie (Mkt.initBooks) a typ starších fixtúr
+export type MarketV12 = Omit<Market, 'books' | 'npcs'> & {
+  npcs: { jano: { coins: number }; fero: { coins: number; hold: Partial<Record<SpeciesId, number>> } };
+};
 export type ContractKind = 'short' | 'long' | 'big';
 export interface Contract {
   id: number;
@@ -228,7 +231,7 @@ export type Vehicles = Record<VehicleId, Vehicle>;
 
 // ---- Celé uloženie ----
 export interface SaveFile {
-  v: 12;
+  v: 13;
   tick: number;
   wall: number;               // reálny čas (ms) k času tick
   mode: WorldMode;
