@@ -379,7 +379,7 @@ export function upcomingFestival(events: readonly EngineEvent[] | null | undefin
 // ---------- Pohľad pre klienta ----------
 export function marketView(m: Market, tick: number, events: readonly EngineEvent[] | null | undefined): Extract<ServerMessage, { t: 'market' }> {
   const seeds: Partial<Record<SpeciesId, MarketItemView>> = {}, flowers: Partial<Record<SpeciesId, MarketItemView>> = {};
-  const item = (id: ItemId, p: number, st: number): MarketItemView => ({ p, st, h: m.hist[id] || [], a: Mkt.levels(m, id, 'sell', tick), b: Mkt.levels(m, id, 'buy', tick) });
+  const item = (id: ItemId, p: number, st: number): MarketItemView => ({ p, st, h: m.hist[id] || [], a: Mkt.levels(m, id, 'sell', tick), b: Mkt.levels(m, id, 'buy', tick), t: Mkt.tradeHist(m, id, tick) });
   for (const sp of PLANTABLE) {
     seeds[sp] = item(`seed_${sp}`, seedPrice(m, tick, sp), must(m.seeds[sp]).stock);
     flowers[sp] = item(`fl_${sp}`, flowerPrice(m, tick, sp), must(m.flowers[sp]).stock);

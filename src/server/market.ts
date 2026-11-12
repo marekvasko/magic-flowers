@@ -236,11 +236,25 @@ function fill(mk: Mk, item: ItemId, b: Order, a: Order): boolean {
   // kúpené cez Dopyt čaká na trhu; okamžitý nákup ide rovno do batohu (hráč stojí pri trhu)
   I.addItems(b.pl != null && !b.ioc ? boxC(must(mk.save(b.pl))) : buyer.c, item, k, tick, batches);
   mk.trades.push({ item, k, pay, buyer: { ...b }, seller: { ...a } });
+  logTrade(mk.book(item), tick, Math.round(pay / k), k);
   if (b.npc === 'vo' || a.npc === 'vo') mk.requote.add(item);
   if (b.npc) npcBought(mk, b.npc, item, k);
   if (a.rem <= 0) drop(mk, item, a);
   if (b.rem <= 0) { if (b.coins > 0) { buyer.coins.coins += b.coins; b.coins = 0; } drop(mk, item, b); }
   return true;
+}
+// Záznam obchodu v knihe (graf pri posuvníku ceny): staršie než TRADE_DAYS dní sa zahodia, najviac 200 záznamov
+function logTrade(book: Book, tick: number, p: number, k: number): void {
+  const from = tick - B.TRADE_DAYS * TPD, tr = (book.tr || []).filter(t => t[0] >= from);
+  const last = tr[tr.length - 1];
+  if (last && last[0] === tick && last[1] === p) last[2] += k; else tr.push([tick, p, k]);
+  book.tr = tr.length > 200 ? tr.slice(-200) : tr;
+}
+// Rozdelenie cien obchodov za posledné TRADE_DAYS dní pre klienta: [cena, kusy], zoradené podľa ceny
+export function tradeHist(m: Market, item: ItemId, tick: number): [number, number][] {
+  const by = new Map<number, number>(), from = tick - B.TRADE_DAYS * TPD;
+  for (const [t, p, k] of m.books[item]?.tr ?? []) if (t >= from) by.set(p, (by.get(p) ?? 0) + k);
+  return [...by.entries()].sort((a, b) => a[0] - b[0]);
 }
 // Postava kúpila k kusov: Jano kúpené semienka hneď zasadí – o pár dní z nich prinesie dvakrát toľko kvetov (jano_sell).
 // Iné postavy si tovar nechávajú (Fero ako zásobu, Zuzka do kytíc, veľkoobchodník na predaj).

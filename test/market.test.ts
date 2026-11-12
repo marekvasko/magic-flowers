@@ -311,3 +311,22 @@ test('postava s postavou: Jano prinesie kvety, Zuzkin čakajúci dopyt ich kúpi
   assert.ok(w.market.npcs.jano.coins >= jano + q * p, 'Jano dostal aspoň Zuzkin limit za každý jej kus');
   invariants(w);
 });
+
+test('graf pri posuvníku: kniha si pamätá obchody (cena, kusy) za posledné dni, staršie zabudne; trh ich posiela ako rozdelenie', () => {
+  const w = makeWorld(24), p = topBid(w, FL) + 10;
+  give(save(w, 'bob'), FL, 3, w.tick); save(w, 'ana').coins = 5000;
+  run(w, act('order', 'bob', { id: FL, side: 'sell', n: 3, p }));
+  run(w, act('buy', 'ana', { id: FL, n: 2, lim: p }));
+  give(save(w, 'ana'), FL, 1, w.tick);
+  run(w, act('sell', 'ana', { id: FL, n: 1 })); // predá veľkoobchodníkovi (alebo Zuzke) za jeho cenu
+  const hist = Mkt.tradeHist(w.market, FL, w.tick);
+  assert.deepStrictEqual(hist.find(([q]) => q === p), [p, 2], 'dva kusy za cenu Bobovej ponuky');
+  assert.strictEqual(hist.reduce((a, [, k]) => a + k, 0), 3);
+  const view = Econ.marketView(w.market, w.tick, w.events);
+  assert.deepStrictEqual(must(view.flowers.ruza).t, hist);
+  // po TRADE_DAYS dňoch sa staré obchody v grafe neukážu a pri ďalšom obchode z knihy zmiznú
+  w.tick += B.TRADE_DAYS * TPD + 1;
+  assert.deepStrictEqual(Mkt.tradeHist(w.market, FL, w.tick), []);
+  run(w, act('buy', 'ana', { id: FL, n: 1, lim: p }));
+  assert.deepStrictEqual(must(w.market.books[FL]).tr, [[w.tick, p, 1]]);
+});

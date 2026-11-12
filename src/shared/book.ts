@@ -3,12 +3,12 @@
 import * as D from './data.ts';
 import type { ItemId } from './data.ts';
 
+// Graf pri posuvníku ceny ukazuje obchody za posledné TRADE_DAYS herné dni
+export const TRADE_DAYS = 3;
 // Objednávka platí 3 herné dni (ponuka kvetov najviac dovtedy, kým najstarší kvet nezvädne)
 export const ORDER_DAYS = 3;
 // Najviac otvorených objednávok podľa úrovne reputácie 0–4: 2, 3, 4, 5, 6
 export function orderLimit(rep: number): number { return 2 + D.repLevel(rep); }
-// Štyri tlačidlá Dopyt / Ponuka: násobky ceny okamžitého obchodu (zľava doprava)
-export const STEPS: readonly number[] = [0.8, 0.9, 1.1, 1.2];
 // Starnutie priority: objednávka, ktorá čaká, sa pri výbere posúva dopredu o AGING.perDay mince za deň čakania,
 // najviac o AGING.max. Mení len poradie výberu – nikdy limitnú cenu, zálohu ani cenu obchodu (tá je vždy limit čakajúcej objednávky).
 export const AGING = { perDay: 0.5, max: 1.5 } as const;
@@ -43,6 +43,3 @@ export function walk(levels: readonly Level[], n: number, fresh?: (i: number) =>
   }
   return { n: got, total, worst, first };
 }
-// Limitná cena za kus pre tlačidlo s násobkom f, keď okamžitý obchod stojí v priemere avg za kus.
-// Celé mince: nižšie tlačidlá zaokrúhľujú nadol, vyššie nahor, aby sa od okamžitej ceny naozaj líšili; aspoň 1.
-export function stepPrice(avg: number, f: number): number { return Math.max(1, f < 1 ? Math.floor(avg * f) : Math.ceil(avg * f)); }
