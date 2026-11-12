@@ -497,7 +497,7 @@ export function janoVisit(mk: Mk, g: { int(n: number): number }): void {
   npcWithdrawAll(mk, 'jano', [...SEED_ITEMS, ...FLOWER_ITEMS]);
   I.wiltSweep(npcC(jano), tick); delete jano.inv.wilted;
   for (const sp of P.PLANTABLE) janoOffer(mk, sp);
-  const cands = P.PLANTABLE.filter(sp => !D.SPECIES[sp].strict && mk.entry(`seed_${sp}`).stock >= 3 && P.phase(sp, se) !== 'off')
+  const cands = P.PLANTABLE.filter(sp => !D.SPECIES[sp].strict && !D.isAqua(sp) && mk.entry(`seed_${sp}`).stock >= 3 && P.phase(sp, se) !== 'off') // jazierko nemá (#38)
     .map(sp => { const sc = D.SPECIES[sp], p = wholesaleAsk(mk, `seed_${sp}`); return { sp, p, score: (sc.sell * 2 - p) / sc.days, cheap: p <= sc.seed * 1.25 }; })
     .filter(c => c.cheap && c.score > 0).sort((a, b) => b.score - a.score);
   const c = cands[0];
@@ -620,8 +620,21 @@ const newAcct = (coins: number): NpcAccount => ({ coins, inv: {}, fb: {} });
 // (seeds/flowers/compost.stock) sa stane jeho tovarom, Ferove zásoby (hold) jeho tovarom, mince postáv ostanú.
 // Potom veľkoobchodník vypíše ceny. Volá sa nad živým svetom (initEconomy), raz – ďalej trh mení len kniha.
 export function initBooks(world: Pick<GameWorld, 'saves' | 'tick'>, m: Market): void {
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- uloženia pred verziou 12 knihy nemajú
-  if (m.books && Object.keys(m.books).length) return;
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- uloženia pred verziou 13 knihy nemajú
+  if (m.books && Object.keys(m.books).length) {
+    // tovar pridaný neskôr (nové druhy): kniha so zásobou veľkoobchodníka, ktorú mu dal trh (seeds/flowers.stock)
+    const missing = BOOK_ITEMS.filter(item => !m.books[item]);
+    if (!missing.length) return;
+    for (const item of missing) {
+      const vo = newAcct(0), sp = speciesOf(item), st = !sp ? m.compost.stock : item.startsWith('seed_') ? m.seeds[sp]?.stock ?? 0 : m.flowers[sp]?.stock ?? 0;
+      if (st > 0) I.addItems(npcC(vo), item, st, world.tick);
+      m.books[item] = { next: 1, orders: {}, vo };
+    }
+    const mk = mkWorld(world, m, null);
+    for (const item of missing) fund(mk, item);
+    requoteAll(mk, missing);
+    return;
+  }
   const old: { jano?: { coins?: number }; fero?: { coins?: number; hold?: Partial<Record<SpeciesId, number>> } } = m.npcs;
   const jano = newAcct(old.jano?.coins ?? 300), fero = newAcct(old.fero?.coins ?? 400), zuzka = newAcct(ZUZKA.budget);
   const add = (a: NpcAccount, item: ItemId, n: number): void => { if (n > 0) I.addItems(npcC(a), item, n, world.tick); };
