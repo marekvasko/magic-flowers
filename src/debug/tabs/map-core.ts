@@ -101,9 +101,13 @@ export function buildTiles(D: D, area: string, opt?: { state?: MapState | null; 
   // mólo a loďka (dock.ts applyDock): políčka móla sú voda, kým mólo nestojí
   const dock = field('dock'), kbuilt = area === 'garden' && builtOf(dock);
   const klot = new Set<number>(area === 'garden' ? D.DOCK.tiles.map(p => p.y * w + p.x) : []);
+  // zem zmenená cheatom (#153): plocha → index → { g, was } (server: Areas.applyGround)
+  const ground = st && st.ground ? st.ground[D.AREAS.find(a => a === area) ?? 'garden'] : null;
   let maxIce = 0;
   const tiles = base.map((g0, i): MapTile => {
     let g = g0;
+    const ov = ground ? ground[String(i)] : undefined;
+    if (ov) g = ov.g;
     if (lot.has(i)) g = built ? 'icehouse' : 'lot';
     else if (dlot.has(i)) g = dbuilt ? 'dielna' : 'lot';
     else if (klot.has(i) && kbuilt) g = 'dock';

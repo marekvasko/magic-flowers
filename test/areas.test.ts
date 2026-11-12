@@ -286,7 +286,7 @@ test('server: svet z verzie 3 sa prevedie (záhrada aj poloha ostanú) a hráč 
     c.ws.close();
   } finally { await stopServer(proc); }
   const saved = readJson<SaveFile>(path.join(dir, 'room-stary.json'));
-  assert.strictEqual(saved.v, 12);
+  assert.strictEqual(saved.v, 13);
   assert.strictEqual(saved.migratedFrom, 3);
   assert.ok(Number.isInteger(saved.pomedzieSeed));
   assert.strictEqual(must(saved.tiles[plot]).s?.p?.sp, 'mak');

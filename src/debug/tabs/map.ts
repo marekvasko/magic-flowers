@@ -6,6 +6,9 @@ import type { AreaMap, MapError, MapPlayer, MapTile } from './map-core.ts';
 import { vehiclesOf, vehicleText, drawVehicle, nextToggle, VEHICLE_COLOR } from './vehicles-core.ts';
 import type { DebugVehicle } from './vehicles-core.ts';
 import type { Kid, TabCtx, TabInstance } from '../ui.ts';
+import { tileEditor } from './tile-editor.ts';
+import { cheat, cheatKey, setCheatKey } from './cheat-api.ts';
+import type { CheatBody } from './cheat-api.ts';
 import { lookup, must } from '../../shared/util.ts';
 
 type C2 = CanvasRenderingContext2D;
@@ -27,6 +30,14 @@ const CSS = `
 .map-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: flex; justify-content: center; min-width: 0; }
 .map-wrap canvas { display: block; touch-action: manipulation; cursor: crosshair; border-radius: 2px; }
 .map-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.te-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
+.te-row select { max-width: 100%; }
+.te-lbl { min-width: 58px; color: var(--muted); }
+.te-num { width: 56px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+.te-sub { margin-top: 10px; font-weight: 600; }
+.te-msg { min-height: 1.3em; font-size: 12.5px; }
+.te-msg.ok { color: var(--ok); } .te-msg.err { color: var(--warn); }
+.te-key { width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
 .map-box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
 .map-box h4 { margin: 0 0 8px; font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; gap: 6px; }
 .map-box h4 span { text-transform: none; letter-spacing: 0; font-weight: 400; }
@@ -72,6 +83,9 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
   let layers = ctx.param('maplayers') ?? DEFAULT_LAYERS;
   let vehicles: DebugVehicle[] = [], names = new Map<string, string>(), toggleAt: number | null = null; // fúrik a sane (#158)
   let map: AreaMap | MapError | null = null, players: MapPlayer[] = [], hover: Pt | null = null, sel: Pt | null = null, T = 16, shownArea: string | null = null;
+  // vybrané políčka na úpravu (#153): Shift+klik pridá / uberie, Shift+ťahanie pridá obdĺžnik (na dotyk prepínač „Select several“);
+  // sel = naposledy vybrané (ukazuje ho inšpektor)
+  let picks: Pt[] = [], several = false, drag: { from: Pt; to: Pt } | null = null, skipClick = false;
   const on = (id: string): boolean => layers.includes(id);
   const source = (): 'room' | 'seed' => {
     const s = ctx.param('mapsrc');
@@ -90,11 +104,12 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
   const legendH = h('div', { class: 'map-box' });
   const legendL = h('div', { class: 'map-box' });
   const tileBox = h('div', { class: 'map-box' });
+  const editBox = h('div', { class: 'map-box' }); // úprava vybraného políčka cheatom (#153), len pre svet
   const areaBox = h('div', { class: 'map-box' });
   el.append(
     h('div', { class: 'map-bar' }, areaSeg, srcSeg, h('label', { class: 'map-seed' }, 'Seed', seedIn), newSeed, layerBox),
     note,
-    h('div', { class: 'map-grid' }, wrap, h('div', { class: 'map-side' }, legendH, legendL, tileBox, areaBox)));
+    h('div', { class: 'map-grid' }, wrap, h('div', { class: 'map-side' }, editBox, legendH, legendL, tileBox, areaBox)));
 
   seedIn.addEventListener('change', () => {
     const v = parseSeed(seedIn.value);
@@ -129,7 +144,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
   function rebuild(): void {
     const src = source();
     const snap = ctx.snap && ctx.snap.id === ctx.room ? ctx.snap : null;
-    if (ctx.area !== shownArea) { hover = null; sel = null; }
+    if (ctx.area !== shownArea) { hover = null; sel = null; picks = []; }
     shownArea = ctx.area;
     const name = D.AREA_NAMES[ctx.area] || ctx.area;
     const seeded = isSeeded(D, ctx.area);
@@ -151,7 +166,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     renderBar();
     if (map.error) { canvas.width = canvas.height = 0; canvas.style.width = canvas.style.height = '0'; }
     else draw();
-    renderLegend(); renderTile(); renderArea();
+    renderLegend(); renderTile(); renderArea(); renderEdit();
   }
 
   // ---------- kreslenie ----------
@@ -290,7 +305,8 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     }
     // vybrané a ukázané políčko
     const box = (p: Pt | null, c: string, lw: number): void => { if (!p) return; g.strokeStyle = c; g.lineWidth = lw / T; g.strokeRect(p.x + lw / T / 2, p.y + lw / T / 2, 1 - lw / T, 1 - lw / T); };
-    box(sel, COL.sel, 3);
+    for (const p of picks) box(p, COL.sel, picks.length > 1 ? 2 : 3);
+    if (drag) for (const p of rect(drag.from, drag.to)) box(p, COL.hover, 1.5);
     if (hover && !(sel && sel.x === hover.x && sel.y === hover.y)) box(hover, COL.hover, 2);
   }
   // trojuholník prechodu smerom k okraju plochy (side: n, s, w, e)
@@ -365,6 +381,49 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
       ...vehicles.filter(v => v.bought && v.area === map?.area && Math.floor(v.x) === p.x && Math.floor(v.y) === p.y).map((v): [string, Kid] => [v.name, vehicleText(v, names)])
     ]));
   }
+  // Úprava vybraného políčka (#153): ťuknutie na políčko sveta ukáže, čo sa dá zmeniť; zmena ide hneď na server (cheat)
+  // a mapa sa obnoví. Potrebuje kľúč cheatov – kým ho stránka nemá, pýta si ho tu.
+  const editMsg = h('div', { class: 'te-msg' });
+  let busy = false;
+  function act(body: CheatBody, done: string): void {
+    const room = ctx.room;
+    if (busy || !room) return;
+    busy = true;
+    editMsg.textContent = 'Saving…'; editMsg.className = 'te-msg';
+    void cheat(room, body).then(async r => {
+      busy = false;
+      if (!r.ok) { editMsg.textContent = r.error; editMsg.className = 'te-msg err'; if (r.disabled || /key/.test(r.error)) renderEdit(); return; }
+      editMsg.textContent = done; editMsg.className = 'te-msg ok';
+      await ctx.refresh(); // nový stav sveta → update → mapa a panel sa prekreslia
+    });
+  }
+  function renderEdit(): void {
+    const snap = ctx.snap && ctx.snap.id === ctx.room ? ctx.snap : null;
+    if (source() !== 'room' || !snap || !map || map.error) { editBox.hidden = true; return; }
+    const m = map;
+    editBox.hidden = false;
+    const sevBox = h('input', { type: 'checkbox' });
+    sevBox.checked = several;
+    sevBox.addEventListener('change', () => { several = sevBox.checked; });
+    const tools = h('div', { class: 'te-row' }, h('label', { title: 'Or hold Shift: click toggles a tile, drag adds a rectangle' }, sevBox, ' Select several'),
+      picks.length ? h('button', { onclick: () => { picks = []; selected(); } }, 'Clear selection') : null);
+    const one = picks.length === 1 ? must(picks[0]) : null;
+    const head = h('h4', null, 'Edit tiles', h('span', null, one ? `${one.x}, ${one.y}` : picks.length ? `${picks.length} tiles` : ''));
+    if (!picks.length) { editBox.replaceChildren(head, h('p', { class: 'muted' }, 'Tap a tile to change it. Shift+click or Shift+drag (or “Select several”) to change many at once.'), tools); return; }
+    if (!cheatKey()) {
+      const inp = h('input', { type: 'password', class: 'te-key', placeholder: 'cheat key (DEBUG_CHEATS_KEY)', autocomplete: 'off' });
+      const use = (): void => { setCheatKey(inp.value.trim()); renderEdit(); };
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') use(); });
+      editBox.replaceChildren(head, h('p', { class: 'muted' }, 'Enter the cheat key to edit tiles of this room.'), h('div', { class: 'te-row' }, inp, h('button', { onclick: use }, 'Use key')), editMsg, tools);
+      return;
+    }
+    const online = new Map(snap.online.map(o => [o.player, o.name]));
+    const owners = Object.keys(snap.state.saves || {}).map(id => ({ id, label: online.get(id) ?? id }));
+    const ov = snap.state.ground?.[ctx.area];
+    const tiles = picks.flatMap(p => { const i = p.y * m.w + p.x, t = m.tiles[i]; return t ? [{ i, tile: t, changed: !!ov?.[String(i)] }] : []; });
+    editBox.replaceChildren(head, ...tileEditor({ h, D, area: ctx.area, tiles, owners, act }), editMsg, tools,
+      h('div', { class: 'te-row' }, h('button', { class: 'muted', onclick: () => { setCheatKey(''); renderEdit(); } }, 'Forget key')));
+  }
   function renderArea(): void {
     if (!map || map.error) { areaBox.replaceChildren(h('h4', null, 'Area'), h('p', null, 'No map.')); return; }
     const s = areaStats(D, map), on_ = players.filter(p => p.online).length;
@@ -394,16 +453,38 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     return map && !map.error && x >= 0 && y >= 0 && x < map.w && y < map.h ? { x, y } : null;
   };
   const same = (a: Pt | null, b: Pt | null): boolean => a === b || (!!a && !!b && a.x === b.x && a.y === b.y);
-  canvas.addEventListener('pointermove', e => {
-    if (e.pointerType !== 'mouse') return; // na dotyk len ťuknutie
+  const rect = (a: Pt, b: Pt): Pt[] => {
+    const out: Pt[] = [];
+    for (let y = Math.min(a.y, b.y); y <= Math.max(a.y, b.y); y++) for (let x = Math.min(a.x, b.x); x <= Math.max(a.x, b.x); x++) out.push({ x, y });
+    return out;
+  };
+  const picked = (t: Pt): boolean => picks.some(p => same(p, t));
+  function selected(): void { sel = picks[picks.length - 1] ?? null; editMsg.textContent = ''; draw(); renderTile(); renderEdit(); }
+  canvas.addEventListener('pointerdown', e => {
     const t = tileAt(e);
+    if (t && (e.shiftKey || several) && source() === 'room') { drag = { from: t, to: t }; canvas.setPointerCapture(e.pointerId); }
+  });
+  canvas.addEventListener('pointermove', e => {
+    const t = tileAt(e);
+    if (drag && t && !same(t, drag.to)) { drag.to = t; draw(); return; }
+    if (e.pointerType !== 'mouse') return; // na dotyk len ťuknutie
     if (!same(t, hover)) { hover = t; draw(); renderTile(); }
+  });
+  canvas.addEventListener('pointerup', () => {
+    if (!drag) return;
+    const area = rect(drag.from, drag.to);
+    drag = null; skipClick = true;
+    // jedno políčko sa prepne, obdĺžnik sa pridá
+    if (area.length === 1) { const t = must(area[0]); picks = picked(t) ? picks.filter(p => !same(p, t)) : picks.concat([t]); }
+    else picks = picks.concat(area.filter(t => !picked(t)));
+    selected();
   });
   canvas.addEventListener('pointerleave', () => { if (hover) { hover = null; draw(); renderTile(); } });
   canvas.addEventListener('click', e => {
+    if (skipClick) { skipClick = false; return; }
     const t = tileAt(e);
-    sel = same(t, sel) ? null : t;
-    draw(); renderTile();
+    picks = !t || (picks.length === 1 && picked(t)) ? [] : [t];
+    selected();
   });
   const ro = new ResizeObserver(() => { draw(); });
   ro.observe(wrap);
