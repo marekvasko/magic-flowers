@@ -355,9 +355,10 @@ test('rep brána: plesnivec od hráča kúpi len reputácia 2; okamžitý predaj
 
 test('postavy: 40 dní – Jano, Fero, Zuzka a veľkoobchodník obchodujú cez knihu; nič sa nestratí, kniha je vždy v poriadku', () => {
   const w = makeWorld(11);
-  w.presence = [];
   give(save(w, 'bob'), FL, 6, w.tick);
   run(w, act('order', 'bob', { id: FL, side: 'sell', n: 6, p: topBid(w, FL) + 2 }));
+  assert.strictEqual(players(w, FL).length, 1);
+  w.presence = [];
   const jano0 = w.market.npcs.jano.coins;
   for (let d = 0; d < 40; d++) { E.advanceTo(w, w.tick + TPD, SPEC); invariants(w); }
   const news = w.market.news.map(n => n.text).join('\n');
@@ -365,6 +366,17 @@ test('postavy: 40 dní – Jano, Fero, Zuzka a veľkoobchodník obchodujú cez k
   assert.ok(Mkt.BOOK_ITEMS.every(item => orders(w, item).every(o => o.npc !== 'vo' || o.exp === null)));
   for (const id of Mkt.TRADERS) assert.ok(w.market.npcs[id].coins >= 0, id + ' nemá dlh');
   for (const item of Mkt.BOOK_ITEMS) assert.ok(must(w.market.books[item]).vo.coins >= 0, item);
+});
+
+test('Jano: za 240 dní mu mince neprerastú – nad svoju zásobu na semienka zarobené minie', () => {
+  const w = makeWorld(11);
+  w.presence = [];
+  let max = 0;
+  for (let d = 0; d < 240; d++) { E.advanceTo(w, w.tick + TPD, SPEC); max = Math.max(max, w.market.npcs.jano.coins); }
+  // medzi návštevami môže zarobiť na kvetoch (jano_sell), pri návšteve sa vráti na zásobu
+  assert.ok(max < Mkt.JANO.purse * 4, `Jano mal najviac ${String(max)} 🪙`);
+  assert.ok(/Jano/.test(w.market.news.map(n => n.text).join('\n')), 'Jano obchodoval');
+  invariants(w);
 });
 
 test('veľkoobchodník vykupuje kvety za cenu × čerstvosť a po predaji zníži výkupnú cenu', () => {

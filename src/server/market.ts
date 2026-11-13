@@ -17,7 +17,7 @@ import * as B from '../shared/book.ts';
 import type { Level } from '../shared/book.ts';
 import type { OrderView } from '../shared/protocol.ts';
 import type { Book, Market, NpcAccount, NpcId, Order, OrderSide, PlayerKey, PlayerSave, Trader } from '../shared/save.ts';
-import { entries, keys, lookup, must } from '../shared/util.ts';
+import { entries, keys, lookup, must, plural } from '../shared/util.ts';
 import { maybe, sl } from './game.ts';
 import type { GameCtx, GameSlices, GameWorld, Msg } from './game.ts';
 import * as I from './items.ts';
@@ -37,6 +37,9 @@ export const WHOLESALE = { bidDepth: 20, compostBidDepth: 10, skim: 2, step: 5 }
 // výkup veľkoobchodníka, `perSpecies` kusov každého druhu v sezóne, počas sviatku `festExtra` navyše. Kúpené kvety
 // predá v kyticiach (zmiznú z jej účtu pri ďalšej návšteve).
 export const ZUZKA = { budget: 250, markup: 1.15, perSpecies: 2, festExtra: 3 } as const;
+// Záhradník Jano si nechá najviac purse mincí na nákup semienok; čo zarobí navyše, pri návšteve minie na živobytie
+// (mince z hry odídu) – inak by mu za rok narástli do desiatok tisíc
+export const JANO = { purse: 1000 } as const;
 
 // Tovar s knihou (kľúče kníh): semienka a kvety pestovateľných druhov a kompost
 export const BOOK_ITEMS: readonly ItemId[] = ['compost', ...P.PLANTABLE.flatMap(sp => [`seed_${sp}` as const, `fl_${sp}` as const])];
@@ -511,7 +514,7 @@ export function playerOrder(mk: Mk, item: ItemId, key: PlayerKey, name: string, 
   if (s === 'buy' && sp && minRep && D.repLevel(sv.rep || 0) < minRep) return { err: `Semienka ${D.SPECIES[sp].name} môžu kupovať len záhradníci s reputáciou ${String(minRep)}.` };
   if (!ioc && (sv.orders || []).length >= B.orderLimit(sv.rep || 0)) {
     const lim = B.orderLimit(sv.rep || 0);
-    return { err: `Naraz môžeš mať len ${String(lim)} otvorené objednávky. Vyššia reputácia ti dovolí viac.` };
+    return { err: `Naraz môžeš mať len ${String(lim)} ${plural(lim, 'otvorenú objednávku', 'otvorené objednávky', 'otvorených objednávok')}. Vyššia reputácia ti dovolí viac.` };
   }
   let coins = 0, batches: MovedBatch[] | null = null;
   if (s === 'buy') {
@@ -594,6 +597,7 @@ const flowerQuote = (mk: Mk, sp: SpeciesId): number => { const e = mk.entry(`fl_
 export function janoVisit(mk: Mk, g: { int(n: number): number }, items: readonly ItemId[]): void {
   const tick = mk.tick, jano = mk.npc('jano'), has = new Set(items);
   npcWithdrawAll(mk, 'jano', items);
+  if (jano.coins > JANO.purse) jano.coins = JANO.purse;
   I.wiltSweep(npcC(jano), tick); delete jano.inv.wilted;
   for (const sp of P.PLANTABLE) if (has.has(`fl_${sp}`)) janoOffer(mk, sp);
   const c = janoPick(item => mk.entry(item).stock, tick);

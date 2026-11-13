@@ -8,7 +8,7 @@ import * as Players from '../shared/players.ts';
 import * as SpiderModel from '../shared/spidermodel.ts';
 import type { ClientMessage, Emote, MarketItemView, ServerMessage, TileView, ToastKind, WebView, WishKind } from '../shared/protocol.ts';
 import type { Contract, WorldMode } from '../shared/save.ts';
-import { entries, isRecord, keys, lookup, must } from '../shared/util.ts';
+import { entries, isRecord, keys, lookup, must, plural } from '../shared/util.ts';
 import { Art } from './art.ts';
 import { createVehicles } from './vehicles.ts';
 import type { Render3D } from './render3d.ts';
@@ -909,7 +909,18 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
   function openModal(title: string, render: (body: HTMLElement) => void): void {
     $('mTitle').textContent = title;
     // počas ťahania na trhu (pás kusov, posuvník ceny) sa okno neprekreslí – prekreslí sa, keď prst pustí
-    S.modal = { refresh: () => { if (S.modalHold) { S.modalPending = true; return; } $('mBody').innerHTML = ''; render($('mBody')); } };
+    S.modal = { refresh: () => {
+      if (S.modalHold) { S.modalPending = true; return; }
+      // prekreslenie (správy zo servera) nesmie vziať fokus klávesnice: zapamätá sa prvok (data-fk, inak poradie
+      // medzi ovládacími prvkami okna) a po prekreslení sa fokus vráti na ten istý
+      const body = $('mBody'), act = document.activeElement, FOCUS = 'button, [tabindex], input, select, textarea';
+      const had = act instanceof HTMLElement && body.contains(act) ? { fk: act.dataset['fk'], i: [...body.querySelectorAll(FOCUS)].indexOf(act) } : null;
+      body.innerHTML = ''; render(body);
+      if (had) {
+        const back = (had.fk ? body.querySelector<HTMLElement>(`[data-fk="${CSS.escape(had.fk)}"]`) : null) ?? body.querySelectorAll<HTMLElement>(FOCUS)[had.i];
+        back?.focus({ preventScroll: true });
+      }
+    } };
     S.modal.refresh();
     $('modal').classList.remove('hidden');
   }
@@ -941,7 +952,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
 
   function openUI(kind: UiKind): void {
     sfx('pop');
-    if (kind === 'shop') { openShop('buy'); return; }
+    if (kind === 'shop') { rowState.clear(); openShop('buy'); return; } // nové otvorenie trhu: počty a ceny odznova
     if (kind === 'cauldron') { S.brewed = null; openModal('⚗️ Čarovný kotlík', renderCauldron); return; }
     if (kind === 'babka') { S.tipIdx = D.nextTipIdx(S.tipIdx, S.recipes.length > 0); openModal('👵 Babka bylinkárka', renderBabka); return; }
     if (kind === 'book') { openBook('flowers'); return; }
@@ -1092,13 +1103,16 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
         // zrušené (prekryv s vlastnou objednávkou druhej strany – sám so sebou sa neobchoduje) – a popis
         for (const o of S.orders) {
           const buy = o.side === 'buy', dead = o.dead ?? 0, cx = o.cx ?? 0, done = Math.max(0, o.q - o.rem - dead - cx), pct = (k: number): string => `${(k / Math.max(1, o.q) * 100).toFixed(1)}%`;
-          const bar = h('div', { class: 'obar', title: `${done} ${buy ? 'kúpené' : 'predané'}, ${o.rem} čaká, ${dead} zvädlo, ${cx} zrušené` },
+          // počty s tvarom podľa čísla: 1 kúpený, 2 kúpené, 0 / 5 kúpených
+          const nDone = `${done} ${buy ? plural(done, 'kúpený', 'kúpené', 'kúpených') : plural(done, 'predaný', 'predané', 'predaných')}`;
+          const nDead = `${dead} ${plural(dead, 'zvädnutý', 'zvädnuté', 'zvädnutých')}`, nCx = `${cx} ${plural(cx, 'zrušený', 'zrušené', 'zrušených')}`;
+          const bar = h('div', { class: 'obar', title: `${nDone}, ${o.rem} ${buy ? 'v dopyte' : 'v ponuke'}, ${nDead}, ${nCx}` },
             h('i', { class: 'done', style: `width:${pct(done)}` }), h('i', { class: 'wait ' + o.side, style: `width:${pct(o.rem)}` }), h('i', { class: 'dead', style: `width:${pct(dead)}` }), h('i', { class: 'cx', style: `width:${pct(cx)}` }));
           const legend = h('div', { class: 'olegend' },
-            h('span', null, h('i', { class: 'done' }), `${done} ${buy ? 'kúpené' : 'predané'}`),
+            h('span', null, h('i', { class: 'done' }), nDone),
             h('span', null, h('i', { class: 'wait ' + o.side }), `${o.rem} ${buy ? 'v dopyte' : 'v ponuke'}`));
-          if (dead || o.item.startsWith('fl_') && !buy) legend.appendChild(h('span', null, h('i', { class: 'dead' }), `${dead} zvädlo`));
-          if (cx) legend.appendChild(h('span', { title: 'Prekrývalo sa s tvojou vlastnou objednávkou – sám so sebou sa neobchoduje' }, h('i', { class: 'cx' }), `${cx} zrušené`));
+          if (dead || o.item.startsWith('fl_') && !buy) legend.appendChild(h('span', null, h('i', { class: 'dead' }), nDead));
+          if (cx) legend.appendChild(h('span', { title: 'Prekrývalo sa s tvojou vlastnou objednávkou – sám so sebou sa neobchoduje' }, h('i', { class: 'cx' }), nCx));
           const parts = [`${o.p} 🪙/ks`];
           if (buy) parts.push(`odložené ${o.coins} 🪙`);
           if (o.fr != null) parts.push(`čerstvosť ${Math.round(o.fr * 100)} %`);

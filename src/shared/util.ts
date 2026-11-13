@@ -31,3 +31,8 @@ export function mapValues<K extends string, A, B>(o: Readonly<Record<K, A>>, f: 
 export type JsonRecord = { [key: string]: unknown };
 export const isRecord = (v: unknown): v is JsonRecord => v !== null && typeof v === 'object';
 export const isArray = (v: unknown): v is unknown[] => Array.isArray(v);
+// Slovenský tvar podľa počtu: 1 → one, 2–4 → few, inak (0, 5 a viac) → many („1 kúpený, 2 kúpené, 5 kúpených“)
+export function plural(n: number, one: string, few: string, many: string): string {
+  const a = Math.abs(n);
+  return a === 1 ? one : a >= 2 && a <= 4 ? few : many;
+}
