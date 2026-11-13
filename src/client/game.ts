@@ -1016,7 +1016,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     info.insertBefore(line, info.children[1] ?? null);
     body.appendChild(TR.tradeRow({
       id, side, icon: Art.icon(id), info, q, fixed, have: S.inv[id] ?? 0, coins: S.coins,
-      mine: new Set(S.orders.map(o => o.id)), own: S.orders.filter(o => o.item === id && o.side === side).map(o => ({ p: o.p, n: o.rem })), fresh: side === 'sell' && id.startsWith('fl_') ? sellFresh(id) : undefined,
+      mine: new Set(S.orders.map(o => o.id)), own: S.orders.filter(o => o.item === id && o.side !== side).map(o => ({ p: o.p, n: o.rem })), fresh: side === 'sell' && id.startsWith('fl_') ? sellFresh(id) : undefined,
       orderRoom: S.orders.length < S.orderLimit, state,
       send: m => { send(m); if (m.t === 'sell') sfx('coin'); },
       busy: on => { S.modalHold = on; if (!on && S.modalPending) { S.modalPending = false; refreshModal(); } }
@@ -1039,7 +1039,8 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
         const se = season();
         const rank = (sp: SpeciesId): number => D.SPECIES[sp].seasons.some(s => s === se) ? 0 : D.SPECIES[sp].seasons.some(s => s === (se + 1) % 4) ? 1 : 2;
         // kvety sa dajú kúpiť, keď ich niekto (hráč, Jano) ponúka
-        const fls = keys(M.flowers).filter(sp => others(lookup(M.flowers, sp)?.a ?? []).length).map(sp => `fl_${sp}` as const);
+        // aj keď ich ponúka len sám hráč – svoju ponuku tak vidí v knihe (kúpiť ju nemôže)
+        const fls = keys(M.flowers).filter(sp => (lookup(M.flowers, sp)?.a ?? []).length).map(sp => `fl_${sp}` as const);
         const ids: ItemId[] = ['compost', ...keys(M.seeds).sort((a, b) => rank(a) - rank(b)).map(sp => `seed_${sp}` as const), ...fls];
         for (const id of ids) {
           const q = bookView(id);
