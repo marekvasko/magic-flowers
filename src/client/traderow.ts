@@ -17,7 +17,8 @@ import type { ClientMessage, MarketItemView } from '../shared/protocol.ts';
 
 export type { Side } from '../shared/quote.ts';
 // Čo si riadok pamätá medzi prekresleniami okna (správy zo servera okno prekreslia): počet a zvolená cena
-export interface RowState { n?: number; price?: number | null }
+// (have = koľko mal hráč pri predaji, keď si počet vybral – keď sa zmení, počet je znova „všetko“)
+export interface RowState { n?: number; price?: number | null; have?: number }
 export interface RowInput {
   id: ItemId;
   side: Side;
@@ -75,6 +76,7 @@ export function tradeRow(r: RowInput): HTMLElement {
   const { lv, all, isMine, bookAvail, thresh, walk, quote, need, defPrice } = Q;
   const limit = (): number => Q.limit(r.coins, r.have);
   const st = r.state;
+  if (side === 'sell' && st.have !== r.have) { delete st.n; st.have = r.have; }
   let n = Math.max(1, Math.min(limit(), st.n ?? (side === 'sell' ? r.have : 1)));
   st.n = n;
 
@@ -82,16 +84,16 @@ export function tradeRow(r: RowInput): HTMLElement {
   const top = el('div', 'top'); const ic = el('img'); ic.src = r.icon; top.append(ic, r.info);
   // pás kusov a popis počtu
   const qty = el('div', 'qty'), strip = el('div', 'strip'), track = el('div', 'track');
-  strip.tabIndex = 0; strip.setAttribute('role', 'slider'); strip.setAttribute('aria-label', 'Počet kusov'); strip.setAttribute('aria-valuemin', '1');
+  strip.tabIndex = 0; strip.dataset['fk'] = `${side}:${id}:pocet`; strip.setAttribute('role', 'slider'); strip.setAttribute('aria-label', 'Počet kusov'); strip.setAttribute('aria-valuemin', '1');
   strip.append(track); qty.append(strip);
   row.append(top, qty);
   // posuvník ceny (len tovar s knihou), tlačidlo, riadok s cenou
   const trade = el('div', 'trade'), go = el('button', 'go');
-  go.type = 'button';
+  go.type = 'button'; go.dataset['fk'] = `${side}:${id}:go`;
   let slider: HTMLDivElement | null = null, cv: HTMLCanvasElement | null = null;
   if (q) {
     slider = el('div', 'slider'); cv = el('canvas'); cv.setAttribute('aria-hidden', 'true');
-    slider.tabIndex = 0; slider.setAttribute('role', 'slider'); slider.setAttribute('aria-label', 'Cena za kus');
+    slider.tabIndex = 0; slider.dataset['fk'] = `${side}:${id}:cena`; slider.setAttribute('role', 'slider'); slider.setAttribute('aria-label', 'Cena za kus');
     slider.append(cv); trade.append(slider);
   }
   trade.append(go); row.append(trade);
