@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import * as D from '../src/shared/data.ts';
+import * as Obj from '../src/shared/objects.ts';
 import type { SaveFile } from '../src/shared/save.ts';
 import * as E from '../src/server/engine.ts';
 import * as Cheats from '../src/server/cheats.ts';
@@ -164,8 +165,8 @@ test('cheat: zmenená zem v Lese divov sa uloží zvlášť – po uložení a n
 
 test('cheat: budovy – ľadovňa, Dielňa a krosná sa postavia aj zbúrajú; pôda na pozemku sa zarovná, tkanie sa zruší', () => {
   const w = world(7);
-  w.icehouse = { built: false, ice: 0, bl: 0 }; Ice.applyIcehouse(w.icehouse, w.tiles);
-  const lot = must(Ice.lotIdx()[0]);
+  w.icehouse = { built: false, ice: 0, bl: 0 }; Ice.applyIcehouse(w.icehouse, w.tiles, w.objects);
+  const lot = must(Ice.lotIdx(w.objects)[0]);
   must(w.tiles[lot]).g = 'grass';
   run(w, { op: 'plot', is: [lot], plot: { w: false, r: false, o: 'ana', plant: null } });
   run(w, { op: 'building', what: 'icehouse', on: true });
@@ -177,7 +178,7 @@ test('cheat: budovy – ľadovňa, Dielňa a krosná sa postavia aj zbúrajú; p
   run(w, { op: 'building', what: 'icehouse', on: false });
   assert.deepStrictEqual([w.icehouse.built, w.icehouse.ice, must(w.tiles[lot]).g], [false, 0, 'lot']);
   run(w, { op: 'building', what: 'loom', on: true });
-  assert.deepStrictEqual([w.dielna.built, w.dielna.loom, must(w.tiles[must(Dielna.lotIdx()[0])]).g], [true, true, 'dielna']);
+  assert.deepStrictEqual([w.dielna.built, w.dielna.loom, must(w.tiles[must(Dielna.lotIdx(w.objects)[0])]).g], [true, true, 'dielna']);
   w.dielna.job = { key: 'ana', at: w.tick + 100 };
   E.commitBatch(w, [], spec);
   const ev = (): boolean => w.events.some(e => e.key === 'loomDone:ana');
@@ -254,12 +255,25 @@ test('cheat na serveri: kľúč, mince hráčovi podľa odtlačku, skok v čase,
     assert.strictEqual((await post({ room: 'test', op: 'ground', area: 'garden', i: [grass], g: 'boulder' })).code, 200);
     assert.strictEqual((await post({ room: 'test', op: 'ground', area: 'garden', i: grass, g: 'house' })).code, 400);
     assert.strictEqual((await post({ room: 'test', op: 'plot', i: grass2, w: true, sp: 'mak', stage: 'bloom' })).code, 200);
+    // pozemok ľadovne (#178): stojaca ľadovňa sa nepresúva; po zbúraní sa pozemok premiestni na voľnú trávu
+    const free = new Set([grass, grass2]), soil = (i: number): unknown => SAVE_V11.tiles[i]?.s;
+    let spot: { x: number; y: number } | null = null;
+    for (let y = 2; y < D.H - 1 && !spot; y++) for (let x = 0; x < D.W - 1 && !spot; x++) {
+      const err = Obj.lotPlaceError(i => ({ g: must(map[i]), s: soil(i) }), Obj.defaultLots(), 'icehouse', x, y, free);
+      if (!err) spot = { x, y };
+    }
+    const to = must(spot ?? undefined);
+    assert.strictEqual((await post({ room: 'test', op: 'lot', v: 'icehouse', x: to.x, y: to.y })).code, 409, 'ľadovňa stojí');
+    assert.strictEqual((await post({ room: 'test', op: 'lot', v: 'kostol', x: to.x, y: to.y })).code, 400);
+    assert.strictEqual((await post({ room: 'test', op: 'building', what: 'icehouse', on: false })).code, 200);
+    assert.strictEqual((await post({ room: 'test', op: 'lot', v: 'icehouse', x: to.x, y: to.y })).code, 200);
     await stopServer(srv);
     const saved = readJson<SaveFile>(path.join(dir, 'room-test.json'));
     assert.strictEqual(saved.saves['ana']?.coins, coins + 100);
     assert.ok(saved.tick >= until);
-    assert.strictEqual(saved.v, 14);
+    assert.strictEqual(saved.v, 15);
     assert.deepStrictEqual(saved.ground, { garden: { [String(grass)]: { g: 'boulder', was: 'grass' } } });
+    assert.deepStrictEqual(saved.objects.list.map(o => [o.v, o.x, o.y]), [['icehouse', to.x, to.y], ['dielna', D.DIELNA.lot.x0, D.DIELNA.lot.y0]], 'migrácia v11 → v15 dala pozemky na pôvodné miesta, cheat presunul ľadovňu');
     assert.strictEqual(saved.tiles[grass2]?.s?.p?.sp, 'mak');
     const srv2 = await startServer(dir, port, KEY);
     try {
@@ -267,6 +281,8 @@ test('cheat na serveri: kľúč, mince hráčovi podľa odtlačku, skok v čase,
         http.get({ host: '127.0.0.1', port, path: '/api/debug/world?room=test&area=garden' }, res => { let t = ''; res.on('data', (d: Buffer) => { t += String(d); }); res.on('end', () => { resolve(parseJson(t)); }); }).on('error', reject);
       });
       assert.strictEqual(w.tiles[grass]?.g, 'boulder', 'mapa ukáže zem zmenenú cheatom');
+      assert.ok(Obj.rectIdx(Obj.rectAt(to.x, to.y)).every(i => w.tiles[i]?.g === 'lot'), 'po reštarte je pozemok na novom mieste');
+      assert.ok(Obj.rectIdx(D.ICEHOUSE.lot).every(i => w.tiles[i]?.g === 'grass'), 'pôvodné miesto je tráva');
       assert.strictEqual((await post({ room: 'test', op: 'ground', area: 'garden', i: grass, g: null })).code, 200);
     } finally { await stopServer(srv2); }
     assert.deepStrictEqual(readJson<SaveFile>(path.join(dir, 'room-test.json')).ground, {});

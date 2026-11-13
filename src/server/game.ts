@@ -2,7 +2,7 @@
 // Engine (engine.ts) je všeobecný; tu sa dosadí, čo je herný svet, prítomnosť a správa.
 import type { AreaId } from '../shared/data.ts';
 import type { ServerMessage } from '../shared/protocol.ts';
-import type { Book, Contracts, Dielna, Dock, GroundOverrides, Icehouse, Inventory, Market, NpcAccount, Order, PlayerKey, PlayerSave, SaveFile, Vehicles, Weather, Webs, WorldMode } from '../shared/save.ts';
+import type { Book, Contracts, Dielna, Dock, GroundOverrides, Icehouse, Inventory, Market, NpcAccount, Objects, Order, PlayerKey, PlayerSave, SaveFile, Vehicles, Weather, Webs, WorldMode } from '../shared/save.ts';
 import type { Ctx, EngineWorld, Keys, PeriodicDef, Proposer, Slices, Spec } from './engine.ts';
 import type { Scav } from './scavenge.ts';
 import type { AreaTilesWorld, Presence, StorageSlice, Tile } from './world.ts';
@@ -24,6 +24,7 @@ export interface GameWorld extends EngineWorld, AreaTilesWorld {
   icehouse: Icehouse;
   dielna: Dielna;
   dock: Dock;
+  objects: Objects;   // umiestnené objekty (#178): pozemky budov
   redeem: Inventory;
   pomedzieSeed: number;
   up: { plots: number };
@@ -120,6 +121,7 @@ export interface GameSlices extends Slices {
   icehouse: Icehouse;
   dielna: Dielna;
   dock: Dock;
+  objects: Objects;   // umiestnené objekty (#178): pozemky budov
   redeem?: Inventory;   // join ho deklaruje, len keď je čo odovzdať
   scav: Scav;
   scavSalt: number;

@@ -4,12 +4,14 @@
 // Hra ho načíta až po štarte ako samostatný kúsok balíka (import('./render3d.ts'), aj s Three.js).
 import * as THREE from 'three';
 import * as D from '../shared/data.ts';
+import * as Obj from '../shared/objects.ts';
 import * as W from '../shared/world3d.ts';
 import type { FineInfo, FineModel, Grid, SunDir } from '../shared/world3d.ts';
 import * as MS from '../shared/mesher.ts';
 import type { Baked, Quad } from '../shared/mesher.ts';
 import type { Look } from '../shared/data.ts';
 import type { PlantView } from '../shared/protocol.ts';
+import type { GardenObject } from '../shared/save.ts';
 import { must } from '../shared/util.ts';
 import { Art } from './art.ts';
 import { AO_CURVE, FACE_SHADE, bakeFine } from './finebake.ts';
@@ -498,9 +500,17 @@ export function create(api: Render3DApi): Render3D {
     const gt = D.gateAt(S.area, x, y);
     return gt ? { side: D.gateSide(S.area, gt), icon: D.AREA_FX[gt.to].icon || '✨' } : null;
   }
+  // Pozemok budovy pod políčkom i (#178): kolíky sú v rohoch pozemku. Správa objects môže prísť po políčkach – preto je
+  // roh pozemku aj v podpise políčka (refreshGround), aby sa po nej prekreslilo.
+  function lotAt(i: number): GardenObject | undefined {
+    if (S.area !== 'garden' || S.tiles[i]?.g !== 'lot') return undefined;
+    const x = i % S.W, y = (i / S.W) | 0;
+    return S.objects.find(o => Obj.inRect(Obj.rectAt(o.x, o.y), x, y));
+  }
   function drawTile(i: number, se: number, t: number): void {
     const tl = must(S.tiles[i]), x = i % S.W, y = (i / S.W) | 0;
-    Art.ground(gctx, tl.g, x * GT, y * GT, GT, se, t, x, y, tl.g === 'gate' ? gateInfo(x, y) : null, S.area);
+    const lot = lotAt(i);
+    Art.ground(gctx, tl.g, x * GT, y * GT, GT, se, t, x, y, tl.g === 'gate' ? gateInfo(x, y) : null, S.area, lot ? { x0: lot.x, y0: lot.y } : null);
     if (tl.s) Art.soil(gctx, tl.s, x * GT, y * GT, GT, se);
   }
   function refreshGround(se: number, t: number, force: boolean): void {
@@ -511,7 +521,8 @@ export function create(api: Render3DApi): Render3D {
       const lp = lilyPlant(tl);
       if (lp) holes += `${i}:${lp.st}${lp.dead ? 'd' : ''},`; // plávajúce listy vodných kvetov sú v tej istej sieti
       else if (tl.s) holes += i + 's,'; // ozdobné lekno pod iným kvetom zmizne
-      const sig = tl.g + '|' + (tl.s ? tl.s.k + String(tl.s.w) + String(tl.s.r) : '') + '|' + (tl.ice == null ? '' : tl.ice);
+      const lot = tl.g === 'lot' ? lotAt(i) : undefined;
+      const sig = tl.g + '|' + (tl.s ? tl.s.k + String(tl.s.w) + String(tl.s.r) : '') + '|' + (tl.ice == null ? '' : tl.ice) + (lot ? `|${lot.x},${lot.y}` : '');
       if (force || sig !== tileSig[i]) { drawTile(i, se, t); tileSig[i] = sig; changed = true; } // vlny vody sú na GPU
     }
     if (changed) groundTex.needsUpdate = true;

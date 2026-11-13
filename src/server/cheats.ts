@@ -7,7 +7,8 @@ import crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as D from '../shared/data.ts';
 import type { AreaId, Ground, ItemId, SpeciesId } from '../shared/data.ts';
-import type { PlayerKey, PlayerSave, Plant } from '../shared/save.ts';
+import type { LotFor, PlayerKey, PlayerSave, Plant } from '../shared/save.ts';
+import * as Obj from '../shared/objects.ts';
 import { SPEEDS, isPlaceable, PLANT_STAGES } from '../shared/cheats.ts';
 import type { PlantStage } from '../shared/cheats.ts';
 import { isRecord } from '../shared/util.ts';
@@ -40,7 +41,8 @@ export type CheatData =
   | DockCheat // mólo a loďka (#160): postaviť / zbúrať, loďku inam, hráča do loďky (z nej), prevrátiť na zimu
   | { op: 'plot'; is: number[]; plot: PlotSpec | null }        // záhony na políčkach záhrady (null = zarovnať)
   | { op: 'ground'; area: AreaId; is: number[]; g: Ground | null }   // zem políčok (null = vrátiť zem z generátora)
-  | { op: 'building'; what: Building; on: boolean };
+  | { op: 'building'; what: Building; on: boolean }
+  | { op: 'lot'; v: LotFor; at: { x: number; y: number } | null };   // pozemok budovy (#178): premiestniť (ľavý horný roh) alebo odstrániť (null)
 // Záhon: poliaty, pohnojený, kto ho prekopal a rastlina (druh, štádium, kvalita, dni bez vody, uschnutá)
 export interface PlotSpec { w: boolean; r: boolean; o: PlayerKey; plant: { sp: SpeciesId; stage: PlantStage; q: number; dry: number; dead: boolean } | null }
 export type Building = 'icehouse' | 'dielna' | 'loom';
@@ -100,6 +102,22 @@ function groundAt(s: GameSlices, areaId: AreaId, i: number, to: Ground | null): 
   if (areaId === 'garden' && t.s) { if (k) t.s.k = k; else { t.s = null; s.plotsUsed = Math.max(0, s.plotsUsed - 1); } } // záhon zmizne pod objektom, inak má pôdu novej zeme
   return null;
 }
+// Pozemok budovy v (#178) na nové miesto (at = ľavý horný roh) alebo preč (null). Len kým budova nestojí – postavená
+// budova je tam, kde jej pozemok. Hráči pozemky nepresúvajú (neskôr plánovač, #156).
+function lotCheat(s: GameSlices, v: LotFor, at: { x: number; y: number } | null, ctx: GameCtx): void {
+  if (v === 'icehouse' ? s.icehouse.built : s.dielna.built) ctx.reject('the building stands on its lot; tear it down first');
+  const tiles = sl(s, 'tile:garden:*'), objects = s.objects, was = Obj.lotOf(objects, v);
+  if (at) {
+    const changed = new Set(Object.keys(s.ground.garden ?? {}).map(Number));
+    const why = Obj.lotPlaceError(i => tiles[i], objects, v, at.x, at.y, changed);
+    if (why) ctx.reject(why);
+  } else if (!was) ctx.reject('the building has no lot');
+  for (const i of Obj.rectIdx(was && Obj.rectAt(was.x, was.y))) { const t = tiles[i]; if (t && t.g === 'lot') t.g = 'grass'; } // pozemok stál len na tráve
+  if (!at) objects.list = objects.list.filter(o => o !== was);
+  else if (was) { was.x = at.x; was.y = at.y; }
+  else objects.list.push({ id: objects.nid++, area: 'garden', x: at.x, y: at.y, kind: 'lot', v });
+  Obj.applyLot(tiles, objects, v, false);
+}
 const saveOf = (s: GameSlices, key: PlayerKey, ctx: GameCtx): PlayerSave => sl(s, `save:${key}`) || ctx.reject('no such player');
 export const PROPOSERS: { cheat: GameProposer<CheatData> } = {
   cheat: {
@@ -114,7 +132,8 @@ export const PROPOSERS: { cheat: GameProposer<CheatData> } = {
         case 'transport': return Transport.cheatKeys(w);
         case 'plot': return { writes: [...d.is.map(i => `tile:garden:${i}`), 'plotsUsed'] };
         case 'ground': return { writes: [...d.is.map(i => `tile:${d.area}:${i}`), 'ground', ...(d.area === 'garden' ? ['plotsUsed'] : [])] };
-        case 'building': return { writes: ['tile:garden:*', 'icehouse', 'storage', 'dielna', 'plotsUsed'] };
+        case 'building': return { writes: ['tile:garden:*', 'icehouse', 'storage', 'dielna', 'plotsUsed'], reads: ['objects'] };
+        case 'lot': return { writes: ['tile:garden:*', 'objects'], reads: ['icehouse', 'dielna', 'ground'] };
       }
     },
     run(s, d, ctx) {
@@ -140,19 +159,21 @@ export const PROPOSERS: { cheat: GameProposer<CheatData> } = {
         case 'ground': { each(d.is, i => groundAt(s, d.area, i, d.g), ctx); return; }
         case 'building': {
           const tiles = sl(s, 'tile:garden:*'), dl = s.dielna;
+          if (d.on && !Obj.lotOf(s.objects, d.what === 'icehouse' ? 'icehouse' : 'dielna')) ctx.reject('the building has no lot; place one first'); // krosná stavajú aj Dielňu
           if (d.what === 'icehouse') {
-            if (d.on && !s.icehouse.built) { s.plotsUsed = Math.max(0, s.plotsUsed - clearLot(tiles, Ice.lotIdx())); s.icehouse.built = true; s.icehouse.ice = 0; s.icehouse.bl = 0; }
+            if (d.on && !s.icehouse.built) { s.plotsUsed = Math.max(0, s.plotsUsed - clearLot(tiles, Ice.lotIdx(s.objects))); s.icehouse.built = true; s.icehouse.ice = 0; s.icehouse.bl = 0; }
             if (!d.on && s.icehouse.built) { Ice.setIce(s.icehouse, s.storage, ctx.tick, 0); s.icehouse.built = false; s.icehouse.bl = 0; }
-            Ice.applyIcehouse(s.icehouse, tiles);
+            Ice.applyIcehouse(s.icehouse, tiles, s.objects);
             return;
           }
-          if (d.on && !dl.built) { s.plotsUsed = Math.max(0, s.plotsUsed - clearLot(tiles, Dielna.lotIdx())); dl.built = true; } // krosná potrebujú Dielňu
+          if (d.on && !dl.built) { s.plotsUsed = Math.max(0, s.plotsUsed - clearLot(tiles, Dielna.lotIdx(s.objects))); dl.built = true; } // krosná potrebujú Dielňu
           const stopLoom = (): void => { if (dl.job) ctx.cancel(`loomDone:${dl.job.key}`); dl.job = null; dl.loom = false; };
           if (d.what === 'loom') { if (d.on) dl.loom = true; else stopLoom(); }
           else if (!d.on && dl.built) { stopLoom(); dl.built = false; dl.ready = {}; }
-          Dielna.applyDielna(dl, tiles);
+          Dielna.applyDielna(dl, tiles, s.objects);
           return;
         }
+        case 'lot': lotCheat(s, d.v, d.at, ctx); return;
       }
     }
   }
@@ -249,6 +270,11 @@ export function parseCheat(room: CheatRoom, b: JsonRecord, keyId: (k: PlayerKey)
       const what = BUILDINGS.find(x => x === b['what']);
       if (!what) throw new Bad(400, 'unknown building');
       return { op: 'building', what, on: b['on'] === true };
+    }
+    case 'lot': {
+      const v = Obj.LOT_FOR.find(x => x === b['v']);
+      if (!v) throw new Bad(400, 'unknown building');
+      return { op: 'lot', v, at: b['remove'] === true ? null : { x: num(b['x'], 'x'), y: num(b['y'], 'y') } };
     }
     case 'jump': case 'jumpStop': case 'speed': case 'status': return null;
     default: throw new Bad(400, 'unknown op');

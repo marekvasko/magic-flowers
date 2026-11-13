@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import WebSocket from 'ws';
+import * as Obj from '../src/shared/objects.ts';
 import * as D from '../src/shared/data.ts';
 import type { ItemId, SpeciesId } from '../src/shared/data.ts';
 import type { ClientMessage, ServerMessage } from '../src/shared/protocol.ts';
@@ -51,7 +52,7 @@ function makeWorld(seed: number, tick?: number): W {
     icehouse: partial<Icehouse>({ built: true, ice: 0 }), up: { plots: 1 }, glacierFed: -1, plotsUsed: 0, maxRep: 0,
     tiles: D.buildMap().map(g => ({ g, s: null })), hory: Ice.loadHory(null)
   });
-  Ice.applyIcehouse(w.icehouse, w.tiles);
+  w.objects = Obj.defaultLots(); Ice.applyIcehouse(w.icehouse, w.tiles, w.objects);
   Econ.initEconomy(w);
   for (const key of ['ana', 'bob']) w.saves[key] = partial<PlayerSave>({ coins: 500, water: 5, inv: { hoe: 1, can: 1 }, fb: {}, recipes: [], seen: [], vily: 0, rep: 0, up: { can: 0, composter: 1 }, area: 'garden' });
   w.presence = [{ key: 'ana', name: 'Ana', area: 'garden', x: Actions.HOUSE.x, y: Actions.HOUSE.y, scav: null }, { key: 'bob', name: 'Bob', area: 'garden', x: Actions.HOUSE.x + 1, y: Actions.HOUSE.y, scav: null }];
@@ -423,11 +424,11 @@ test('krhla v zime (#87): zamrznuté jazierko a pleso len cez vysekaný otvor, s
 
 test('ľadovňa a sklad: stavba, naplnenie ľadom pri ľadovni, vylepšenia (spoločné povolenie mení up), kotlík', () => {
   const w = makeWorld(14);
-  w.icehouse = partial<Icehouse>({ built: false, ice: 0 }); Ice.applyIcehouse(w.icehouse, w.tiles);
+  w.icehouse = partial<Icehouse>({ built: false, ice: 0 }); Ice.applyIcehouse(w.icehouse, w.tiles, w.objects);
   save(w, 'ana').rep = must(D.REP_LEVELS[D.ICEHOUSE.rep]); save(w, 'ana').coins = 5000;
   let r = E.commitBatch(w, [act('build', 'ana', {}), act('build', 'bob', {})], SPEC);
   assert.deepStrictEqual([w.icehouse.built, r.rejected.map(x => x.reject)], [true, ['Ľadovňa už v záhrade stojí.']]);
-  assert.ok(Ice.lotIdx().every(i => at(w, i).g === 'icehouse'));
+  assert.ok(Ice.lotIdx(w.objects).every(i => at(w, i).g === 'icehouse'));
   give(save(w, 'ana'), 'ice', 3, w.tick);
   const L = D.ICEHOUSE.lot; pr(w, 0).x = L.x0 + 1; pr(w, 0).y = L.y0 + 1;
   r = E.commitBatch(w, [act('fillIce', 'ana', { n: 2 })], SPEC);
@@ -532,7 +533,7 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
   const px = ti[0] % D.W + 1.5, py = Math.floor(ti[0] / D.W) + 0.5;
   for (const k of ['ana', 'bob']) Object.assign(save(w, k), { x: px, y: py, area: 'garden', look: { shirt: '#000', hair: '#000', hat: false }, talked: true });
   give(save(w, 'ana'), `seed_${SP}`, 3, w.tick); give(save(w, 'ana'), `fl_${SP}`, 2, w.tick);
-  w.icehouse = partial<Icehouse>({ built: false, ice: 0 }); Ice.applyIcehouse(w.icehouse, w.tiles);
+  w.icehouse = partial<Icehouse>({ built: false, ice: 0 }); Ice.applyIcehouse(w.icehouse, w.tiles, w.objects);
   save(w, 'bob').rep = must(D.REP_LEVELS[D.ICEHOUSE.rep]); save(w, 'bob').coins = D.ICEHOUSE.price + 10;
   setStock(w, `seed_${SP}`, 1);
   save(w, 'ana').wellFern = 3; // voliteľné pole uloženia (studňa, #100): prežije prevod, načítanie aj uloženie
@@ -574,8 +575,8 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
     await B.wait('toast', m => /nie je postavená/.test(m.text));
     // stavba ľadovne mení typ zeme: klient dostane celú plochu (prestavia 3D svet) a room s ľadovňou
     B.send({ t: 'build', id: 'icehouse' });
-    const all = await A.wait('tiles', m => m.tiles[must(Ice.lotIdx()[0])]?.g === 'icehouse');
-    assert.ok(Ice.lotIdx().every(i => all.tiles[i]?.g === 'icehouse'));
+    const all = await A.wait('tiles', m => m.tiles[must(Obj.rectIdx(Obj.defaultRect('icehouse'))[0])]?.g === 'icehouse');
+    assert.ok(Obj.rectIdx(Obj.defaultRect('icehouse')).every(i => all.tiles[i]?.g === 'icehouse'));
     await B.wait('room', m => m.icehouse.built);
     await A.wait('toast', m => /postavil\(a\) pri domčeku ľadovňu/.test(m.text));
     const board = gotOf(B, 'board'), c0 = must(board.list[0]);
@@ -624,7 +625,7 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
   Dock.migrate(start); // ako migrácia na v12 (#160): nová voda jazierka, mólo ešte nie je
   const { tiles: savedTiles, hory: savedHory, les: savedLes, ...rest } = start;
   const room = testWorld({ ...rest, tiles: D.buildMap().map((g, i) => ({ g, s: must(savedTiles[i]).s })), hory: Ice.loadHory(savedHory) });
-  Ice.applyIcehouse(room.icehouse, room.tiles);
+  room.objects = Obj.defaultLots(); Ice.applyIcehouse(room.icehouse, room.tiles, room.objects);
   room.icehouse.bl = 0; room.dielna = Dielna.newDielna(); room.redeem = start.redeem; // ako migrácia z verzie 10 (#23)
   room.ground = {}; // ako migrácia z verzie 12 (#153)
   room.plotsUsed = Econ.plotsUsedOf(room.tiles); room.maxRep = Econ.maxRepOf(room.saves); // ako getRoom: odvodené počítadlá sa pri načítaní prepočítajú
@@ -685,7 +686,7 @@ test('uloženie v8 (288 krokov za deň) sa prevedie na v9: každý krok ×40 –
   const proc = await startServer(dir, port);
   try { const c = await client(port, 'stary', 'Eva'); c.ws.close(); await sleep(100); } finally { await stopServer(proc); }
   const s = readJson<SaveFile>(path.join(dir, 'room-stary.json'));
-  assert.strictEqual(s.v, 14);
+  assert.strictEqual(s.v, 15);
   assert.strictEqual(s.tick, old.tick * K);
   assert.deepStrictEqual([D.dayOfTick(s.tick), D.minOfTick(s.tick)], [3, 450], 'deň 3, 7:30 ako predtým');
   assert.deepStrictEqual(s.events.filter(e => e.key !== 'dawn' && !/^(delivery|npc_|fest|spider:|kz:|kriziakTrip|webDawn|weave:|vehSeason|boatDay)/.test(e.key ?? '')).map(e => [e.key, e.at]).sort(), [['cDue:1', 1000 * K], ['hourly', 666 * K], ['vilyEnd:eva', 700 * K]]);

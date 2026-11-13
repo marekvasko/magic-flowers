@@ -4,6 +4,7 @@
 import type * as Data from '../../shared/data.ts';
 import type { AreaId, Ground } from '../../shared/data.ts';
 import type { Soil } from '../../shared/save.ts';
+import * as Obj from '../../shared/objects.ts';
 import { isRecord, lookup } from '../../shared/util.ts';
 import type { JsonRecord } from '../../shared/util.ts';
 import type { DebugState, RoomSnapshot } from '../../server/debug.ts';
@@ -84,20 +85,17 @@ export function buildTiles(D: D, area: string, opt?: { state?: MapState | null; 
   const soils = area === 'garden' && sv ? st?.tiles : null; // záhrada: uložená pôda a rastliny (SavedTile)
   // pôvodná výška ľadovca (ako ice.ts LEVELS) – glacierLevels počíta s rozmermi záhrady
   const levels = base.includes('glacier') && base.length === D.W * D.H ? D.glacierLevels(base) : null;
-  // záhrada: pozemok ľadovne, kým nie je postavená ľadovňa (ice.ts applyIcehouse)
-  const lot = new Set<number>();
-  if (area === 'garden') {
-    const L = D.ICEHOUSE.lot;
-    for (let y = L.y0; y <= L.y1; y++) for (let x = L.x0; x <= L.x1; x++) lot.add(y * w + x);
-  }
-  // pozemok Dielne vedľa trhu (dielna.ts applyDielna)
-  const dlot = new Set<number>();
-  if (area === 'garden') {
-    const L = D.DIELNA.lot;
-    for (let y = L.y0; y <= L.y1; y++) for (let x = L.x0; x <= L.x1; x++) dlot.add(y * w + x);
-  }
   const builtOf = (v: unknown): boolean => isRecord(v) && !!v['built'];
   const built = builtOf(field('icehouse')), dbuilt = builtOf(field('dielna'));
+  // záhrada: pozemky ľadovne a Dielne podľa objektov (#178; ice.ts applyIcehouse, dielna.ts applyDielna) – kým budova
+  // nestojí 'lot'; pôvodné miesto presunutého pozemku je tráva. Svet len zo semienka má pozemky na pôvodných miestach.
+  const lotG = base.map(g => ({ g })), lot = new Set<number>();
+  if (area === 'garden') {
+    const objects = Obj.loadObjects(st ? field('objects') : undefined);
+    Obj.applyLot(lotG, objects, 'icehouse', built);
+    Obj.applyLot(lotG, objects, 'dielna', dbuilt);
+    for (const v of Obj.LOT_FOR) for (const i of Obj.rectIdx(Obj.lotRect(objects, v))) lot.add(i);
+  }
   // mólo a loďka (dock.ts applyDock): políčka móla sú voda, kým mólo nestojí
   const dock = field('dock'), kbuilt = area === 'garden' && builtOf(dock);
   const klot = new Set<number>(area === 'garden' ? D.DOCK.tiles.map(p => p.y * w + p.x) : []);
@@ -105,12 +103,10 @@ export function buildTiles(D: D, area: string, opt?: { state?: MapState | null; 
   const ground = st && st.ground ? st.ground[D.AREAS.find(a => a === area) ?? 'garden'] : null;
   let maxIce = 0;
   const tiles = base.map((g0, i): MapTile => {
-    let g = g0;
+    let g = lotG[i]?.g ?? g0;
     const ov = ground ? ground[String(i)] : undefined;
-    if (ov) g = ov.g;
-    if (lot.has(i)) g = built ? 'icehouse' : 'lot';
-    else if (dlot.has(i)) g = dbuilt ? 'dielna' : 'lot';
-    else if (klot.has(i) && kbuilt) g = 'dock';
+    if (ov && !lot.has(i)) g = ov.g;
+    if (klot.has(i) && kbuilt) g = 'dock';
     const t: MapTile = { g }, raw = sv?.[i], s: JsonRecord = isRecord(raw) ? raw : {};
     if (g === 'glacier') {
       const top = levels?.[i] ?? 0, ice = s['ice'];

@@ -2,6 +2,7 @@
 // a to, že NPC, zákazky, divé semienka ani studňa vodné druhy nevyberú.
 import test from 'node:test';
 import assert from 'node:assert';
+import * as Obj from '../src/shared/objects.ts';
 import * as D from '../src/shared/data.ts';
 import type { AreaId, SpeciesId } from '../src/shared/data.ts';
 import type { Icehouse, PlayerSave, Soil } from '../src/shared/save.ts';
@@ -28,7 +29,7 @@ function makeWorld(se: number): W {
     icehouse: partial<Icehouse>({ built: true, ice: 0 }), up: { plots: 0 }, glacierFed: -1, plotsUsed: 0, maxRep: 0,
     tiles: D.buildMap().map(g => ({ g, s: null })), hory: Ice.loadHory(null)
   });
-  Ice.applyIcehouse(w.icehouse, w.tiles);
+  w.objects = Obj.defaultLots(); Ice.applyIcehouse(w.icehouse, w.tiles, w.objects);
   Econ.initEconomy(w);
   w.saves['ana'] = partial<PlayerSave>({ coins: 500, water: 5, inv: { hoe: 1, can: 1 }, fb: {}, recipes: [], seen: [], vily: 0, rep: 0, up: { can: 0, composter: 0 }, area: 'garden' });
   w.presence = [{ key: 'ana', name: 'Ana', area: 'garden', x: 10.5, y: 30.5, scav: null }];

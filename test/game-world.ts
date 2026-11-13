@@ -1,5 +1,6 @@
 // Spoločný testovací svet pre akcie hráčov (studňa, priania, výkup semienok – #100): svet ako na serveri po načítaní,
 // ana a bob stoja v záhrade pri domčeku; vstupy ako ich skladá server. Rovnaký ako makeWorld v actions.test.ts.
+import * as Obj from '../src/shared/objects.ts';
 import * as D from '../src/shared/data.ts';
 import type { ItemId } from '../src/shared/data.ts';
 import type { ServerMessage } from '../src/shared/protocol.ts';
@@ -28,7 +29,7 @@ export function makeWorld(seed: number, tick?: number): W {
     icehouse: partial<Icehouse>({ built: true, ice: 0 }), up: { plots: 1 }, glacierFed: -1, plotsUsed: 0, maxRep: 0,
     tiles: D.buildMap().map(g => ({ g, s: null })), hory: Ice.loadHory(null)
   });
-  Ice.applyIcehouse(w.icehouse, w.tiles);
+  w.objects = Obj.defaultLots(); Ice.applyIcehouse(w.icehouse, w.tiles, w.objects);
   Econ.initEconomy(w);
   for (const key of ['ana', 'bob']) w.saves[key] = newPlayer();
   w.presence = [{ key: 'ana', name: 'Ana', area: 'garden', x: Actions.HOUSE.x, y: Actions.HOUSE.y, scav: null }, { key: 'bob', name: 'Bob', area: 'garden', x: Actions.HOUSE.x + 1, y: Actions.HOUSE.y, scav: null }];

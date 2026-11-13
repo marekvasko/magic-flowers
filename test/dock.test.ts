@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import WebSocket from 'ws';
+import * as Obj from '../src/shared/objects.ts';
 import * as D from '../src/shared/data.ts';
 import type { Ground } from '../src/shared/data.ts';
 import type { MarketV12, PlayerSave, SaveFile, SavedTile } from '../src/shared/save.ts';
@@ -42,8 +43,8 @@ function makeWorld(built = true, tick = D.DAWN_TICK + 6): W {
     icehouse: { built: false, ice: 0, bl: 0 }, dielna: Dielna.newDielna(), dock: Dock.newDock(), redeem: {}, up: { plots: 1 }, glacierFed: -1, plotsUsed: 0, maxRep: 0,
     tiles: D.buildMap().map(g => ({ g, s: null })), hory: Ice.loadHory(null)
   });
-  Ice.applyIcehouse(w.icehouse, w.tiles);
-  Dielna.applyDielna(w.dielna, w.tiles);
+  w.objects = Obj.defaultLots(); Ice.applyIcehouse(w.icehouse, w.tiles, w.objects);
+  Dielna.applyDielna(w.dielna, w.tiles, w.objects);
   w.dock.built = built;
   Dock.applyDock(w.dock, w.tiles);
   Econ.initEconomy(w);
@@ -318,7 +319,7 @@ test('server: uloženie v11 sa prevedie na v12 – záhon na novej vode dostane 
     await new Promise(r => setTimeout(r, 300));
   } finally { await stopServer(proc); }
   const s = readJson<SaveFile>(path.join(dir, 'room-dock.json'));
-  assert.strictEqual(s.v, 14);
+  assert.strictEqual(s.v, 15);
   assert.strictEqual(s.migratedFrom, 11);
   assert.deepStrictEqual(s.redeem, {}, 'odovzdané');
   assert.ok(got.some(t => /2|3× Tulipán|Tulipán/.test(t)), got.join(' | '));

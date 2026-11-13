@@ -4,7 +4,8 @@
 // zadarmo, ale krosná tká 2–4 herné hodiny a naraz len jednu prikrývku. Hotová počká v Dielni, kým si ju tkáč vezme.
 import * as D from '../shared/data.ts';
 import type { ItemId } from '../shared/data.ts';
-import type { Dielna, Inventory, PlayerKey, PlayerSave, Soil } from '../shared/save.ts';
+import type { Dielna, Inventory, Objects, PlayerKey, PlayerSave, Soil } from '../shared/save.ts';
+import * as Obj from '../shared/objects.ts';
 import { isArray, isRecord, keys, lookup, must } from '../shared/util.ts';
 import * as I from './items.ts';
 import type { Presence, Tile } from './world.ts';
@@ -28,19 +29,15 @@ function readyOf(r: { [key: string]: unknown }): Dielna['ready'] {
   return out;
 }
 
-// Pozemok Dielne v záhrade: kým nie je postavená 'lot', potom 'dielna'
-export function lotIdx(): number[] {
-  const L = D.DIELNA.lot, out: number[] = [];
-  for (let y = L.y0; y <= L.y1; y++) for (let x = L.x0; x <= L.x1; x++) out.push(y * D.W + x);
-  return out;
-}
-export function applyDielna(dielna: Pick<Dielna, 'built'> | null | undefined, tiles: readonly Tile[]): void {
-  for (const i of lotIdx()) must(tiles[i]).g = dielna && dielna.built ? 'dielna' : 'lot';
+// Pozemok Dielne v záhrade (objekt, #178): kým nie je postavená 'lot', potom 'dielna'. Bez pozemku žiadne políčka.
+export function lotIdx(objects: Objects | null | undefined): number[] { return Obj.rectIdx(Obj.lotRect(objects, 'dielna')); }
+export function applyDielna(dielna: Pick<Dielna, 'built'> | null | undefined, tiles: readonly Tile[], objects: Objects | null | undefined): void {
+  Obj.applyLot(tiles, objects, 'dielna', !!dielna && dielna.built);
 }
 // Hráč stojí pri Dielni / pri majstrovi (p = záznam prítomnosti)
 type Where = Pick<Presence, 'area' | 'x' | 'y'> | null | undefined;
 function near(p: Where, x: number, y: number, r: number): boolean { return !!p && p.area === 'garden' && Math.hypot(p.x - x, p.y - y) <= r; }
-export function nearDielna(p: Where): boolean { const L = D.DIELNA.lot; return near(p, (L.x0 + L.x1 + 1) / 2, (L.y0 + L.y1 + 1) / 2, 3); }
+export function nearDielna(p: Where, objects: Objects | null | undefined): boolean { const L = Obj.lotRect(objects, 'dielna'), c = L && Obj.center(L); return !!c && near(p, c.x, c.y, 3); }
 // Majster hodvábu v kroku tick (D.masterAt): '' = hráč p u neho môže tkať, inak dôvod odmietnutia; dielna = world.dielna (krosná)
 const MASTER_GONE = 'Odkedy sú v Dielni krosná, majster hodvábu do dedinky nechodí. Prikrývky ti utkajú krosná. 🧶';
 export function masterCheck(p: Where, tick: number, dielna: Pick<Dielna, 'loom'> | null | undefined): string {
@@ -58,15 +55,16 @@ const lacksSilk = (sv: PlayerSave): boolean => (sv.inv.silk || 0) < D.BLANKET_SI
 const SILK_MSG = `Na prikrývku treba ${String(D.BLANKET_SILK)}× pavúčí hodváb. Nájdeš ho v pavučinách v Lese divov. 🕸️`;
 
 // Kúpa Dielne (spoločná stavba, platí ju hráč): pozemok v tiles dostane budovu. Vráti chybu alebo null.
-export function buildDielna(dielna: Dielna, tiles: readonly Tile[], sv: PlayerSave): string | null {
+export function buildDielna(dielna: Dielna, tiles: readonly Tile[], sv: PlayerSave, objects: Objects | null | undefined): string | null {
   const B = D.DIELNA;
   if (dielna.built) return 'Dielňa už v záhrade stojí.';
+  if (!Obj.lotOf(objects, 'dielna')) return 'Pre Dielňu zatiaľ nie je vymeraný pozemok.';
   if (D.repLevel(sv.rep || 0) < B.rep) return `Potrebuješ reputáciu úrovne ${String(B.rep)}.`;
   if (sv.coins < B.price) return 'Nemáš dosť mincí. 🪙';
-  if (lotIdx().some(i => must(tiles[i]).s)) return 'Na pozemku vedľa trhu je prekopaná zem. Najprv ju zarovnaj motykou.';
+  if (lotIdx(objects).some(i => must(tiles[i]).s)) return 'Na pozemku vedľa trhu je prekopaná zem. Najprv ju zarovnaj motykou.';
   sv.coins -= B.price;
   dielna.built = true;
-  applyDielna(dielna, tiles);
+  applyDielna(dielna, tiles, objects);
   return null;
 }
 // Kúpa krosien do Dielne (spoločné ako Dielňa)
@@ -133,7 +131,7 @@ export function redeemOf(s: Soil | null | undefined): [ItemId, number][] {
   return out.filter(([, n]) => n > 0);
 }
 // Políčka, ktoré migrácia uvoľní: pozemok Dielne a miesto majstra
-export function clearedIdx(): number[] { return lotIdx().concat([D.MASTER.y * D.W + D.MASTER.x]); }
+export function clearedIdx(): number[] { return Obj.rectIdx(Obj.defaultRect('dielna')).concat([D.MASTER.y * D.W + D.MASTER.x]); } // migrácia v11: pôvodné miesto pozemku
 // Zo starých uložených políčok (saved = pole { s } v poradí záhrady) vyberie, čo treba vrátiť, a pôdu tam zmaže.
 // Vráti { id: počet } (prázdny objekt, ak tam nič nebolo).
 export function clearForDielna(saved: unknown): Inventory {

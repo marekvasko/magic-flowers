@@ -268,7 +268,7 @@ test('server: svet z verzie 4 dostane (cez v7) Les divov (záhrada aj Les na pom
     c.ws.close();
   } finally { await stopServer(proc); }
   const saved = readJson<SaveFile>(path.join(dir, 'room-v4.json'));
-  assert.strictEqual(saved.v, 14);
+  assert.strictEqual(saved.v, 15);
   assert.strictEqual(saved.migratedFrom, 4);
   assert.strictEqual(saved.pomedzieSeed, 4242);
   assert.ok(Number.isInteger(saved.lesSeed));
