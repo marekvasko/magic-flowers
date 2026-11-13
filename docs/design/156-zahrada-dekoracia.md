@@ -155,7 +155,8 @@ Following AGENTS.md (proposers read and write through `sl()` / `put()` / `maybe(
     greyed spots that break the spacing;
   - the hotbar stays at the bottom with the actions (zasadiť, poliať, zrezať, presunúť);
   - rotating the view in steps works as today (the ⟲ ⟳ buttons), so no new gestures are needed.
-  Mockup A stays in the repo for reference only.
+  **B is the only way to edit a záhon**; the flat grid panel A is not in the game at all (mockup A is kept only as a
+  record of the rejected option).
 - Moving a lot or a park block: the **"Presunúť"** button in the detail panel, then walk to the new place and press E.
   No drag gestures needed.
 
