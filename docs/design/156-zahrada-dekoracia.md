@@ -44,7 +44,7 @@ A new top-level list in `SaveFile`, with a migration from v11:
 ```ts
 // src/shared/save.ts (proposal)
 export type ObjKind = 'lot' | 'zahon' | 'vyvyseny' | 'kvetinac' | 'skalka' | 'lavicka' | 'cesta' /* … */;
-export interface Spot { sx: number; sy: number; p: Plant }   // sx, sy = 0–7 inside the tile
+export interface Spot { sx: number; sy: number; p?: Plant; c?: CoverId }   // sx, sy = 0–7; a flower OR a ground cover (grass, stones)
 export interface GardenObject {
   id: number;
   area: AreaId;
@@ -97,6 +97,10 @@ Today `lotIdx()` in `ice.ts` and `dielna.ts` hard-codes the 2×2 lots. With the 
   - The result is about 9 bushy or 36 small flowers in a 6×6 inner area.
 - Validation lives on the server (`actions.ts`) and is shared with the client (`src/shared/`), so the detail view
   can grey out invalid spots before sending.
+
+**Ground cover:** a spot can hold a cover instead of a flower: grass or a kind of stone, bought as inventory items
+(the stone kind depends on what the player buys). Covers ignore spacing, may go on the keep-out ring, can be picked up
+again and don't count against the permit. Details and open questions in #179.
 
 ## 6. Growth reuse
 
