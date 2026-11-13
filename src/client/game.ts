@@ -1016,7 +1016,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     info.insertBefore(line, info.children[1] ?? null);
     body.appendChild(TR.tradeRow({
       id, side, icon: Art.icon(id), info, q, fixed, have: S.inv[id] ?? 0, coins: S.coins,
-      mine: new Set(S.orders.map(o => o.id)), own: S.orders.filter(o => o.item === id && o.side !== side).map(o => ({ p: o.p, n: o.rem })), fresh: side === 'sell' && id.startsWith('fl_') ? sellFresh(id) : undefined,
+      mine: new Set(S.orders.map(o => o.id)), own: S.orders.filter(o => o.item === id).map(o => ({ p: o.p, n: o.rem, side: o.side })), fresh: side === 'sell' && id.startsWith('fl_') ? sellFresh(id) : undefined,
       orderRoom: S.orders.length < S.orderLimit, state,
       send: m => { send(m); if (m.t === 'sell') sfx('coin'); },
       busy: on => { S.modalHold = on; if (!on && S.modalPending) { S.modalPending = false; refreshModal(); } }

@@ -28,7 +28,7 @@ export interface RowInput {
   have: number;                    // koľko má hráč (predaj)
   coins: number;
   mine: ReadonlySet<string>;       // id vlastných objednávok (sám so sebou sa neobchoduje)
-  own: readonly { p: number; n: number }[];   // vlastné čakajúce objednávky v knihe, ktorú riadok ukazuje (pri nákupe Ponuky, pri predaji Dopyty)
+  own: readonly { p: number; n: number; side: Side }[];   // vlastné čakajúce objednávky tovaru (Dopyty aj Ponuky)
   fresh?: ((i: number) => number) | undefined;   // čerstvosť i-teho predávaného kvetu (postavy platia cena × čerstvosť)
   orderRoom: boolean;              // ešte smie zadať objednávku (limit podľa reputácie)
   state: RowState;
@@ -271,30 +271,33 @@ export function tradeRow(r: RowInput): HTMLElement {
       if (left <= 0 || (side === 'buy' ? l.p > price : l.p < price)) break;
       const k = Math.min(l.n, left); taken.set(l.p, (taken.get(l.p) ?? 0) + k); left -= k;
     }
-    // vlastné objednávky v tejto knihe (pri nákupe tvoje Ponuky, pri predaji tvoje Dopyty) sú v knihe tiež, ale sám
-    // so sebou hráč neobchoduje: šrafovaný kus navrchu stĺpika ceny, nikdy sa nezafarbí ako zobraté
-    const ownAt = new Map<number, number>();
-    for (const o of r.own) ownAt.set(o.p, (ownAt.get(o.p) ?? 0) + o.n);
-    const allAt = (p: number): number => (inBook.get(p) ?? 0) + (ownAt.get(p) ?? 0);
-    const topMax = Math.max(1, ...[...new Set([...inBook.keys(), ...ownAt.keys()])].map(allAt)), hMax = base - top - 12;
+    // vlastné objednávky: tie v knihe, ktorú riadok ukazuje (pri nákupe tvoje Ponuky, pri predaji tvoje Dopyty), sú
+    // šrafovaný kus navrchu stĺpika ceny – sám so sebou hráč neobchoduje, takže sa nikdy nezafarbia ako zobraté; tie
+    // druhej strany (pri nákupe tvoje Dopyty, pri predaji tvoje Ponuky) samostatný šrafovaný stĺpik od osi.
+    // Farba podľa druhu: Dopyt fialový, Ponuka hnedá.
+    const bookSide: Side = side === 'buy' ? 'sell' : 'buy';
+    const ownAt = (s2: Side): Map<number, number> => { const m = new Map<number, number>(); for (const o of r.own) if (o.side === s2) m.set(o.p, (m.get(o.p) ?? 0) + o.n); return m; };
+    const inOwn = ownAt(bookSide), outOwn = ownAt(side);
+    const allAt = (p: number): number => (inBook.get(p) ?? 0) + (inOwn.get(p) ?? 0);
+    const topMax = Math.max(1, ...[...new Set([...inBook.keys(), ...inOwn.keys()])].map(allAt), ...outOwn.values()), hMax = base - top - 12;
     for (const [p, k] of inBook) {
       if (p < sc.lo || p > sc.hi) continue;
       const bw = Math.max(3, Math.min(6, (x(p + 0.5) - x(p - 0.5)) * 0.7)), hh = Math.max(3, (k / topMax) * hMax), th = hh * Math.min(1, (taken.get(p) ?? 0) / k);
       g.fillStyle = COL.violetPale; g.fillRect(x(p) - bw / 2, base - hh + th, bw, hh - th);
       if (th > 0) { g.fillStyle = advColor(sc, p, side); g.fillRect(x(p) - bw / 2, base - hh, bw, th); }
     }
-    const ownCol = side === 'buy' ? COL.edge : COL.violet;
-    for (const [p, k] of ownAt) {
-      if (p < sc.lo || p > sc.hi) continue;
-      const under = inBook.has(p) ? Math.max(3, ((inBook.get(p) ?? 0) / topMax) * hMax) : 0;
-      const bw = 7, hh = Math.max(6, (k / topMax) * hMax), bx = x(p) - bw / 2, by = base - under - hh;
+    const hatch = (p: number, k: number, under: number, s2: Side): void => {
+      if (p < sc.lo || p > sc.hi) return;
+      const col = s2 === 'buy' ? COL.violet : COL.edge, bw = 7, hh = Math.max(6, (k / topMax) * hMax), bx = x(p) - bw / 2, by = base - under - hh;
       g.save(); g.beginPath(); g.rect(bx, by, bw, hh); g.clip();
-      g.fillStyle = side === 'buy' ? 'rgba(139,90,43,.18)' : 'rgba(107,63,160,.18)'; g.fillRect(bx, by, bw, hh);
-      g.strokeStyle = ownCol; g.lineWidth = 1.2;
-      g.beginPath(); for (let k = -bw; k < hh + bw; k += 4) { g.moveTo(bx, by + k + bw); g.lineTo(bx + bw, by + k); } g.stroke();
+      g.fillStyle = s2 === 'buy' ? 'rgba(107,63,160,.18)' : 'rgba(139,90,43,.18)'; g.fillRect(bx, by, bw, hh);
+      g.strokeStyle = col; g.lineWidth = 1.2;
+      g.beginPath(); for (let t = -bw; t < hh + bw; t += 4) { g.moveTo(bx, by + t + bw); g.lineTo(bx + bw, by + t); } g.stroke();
       g.restore();
-      g.strokeStyle = ownCol; g.lineWidth = 1.5; g.strokeRect(bx + 0.75, by + 0.75, bw - 1.5, hh - 1.5);
-    }
+      g.strokeStyle = col; g.lineWidth = 1.5; g.strokeRect(bx + 0.75, by + 0.75, bw - 1.5, hh - 1.5);
+    };
+    for (const [p, k] of inOwn) hatch(p, k, inBook.has(p) ? Math.max(3, ((inBook.get(p) ?? 0) / topMax) * hMax) : 0, bookSide);
+    for (const [p, k] of outOwn) hatch(p, k, 0, side);
   }
 
   // prepočet riadku; resetPrice = cena späť na predvolenú (celý počet hneď)
@@ -329,9 +332,10 @@ export function tradeRow(r: RowInput): HTMLElement {
       // porovnanie s trhovou cenou a koľko kusov je v knihe za túto cenu alebo lepšiu (na všetko to objednávka dosiahne);
       // cena za kus je na úchyte
       const diff = Math.round(Math.abs(price / sc.market - 1) * 100);
-      // len súčet; ceny sú v grafe (šrafované), podrobnosti v Moje
-      const ownN = r.own.reduce((a, o) => a + o.n, 0);
-      ownLine.textContent = r.own.length ? `🏷️ ${side === 'buy' ? `+ ${String(ownN)} ks tvojej ponuky – sám od seba nekúpiš` : `+ ${String(ownN)} ks tvojho dopytu – sám sebe nepredáš`}` : '';
+      // len súčty (najprv tie v knihe, s ktorou riadok obchoduje); ceny sú v grafe (šrafované), podrobnosti v Moje
+      const sum = (s2: Side): number => r.own.filter(o => o.side === s2).reduce((a, o) => a + o.n, 0);
+      const parts = ([side === 'buy' ? 'sell' : 'buy', side] as const).filter(s2 => sum(s2)).map(s2 => `${s2 === 'buy' ? 'tvoj dopyt' : 'tvoja ponuka'} ${String(sum(s2))} ks`);
+      ownLine.textContent = parts.length ? `🏷️ ${parts.join(' · ')}` : '';
       ownLine.hidden = !r.own.length;
       hint.innerHTML = '';
       if (price === sc.market || !diff) hint.append(el('b', '', 'trhová cena'));
