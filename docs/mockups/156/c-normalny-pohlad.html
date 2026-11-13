@@ -1,0 +1,45 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;width:390px;height:780px;position:relative;overflow:hidden;font-family:system-ui,sans-serif}
+.bg{position:absolute;inset:0;background:url(game.png) 0 0/390px 780px}
+svg{position:absolute;inset:0}
+.tag{position:absolute;left:50%;transform:translateX(-50%);background:#fff8e7;border:3px solid #8b5a2b;border-radius:12px;padding:5px 10px;font-weight:700;font-size:13px;white-space:nowrap}
+</style></head><body><div class="bg"></div>
+<svg id="s" width="390" height="780"></svg>
+<div class="tag" style="top:118px">Záhony v hre (náčrt, bez rozkliknutia)</div>
+<script>
+const s=document.getElementById('s'),NS='http://www.w3.org/2000/svg';
+const el=(n,a,p=s)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);p.appendChild(e);return e};
+// izometria podľa záberu hry: posun o políčko v x a y
+const ex=[42,21], ey=[-42,21];
+const P=(ox,oy,u,v)=>[ox+u*ex[0]+v*ey[0], oy+u*ex[1]+v*ey[1]];
+const poly=pts=>pts.map(p=>p.join(',')).join(' ');
+function bed(ox,oy,items){
+  const g=el('g',{});
+  const A=P(ox,oy,0,0),B=P(ox,oy,1,0),C=P(ox,oy,1,1),D=P(ox,oy,0,1),h=5;
+  el('polygon',{points:poly([D,C,[C[0],C[1]+h],[D[0],D[1]+h]]),fill:'#7a5230'},g);
+  el('polygon',{points:poly([B,C,[C[0],C[1]+h],[B[0],B[1]+h]]),fill:'#5e3e22'},g);
+  el('polygon',{points:poly([A,B,C,D]),fill:'#6b4a2b',stroke:'#9a6a3a','stroke-width':2.5},g);
+  items.sort((a,b)=>(a[0]+a[1])-(b[0]+b[1])).forEach(([sx,sy,k])=>{
+    const [x,y]=P(ox,oy,(sx+.5)/8,(sy+.5)/8);
+    if(k==='kameň') el('ellipse',{cx:x,cy:y,rx:3.2,ry:2.2,fill:'#b9b4aa',stroke:'#8d877c','stroke-width':.6},g);
+    else if(k==='tráva'){ for(const d of [-1.5,0,1.5]) el('line',{x1:x+d,y1:y+1,x2:x+d*1.6,y2:y-3,stroke:'#4f9a3c','stroke-width':1},g); }
+    else { el('line',{x1:x,y1:y,x2:x,y2:y-7,stroke:'#3d7a2e','stroke-width':1},g); el('circle',{cx:x,cy:y-8,r:2.6,fill:k},g); }
+  });
+}
+const ring=[];for(let i=0;i<8;i++){ring.push([i,0,'kameň'],[i,7,'kameň'],[0,i,'kameň'],[7,i,'kameň']);}
+// záhon 1: okraj z kameňov, tulipány a maky
+bed(150,470,[...ring,[2,2,'#e8486a'],[2,5,'#e8486a'],[5,2,'#e8486a'],[5,5,'#e8486a'],[3,3,'#d9302c'],[4,4,'#d9302c'],[3,6,'#f2c230'],[6,3,'#f2c230']]);
+// záhon 2: tráva po okraji, v strede slnečnice
+const grassRing=[];for(let i=0;i<8;i++){grassRing.push([i,0,'tráva'],[i,7,'tráva'],[0,i,'tráva'],[7,i,'tráva']);}
+bed(192,491,[...grassRing,[2,2,'#f6c21a'],[5,2,'#f6c21a'],[2,5,'#f6c21a'],[5,5,'#f6c21a']]);
+// obyčajné prekopané políčko na porovnanie
+const T=P(234,512,0,0),T2=P(234,512,1,0),T3=P(234,512,1,1),T4=P(234,512,0,1);
+el('polygon',{points:poly([T,T2,T3,T4]),fill:'#7a5634',stroke:'#5b3d22','stroke-width':1});
+const c=P(234,512,.5,.5); el('line',{x1:c[0],y1:c[1],x2:c[0],y2:c[1]-14,stroke:'#3d7a2e','stroke-width':1.5}); el('circle',{cx:c[0],cy:c[1]-15,r:5,fill:'#e8486a'});
+// popisy
+const lbl=(x,y,t)=>{const r=el('rect',{x:x-2,y:y-11,width:t.length*5.6+6,height:15,rx:4,fill:'#fff8e7',stroke:'#8b5a2b'});const e=el('text',{x:x+1,y:y,'font-size':10,'font-weight':700,fill:'#2b2116'});e.textContent=t;};
+const line=(x1,y1,x2,y2)=>el('line',{x1,y1,x2,y2,stroke:'#8b5a2b','stroke-width':1.2});
+line(140,470,95,430); lbl(20,430,'záhon: kamene + tulipány, maky');
+line(185,525,150,590); lbl(80,600,'záhon: tráva + 4 slnečnice');
+line(280,525,300,580); lbl(250,592,'obyčajné políčko');
+</script></body></html>
