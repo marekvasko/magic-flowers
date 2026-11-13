@@ -1088,15 +1088,17 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
         }
         if (!S.orders.length) body.appendChild(h('p', null, 'Nemáš žiadne otvorené objednávky. Dopyt alebo Ponuku zadáš pri tovare v Kúpiť a Predať. 🏷️'));
         else body.appendChild(h('b', { style: 'display:block;margin:8px 0 6px' }, '🏷️ Objednávky'));
-        // objednávka: pruh z troch častí – vybavené (kúpené / predané), čaká v knihe, zvädlo (len ponuka kvetov) – a popis
+        // objednávka: pruh zo štyroch častí – vybavené (kúpené / predané), čaká v knihe, zvädlo (len ponuka kvetov),
+        // zrušené (prekryv s vlastnou objednávkou druhej strany – sám so sebou sa neobchoduje) – a popis
         for (const o of S.orders) {
-          const buy = o.side === 'buy', dead = o.dead ?? 0, done = Math.max(0, o.q - o.rem - dead), pct = (k: number): string => `${(k / Math.max(1, o.q) * 100).toFixed(1)}%`;
-          const bar = h('div', { class: 'obar', title: `${done} ${buy ? 'kúpené' : 'predané'}, ${o.rem} čaká, ${dead} zvädlo` },
-            h('i', { class: 'done', style: `width:${pct(done)}` }), h('i', { class: 'wait ' + o.side, style: `width:${pct(o.rem)}` }), h('i', { class: 'dead', style: `width:${pct(dead)}` }));
+          const buy = o.side === 'buy', dead = o.dead ?? 0, cx = o.cx ?? 0, done = Math.max(0, o.q - o.rem - dead - cx), pct = (k: number): string => `${(k / Math.max(1, o.q) * 100).toFixed(1)}%`;
+          const bar = h('div', { class: 'obar', title: `${done} ${buy ? 'kúpené' : 'predané'}, ${o.rem} čaká, ${dead} zvädlo, ${cx} zrušené` },
+            h('i', { class: 'done', style: `width:${pct(done)}` }), h('i', { class: 'wait ' + o.side, style: `width:${pct(o.rem)}` }), h('i', { class: 'dead', style: `width:${pct(dead)}` }), h('i', { class: 'cx', style: `width:${pct(cx)}` }));
           const legend = h('div', { class: 'olegend' },
             h('span', null, h('i', { class: 'done' }), `${done} ${buy ? 'kúpené' : 'predané'}`),
             h('span', null, h('i', { class: 'wait ' + o.side }), `${o.rem} ${buy ? 'v dopyte' : 'v ponuke'}`));
           if (dead || o.item.startsWith('fl_') && !buy) legend.appendChild(h('span', null, h('i', { class: 'dead' }), `${dead} zvädlo`));
+          if (cx) legend.appendChild(h('span', { title: 'Prekrývalo sa s tvojou vlastnou objednávkou – sám so sebou sa neobchoduje' }, h('i', { class: 'cx' }), `${cx} zrušené`));
           const parts = [`${o.p} 🪙/ks`];
           if (buy) parts.push(`odložené ${o.coins} 🪙`);
           if (o.fr != null) parts.push(`čerstvosť ${Math.round(o.fr * 100)} %`);

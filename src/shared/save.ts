@@ -124,6 +124,7 @@ export interface Order {
   fb?: Batch[];               // várky ponuky kvetov (súčet n = rem)
   ioc?: 1;                    // okamžitý príkaz: čo sa hneď nevybaví, zruší sa (v knihe nikdy nezostane)
   dead?: number;              // ponuka kvetov: koľko kusov v nej zvädlo
+  cx?: number;                // koľko kusov sa zrušilo, lebo sa prekrývala s inou objednávkou toho istého hráča
 }
 export interface Book {
   next: number;               // ďalšie číslo objednávky
