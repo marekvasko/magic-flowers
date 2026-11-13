@@ -37,7 +37,7 @@ shared Povolenie na pole, however many flowers it holds.
 
 The first slice only needs `lot`; the other kinds arrive in later phases (see *Phasing*).
 
-## 2. Save format (v12)
+## 2. Save format (next version: v15 at the time of writing)
 
 A new top-level list in `SaveFile`, with a migration from v11:
 
@@ -57,13 +57,13 @@ export interface GardenObject {
   spots?: Spot[];                // arrangement objects only
   o: PlayerKey;                  // who placed it (shown in the UI, not ownership: everyone may edit)
 }
-export interface SaveFile { v: 12; /* … */ objects: { list: GardenObject[]; nid: number } }
+export interface SaveFile { v: 15; /* … */ objects: { list: GardenObject[]; nid: number } }
 ```
 
-- **Migration 11 → 12** (`migrate()` in `server.ts`, `SAVE_VERSION = 12`): add `objects` with **two `lot` objects at
+- **Migration 14 → 15** (`migrate()` in `server.ts`, `SAVE_VERSION = 15`): add `objects` with **two `lot` objects at
   today's fixed positions** (ice house next to the house, Dielňa next to the market), so no garden changes. Built
   buildings keep their tiles as they are.
-- `test/save-v11.fixture.ts` stays as the migration input; a `save-v12` fixture from a real server is added once
+- the current save fixture stays as the migration input; a new fixture from a real server is added once
   phase 1 runs.
 - Flowers in spots reuse the existing `Plant` type, so growth, wilting, quality, wild seeds and the herbarium keep
   working the same way.
@@ -164,7 +164,7 @@ Following AGENTS.md (proposers read and write through `sl()` / `put()` / `maybe(
 
 ```mermaid
 flowchart LR
-  P1["1. Objects layer + v12 + movable lots"] --> P2["2. Záhon + 8×8 + zoomed tile view"]
+  P1["1. Objects layer + v15 + movable lots"] --> P2["2. Záhon + 8×8 + zoomed tile view"]
   P2 --> P3["3. Kvetináč, skalka, vyvýšený záhon"]
   P3 --> P4["4. Park blocks + paths"]
   P2 --> P5["5. Bouquets + arrangement table"]
@@ -173,7 +173,7 @@ flowchart LR
   P6 --> P7
 ```
 
-1. **Objects layer + v12 migration + movable lots.** No new object kinds yet, but it touches every layer (save,
+1. **Objects layer + save migration + movable lots.** No new object kinds yet, but it touches every layer (save,
    slices, protocol, 3D, input) with the least game-design risk.
 2. **Záhon + 8×8 spots + zoomed tile view (B).** The first decorative planting.
 3. **Kvetináč, skalka, vyvýšený záhon** (spot masks, levels).
