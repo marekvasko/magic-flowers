@@ -325,7 +325,9 @@ export function tradeRow(r: RowInput): HTMLElement {
       // porovnanie s trhovou cenou a koľko kusov je v knihe za túto cenu alebo lepšiu (na všetko to objednávka dosiahne);
       // cena za kus je na úchyte
       const diff = Math.round(Math.abs(price / sc.market - 1) * 100);
-      ownLine.textContent = r.own.length ? `${side === 'buy' ? '🏷️ Tvoj dopyt' : '🏷️ Tvoja ponuka'}: ${r.own.map(o => `${String(o.n)} ks za ${String(o.p)} 🪙`).join(', ')} · v Moje` : '';
+      // len súčet, ako v riadku nad ním („N ks v dopyte“); ceny a podrobnosti sú v grafe a v Moje
+      const ownN = r.own.reduce((a, o) => a + o.n, 0);
+      ownLine.textContent = r.own.length ? `🏷️ ${String(ownN)} ks ${side === 'buy' ? 'v tvojom dopyte' : 'v tvojej ponuke'}` : '';
       ownLine.hidden = !r.own.length;
       hint.innerHTML = '';
       if (price === sc.market || !diff) hint.append(el('b', '', 'trhová cena'));
