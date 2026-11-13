@@ -3,6 +3,8 @@
 // a 2D galéria kvetov z art.ts (druh × štádium rastu). Len zobrazuje, hru nemení.
 import { createViewer, loadWorld3D, loadArt, injectCss, modelStats, matName } from './modelview.ts';
 import type { Viewer } from './modelview.ts';
+import { mesherPanel, MESHER_CSS } from './mesherview.ts';
+import type { PanelState } from './mesherview.ts';
 import type * as World3D from '../../shared/world3d.ts';
 import type { FineModel, FineModelEntry } from '../../shared/world3d.ts';
 import type { Art as ArtApi, BoatOpts, PlantOpts } from '../../client/art.ts';
@@ -75,6 +77,7 @@ const intParam = (ctx: Pick<TabCtx, 'param'>, k: string, def: number, max: numbe
 export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
   const { h } = ctx;
   injectCss('tab-assets-css', CSS);
+  injectCss('tab-mesher-css', MESHER_CSS);
   document.body.classList.add('dbg-wide');
   let W: typeof World3D | null = null, Art: typeof ArtApi | null = null, viewer: Viewer | null = null, gone = false, q = '';
   const st = {
@@ -100,8 +103,10 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
   const viewEl = h('div', { class: 'as-view' });
   const infoEl = h('div');
   const galEl = h('div');
+  const meshEl = h('div');
+  const mst: PanelState = { zoom: 4, outlines: true, stretch: false, mode: 'color' };
   root.append(listEl, mainEl);
-  mainEl.append(barEl, viewEl, infoEl, galEl);
+  mainEl.append(barEl, viewEl, infoEl, meshEl, galEl);
 
   function save(): void {
     ctx.setParam('model', st.model); ctx.setParam('season', st.season); ctx.setParam('rot', st.rot); ctx.setParam('grid', st.grid ? 1 : null);
@@ -143,7 +148,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
     if (GALLERIES.includes(st.model)) {
       if (viewer) { viewer.dispose(); viewer = null; }
       viewEl.style.display = 'none';
-      infoEl.replaceChildren();
+      infoEl.replaceChildren(); meshEl.replaceChildren();
       galEl.replaceChildren(...(st.model === 'boat' ? boatGallery() : st.model === 'vehicles' ? vehicleGallery() : flowerGallery()));
       return;
     }
@@ -157,7 +162,11 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
       ? [0, 1, 2, 3].flatMap(se => [0, 1, 2, 3].map(r => ({ model: e.build(se, r), season: se, label: `${SEASONS[se]} ${ROTS[r]}` })))
       : [{ model: e.build(st.season, st.rot), season: st.season }];
     viewer.setCells(cells, { cols: st.grid ? 4 : 0 });
-    info(W, e, must(cells[st.grid ? st.season * 4 + st.rot : 0]).model, performance.now() - t0);
+    const model = must(cells[st.grid ? st.season * 4 + st.rot : 0]).model;
+    info(W, e, model, performance.now() - t0);
+    // optimalizácia siete (#176): len pri jednom modeli, v mriežke by to bolo 16 vypečení
+    const mesher = (): void => { meshEl.replaceChildren(st.grid ? h('div', { class: 'muted', style: 'margin-top:12px' }, 'Mesher view: switch to Single.') : mesherPanel(h, model, st.season, mst, mesher)); };
+    mesher();
   }
   function info(W: typeof World3D, e: FineModelEntry, f: FineModel, ms: number): void {
     const s = modelStats(f), F = W.FINE, tw = (f.sx - 2 * W.FM) / F, td = (f.sz - 2 * W.FM) / F;

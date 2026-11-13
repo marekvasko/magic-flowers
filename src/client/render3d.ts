@@ -12,6 +12,7 @@ import type { Look } from '../shared/data.ts';
 import type { PlantView } from '../shared/protocol.ts';
 import { must } from '../shared/util.ts';
 import { Art } from './art.ts';
+import { AO_CURVE, FACE_SHADE, bakeFine } from './finebake.ts';
 import type { CharOpts } from './art.ts';
 import { createParticles } from './particles3d.ts';
 import { createSpiders3d } from './spiders3d.ts';
@@ -25,8 +26,6 @@ type V3 = [number, number, number];
 const uni = <T>(value: T): THREE.IUniform<T> => ({ value });
 const R = W.R;
 const PITCH = Math.atan(1 / Math.SQRT2);       // klasická izometria ~35,26°
-const FACE_SHADE: readonly number[] = [0.62, 0.62, 1.0, 0.5, 0.8, 0.8]; // +x, -x, +y, -y, +z, -z (ako v Minecrafte)
-const AO_CURVE: readonly number[] = [0.5, 0.68, 0.84, 1];
 const GT = 32;                                   // px na políčko v textúre zeme
 const MAX_LIGHTS = 16;
 // blčanie svetiel (pomerná zmena dosahu): oheň, lampáš, okno, ostatné (hráči, kvety, víly)
@@ -711,15 +710,7 @@ export function create(api: Render3DApi): Render3D {
   function meshFine(f: FineModel, se: number): Baked {
     const r = fineMeshData.get(f.data);
     if (r && r.se === se) return r.bake;
-    const { sx, sy, sz, data } = f;
-    const get = (x: number, y: number, z: number): number => (y < 0 ? 1 : (x < 0 || z < 0 || x >= sx || y >= sy || z >= sz) ? 0 : data[(z * sy + y) * sx + x] ?? 0); // pod modelom je zem
-    const cols = new Map<number, V3>();
-    const bake = MS.bakeModel([sx, sy, sz], get, v => !!v, (m, x, y, z, fi) => {
-      let c = cols.get(m);
-      if (!c) { c = toLin(hex(W.colorOf(m, se))); cols.set(m, c); }
-      const vary = 0.94 + W.hash(x, y, z) * 0.12, sh = must(FACE_SHADE[fi]);
-      return [Math.min(1, c[0] * vary) * sh, Math.min(1, c[1] * vary) * sh, Math.min(1, c[2] * vary) * sh, W.EMISSIVE[m] ? 1 : 0];
-    }, AO_CURVE);
+    const bake = bakeFine(f, se);
     const F = W.FINE;
     for (let i = 0; i < bake.P.length; i++) bake.P[i] = (bake.P[i] ?? 0) / F; // minikocky → bloky
     fineMeshData.set(f.data, { se, bake });
