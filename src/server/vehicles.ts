@@ -9,7 +9,8 @@
 import * as D from '../shared/data.ts';
 import type { AreaId } from '../shared/data.ts';
 import type { ToastKind, VehicleView } from '../shared/protocol.ts';
-import type { PlayerKey, PlayerSave, Vehicle, VehicleId, Vehicles } from '../shared/save.ts';
+import type { Objects, PlayerKey, PlayerSave, Vehicle, VehicleId, Vehicles } from '../shared/save.ts';
+import * as Obj from '../shared/objects.ts';
 import * as V from '../shared/vehicles.ts';
 import { isRecord } from '../shared/util.ts';
 import * as E from './engine.ts';
@@ -96,9 +97,9 @@ export function debugView(saved: unknown, area: AreaId, tick: number): VehicleVi
 // ---------- Kde kto stojí ----------
 type Where = Pick<Presence, 'area' | 'x' | 'y'> | null | undefined;
 export function nearVehicle(p: Where, v: Pick<Vehicle, 'area' | 'x' | 'y'>): boolean { return !!p && p.area === v.area && Math.hypot(p.x - v.x, p.y - v.y) <= V.VEHICLE_REACH; }
-export function atIcehouse(v: Pick<Vehicle, 'area' | 'x' | 'y'>): boolean {
-  const L = D.ICEHOUSE.lot;
-  return v.area === 'garden' && Math.hypot(v.x - (L.x0 + L.x1 + 1) / 2, v.y - (L.y0 + L.y1 + 1) / 2) <= V.VEHICLE_ICEHOUSE;
+export function atIcehouse(v: Pick<Vehicle, 'area' | 'x' | 'y'>, objects: Objects | null | undefined): boolean {
+  const L = Obj.lotRect(objects, 'icehouse'), c = L && Obj.center(L);
+  return !!c && v.area === 'garden' && Math.hypot(v.x - c.x, v.y - c.y) <= V.VEHICLE_ICEHOUSE;
 }
 
 // ---------- Vstupy ----------
@@ -151,11 +152,11 @@ function carry(s: GameSlices, v: Vehicle, ctx: GameCtx): void {
 export const PROPOSERS: { [T in keyof VehicleInputs]: GameProposer<VehicleInputs[T]> } = {
   // kúpa v Dielni (spoločná ako krosná): 400 🪙, reputácia 2; nový stojí pred Dielňou
   vehBuy: {
-    keys: d => ({ writes: ['vehicles', `save:${d.key}`], reads: ['dielna'] }),
+    keys: d => ({ writes: ['vehicles', `save:${d.key}`], reads: ['dielna', 'objects'] }),
     run(s, d, ctx) {
       const me = who(ctx), sv = saveOf(s, d.key, ctx), v = all(s, ctx)[d.id], X = VEHICLES[d.id];
       if (!s.dielna.built) ctx.reject('Najprv treba postaviť Dielňu. Kúpiš ju na trhu (záložka Vylepšiť). 🪚');
-      if (!Dielna.nearDielna(me)) ctx.reject('Podíď bližšie k Dielni.');
+      if (!Dielna.nearDielna(me, s.objects)) ctx.reject('Podíď bližšie k Dielni.');
       if (v.bought) ctx.reject(`${X.name} už v Dielni ${d.id === 'sane' ? 'sú' : 'je'}.`);
       if (D.repLevel(sv.rep || 0) < X.rep) ctx.reject(`Potrebuješ reputáciu úrovne ${String(X.rep)}.`);
       if (sv.coins < X.price) ctx.reject('Nemáš dosť mincí. 🪙');
@@ -231,12 +232,12 @@ export const PROPOSERS: { [T in keyof VehicleInputs]: GameProposer<VehicleInputs
   },
   // vyložiť celý náklad do ľadovne (fúrik musí stáť pri nej)
   vehIcehouse: {
-    keys: () => ({ writes: ['vehicles', 'icehouse', 'storage'] }),
+    keys: () => ({ writes: ['vehicles', 'icehouse', 'storage'], reads: ['objects'] }),
     run(s, d, ctx) {
       const me = who(ctx), v = bought(s, d.id, ctx);
       if (!s.icehouse.built) ctx.reject('Ľadovňa ešte nie je postavená. Kúpiš ju na trhu (záložka Vylepšiť). 🧊');
       if (!nearVehicle(me, v)) ctx.reject(closer(d.id));
-      if (!atIcehouse(v)) ctx.reject(d.id === 'sane' ? 'Dotiahni sane bližšie k ľadovni. 🧊' : 'Dotlač fúrik bližšie k ľadovni. 🧊');
+      if (!atIcehouse(v, s.objects)) ctx.reject(d.id === 'sane' ? 'Dotiahni sane bližšie k ľadovni. 🧊' : 'Dotlač fúrik bližšie k ľadovni. 🧊');
       if (!v.ice) ctx.reject(`${cap(VEHICLES[d.id].loc)} nie je žiadny ľad.`);
       const k = Ice.fillIcehouse(s.icehouse, s.storage, ctx.tick, v.ice);
       if (!k) ctx.reject('Ľadovňa je plná. 🧊');
@@ -244,7 +245,7 @@ export const PROPOSERS: { [T in keyof VehicleInputs]: GameProposer<VehicleInputs
       I.removeItems(c, 'ice', k, ctx.tick); // najstarší ľad ide do ľadovne prvý
       c.done();
       ctx.emit(toast$(d.key, `🧊 Vyložil(a) si do ľadovne ${V.iceText(k)}. V ľadovni je ${String(Math.ceil(s.icehouse.ice))}/${String(D.ICEHOUSE.cap)}.`, 'info', d.id));
-      const L = D.ICEHOUSE.lot;
+      const L = Obj.lotRect(s.objects, 'icehouse') ?? Obj.defaultRect('icehouse');
       ctx.emit({ to: E.area('garden'), t: 'fx', k: 'ice', x: L.x0 + 1, y: L.y0 + 1 });
     }
   },

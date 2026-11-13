@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import WebSocket from 'ws';
+import * as Obj from '../src/shared/objects.ts';
 import * as D from '../src/shared/data.ts';
 import type { ServerMessage } from '../src/shared/protocol.ts';
 import type { PlayerSave, SaveFile, Vehicle, VehicleId } from '../src/shared/save.ts';
@@ -40,8 +41,8 @@ function makeWorld(tick = SUMMER): W {
     icehouse: { built: true, ice: 10, bl: 0 }, dielna: { ...Dielna.newDielna(), built: true }, redeem: {}, up: { plots: 1 }, glacierFed: -1, plotsUsed: 0, maxRep: 0,
     tiles: D.buildMap().map(g => ({ g, s: null })), hory: Ice.loadHory(null), vehicles: V.newVehicles()
   });
-  Ice.applyIcehouse(w.icehouse, w.tiles);
-  Dielna.applyDielna(w.dielna, w.tiles);
+  w.objects = Obj.defaultLots(); Ice.applyIcehouse(w.icehouse, w.tiles, w.objects);
+  Dielna.applyDielna(w.dielna, w.tiles, w.objects);
   Econ.initEconomy(w);
   for (const key of ['ana', 'bob', 'cyril']) w.saves[key] = partial<PlayerSave>({ coins: 1000, water: 5, inv: { hoe: 1, can: 1 }, fb: {}, recipes: [], seen: [], vily: 0, rep: must(D.REP_LEVELS[2]), up: { can: 0, composter: 0 }, area: 'garden', ...DIELNA_AT });
   return Object.assign(w, { presence: ['ana', 'bob', 'cyril'].map(key => ({ key, name: key.charAt(0).toUpperCase() + key.slice(1), area: 'garden' as const, ...DIELNA_AT, scav: null })) });
@@ -442,7 +443,7 @@ test('server: uloženie bez fúrikov sa načíta bez zmeny verzie, kúpený fúr
   } finally { await stopServer(proc); }
   const file = path.join(dir, 'room-doprava.json');
   const saved = readJson<SaveFile & { v: number }>(file);
-  assert.strictEqual(saved.v, 14, 'verzia uloženia sa fúrikmi nemení (13 = zem zmenená cheatom, #153; 14 = kniha objednávok, #112)');
+  assert.strictEqual(saved.v, 15, 'verzia uloženia sa fúrikmi nemení (13 = zem zmenená cheatom, #153; 14 = kniha objednávok, #112; 15 = umiestnené objekty, #178)');
   assert.ok(saved.vehicles && !saved.vehicles.furik.bought, 'nový svet ich má nekúpené');
   // staré uloženie bez poľa vehicles a uloženie s kúpeným fúrikom, ktorý niekto držal
   delete saved.vehicles;

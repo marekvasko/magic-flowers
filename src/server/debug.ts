@@ -7,7 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AreaId } from '../shared/data.ts';
-import type { Dielna, GroundOverrides, Icehouse, PlayerKey, SavedTile, Vehicles, Weather } from '../shared/save.ts';
+import type { Dielna, GroundOverrides, Icehouse, Objects, PlayerKey, SavedTile, Vehicles, Weather } from '../shared/save.ts';
 import { isRecord } from '../shared/util.ts';
 import * as E from './engine.ts';
 import type { BatchOut, EngineEvent, JournalEntry, PeriodicDef } from './engine.ts';
@@ -125,6 +125,7 @@ export interface DebugState {
   icehouse?: Icehouse | null;
   vehicles?: Vehicles;          // fúrik a sane (#158); staršie uloženia ho nemajú
   dielna?: Dielna | null;
+  objects?: Objects | null;     // umiestnené objekty (#178); staršie uloženia ich nemajú
   ground?: GroundOverrides | null;   // zem zmenená cheatom (#153)
   [key: string]: unknown;
 }

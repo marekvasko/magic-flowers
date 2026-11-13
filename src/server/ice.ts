@@ -5,7 +5,8 @@
 // Na políčku ľadovca je ice = koľko vrstiev ľadu (po 1/4 bloku) na ňom ešte stojí; cut = 1 → do vody sa dnes už vysekal otvor.
 import * as D from '../shared/data.ts';
 import type { AreaId, Season } from '../shared/data.ts';
-import type { Icehouse, PlayerSave, Soil } from '../shared/save.ts';
+import type { Icehouse, Objects, PlayerSave, Soil } from '../shared/save.ts';
+import * as Obj from '../shared/objects.ts';
 import { isArray, isRecord, lookup, must } from '../shared/util.ts';
 import * as I from './items.ts';
 import type { Presence, StorageSlice, Tile } from './world.ts';
@@ -31,14 +32,10 @@ export function saveHory(hory: readonly Tile[]): ({ ice: number | undefined; cut
   return hory.map(t => t.ice != null || t.cut || t.s ? { ice: t.ice, cut: t.cut, s: t.s || undefined } : 0);
 }
 
-// Pozemok ľadovne v záhrade: kým nie je postavená 'lot', potom 'icehouse'.
-export function lotIdx(): number[] {
-  const L = D.ICEHOUSE.lot, out: number[] = [];
-  for (let y = L.y0; y <= L.y1; y++) for (let x = L.x0; x <= L.x1; x++) out.push(y * D.W + x);
-  return out;
-}
-export function applyIcehouse(icehouse: Pick<Icehouse, 'built'> | null | undefined, tiles: readonly Tile[]): void {
-  for (const i of lotIdx()) must(tiles[i]).g = icehouse && icehouse.built ? 'icehouse' : 'lot';
+// Pozemok ľadovne v záhrade (objekt, #178): kým nie je postavená 'lot', potom 'icehouse'. Bez pozemku žiadne políčka.
+export function lotIdx(objects: Objects | null | undefined): number[] { return Obj.rectIdx(Obj.lotRect(objects, 'icehouse')); }
+export function applyIcehouse(icehouse: Pick<Icehouse, 'built'> | null | undefined, tiles: readonly Tile[], objects: Objects | null | undefined): void {
+  Obj.applyLot(tiles, objects, 'icehouse', !!icehouse && icehouse.built);
 }
 
 // Vysekanie ľadu krompáčom na políčku i plochy tiles. Vráti { ok, msg } – pri ok sa hráčovi pridá 1 ľad.
@@ -162,15 +159,16 @@ export function insulate(icehouse: Icehouse | null | undefined, sv: PlayerSave):
 }
 
 // Kúpa ľadovne (spoločná stavba, platí ju hráč): icehouse sa mení na mieste, pozemok v tiles dostane budovu. Vráti chybu alebo null.
-export function buildIcehouse(icehouse: Icehouse, tiles: readonly Tile[], sv: PlayerSave): string | null {
+export function buildIcehouse(icehouse: Icehouse, tiles: readonly Tile[], sv: PlayerSave, objects: Objects | null | undefined): string | null {
   const B = D.ICEHOUSE;
   if (icehouse.built) return 'Ľadovňa už v záhrade stojí.';
+  if (!Obj.lotOf(objects, 'icehouse')) return 'Pre ľadovňu zatiaľ nie je vymeraný pozemok.';
   if (D.repLevel(sv.rep || 0) < B.rep) return `Potrebuješ reputáciu úrovne ${String(B.rep)}.`;
   if (sv.coins < B.price) return 'Nemáš dosť mincí. 🪙';
-  if (lotIdx().some(i => must(tiles[i]).s)) return 'Na pozemku vedľa domčeka je prekopaná zem. Najprv ju zarovnaj motykou.';
+  if (lotIdx(objects).some(i => must(tiles[i]).s)) return 'Na pozemku vedľa domčeka je prekopaná zem. Najprv ju zarovnaj motykou.';
   sv.coins -= B.price;
   icehouse.built = true; icehouse.ice = 0; icehouse.bl = 0;
-  applyIcehouse(icehouse, tiles);
+  applyIcehouse(icehouse, tiles, objects);
   return null;
 }
 

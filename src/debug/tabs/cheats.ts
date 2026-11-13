@@ -3,7 +3,8 @@
 // POST /api/debug/cheat s tajným kľúčom (cheat-api.ts: drží sa v sessionStorage, kým je karta otvorená).
 // Texty po anglicky (nástroj pre správcu), mená predmetov po slovensky ako v hre.
 import type * as DT from '../../shared/data.ts';
-import type { Dock, PlayerSave } from '../../shared/save.ts';
+import type { Dock, LotFor, PlayerSave } from '../../shared/save.ts';
+import * as Obj from '../../shared/objects.ts';
 import { isRecord } from '../../shared/util.ts';
 import type { RoomSnapshot } from '../../server/debug.ts';
 import { cheatKey, setCheatKey } from './cheat-api.ts';
@@ -225,7 +226,25 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
       row('Icehouse', 'icehouse', !!(ice && ice.built), 'removing it melts the ice'),
       row('Dielňa', 'dielna', !!(dl && dl.built), 'removing it drops the loom, weaving and waiting blankets'),
       row('Loom', 'loom', !!(dl && dl.loom), 'builds the Dielňa if needed'),
-      h('div', { class: 'muted' }, 'Building clears any plots on its lot.'));
+      h('div', { class: 'muted' }, 'Building clears any plots on its lot.'),
+      lotsBox(w));
+  }
+  // Pozemky budov (#178): kde sú, premiestniť (ľavý horný roh 2×2) alebo odstrániť – len kým budova nestojí.
+  // Hráči pozemky nepresúvajú (neskôr plánovač, #156); toto je zatiaľ jediný spôsob.
+  function lotsBox(w: RoomSnapshot['state']): HTMLElement {
+    const objects = Obj.loadObjects(w['objects']);
+    const row = (label: string, v: LotFor, built: boolean): HTMLElement => {
+      const o = Obj.lotOf(objects, v), d = Obj.defaultRect(v), x = numIn(String(o ? o.x : d.x0)), y = numIn(String(o ? o.y : d.y0));
+      return h('div', { class: 'row' },
+        h('span', { class: 'lbl' }, `${label} lot: ${o ? `${o.x}, ${o.y}` : 'none'}`), 'x', x, 'y', y,
+        h('button', { disabled: built, onclick: () => { void act({ op: 'lot', v, x: Number(x.value), y: Number(y.value) }, `${label} lot moved.`); } }, o ? 'Move' : 'Place'),
+        h('button', { disabled: built, onclick: () => { void act({ op: 'lot', v, x: d.x0, y: d.y0 }, `${label} lot back at its original place.`); } }, 'Original place'),
+        h('button', { disabled: built || !o, onclick: () => { void act({ op: 'lot', v, remove: true }, `${label} lot removed.`); } }, 'Remove'));
+    };
+    return h('div', null,
+      h('h4', { style: 'margin-top:12px' }, 'Building lots'),
+      row('Icehouse', 'icehouse', !!w.icehouse?.built), row('Dielňa', 'dielna', !!w.dielna?.built),
+      h('div', { class: 'muted' }, 'A lot is 2×2 tiles (x, y = top-left corner) on plain grass: no plot, no other lot, not over ground changed by a cheat or where the cart and sledge park. A built building keeps its lot; remove the building first. Players cannot move lots (a planner comes later, #156).'));
   }
 
   function render(): void {
