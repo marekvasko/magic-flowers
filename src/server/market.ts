@@ -596,8 +596,9 @@ const flowerQuote = (mk: Mk, sp: SpeciesId): number => { const e = mk.entry(`fl_
 // items = knihy, ktoré návšteva deklarovala (visitItems)
 export function janoVisit(mk: Mk, g: { int(n: number): number }, items: readonly ItemId[]): void {
   const tick = mk.tick, jano = mk.npc('jano'), has = new Set(items);
-  npcWithdrawAll(mk, 'jano', items);
+  // len voľné mince (bez záloh jeho dopytov) – mince odložené v dopyte nezarobil, tie sa vrátia celé
   if (jano.coins > JANO.purse) jano.coins = JANO.purse;
+  npcWithdrawAll(mk, 'jano', items);
   I.wiltSweep(npcC(jano), tick); delete jano.inv.wilted;
   for (const sp of P.PLANTABLE) if (has.has(`fl_${sp}`)) janoOffer(mk, sp);
   const c = janoPick(item => mk.entry(item).stock, tick);

@@ -911,15 +911,13 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     // počas ťahania na trhu (pás kusov, posuvník ceny) sa okno neprekreslí – prekreslí sa, keď prst pustí
     S.modal = { refresh: () => {
       if (S.modalHold) { S.modalPending = true; return; }
-      // prekreslenie (správy zo servera) nesmie vziať fokus klávesnice: zapamätá sa prvok (data-fk, inak poradie
-      // medzi ovládacími prvkami okna) a po prekreslení sa fokus vráti na ten istý
-      const body = $('mBody'), act = document.activeElement, FOCUS = 'button, [tabindex], input, select, textarea';
-      const had = act instanceof HTMLElement && body.contains(act) ? { fk: act.dataset['fk'], i: [...body.querySelectorAll(FOCUS)].indexOf(act) } : null;
+      // prekreslenie (správy zo servera) nesmie vziať fokus klávesnice: po prekreslení sa vráti na prvok s tým istým
+      // data-fk (riadok tovaru, objednávka, vec na vyzdvihnutie). Bez neho sa fokus nevracia – ináč by mohol padnúť
+      // na iné tlačidlo (napr. Zrušiť inej objednávky, keď tá prvá zmizla)
+      const body = $('mBody'), act = document.activeElement;
+      const fk = act instanceof HTMLElement && body.contains(act) ? act.dataset['fk'] : undefined;
       body.innerHTML = ''; render(body);
-      if (had) {
-        const back = (had.fk ? body.querySelector<HTMLElement>(`[data-fk="${CSS.escape(had.fk)}"]`) : null) ?? body.querySelectorAll<HTMLElement>(FOCUS)[had.i];
-        back?.focus({ preventScroll: true });
-      }
+      if (fk) body.querySelector<HTMLElement>(`[data-fk="${CSS.escape(fk)}"]`)?.focus({ preventScroll: true });
     } };
     S.modal.refresh();
     $('modal').classList.remove('hidden');
@@ -1094,7 +1092,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
               if (rem < 0.3) sub.push('⚠️');
             }
             body.appendChild(h('div', { class: 'row' + (id === 'wilted' ? ' dead' : '') }, img(id), h('div', { class: 'info' }, h('b', null, D.itemName(id)), h('small', null, sub.join(' · '))),
-              h('div', { class: 'btns' }, h('button', { class: 'btn', onclick: () => { send({ t: 'collect', id }); sfx('pop'); } }, 'Vybrať'))));
+              h('div', { class: 'btns' }, h('button', { class: 'btn', 'data-fk': `vybrat:${id}`, onclick: () => { send({ t: 'collect', id }); sfx('pop'); } }, 'Vybrať'))));
           }
         }
         if (!S.orders.length) body.appendChild(h('p', null, 'Nemáš žiadne otvorené objednávky. Dopyt alebo Ponuku zadáš pri tovare v Kúpiť a Predať. 🏷️'));
@@ -1120,7 +1118,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
           body.appendChild(h('div', { class: 'row' }, img(o.item),
             h('div', { class: 'info' }, h('b', null, h('span', { class: 'kind', style: `background:${buy ? '#6b3fa0' : '#8b5a2b'}` }, buy ? 'Dopyt' : 'Ponuka'), D.itemName(o.item)),
               bar, legend, h('small', null, parts.join(' · '))),
-            h('div', { class: 'btns' }, h('button', { class: 'btn gray', onclick: () => { send({ t: 'cancelOrder', id: o.id }); } }, 'Zrušiť'))));
+            h('div', { class: 'btns' }, h('button', { class: 'btn gray', 'data-fk': `zrusit:${o.id}`, onclick: () => { send({ t: 'cancelOrder', id: o.id }); } }, 'Zrušiť'))));
         }
       } else if (tab === 'up') {
         const lvl = D.repLevel(S.rep), next = D.REP_LEVELS[lvl + 1], cur = D.REP_LEVELS[lvl] ?? 0;

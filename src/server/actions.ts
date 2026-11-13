@@ -796,6 +796,7 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
   upgrade: {
     keys: d => { const u = lookup(D.UPGRADES, d.kind); return { writes: u && u.shared ? [`save:${d.key}`, 'up'] : [`save:${d.key}`] }; },
     run(s, d, ctx) {
+      if (!nearStall(who(ctx))) { ctx.reject(AT_STALL); return; } // Vylepšiť je na trhu
       const sv = saveOf(s, d.key, ctx), kind = d.kind;
       const err = Econ.upgrade(s.up, sv, kind);
       if (err || !Econ.isUpgradeId(kind)) { ctx.reject(err); return; }
@@ -807,6 +808,7 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
   buyTool: {
     keys: d => ({ writes: [`save:${d.key}`] }),
     run(s, d, ctx) {
+      if (!nearStall(who(ctx))) { ctx.reject(AT_STALL); return; } // náradie sa kupuje na trhu (rovno do batohu)
       const sv = saveOf(s, d.key, ctx), id = d.id;
       const err = Ice.buyTool(sv, id);
       if (err) ctx.reject(err);

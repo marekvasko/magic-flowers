@@ -8,6 +8,7 @@ import type { ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import WebSocket from 'ws';
 import * as D from '../src/shared/data.ts';
+import * as Actions from '../src/server/actions.ts';
 import type { ClientMessage, ServerMessage } from '../src/shared/protocol.ts';
 import type { Plant, PlayerSave, SaveFile, Soil } from '../src/shared/save.ts';
 import * as Econ from '../src/server/economy.ts';
@@ -132,7 +133,8 @@ test('server: osobné povolenia z verzie 4 prejdú na spoločné povolenie záhr
     // povolenie je plné: Eva nové políčko neprekope, hoci sama má len 16
     eva.send({ t: 'act', x: fx, y: fy, item: 'hoe' });
     assert.match((await eva.wait('toast', m => /povolenie/.test(m.text))).text, /Spoločné povolenie záhrady je na 48 políčok/);
-    // Eva kúpi ďalšiu úroveň pre všetkých – Ján sa to dozvie a môže kopať
+    // Eva kúpi ďalšiu úroveň pre všetkých (na trhu, pri stánku) – Ján sa to dozvie a môže kopať
+    eva.send({ t: 'move', x: Actions.STALL.x, y: Actions.STALL.y + 1, dir: 0, ar: 0 });
     eva.send({ t: 'upgrade', kind: 'plots' });
     assert.match((await jan.wait('toast', m => /celú záhradu/.test(m.text))).text, /Eva kúpil\(a\) pre celú záhradu Povolenie na pole: 96 políčok/);
     assert.strictEqual((await jan.wait('me')).up.plots, 4);
@@ -148,6 +150,7 @@ test('server: osobné povolenia z verzie 4 prejdú na spoločné povolenie záhr
     eva.send({ t: 'act', x: jx, y: jy, item: 'hoe' });
     assert.deepStrictEqual(await eva.wait('plots', m => m.used === 48), { t: 'plots', used: 48, limit: 96 });
     // ďalšia úroveň už nie je
+    eva.send({ t: 'move', x: Actions.STALL.x, y: Actions.STALL.y + 1, dir: 0, ar: 0 });
     eva.send({ t: 'upgrade', kind: 'plots' });
     assert.strictEqual((await eva.wait('toast', m => /najvyššiu/.test(m.text))).text, 'Záhrada už má najvyššiu úroveň.');
     eva.ws.close(); jan.ws.close();
