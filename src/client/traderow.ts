@@ -133,9 +133,9 @@ export function tradeRow(r: RowInput): HTMLElement {
   const row = el('div', 'item');
   const top = el('div', 'top'); const ic = el('img'); ic.src = r.icon; top.append(ic, r.info);
   // pás kusov a popis počtu
-  const qty = el('div', 'qty'), strip = el('div', 'strip'), track = el('div', 'track'), count = el('div', 'count');
+  const qty = el('div', 'qty'), strip = el('div', 'strip'), track = el('div', 'track');
   strip.tabIndex = 0; strip.setAttribute('role', 'slider'); strip.setAttribute('aria-label', 'Počet kusov'); strip.setAttribute('aria-valuemin', '1');
-  strip.append(track); qty.append(strip, count);
+  strip.append(track); qty.append(strip);
   row.append(top, qty);
   // posuvník ceny (len tovar s knihou), tlačidlo, riadok s cenou
   const trade = el('div', 'trade'), go = el('button', 'go');
@@ -174,13 +174,6 @@ export function tradeRow(r: RowInput): HTMLElement {
       if (k > lim) { c.title = 'Viac nezaplatíš'; c.insertAdjacentHTML('beforeend', '<svg class="padlock" viewBox="0 0 14 16" aria-hidden="true"><path d="M4 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><rect x="1.5" y="7" width="11" height="8" rx="2" fill="currentColor"/><circle cx="7" cy="11" r="1.3" fill="#fff8e7"/></svg>'); }
       track.append(c);
     }
-    const atMax = n >= lim, waiting = q ? Math.max(0, n - bookAvail) : 0;
-    const sub = side === 'buy'
-      ? (atMax ? 'viac nezaplatíš' : waiting ? `${waiting} v dopyte` : 'hneď')
-      : (waiting ? `${waiting} v ponuke` : atMax ? 'všetko hneď' : 'hneď');
-    count.innerHTML = '';
-    const s2 = el('small', atMax && side === 'buy' ? 'max' : '', sub);
-    count.append(el('small', 'lbl', side === 'buy' ? 'kúpiš' : 'predáš'), el('b', '', `${n} ks`), s2);
     // posun pásu: po ťuknutí vybraný kus do stredu, pri ťahaní len aby bol vidieť
     const view = strip.clientWidth || 200, maxScroll = Math.max(0, shown * W - view);
     let left = strip.scrollLeft;
@@ -292,8 +285,10 @@ export function tradeRow(r: RowInput): HTMLElement {
     go.className = 'go ' + (now ? 'now' : 'wait');
     go.innerHTML = '';
     // pod sumou cena za kus: pri okamžitom obchode cez viac cien priemer (≈), inak presne
-    const each = total / Math.max(1, n);
-    go.append(el('small', '', !now && !r.orderRoom ? 'Plno objednávok' : verb), el('span', 'amt', `${String(total)} 🪙`),
+    // v tlačidle aj počet kusov (pás nad ním má celú šírku); keď sa časť vybaví hneď a zvyšok počká, aj koľko počká
+    const each = total / Math.max(1, n), waits = q && !now ? n - walk(n, price).n : 0;
+    go.append(el('small', '', !now && !r.orderRoom ? 'Plno objednávok' : verb),
+      el('b', 'pcs', `${String(n)} ks` + (waits && waits < n ? ` · ${String(waits)} čaká` : '')), el('span', 'amt', `${String(total)} 🪙`),
       el('small', 'each', `${Number.isInteger(each) ? '' : '≈ '}${String(Math.round(each))} 🪙/ks`));
     go.disabled = (side === 'buy' ? need(n, price) > r.coins : n > r.have) || (!now && !r.orderRoom);
     if (q) {
