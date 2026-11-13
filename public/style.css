@@ -229,11 +229,6 @@ button { font: inherit; cursor: pointer; border: none; }
 .pc.lock { box-shadow: inset 0 0 0 1.5px #c9b48a; background: #faf3e2; cursor: not-allowed; }
 .pc.lock img { opacity: .18; }
 .pc .padlock { position: absolute; inset: 0; margin: auto; width: 14px; height: 16px; color: #8b5a2b; }
-.count { flex: 0 0 auto; min-width: 54px; text-align: center; line-height: 1.1; }
-.count b { display: block; font-size: 15px; font-variant-numeric: tabular-nums; }
-.count small { display: block; font-size: 10.5px; color: #7a6a4a; font-weight: 700; min-height: 1.2em; white-space: nowrap; }
-.count small.lbl { min-height: 0; text-transform: uppercase; letter-spacing: .05em; font-size: 9.5px; }
-.count small.max { color: #d23b2f; }
 /* posuvník ceny: graf rozdelenia cien (dole predané, hore v knihe), fialová zóna = hneď; jedno tlačidlo so sumou */
 .trade { display: flex; gap: 8px; align-items: stretch; }
 /* posuvník ceny: hore pás s úchytom, pod ním graf; ťahá sa kdekoľvek, zvislý pohyb posúva okno */
@@ -243,6 +238,7 @@ button { font: inherit; cursor: pointer; border: none; }
 .slider:focus-visible { outline: 2px solid #6b3fa0; outline-offset: 2px; border-radius: 9px; }
 .go { flex: 0 0 108px; border-radius: 12px; color: #fff; font-weight: 800; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 6px 4px; }
 .go small { font-size: 11px; font-weight: 700; opacity: .9; }
+.go .pcs { font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .go .each { font-size: 11px; opacity: .85; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .go .amt { font-size: 16px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .go.now { background: #6b3fa0; }
