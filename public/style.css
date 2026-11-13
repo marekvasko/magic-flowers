@@ -261,7 +261,7 @@ button { font: inherit; cursor: pointer; border: none; }
 .obar .wait.buy, .olegend .wait.buy { background: #b9a3d6; }
 .obar .wait.sell, .olegend .wait.sell { background: #d2b48f; }
 .obar .dead, .olegend .dead { background: repeating-linear-gradient(135deg, #8a7a62 0 3px, #b3a48a 3px 6px); }
-.obar .cx, .olegend .cx { background: #b3a796; }
+.obar .cx, .olegend .cx { background: #d2483a; }
 .olegend { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12px; font-weight: 700; color: #5a4a30; }
 .olegend span { display: inline-flex; align-items: center; gap: 4px; }
 .olegend i { width: 9px; height: 9px; border-radius: 3px; }
