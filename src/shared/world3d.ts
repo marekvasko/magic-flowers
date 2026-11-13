@@ -610,6 +610,65 @@ function dockModel(season: number): FineModel {
   if (season === 3) C.snow([M.PLANK, M.PLANK_DARK, M.SACK, M.LOG], DOCK_DECK);
   return C.done();
 }
+// ---- Záhon (#179, návrh vzhľadu): 1 pole = 8 × 8 minikociek = 8 × 8 bodov záhonu ----
+// Okraj (vonkajší prstenec bodov) je drevený rám, vnútri pôda. Kvety sú z minikociek a sú veľké podľa skutočného rozostupu
+// (tulipán zaberie 1 bod, mak 2 × 2, levanduľa 3 × 3, slnečnica 4 × 4). Pokryvy: trávnik, štrk, okruhliaky, plochý kameň.
+export type ZahonLook = 'empty' | 'tulipany' | 'maky' | 'slnecnice' | 'skalka';
+export const ZAHON_LOOKS: readonly { v: ZahonLook; name: string }[] = [
+  { v: 'empty', name: 'Záhon – prázdny' },
+  { v: 'tulipany', name: 'Záhon – 36 tulipánov (rozostup 1)' },
+  { v: 'maky', name: 'Záhon – maky a nevädze v trávniku (rozostup 2)' },
+  { v: 'slnecnice', name: 'Záhon – 4 slnečnice na štrku (rozostup 4)' },
+  { v: 'skalka', name: 'Záhon – okruhliaky, plochý kameň a levanduľa (rozostup 3)' }
+];
+function zahonModel(season: number, look: ZahonLook): FineModel {
+  const C = fineCanvas(1, 1, 14), { put, fbox } = C;
+  const ring = (x: number, z: number): boolean => x === 0 || x === 7 || z === 0 || z === 7;
+  const stonesOnRing = look === 'skalka';
+  // rám a pôda
+  for (let z = 0; z < 8; z++) for (let x = 0; x < 8; x++) {
+    if (!ring(x, z)) { put(x, 0, z, M.DIRT); continue; }
+    if (stonesOnRing) { put(x, 0, z, M.DIRT); put(x, 1, z, hash(x, z, 3) < 0.5 ? M.STONE_LIGHT : M.STONE); continue; } // okruhliaky namiesto dosiek
+    const corner = (x === 0 || x === 7) && (z === 0 || z === 7);
+    put(x, 0, z, M.PLANK_DARK); put(x, 1, z, corner ? M.LOG_DARK : (x + z) % 2 ? M.PLANK : M.PLANK_DARK);
+    if (corner) put(x, 2, z, M.LOG_DARK);
+  }
+  // kvety (bod = minikocka nad pôdou)
+  const tulip = (x: number, z: number, c: MatId): void => { put(x, 1, z, M.LEAF_SUMMER); put(x, 2, z, M.LEAF_SUMMER2); put(x, 3, z, c); };
+  const poppy = (x: number, z: number, c: MatId): void => { // tenká stonka, listy pri zemi, jeden kvet navrchu
+    put(x, 1, z, M.HERB_GREEN); put(x + 1, 1, z, M.HERB_GREEN);
+    put(x, 2, z, M.LEAF_SUMMER); put(x, 3, z, M.LEAF_SUMMER); put(x, 4, z, c);
+  };
+  const lavender = (x: number, z: number): void => {
+    for (let dz = 0; dz < 3; dz++) for (let dx = 0; dx < 3; dx++) {
+      const edge = (dx === 0 || dx === 2) && (dz === 0 || dz === 2);
+      put(x + dx, 1, z + dz, M.HERB_GREEN);
+      if (!edge) put(x + dx, 2, z + dz, M.HERB_GREEN);
+      if ((dx + dz) % 2 === 1 || (dx === 1 && dz === 1)) put(x + dx, edge ? 2 : 3, z + dz, M.LAVENDER);
+    }
+  };
+  const sunflower = (x: number, z: number): void => {
+    for (let y = 1; y <= 9; y++) put(x, y, z, M.LEAF_SUMMER2);
+    put(x + 1, 4, z, M.LEAF_SUMMER); put(x - 1, 6, z, M.LEAF_SUMMER); put(x, 5, z + 1, M.LEAF_SUMMER);
+    fbox(x - 1, 10, z - 1, x + 1, 10, z + 1, M.FL_YELLOW); put(x, 10, z, M.BARK_DARK); // kvet hore, tmavý stred
+    put(x - 2, 10, z, M.FL_YELLOW); put(x + 2, 10, z, M.FL_YELLOW); put(x, 10, z - 2, M.FL_YELLOW); put(x, 10, z + 2, M.FL_YELLOW);
+  };
+  if (look === 'tulipany') {
+    const cols: MatId[] = [M.FL_RED, M.FL_PINK, M.FL_YELLOW, M.BLOSSOM_W];
+    for (let z = 1; z <= 6; z++) for (let x = 1; x <= 6; x++) tulip(x, z, must(cols[(x + 2 * z) % cols.length]));
+  } else if (look === 'maky') {
+    for (let z = 1; z <= 6; z++) for (let x = 1; x <= 6; x++) put(x, 0, z, M.ALP); // trávnik
+    for (const z of [1, 3, 5]) for (const x of [1, 3, 5]) poppy(x, z, (x + z) % 4 === 2 ? M.FL_BLUE : M.FL_RED);
+  } else if (look === 'slnecnice') {
+    for (let z = 1; z <= 6; z++) for (let x = 1; x <= 6; x++) put(x, 0, z, hash(x, z, 8) < 0.5 ? M.SCREE : M.PATH); // štrk
+    for (const [x, z] of [[2, 2], [2, 5], [5, 2], [5, 5]] as const) sunflower(x, z);
+  } else if (look === 'skalka') {
+    for (const [x, z] of [[1, 1], [1, 4], [4, 1]] as const) lavender(x, z);
+    fbox(4, 0, 4, 6, 0, 6, M.STONE); put(5, 1, 5, M.STONE_LIGHT); put(4, 1, 6, M.STONE_LIGHT); // plochý kameň
+  }
+  if (season === 3) C.snow([M.DIRT, M.PLANK, M.PLANK_DARK, M.LOG_DARK, M.STONE, M.STONE_LIGHT, M.ALP, M.PATH, M.SCREE, M.HERB_GREEN, M.LEAF_SUMMER, M.LEAF_SUMMER2, M.LAVENDER, M.FL_YELLOW, M.BARK_DARK, M.FL_RED, M.FL_PINK, M.FL_BLUE, M.BLOSSOM_W]);
+  return C.done();
+}
 // Značka okraja mapy pri jazierku (1 pole): kolík s červeno-bielou bójkou a lanom – tadiaľto raz loďka pôjde do Močiara
 function edgeModel(season: number): FineModel {
   const C = fineCanvas(1, 1, 12), { put, fbox } = C;
@@ -833,6 +892,7 @@ export const FINE_MODELS: FineModelEntry[] = [
   { id: 'dielna-loom', name: 'Dielňa s krosnami', group: 'Buildings', fn: 'dielnaModel(loom = true)', tiles: [2, 2], build: turned(se => dielnaModel(se, true)) },
   { id: 'dock', name: 'Mólo', group: 'Buildings', fn: 'dockModel', tiles: [1, 2], build: turned(dockModel) },
   { id: 'pond-edge', name: 'Značka okraja jazierka (Močiar)', group: 'Objects', fn: 'edgeModel', tiles: [1, 1], build: turned(edgeModel) },
+  ...ZAHON_LOOKS.map((l): FineModelEntry => ({ id: 'zahon-' + l.v, name: l.name, group: 'Objects', fn: `zahonModel(${l.v})`, tiles: [1, 1], build: turned(se => zahonModel(se, l.v)) })),
   { id: 'stall', name: 'Trh', group: 'Objects', fn: 'marketStall', tiles: [3, 1], build: turned(marketStall) },
   { id: 'well', name: 'Studňa', group: 'Objects', fn: 'wellModel', tiles: [1, 1], build: turned(wellModel) },
   { id: 'cauldron', name: 'Čarovný kotlík', group: 'Objects', fn: 'cauldronModel', tiles: [1, 1], build: turned(cauldronModel) },
