@@ -36,7 +36,7 @@ export interface RowInput {
   busy(on: boolean): void;         // počas ťahania sa okno neprekresľuje
 }
 
-const COL = { ink: '#2b2116', muted: '#7a6a4a', violet: '#6b3fa0', violetSoft: '#ece3f7', violetPale: 'rgba(107,63,160,.32)', edge: '#8b5a2b', cancel: '#b3a796', bars: '#c9b48a', plot: '#faf3e2' };
+const COL = { ink: '#2b2116', muted: '#7a6a4a', violet: '#6b3fa0', violetSoft: '#ece3f7', violetPale: 'rgba(107,63,160,.32)', edge: '#8b5a2b', cancel: '#d2483a', bars: '#c9b48a', plot: '#faf3e2' };
 const HANDLE = 30;   // výška pásu s úchytom nad grafom
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 const W = 24; // šírka ikony v páse aj s medzerou
@@ -277,7 +277,7 @@ export function tradeRow(r: RowInput): HTMLElement {
       const k = Math.min(l.n, left), m = isMine(l) ? ownTaken : taken; m.set(l.p, (m.get(l.p) ?? 0) + k); left -= k;
     }
     // vlastné objednávky: tie v knihe, ktorú riadok ukazuje (pri nákupe tvoje Ponuky, pri predaji tvoje Dopyty), sú
-    // šrafovaný kus navrchu stĺpika ceny; čo by objednávka z nich „zobrala“, sa zruší (sivé, zhora); tie druhej strany
+    // šrafovaný kus navrchu stĺpika ceny; čo by objednávka z nich „zobrala“, sa zruší (červené, zhora); tie druhej strany
     // (pri nákupe tvoje Dopyty, pri predaji tvoje Ponuky) samostatný šrafovaný stĺpik od osi.
     // Farba podľa druhu: Dopyt fialový, Ponuka hnedá.
     const bookSide: Side = side === 'buy' ? 'sell' : 'buy';
