@@ -73,10 +73,11 @@ export interface SaveFile { v: 15; /* … */ objects: { list: GardenObject[]; ni
 Today `lotIdx()` in `ice.ts` and `dielna.ts` hard-codes the 2×2 lots. With the objects layer:
 
 - `lotIdx()` reads the `lot` object with the matching `v`, not a constant.
-- **Moving a lot** works on a free 2×2 area only: grass, no soil, no object, not the house, not a passage. Anyone
-  can move it, as long as the building is not built yet.
+- **Moving a lot:** players can't move or remove lots (#178). For now only the debug page can (free 2×2 plain grass,
+  while the building is not built); later a *planner* character in the town will do it (#156).
 - **Building** works as today: the tiles become the `icehouse` / `dielna` ground, so `BLOCK`, `CORNER_WALL` and the
-  3D models keep working, and the `lot` object is removed (proposal: the smallest change). Built buildings are immovable.
+  3D models keep working. The `lot` object **stays** after building: it is the only place that holds the building's
+  position (the ground is rebuilt from the map generator on every load). Built buildings are immovable (#178).
 
 ## 4. Soil, objects and the field permit
 
