@@ -29,7 +29,7 @@ import type { JournalList, JournalLoadReply, JournalOne } from '../src/server/de
 import type { GameWorld, Msg } from '../src/server/game.ts';
 import type { Presence } from '../src/server/world.ts';
 import { isMsg, must, parseJson, parseMsg, partial, portOf, rethrow, testWorld } from './helpers.ts';
-import { setStock } from './game-world.ts';
+import { setStock, toStall } from './game-world.ts';
 import type { MsgOf, MsgType } from './helpers.ts';
 const TPD = D.TICKS_PER_DAY;
 const json = (v: unknown): string => JSON.stringify(v);
@@ -102,6 +102,7 @@ test('kruhová pamäť: nikdy nepresiahne N, drží posledných N v poradí, po�
 
 test('dávka: dve kúpy posledného semienka – poradie, odloženie s vinníkom a kľúčom, odmietnutie, skupiny, zmeny pred / po', () => {
   const w = makeWorld(2), spec = traced(w);
+  toStall(w, 'ana', 'bob');
   setStock(w, `seed_${SP}`, 1); setStock(w, `seed_${SP2}`, 5);
   const a = act('buy', 'ana', { id: `seed_${SP}`, n: 1 }), b = act('buy', 'bob', { id: `seed_${SP2}`, n: 2 }), c = act('buy', 'bob', { id: `seed_${SP}`, n: 1 });
   E.commitBatch(w, [a, b, c], spec);
@@ -338,6 +339,7 @@ test('denník: riadky od najnovšieho, filtre (druh, typ, hráč odtlačkom, osu
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-dbg-journal-'));
   const file = path.join(dir, 'journal-x.jsonl');
   const w = makeWorld(7);
+  toStall(w, 'ana', 'bob'); // obchoduje sa pri stánku
   setStock(w, `seed_${SP}`, 1);
   const spec: Spec = { ...traced(w), onBatch: (x, out) => { fs.appendFileSync(file, json(Object.assign({ wall: 1700000000000 }, out.entry)) + '\n'); } };
   fs.writeFileSync(file, json({ wall: 1700000000000, load: true, tick: w.tick, step: 0, seq: 0, migratedFrom: null }) + '\n');

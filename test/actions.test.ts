@@ -31,7 +31,7 @@ import * as Dock from '../src/server/dock.ts';
 import type { GameCtx, GameWorld, Msg } from '../src/server/game.ts';
 import type { Presence, Tile } from '../src/server/world.ts';
 import { isMsg, must, parseJson, parseMsg, partial, portOf, readJson, rethrow, testWorld } from './helpers.ts';
-import { setStock } from './game-world.ts';
+import { setStock, toStall } from './game-world.ts';
 import type { MsgOf, MsgType } from './helpers.ts';
 const TPD = D.TICKS_PER_DAY;
 const json = (v: unknown): string => JSON.stringify(v);
@@ -167,6 +167,7 @@ test('act: kliknutie sa rozloží na konkrétnu akciu podľa políčka, predmetu
 
 test('trh: kľúče po položkách – nákupy rôznych semienok v jednom kroku sa nebrzdia, posledný kus toho istého kúpi práve jeden', () => {
   const w = makeWorld(2);
+  toStall(w, 'ana', 'bob');
   setStock(w, `seed_${SP}`, 1); setStock(w, `seed_${SP2}`, 5);
   const r = E.commitBatch(w, [act('buy', 'ana', { id: `seed_${SP}`, n: 1 }), act('buy', 'bob', { id: `seed_${SP2}`, n: 2 }), act('buy', 'bob', { id: `seed_${SP}`, n: 1 })], SPEC);
   assert.strictEqual(r.rounds, 2, 'len tretí nákup (to isté semienko) čaká na druhé kolo');
@@ -177,6 +178,7 @@ test('trh: kľúče po položkách – nákupy rôznych semienok v jednom kroku 
   assert.deepStrictEqual([seedOf(w, SP).stock, seedOf(w, SP2).stock, save(w, 'ana').inv[`seed_${SP}`], save(w, 'bob').inv[`seed_${SP2}`]], [0, 3, 1, 2]);
   // predaj kvetu číta sviatočný násobok z položky kvetu, nie zo súhrnu trhu
   const w2 = makeWorld(3);
+  toStall(w2, 'ana', 'bob');
   give(save(w2, 'ana'), `fl_${SP}`, 2, w2.tick);
   // skúšobný sviatok s id skutočného sviatku (test na id nič neoveruje; festEnd tu nenastane)
   const f: ActiveFestival = { id: must(D.FESTIVALS[0]).id, name: 'Skúška', icon: '✨', mult: { [SP]: 2 }, until: w2.tick + TPD };
@@ -555,7 +557,8 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
     await A.wait('tile', m => m.i === ti[0] && m.v.s?.p && m.v.s.p.sp === SP && m.v.s.w === 1);
     const me1 = await A.wait('me', m => m.inv[`seed_${SP}`] === 2 && m.water === 4);
     assert.ok(me1);
-    // posledné semienko kúpi práve jeden; druhý dostane „Vypredané“
+    // posledné semienko kúpi práve jeden; druhý dostane „Vypredané“ (obchoduje sa pri stánku)
+    for (const C of [A, B]) C.send({ t: 'move', x: Actions.STALL.x, y: Actions.STALL.y + 1, dir: 0, ar: 0 });
     A.send({ t: 'buy', id: `seed_${SP}`, n: 1 }); B.send({ t: 'buy', id: `seed_${SP}`, n: 1 });
     const t1 = await A.wait('toast', m => /Kúpené|Vypredané/.test(m.text)), t2 = await B.wait('toast', m => /Kúpené|Vypredané/.test(m.text));
     assert.ok([t1.text, t2.text].filter(t => /Kúpené/.test(t)).length === 1, t1.text + ' / ' + t2.text);
@@ -595,6 +598,7 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
     await A.wait('pl', m => m.list.some(p => p.name === 'Ana' && p.si === -1));
     // záplava akcií jedného hráča nezablokuje správy ostatných
     for (let k = 0; k < 300; k++) B.send({ t: 'act', x, y, item: 'hoe' });
+    A.send({ t: 'move', x: Actions.STALL.x, y: Actions.STALL.y + 1, dir: 0, ar: 0 }); // k stánku
     A.send({ t: 'buy', id: 'compost', n: 1 });
     await A.wait('toast', m => /Kúpené: 1× Kompost/.test(m.text), 1500);
     await sleep(250);
@@ -734,6 +738,7 @@ test('pohyb: poloha je stav (pos:<kľúč>), dvaja na jednom políčku prejdú, 
 
 test('pohyb a nákup v jednom rámci: uloženie (save:) polohu neprepíše, poloha (pos:) mince neprepíše; ráno (save:*) tiež nie', () => {
   const w = makeWorld(18);
+  toStall(w, 'ana', 'bob');
   const price = Econ.seedPrice(w.market, w.tick, SP);
   const r = E.commitBatch(w, [act('buy', 'ana', { id: `seed_${SP}`, n: 1 }), act('pos', 'ana', { x: 7.5, y: 7.5 }), act('pos', 'bob', { x: 8.5, y: 7.5 }), act('sell', 'bob', { id: 'hoe', n: 1 })], SPEC);
   assert.strictEqual(r.rounds, 1, 'pos a save sú nezávislé výrezy');

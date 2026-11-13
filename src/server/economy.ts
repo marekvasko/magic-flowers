@@ -42,6 +42,7 @@ export function initEconomy(world: GameWorld, ctx?: GameCtx): void {
   if (fresh) recordHistory(world.market, world.tick);
   if (!world.contracts) { world.contracts = { list: [], nextId: 1 }; fillBoard(world.contracts, world.tick, maxRepOf(savesOf(world)), live); }
   Mkt.syncPlayerOrders(world, world.market);
+  Mkt.restoreOrderEvents(world.market, live);
 }
 const npc = (coins = 0): Market['npcs']['jano'] => ({ coins, inv: {}, fb: {} });
 

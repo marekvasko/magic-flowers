@@ -745,6 +745,19 @@ export function initBooks(world: Pick<GameWorld, 'saves' | 'tick'>, m: Market): 
   requoteAll(mk);
 }
 // Pri načítaní: zoznam otvorených objednávok v uložení hráča sa prepočíta z kníh (odvodený údaj, ako plotsUsed)
+// Pri načítaní: každá čakajúca objednávka má udalosť vypršania a ponuka kvetov udalosť vädnutia. Uloženie zo servera,
+// ktorý tieto udalosti nepozná (návrat na staršiu verziu a späť), ich nemá – objednávky by inak nikdy nevypršali
+// a ich záloha by ostala zamknutá. Vypršanie, ktoré prešlo počas výpadku, príde hneď v ďalšom kroku.
+export function restoreOrderEvents(m: Market, ctx: Pick<GameCtx, 'tick' | 'pending' | 'scheduleUnique'>): number {
+  let n = 0;
+  for (const item of keys(m.books)) for (const o of Object.values(m.books[item]?.orders ?? {})) {
+    if (!o || o.ioc) continue;
+    const id = orderId(item, o.n);
+    if (o.exp != null && !ctx.pending('oExpire:' + id)) { ctx.scheduleUnique('oExpire:' + id, Math.max(ctx.tick + 1, o.exp), 'oExpire', { item, n: o.n }); n++; }
+    if (o.side === 'sell' && isFlower(item) && o.fb && o.fb.length && !ctx.pending('oWilt:' + id)) { planWilt(ctx, item, o); n++; }
+  }
+  return n;
+}
 export function syncPlayerOrders(world: Pick<GameWorld, 'saves'>, m: Market): void {
   const by: Partial<Record<PlayerKey, string[]>> = {};
   for (const item of keys(m.books)) for (const o of Object.values(m.books[item]?.orders ?? {})) if (o && o.pl != null) (by[o.pl] = by[o.pl] || []).push(orderId(item, o.n));

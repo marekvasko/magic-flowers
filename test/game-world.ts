@@ -35,6 +35,10 @@ export function makeWorld(seed: number, tick?: number): W {
   if (!ready(w)) throw new Error('trh a nástenka chýbajú');
   return w;
 }
+// Hráči sa postavia k trhovému stánku (#112: obchoduje sa len tam)
+export function toStall(w: W, ...who: string[]): void {
+  w.presence = (w.presence || []).map(p => (who.includes(p.key) ? { ...p, x: Actions.STALL.x, y: Actions.STALL.y + 1 } : p));
+}
 export const SPEC: E.Spec<W, Presence, Msg> = { proposers: { ...Events.PROPOSERS, ...Actions.PROPOSERS }, periodic: Events.PERIODIC, presence: w => w.presence, onError: rethrow };
 let seq = 0;
 export const act = <T extends keyof Actions.ActionInputs>(type: T, key: string, data?: Partial<Omit<Actions.ActionInputs[T], 'key'>>): E.Input => ({ type, data: Object.assign({ key }, data), id: 'a#' + String(++seq), actor: key });
