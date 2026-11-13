@@ -4,10 +4,11 @@ import assert from 'node:assert';
 import * as D from '../src/shared/data.ts';
 import * as E from '../src/server/engine.ts';
 import * as Econ from '../src/server/economy.ts';
-import { act, give, makeWorld, save, SPEC } from './game-world.ts';
+import { act, give, makeWorld, save, SPEC, toStall } from './game-world.ts';
 
 test('výkup čarovných semienok: symbolických 10 🪙 za kus, rovnako na serveri aj v predaji (#100)', () => {
   const w = makeWorld(38), sv = save(w, 'ana');
+  toStall(w, 'ana');
   for (const id of ['seed_papradie', 'seed_duhova'] as const) {
     assert.strictEqual(D.sellPrice(id), D.MAGIC_SEED_SELL);
     assert.strictEqual(Econ.sellQuote(w.market, w.tick, id), D.MAGIC_SEED_SELL);

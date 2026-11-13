@@ -48,6 +48,7 @@ const fx$ = (area: AreaId, k: FxKind, x: number, y: number, extra?: { c: string 
 // Okamžitý obchod hráča cez knihu: limit je najhoršia cena, ktorú hráč videl (bez nej: kúpi za čokoľvek, čo zaplatí,
 // predá za čokoľvek aspoň 1)
 function instant(s: GameSlices, d: ActionInputs['buy'], side: OrderSide, ctx: GameCtx): void {
+  if (!nearStall(who(ctx))) { ctx.reject(AT_STALL); return; }
   const item = d.id, sv = saveOf(s, d.key, ctx);
   if (!B.isBookItem(item)) { ctx.reject(side === 'buy' ? 'Toto sa na trhu nepredáva.' : 'Toto trh nevykupuje.'); return; }
   const lim = d.lim && d.lim > 0 ? d.lim : side === 'buy' ? Math.max(1, sv.coins) : 1;
@@ -124,6 +125,8 @@ export function nearHouse(p: Where): boolean { return !!p && p.area === 'garden'
 // Pri trhovom stánku (#112): tovar z trhu (na vyzdvihnutie, záloha zrušenej objednávky) sa dá zobrať len tu
 export const STALL: Point = { x: 12.5, y: 28.5 };
 export function nearStall(p: Where): boolean { return !!p && p.area === 'garden' && Math.hypot(p.x - STALL.x, p.y - STALL.y) <= 3; }
+// Obchoduje sa len pri stánku: tovar z batohu do knihy a z knihy do batohu sa nikam neteleportuje
+const AT_STALL = 'Obchoduje sa pri trhovom stánku – podíď bližšie.';
 export function nearIcehouse(p: Where): boolean {
   const L = D.ICEHOUSE.lot;
   return !!p && p.area === 'garden' && Math.hypot(p.x - (L.x0 + L.x1 + 1) / 2, p.y - (L.y0 + L.y1 + 1) / 2) <= 3;
@@ -745,6 +748,7 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
     keys: (d, w) => ({ writes: B.isBookItem(d.id) ? Mkt.bookKeys(w, d.id, d.key) : [`save:${d.key}`] }),
     run(s, d, ctx) {
       if (B.isBookItem(d.id)) { instant(s, d, 'sell', ctx); return; }
+      if (!nearStall(who(ctx))) { ctx.reject(AT_STALL); return; }
       const r = Econ.sellFixed({ seeds: {}, flowers: {}, compost: null }, ctx.tick, saveOf(s, d.key, ctx), d.id, d.n);
       if (!r.n) ctx.reject(r.msg);
       ctx.emit(toast$(d.key, r.msg));
@@ -755,6 +759,7 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
     keys: (d, w) => ({ writes: B.isBookItem(d.id) ? Mkt.bookKeys(w, d.id, d.key) : [`save:${d.key}`] }),
     run(s, d, ctx) {
       const item = d.id;
+      if (!nearStall(who(ctx))) { ctx.reject(AT_STALL); return; }
       if (!B.isBookItem(item)) { ctx.reject('Toto sa na trhu neobchoduje.'); return; }
       const mk = Mkt.mkOf(s, ctx, d.key), r = Mkt.playerOrder(mk, item, d.key, nameOf(ctx, d.key), d.side, d.n, d.p, false);
       if ('err' in r) { ctx.reject(r.err); return; }
