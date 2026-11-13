@@ -335,7 +335,7 @@ export const Art = (() => {
 
   // gate = { side: 'n'|'s'|'w'|'e', icon } – na ktorú stranu prechod vedie a ikona cieľovej plochy (inak podľa riadku)
   // area = plocha (lekná sú len na plese v horách – D.LILY_AREAS; v záhrade nie sú, #160)
-  function ground(c: C2, g: Ground, x: number, y: number, s: number, se: number, t: number, tx: number, ty: number, gate: GateInfo | null, area = 'garden'): void {
+  function ground(c: C2, g: Ground, x: number, y: number, s: number, se: number, t: number, tx: number, ty: number, gate: GateInfo | null, area = 'garden', lot: { x0: number; y0: number } | null = null): void {
     const h = hash(tx, ty);
     let base: string;
     switch (g) {
@@ -402,7 +402,7 @@ export const Art = (() => {
     }
     if (g === 'lot') { // stavebný pozemok: štrk a kolíky v rohoch
       for (let i = 0; i < 5; i++) circ(c, x + hash(tx, ty, i) * s, y + hash(tx, ty, i + 5) * s, s * 0.03, 'rgba(110,100,85,0.4)');
-      const DL = D.DIELNA.lot, L = tx >= DL.x0 && tx <= DL.x1 && ty >= DL.y0 && ty <= DL.y1 ? DL : { x0: 0, y0: 0 }; // kolíky v rohoch pozemku (ľadovne či Dielne)
+      const L = lot ?? { x0: 0, y0: 0 }; // kolíky v rohoch pozemku (ľadovne či Dielne, #178: roh pozemku z objektu)
       c.fillStyle = '#8b5a2b'; c.fillRect(x + s * ((tx - L.x0) % 2 ? 0.82 : 0.08), y + s * ((ty - L.y0) % 2 ? 0.8 : 0.08), s * 0.1, s * 0.12);
       return;
     }

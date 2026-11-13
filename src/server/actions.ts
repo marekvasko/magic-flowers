@@ -10,7 +10,8 @@ import * as D from '../shared/data.ts';
 import type { AreaId, ItemId, Look, Point, PotionId } from '../shared/data.ts';
 import type { FxKind, ToastKind, WishKind } from '../shared/protocol.ts';
 import * as B from '../shared/book.ts';
-import type { OrderSide, PlayerKey, PlayerSave } from '../shared/save.ts';
+import type { Objects, OrderSide, PlayerKey, PlayerSave } from '../shared/save.ts';
+import * as Obj from '../shared/objects.ts';
 import { keys, lookup, must } from '../shared/util.ts';
 import * as E from './engine.ts';
 import * as Econ from './economy.ts';
@@ -127,9 +128,14 @@ export const STALL: Point = { x: 12.5, y: 28.5 };
 export function nearStall(p: Where): boolean { return !!p && p.area === 'garden' && Math.hypot(p.x - STALL.x, p.y - STALL.y) <= 3; }
 // Obchoduje sa len pri stánku: tovar z batohu do knihy a z knihy do batohu sa nikam neteleportuje
 const AT_STALL = 'Obchoduje sa pri trhovom stánku – podíď bližšie.';
-export function nearIcehouse(p: Where): boolean {
-  const L = D.ICEHOUSE.lot;
-  return !!p && p.area === 'garden' && Math.hypot(p.x - (L.x0 + L.x1 + 1) / 2, p.y - (L.y0 + L.y1 + 1) / 2) <= 3;
+export function nearIcehouse(p: Where, objects: Objects | null | undefined): boolean {
+  const L = Obj.lotRect(objects, 'icehouse'), c = L && Obj.center(L);
+  return !!p && !!c && p.area === 'garden' && Math.hypot(p.x - c.x, p.y - c.y) <= 3;
+}
+// Iskry nad ľadovňou (stred jej pozemku)
+function iceFx(objects: Objects): Msg {
+  const L = Obj.lotRect(objects, 'icehouse') ?? Obj.defaultRect('icehouse');
+  return fx$('garden', 'ice', L.x0 + 1, L.y0 + 1);
 }
 // Iný hráč stojaci na políčku (x, y) tej istej plochy
 export function playerAt(presence: readonly Presence[] | null | undefined, me: Pick<Presence, 'key' | 'area'>, x: number, y: number): Presence | null {
@@ -563,26 +569,26 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
   },
   // Ľadovňa: hráč do nej vloží ľad z batohu (najviac toľko, koľko sa zmestí). d: { key, n }
   fillIce: {
-    keys: d => ({ writes: ['icehouse', 'storage', `save:${d.key}`] }),
+    keys: d => ({ writes: ['icehouse', 'storage', `save:${d.key}`], reads: ['objects'] }),
     run(s, d, ctx) {
       const me = who(ctx), sv = saveOf(s, d.key, ctx);
       if (!s.icehouse.built) ctx.reject('Ľadovňa ešte nie je postavená. Kúpiš ju na trhu (záložka Vylepšiť). 🧊');
-      if (!nearIcehouse(me)) ctx.reject('Podíď bližšie k ľadovni.');
+      if (!nearIcehouse(me, s.objects)) ctx.reject('Podíď bližšie k ľadovni.');
       const n = Math.min(d.n | 0, sv.inv.ice || 0);
       if (n <= 0) ctx.reject('Nemáš ľad. Vysekáš ho krompáčom na ľadovci v horách, v zime aj na jazierku. ⛏️');
       const k = Ice.fillIcehouse(s.icehouse, s.storage, ctx.tick, n);
       if (!k) ctx.reject('Ľadovňa je plná. 🧊');
       take(sv, 'ice', k, ctx.tick);
       ctx.emit(toast$(d.key, `🧊 Vložil(a) si ${k}× ľad. V ľadovni je ${Math.ceil(s.icehouse.ice)}/${D.ICEHOUSE.cap}.`));
-      ctx.emit(fx$('garden', 'ice', D.ICEHOUSE.lot.x0 + 1, D.ICEHOUSE.lot.y0 + 1));
+      ctx.emit(iceFx(s.objects));
     }
   },
   // Izolácia ľadovne (#23): hráč vloží 1 hodvábnu prikrývku. d: { key }
   insulate: {
-    keys: d => ({ writes: ['icehouse', `save:${d.key}`] }),
+    keys: d => ({ writes: ['icehouse', `save:${d.key}`], reads: ['objects'] }),
     run(s, d, ctx) {
       const me = who(ctx), sv = saveOf(s, d.key, ctx);
-      if (!nearIcehouse(me)) ctx.reject('Podíď bližšie k ľadovni.');
+      if (!nearIcehouse(me, s.objects)) ctx.reject('Podíď bližšie k ľadovni.');
       const before = D.insulLevel(s.icehouse.bl);
       const err = Ice.insulate(s.icehouse, sv);
       if (err) ctx.reject(err);
@@ -590,7 +596,7 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
       const pct = Math.round(must(B.insul[lvl]) * 100);
       if (lvl > before) ctx.emit(toast$(E.ALL, `🧶 ${nameOf(ctx, d.key)} izoloval(a) ľadovňu hodvábnymi prikrývkami – izolácia úrovne ${lvl}! Ľad sa v nej topí už len na ${pct} %.`, 'gift'));
       else ctx.emit(toast$(d.key, `🧶 Vložil(a) si prikrývku do ľadovne (${bl}/${String(next)}). Pri ${String(next)} prikrývkach bude izolácia úrovne ${lvl + 1}.`));
-      ctx.emit(fx$('garden', 'ice', B.lot.x0 + 1, B.lot.y0 + 1));
+      ctx.emit(iceFx(s.objects));
     }
   },
   // krhla do vody (jazierko, pleso, studňa); v zime voda zamrzne – načrieť sa dá len cez vysekaný otvor (#87)
@@ -818,10 +824,10 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
   },
   // stavba (d: { key, id: 'icehouse' | 'dielna' }): spoločná stavba, platí ju hráč; pozemok v záhrade dostane budovu
   build: {
-    keys: d => ({ writes: [d.id === 'dielna' ? 'dielna' : 'icehouse', 'tile:garden:*', `save:${d.key}`, 'corners'] }),
+    keys: d => ({ writes: [d.id === 'dielna' ? 'dielna' : 'icehouse', 'tile:garden:*', `save:${d.key}`, 'corners'], reads: ['objects'] }),
     run(s, d, ctx) {
       const sv = saveOf(s, d.key, ctx), dielna = d.id === 'dielna', tiles = sl(s, 'tile:garden:*');
-      const err = dielna ? Dielna.buildDielna(s.dielna, tiles, sv) : Ice.buildIcehouse(s.icehouse, tiles, sv);
+      const err = dielna ? Dielna.buildDielna(s.dielna, tiles, sv, s.objects) : Ice.buildIcehouse(s.icehouse, tiles, sv, s.objects);
       if (err) ctx.reject(err);
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- svet bez pavúkov (testy) kúty nemá
       if (s.corners) Spiders.pruneCorners(s.corners, tiles, 'garden'); // kúty, ktoré budova zakryla
@@ -832,10 +838,10 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
   },
   // --- pavúčí hodváb (#23): majster hodvábu a krosná v Dielni (d: { key }) ---
   buyLoom: {
-    keys: d => ({ writes: ['dielna', `save:${d.key}`] }),
+    keys: d => ({ writes: ['dielna', `save:${d.key}`], reads: ['objects'] }),
     run(s, d, ctx) {
       const me = who(ctx), sv = saveOf(s, d.key, ctx);
-      if (!Dielna.nearDielna(me)) ctx.reject('Podíď bližšie k Dielni.');
+      if (!Dielna.nearDielna(me, s.objects)) ctx.reject('Podíď bližšie k Dielni.');
       const err = Dielna.buyLoom(s.dielna, sv);
       if (err) ctx.reject(err);
       ctx.emit(toast$(E.ALL, `🧶 ${nameOf(ctx, d.key)} kúpil(a) do Dielne krosná! Utkajú prikrývku zo ${D.BLANKET_SILK} hodvábu – bez platenia, len to chvíľu trvá. Majster hodvábu sa s dedinkou rozlúčil – už ho tu netreba.`, 'gift'));
@@ -855,10 +861,10 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
     }
   },
   loomStart: {
-    keys: d => ({ writes: ['dielna', `save:${d.key}`] }),
+    keys: d => ({ writes: ['dielna', `save:${d.key}`], reads: ['objects'] }),
     run(s, d, ctx) {
       const me = who(ctx), sv = saveOf(s, d.key, ctx);
-      if (!Dielna.nearDielna(me)) ctx.reject('Podíď bližšie k Dielni.');
+      if (!Dielna.nearDielna(me, s.objects)) ctx.reject('Podíď bližšie k Dielni.');
       const r = Dielna.loomStart(s.dielna, sv, d.key, ctx.tick, ctx.rng.rand());
       if ('err' in r) { ctx.reject(r.err); return; }
       ctx.scheduleUnique(`loomDone:${d.key}`, r.at, 'loomDone', { key: d.key });
@@ -866,10 +872,10 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
     }
   },
   loomTake: {
-    keys: d => ({ writes: ['dielna', `save:${d.key}`] }),
+    keys: d => ({ writes: ['dielna', `save:${d.key}`], reads: ['objects'] }),
     run(s, d, ctx) {
       const me = who(ctx), sv = saveOf(s, d.key, ctx);
-      if (!Dielna.nearDielna(me)) ctx.reject('Podíď bližšie k Dielni.');
+      if (!Dielna.nearDielna(me, s.objects)) ctx.reject('Podíď bližšie k Dielni.');
       const n = Dielna.loomTake(s.dielna, sv, d.key);
       if (!n) ctx.reject('V Dielni na teba nečaká žiadna prikrývka.');
       ctx.emit(toast$(d.key, `🧶 Vzal(a) si si ${n}× hodvábnu prikrývku. Vlož ju do ľadovne – ťukni na ňu s prikrývkou v ruke.`, 'gift'));

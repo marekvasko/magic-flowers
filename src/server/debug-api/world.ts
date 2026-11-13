@@ -5,7 +5,8 @@
 import * as D from '../../shared/data.ts';
 import type { AreaId, Look } from '../../shared/data.ts';
 import type { TileView, VehicleView } from '../../shared/protocol.ts';
-import type { Dock as DockState, Weather } from '../../shared/save.ts';
+import type { Dock as DockState, GardenObject, Weather } from '../../shared/save.ts';
+import * as Obj from '../../shared/objects.ts';
 import * as Ice from '../ice.ts';
 import * as Dock from '../dock.ts';
 import * as Dielna from '../dielna.ts';
@@ -16,7 +17,7 @@ import { keyId } from '../debug.ts';
 import type { DebugState, Tools } from '../debug.ts';
 import type { Tile } from '../world.ts';
 
-type TileSource = Pick<DebugState, 'tiles' | 'hory' | 'pomedzieSeed' | 'lesSeed' | 'les' | 'icehouse' | 'dielna' | 'ground'> & { dock?: unknown };
+type TileSource = Pick<DebugState, 'tiles' | 'hory' | 'pomedzieSeed' | 'lesSeed' | 'les' | 'icehouse' | 'dielna' | 'objects' | 'ground'> & { dock?: unknown };
 // Políčka plochy zo (skopírovaného) stavu sveta – rovnako ako getRoom + tilesView v server.ts
 function areaTiles(state: TileSource, area: AreaId): TileView[] {
   // zem zmenená cheatom (#153) – na kópiu plochy, ako pri getRoom
@@ -34,9 +35,10 @@ function areaTiles(state: TileSource, area: AreaId): TileView[] {
       return t;
     })
   };
-  Ice.applyIcehouse(room.icehouse, room.tiles);
+  const objects = Obj.loadObjects(state.objects); // pozemky budov (#178); staršie uloženia – pôvodné miesta
+  Ice.applyIcehouse(room.icehouse, room.tiles, objects);
   Dock.applyDock(Dock.loadDock(state.dock), room.tiles); // mólo (#160)
-  Dielna.applyDielna(state.dielna, room.tiles);
+  Dielna.applyDielna(state.dielna, room.tiles, objects);
   return ground(room.tiles).map(t => Scav.tileView(t)); // druh divej rastliny ostane skrytý ako v hre
 }
 
@@ -46,6 +48,7 @@ export interface WorldView {
   tiles: TileView[]; players: WorldPlayer[];
   vehicles: VehicleView[];   // fúrik a sane na ploche (#158): vodič a spolujazdec ako odtlačok kľúča (ako hráči)
   dock: DockState | null;   // mólo a loďka (#160), len v záhrade
+  objects: GardenObject[];  // umiestnené objekty (#178), len v záhrade
 }
 
 export default function world(query: URLSearchParams, tools: Pick<Tools, 'load'>): WorldView | null {
@@ -55,7 +58,7 @@ export default function world(query: URLSearchParams, tools: Pick<Tools, 'load'>
   if (!id) {
     const seed = (parseInt(query.get('seed') ?? '', 10) || 0) >>> 0;
     const state: TileSource = { tiles: null, hory: null, pomedzieSeed: seed, lesSeed: seed, les: null, icehouse: { built: false, ice: 0, bl: 0 } };
-    return { room: null, seed, area, w, h, tick: 0, weather: 'sun', tiles: areaTiles(state, area), players: [], vehicles: [], dock: null };
+    return { room: null, seed, area, w, h, tick: 0, weather: 'sun', tiles: areaTiles(state, area), players: [], vehicles: [], dock: null, objects: area === 'garden' ? Obj.defaultLots().list : [] };
   }
   const r = tools.load(id);
   if (!r) return null;
@@ -69,5 +72,5 @@ export default function world(query: URLSearchParams, tools: Pick<Tools, 'load'>
     if (pa !== area || typeof sv.x !== 'number' || typeof sv.y !== 'number') continue;
     players.push({ id: key, name: o ? o.name : null, online: !!o, x: sv.x, y: sv.y, look: sv.look || null });
   }
-  return { room: r.id, source: r.source, seed: area === 'les' ? st.lesSeed : st.pomedzieSeed, area, w, h, tick: st.tick || 0, weather: st.weather || 'sun', tiles: areaTiles(st, area), players, vehicles: Vehicles.debugView(st.vehicles, area, st.tick || 0), dock: area === 'garden' ? Dock.loadDock(st['dock']) : null };
+  return { room: r.id, source: r.source, seed: area === 'les' ? st.lesSeed : st.pomedzieSeed, area, w, h, tick: st.tick || 0, weather: st.weather || 'sun', tiles: areaTiles(st, area), players, vehicles: Vehicles.debugView(st.vehicles, area, st.tick || 0), dock: area === 'garden' ? Dock.loadDock(st['dock']) : null, objects: area === 'garden' ? Obj.loadObjects(st.objects).list : [] };
 }

@@ -4,6 +4,7 @@
 // Hra ho načíta až po štarte ako samostatný kúsok balíka (import('./render3d.ts'), aj s Three.js).
 import * as THREE from 'three';
 import * as D from '../shared/data.ts';
+import * as Obj from '../shared/objects.ts';
 import * as W from '../shared/world3d.ts';
 import type { FineInfo, FineModel, Grid, SunDir } from '../shared/world3d.ts';
 import * as MS from '../shared/mesher.ts';
@@ -500,7 +501,8 @@ export function create(api: Render3DApi): Render3D {
   }
   function drawTile(i: number, se: number, t: number): void {
     const tl = must(S.tiles[i]), x = i % S.W, y = (i / S.W) | 0;
-    Art.ground(gctx, tl.g, x * GT, y * GT, GT, se, t, x, y, tl.g === 'gate' ? gateInfo(x, y) : null, S.area);
+    const lot = tl.g === 'lot' && S.area === 'garden' ? S.objects.find(o => Obj.inRect(Obj.rectAt(o.x, o.y), x, y)) : undefined; // kolíky v rohoch pozemku (#178)
+    Art.ground(gctx, tl.g, x * GT, y * GT, GT, se, t, x, y, tl.g === 'gate' ? gateInfo(x, y) : null, S.area, lot ? { x0: lot.x, y0: lot.y } : null);
     if (tl.s) Art.soil(gctx, tl.s, x * GT, y * GT, GT, se);
   }
   function refreshGround(se: number, t: number, force: boolean): void {

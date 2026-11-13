@@ -1,5 +1,6 @@
 // Čarovná záhrada – klient (#136: TypeScript, jeden balík esbuild; 3D pohľad sa načíta až po štarte ako ďalší kúsok)
 import * as D from '../shared/data.ts';
+import * as Obj from '../shared/objects.ts';
 import * as Bk from '../shared/book.ts';
 import * as TR from './traderow.ts';
 import type { Level } from '../shared/book.ts';
@@ -43,7 +44,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     tiles: [], tick: 0, market: null, board: [], rep: 0, up: {}, canCap: 5, plotLimit: 8, plotsUsed: 0, maxActive: 1, orders: [], orderLimit: 2, box: {}, boxFb: {}, day: 1, min: 390, weather: 'sun', timeAt: 0, tickMs: 1000, daySeconds: 300, mode: 'running', storage: {},
     me: { x: D.SPAWN.x, y: D.SPAWN.y, dir: 0, phase: 0, moving: false, jz: 0, jv: 0, crawl: false }, crawlKey: false, crawlTgl: false, myEmote: null,
     others: new Map(), inv: {}, coins: 0, water: 20, recipes: [], seen: [], vily: false,
-    sel: 'hoe', area: 'garden', areaSeq: 0, W: D.W, H: D.H, tilesGen: 0, storageRate: D.STORAGE_AGE_RATE, icehouse: { built: false, ice: 0, bl: 0 }, dielna: { built: false, loom: false }, loom: { busy: false, mine: null, ready: 0 }, eternal: false, names: [],
+    sel: 'hoe', area: 'garden', areaSeq: 0, W: D.W, H: D.H, tilesGen: 0, storageRate: D.STORAGE_AGE_RATE, icehouse: { built: false, ice: 0, bl: 0 }, dielna: { built: false, loom: false }, loom: { busy: false, mine: null, ready: 0 }, eternal: false, names: [], objects: [],
     keys: {}, stick: { x: 0, y: 0 }, path: null, pendingAct: null, tapMark: null, lastSent: '', sentAt: 0,
     fx: [], screenFx: [], bubbles: {}, modal: null, cauldron: [], brewed: null, brewHint: null, anchors: {}, joined: false,
     skyTaps: [], tipIdx: Math.floor(Math.random() * D.TIPS.length), stuckT: 0,
@@ -209,6 +210,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       case 'brewed': S.brewed = m.k; S.brewHint = m.hint ?? null; S.cauldron = []; sfx(m.k === 'sliz' ? 'bad' : 'magic'); if (S.modal) S.modal.refresh(); break;
       case 'error': alert(m.text); S.joined = false; $('conn').classList.add('hidden'); break;
       case 'vehicles': Veh.onList(m.list); break; // fúrik a sane (#158)
+      case 'objects': S.objects = m.list; break; // pozemky budov (#178); políčka pozemkov prídu v správe tiles
     }
   }
 
@@ -542,7 +544,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
 
   // kde je majster hodvábu teraz (podľa herného času, ako na serveri); null = je preč (leto, zima)
   const masterNow = (): D.MasterPos | null => D.masterAt(S.day, curMin(), S.dielna.loom); // po kúpe krosien už nechodí
-  const onDielnaLot = (tx: number, ty: number): boolean => { const L = D.DIELNA.lot; return tx >= L.x0 && tx <= L.x1 && ty >= L.y0 && ty <= L.y1; };
+  const onDielnaLot = (tx: number, ty: number): boolean => Obj.inRect(Obj.lotRect({ list: S.objects, nid: 0 }, 'dielna'), tx, ty);
   function doAction(tx: number, ty: number): void {
     const a = ctxAction(tx, ty);
     if (!a) return;

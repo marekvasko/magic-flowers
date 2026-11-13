@@ -4,6 +4,7 @@
 // game.ts volá: onList (správa), update (každú snímku), blocks / moved (pohyb), ctxAt (ťuknutie), open, dielnaRows,
 // hotbarSlot, resync (server pohyb odmietol) a icon.
 import * as D from '../shared/data.ts';
+import * as Obj from '../shared/objects.ts';
 import type { ClientMessage, VehicleView } from '../shared/protocol.ts';
 import type { VehicleId } from '../shared/save.ts';
 import * as V from '../shared/vehicles.ts';
@@ -155,8 +156,8 @@ export function createVehicles(dp: VehiclesDeps): ClientVehicles {
 
   function near(v: VehicleView): boolean { return v.area === S.area && Math.hypot(S.me.x - v.x, S.me.y - v.y) <= V.VEHICLE_REACH + 0.3; }
   function atIcehouse(v: VehicleView): boolean {
-    const L = D.ICEHOUSE.lot;
-    return v.area === 'garden' && Math.hypot(v.x - (L.x0 + L.x1 + 1) / 2, v.y - (L.y0 + L.y1 + 1) / 2) <= V.VEHICLE_ICEHOUSE;
+    const L = Obj.lotRect({ list: S.objects, nid: 0 }, 'icehouse'), c = L && Obj.center(L);
+    return !!c && v.area === 'garden' && Math.hypot(v.x - c.x, v.y - c.y) <= V.VEHICLE_ICEHOUSE;
   }
   const send = (op: ClientMessage & { t: 'veh' }): void => { dp.send(op); };
 

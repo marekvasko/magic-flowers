@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import WebSocket from 'ws';
+import * as Obj from '../src/shared/objects.ts';
 import * as D from '../src/shared/data.ts';
 import type { ServerMessage } from '../src/shared/protocol.ts';
 import type { Dielna as DielnaState, PlayerSave, SaveFile } from '../src/shared/save.ts';
@@ -35,8 +36,8 @@ function makeWorld(): W {
     icehouse: { built: true, ice: 12, bl: 0 }, dielna: Dielna.newDielna(), redeem: {}, up: { plots: 1 }, glacierFed: -1, plotsUsed: 0, maxRep: 0,
     tiles: D.buildMap().map(g => ({ g, s: null })), hory: Ice.loadHory(null)
   });
-  Ice.applyIcehouse(w.icehouse, w.tiles);
-  Dielna.applyDielna(w.dielna, w.tiles);
+  w.objects = Obj.defaultLots(); Ice.applyIcehouse(w.icehouse, w.tiles, w.objects);
+  Dielna.applyDielna(w.dielna, w.tiles, w.objects);
   Econ.initEconomy(w);
   for (const key of ['ana', 'bob']) w.saves[key] = partial<PlayerSave>({ coins: 2000, water: 5, inv: { hoe: 1, can: 1, silk: 24 }, fb: {}, recipes: [], seen: [], vily: 0, rep: must(D.REP_LEVELS[2]), up: { can: 0, composter: 0 }, area: 'garden' });
   return Object.assign(w, { presence: [{ key: 'ana', name: 'Ana', area: 'garden' as const, ...DIELNA_AT, scav: null }, { key: 'bob', name: 'Bob', area: 'garden' as const, ...DIELNA_AT, scav: null }] });
@@ -64,7 +65,7 @@ test('mapa: pozemok Dielne vedľa trhu (2×2) a miesto majstra hodvábu medzi tr
   assert.ok(D.BLOCK.dielna && !D.BLOCK.lot && !D.BLOCK.majster, 'miesto majstra je priechodné – majster je postavička, ktorá odchádza');
   assert.ok(!D.TILLABLE.majster, 'na mieste majstra sa nekope');
   const w = makeWorld();
-  w.dielna.built = true; Dielna.applyDielna(w.dielna, w.tiles);
+  w.dielna.built = true; Dielna.applyDielna(w.dielna, w.tiles, w.objects);
   assert.strictEqual(w.tiles.filter(t => t.g === 'dielna').length, 4);
 });
 
@@ -151,7 +152,7 @@ test('Dielňa: na prekopanom pozemku sa nepostaví', () => {
 
 test('krosná: tkajú 2–4 herné hodiny, naraz jednu prikrývku; hotová čaká v Dielni na tkáča', () => {
   const w = makeWorld();
-  w.dielna.built = true; w.dielna.loom = true; Dielna.applyDielna(w.dielna, w.tiles);
+  w.dielna.built = true; w.dielna.loom = true; Dielna.applyDielna(w.dielna, w.tiles, w.objects);
   const t0 = w.tick;
   const r = run(w, act('loomStart', 'ana'), act('loomStart', 'bob'));
   assert.match(reason(r), /pre niekoho iného/);
@@ -259,7 +260,7 @@ test('majster hodvábu: keď sú v Dielni krosná, už nepríde (ani cez deň na
   const w = makeWorld();
   at(w, 'ana', MASTER_AT);
   assert.ok(D.masterAt(1, 12 * 60, false) && D.masterAt(1, 12 * 60, true) === null);
-  w.dielna.built = true; w.dielna.loom = true; Dielna.applyDielna(w.dielna, w.tiles);
+  w.dielna.built = true; w.dielna.loom = true; Dielna.applyDielna(w.dielna, w.tiles, w.objects);
   assert.match(reason(run(w, act('masterWeave', 'ana'))), /majster hodvábu do dedinky nechodí/);
   assert.ok(!save(w, 'ana').inv.blanket);
 });

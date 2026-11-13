@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert';
+import * as Obj from '../src/shared/objects.ts';
 import * as D from '../src/shared/data.ts';
 import type { Ground, ItemId, Season } from '../src/shared/data.ts';
-import type { Icehouse, Inventory, PlayerSave, Soil } from '../src/shared/save.ts';
+import type { Icehouse, Inventory, Objects, PlayerSave, Soil } from '../src/shared/save.ts';
 import { lookup } from '../src/shared/util.ts';
 import * as I from '../src/server/items.ts';
 import * as Ice from '../src/server/ice.ts';
@@ -12,10 +13,10 @@ import { must, parseJson, partial } from './helpers.ts';
 const TPD = D.TICKS_PER_DAY;
 
 // Minimálny svet: záhrada z generátora, hory, sklad
-interface Room { tick: number; storage: StorageSlice; tiles: Tile[]; hory: Tile[]; icehouse: Icehouse; glacierFed: number; players?: { area: D.AreaId; x: number; y: number }[] }
+interface Room { tick: number; storage: StorageSlice; tiles: Tile[]; hory: Tile[]; icehouse: Icehouse; glacierFed: number; objects: Objects; players?: { area: D.AreaId; x: number; y: number }[] }
 function room(tick?: number): Room {
-  const r: Room = { tick: tick || 0, storage: { inv: {}, fb: {} }, tiles: D.buildMap().map(g => ({ g, s: null })), hory: Ice.loadHory(null), icehouse: partial<Icehouse>({ built: false, ice: 0 }), glacierFed: -1 };
-  Ice.applyIcehouse(r.icehouse, r.tiles);
+  const r: Room = { tick: tick || 0, storage: { inv: {}, fb: {} }, tiles: D.buildMap().map(g => ({ g, s: null })), hory: Ice.loadHory(null), icehouse: partial<Icehouse>({ built: false, ice: 0 }), glacierFed: -1, objects: Obj.defaultLots() };
+  Ice.applyIcehouse(r.icehouse, r.tiles, r.objects);
   return r;
 }
 const dawnIce = (r: Room, se: Season, weather: string | null): D.AreaId[] => Ice.dawnIce(r.tiles, r.hory, se, weather);
@@ -167,10 +168,10 @@ test('krompáč sa kupuje raz, s dostatkom mincí', () => {
 
 test('ľadovňa: stavba na pozemku, reputácia, prekopaná zem', () => {
   const r = room(), sv = partial<PlayerSave>({ coins: 1000, rep: 0, inv: {} });
-  const build = () => Ice.buildIcehouse(r.icehouse, r.tiles, sv);
+  const build = () => Ice.buildIcehouse(r.icehouse, r.tiles, sv, r.objects);
   assert.ok(build(), 'bez reputácie nie');
   sv.rep = must(D.REP_LEVELS[D.ICEHOUSE.rep]);
-  const lot = Ice.lotIdx(), lot0 = at(r.tiles, must(lot[0]));
+  const lot = Ice.lotIdx(r.objects), lot0 = at(r.tiles, must(lot[0]));
   lot0.s = partial<Soil>({ k: 'normal' });
   assert.ok(build(), 'na prekopanej zemi nie');
   lot0.s = null;

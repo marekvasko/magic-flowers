@@ -106,7 +106,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     me: { x: D.W / 2, y: D.H / 2, dir: 0, phase: 0, moving: false, jz: 0, jv: 0, crawl: false }, look: null, name: '', id: -1, myEmote: null, mySi: -1, sel: '',
     others, anchors: {}, fx: [], screenFx: [], bubbles: {}, tapMark: null, kbd: false,
     // pavúky (#57, #99): render3d ich kreslí vždy, tu zatiaľ prázdne (pavučiny ani pavúky sa sem nenačítavajú)
-    webs: [], homes: [], websGen: 0, corner: [], cornerGen: 0, spiders: new Map()
+    webs: [], homes: [], websGen: 0, corner: [], cornerGen: 0, spiders: new Map(), objects: []
   };
   let world: WorldView | null = null, worldKey = '', tilesSig = '', loadSeq = 0, offline: WorldPlayer[] = [], panelSig = '';
 
@@ -314,6 +314,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
     const sig = JSON.stringify(w.tiles);
     S.tick = w.tick; S.day = D.dayOfTick(w.tick); S.weather = w.weather;
     if (w.dock) S.dock = w.dock; else delete S.dock; // mólo a loďka (#160)
+    S.objects = w.objects; // pozemky budov (#178): kolíky v rohoch
     if (sig !== tilesSig || S.area !== w.area) {
       tilesSig = sig;
       S.area = w.area; S.W = w.w; S.H = w.h; S.tiles = w.tiles; S.tilesGen++;

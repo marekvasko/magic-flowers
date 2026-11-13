@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
+import * as Obj from '../src/shared/objects.ts';
 import * as D from '../src/shared/data.ts';
 import * as V from '../src/shared/vehicles.ts';
 import type { PlayerSave, SavedTile, VehicleId } from '../src/shared/save.ts';
@@ -39,8 +40,8 @@ function makeWorld(tick = SUMMER): W {
     icehouse: { built: true, ice: 0, bl: 0 }, dielna: { ...Dielna.newDielna(), built: true }, dock: { ...Dock.newDock(), built: true }, redeem: {}, up: { plots: 3 },
     glacierFed: -1, plotsUsed: 0, maxRep: 0, tiles: D.buildMap().map(g => ({ g, s: null })), hory: Ice.loadHory(null), vehicles: V.newVehicles()
   });
-  Ice.applyIcehouse(w.icehouse, w.tiles);
-  Dielna.applyDielna(w.dielna, w.tiles);
+  w.objects = Obj.defaultLots(); Ice.applyIcehouse(w.icehouse, w.tiles, w.objects);
+  Dielna.applyDielna(w.dielna, w.tiles, w.objects);
   Dock.applyDock(w.dock, w.tiles);
   Econ.initEconomy(w);
   const se = D.seasonOf(D.dayOfTick(tick));

@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import WebSocket from 'ws';
+import * as Obj from '../src/shared/objects.ts';
 import * as D from '../src/shared/data.ts';
 import type { ClientMessage, ServerMessage } from '../src/shared/protocol.ts';
 import type { Contracts, Icehouse, Market, PlayerSave } from '../src/shared/save.ts';
@@ -45,7 +46,7 @@ function makeWorld(seed: number): W {
     icehouse: partial<Icehouse>({ built: true, ice: 0 }), up: { plots: 1 }, glacierFed: -1, plotsUsed: 0, maxRep: 0,
     tiles: D.buildMap().map(g => ({ g, s: null })), hory: Ice.loadHory(null)
   });
-  Ice.applyIcehouse(w.icehouse, w.tiles);
+  w.objects = Obj.defaultLots(); Ice.applyIcehouse(w.icehouse, w.tiles, w.objects);
   Econ.initEconomy(w);
   for (const key of ['ana', 'bob']) w.saves[key] = partial<PlayerSave>({ coins: 500, water: 5, inv: { hoe: 1, can: 1 }, fb: {}, recipes: [], seen: [], vily: 0, rep: 0, up: { can: 0, composter: 1 }, area: 'garden' });
   w.presence = [{ key: 'ana', name: 'Ana', area: 'garden', x: Actions.HOUSE.x, y: Actions.HOUSE.y, scav: null }, { key: 'bob', name: 'Bob', area: 'garden', x: Actions.HOUSE.x + 1, y: Actions.HOUSE.y, scav: null }];

@@ -6,7 +6,7 @@
 // typuje ich engine (fáza 3). Správa webbed ide aj klientovi.
 import type { AreaId, BrewHint, Ground, ItemId, Look, PotionId, SpeciesId, UpgradeId } from './data.ts';
 import type { Level } from './book.ts';
-import type { ActiveFestival, Contract, CornerArea, Dock, Icehouse, OrderSide, Plant, Soil, VehicleId, Weather, WorldMode } from './save.ts';
+import type { ActiveFestival, Contract, CornerArea, Dock, GardenObject, Icehouse, OrderSide, Plant, Soil, VehicleId, Weather, WorldMode } from './save.ts';
 
 // ---- Klient → server ----
 export type Emote = 'dance' | 'wave' | 'heart' | 'laugh' | 'flower';
@@ -161,6 +161,7 @@ export type ServerMessage =
   | { t: 'shove'; x: number; y: number }                   // stará pradlena hráča odhodila
   | { t: 'brewed'; k: PotionId; hint?: BrewHint }        // hint len pri slize (rada kotlíka)
   | ({ t: 'dock' } & Dock)                                 // mólo a loďka (#160): stavba, poloha loďky, kto v nej sedí, zima
+  | { t: 'objects'; list: GardenObject[] }                 // umiestnené objekty (#178): pozemky budov
   | { t: 'error'; text: string }
   | { t: 'vehicles'; list: VehicleView[] };                 // fúrik a sane (#158): všetky, pri každej zmene
 export type ServerMessageType = ServerMessage['t'];

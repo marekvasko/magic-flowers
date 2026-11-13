@@ -1,6 +1,7 @@
 // Záložka Mapa na ladiacej stránke (#77): políčka a štatistiky musia sedieť s hrou (shared/data.ts, ice.ts, areas.ts)
 import test from 'node:test';
 import assert from 'node:assert';
+import * as Obj from '../src/shared/objects.ts';
 import * as D from '../src/shared/data.ts';
 import type { AreaId } from '../src/shared/data.ts';
 import type { Plant, SavedHoryTile, SavedTile, Soil } from '../src/shared/save.ts';
@@ -116,8 +117,8 @@ test('mapa: svet – jeho semienko, pôda a rastliny, ľadovňa, ľad a otvory a
   const state = { tiles, hory: savedHory, pomedzieSeed: 991, icehouse: { built: true, ice: 3, bl: 0 }, saves: {}, tick: 0 };
 
   // záhrada ako getRoom v server.ts + applyIcehouse
-  const room = { tiles: garden.map((g, i): Tile => { const sv = must(tiles[i]); const t: Tile = { g, s: sv.s || null }; if (g === 'water' && sv.cut) t.cut = 1; return t; }), icehouse: state.icehouse };
-  Ice.applyIcehouse(room.icehouse, room.tiles);
+  const room = { tiles: garden.map((g, i): Tile => { const sv = must(tiles[i]); const t: Tile = { g, s: sv.s || null }; if (g === 'water' && sv.cut) t.cut = 1; return t; }), icehouse: state.icehouse, objects: Obj.defaultLots() };
+  Ice.applyIcehouse(room.icehouse, room.tiles, room.objects);
   const gm = mapOf(M.buildTiles(D, 'garden', { state }));
   assert.strictEqual(gm.source, 'room');
   assert.deepStrictEqual(gm.tiles.map(t => t.g), room.tiles.map(t => t.g));
@@ -162,7 +163,7 @@ test('mapa: hráči sveta na ploche, online podľa odtlačku kľúča', async ()
 });
 
 test('mapa: zem zmenená cheatom (#153) je na mape sveta, Dielňa tiež; pozemky budov cheat nemení', async () => {
-  const M = await load(), base = D.buildMap(), i = base.findIndex(g => g === 'grass'), lot = must(Ice.lotIdx()[0]);
+  const M = await load(), base = D.buildMap(), i = base.findIndex(g => g === 'grass'), lot = must(Obj.rectIdx(Obj.defaultRect('icehouse'))[0]);
   const map = mapOf(M.buildTiles(D, 'garden', { state: { tick: 0, ground: { garden: { [String(i)]: { g: 'boulder', was: 'grass' } } }, dielna: { built: true, loom: false, job: null, ready: {} } } }));
   assert.strictEqual(must(map.tiles[i]).g, 'boulder');
   assert.strictEqual(must(map.tiles[lot]).g, 'lot');

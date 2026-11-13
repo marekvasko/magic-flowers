@@ -231,10 +231,27 @@ export interface Vehicle {
   passenger: PlayerKey | null;
 }
 export type Vehicles = Record<VehicleId, Vehicle>;
+// ---- Umiestnené objekty (#156, #178): spoločná vrstva nad políčkami ----
+// Zatiaľ len pozemky budov (kind 'lot', v = pre ktorú budovu). Pozemok ostane aj po postavení – drží polohu budovy.
+// Poloha (x, y) = ľavý horný roh na ploche area; o = kto objekt umiestnil (pozemky z generátora ho nemajú).
+export type LotFor = 'icehouse' | 'dielna';
+export interface GardenObject {
+  id: number;
+  area: AreaId;
+  x: number;
+  y: number;
+  kind: 'lot';
+  v: LotFor;
+  o?: PlayerKey;
+}
+export interface Objects {
+  list: GardenObject[];
+  nid: number;
+}
 
 // ---- Celé uloženie ----
 export interface SaveFile {
-  v: 14;
+  v: 15;
   tick: number;
   wall: number;               // reálny čas (ms) k času tick
   mode: WorldMode;
@@ -258,6 +275,7 @@ export interface SaveFile {
   dielna: Dielna;
   redeem: Inventory;          // čo dostane prvý hráč po migrácii v11 a v12 (veci z uvoľnených políčok)
   dock: Dock;
+  objects: Objects;           // umiestnené objekty (#178), od v15
   pomedzieSeed: number;
   up: { plots: number };
   lesSeed: number;
