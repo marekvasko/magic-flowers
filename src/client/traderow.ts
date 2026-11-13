@@ -28,6 +28,7 @@ export interface RowInput {
   have: number;                    // koľko má hráč (predaj)
   coins: number;
   mine: ReadonlySet<string>;       // id vlastných objednávok (sám so sebou sa neobchoduje)
+  own: readonly { p: number; n: number }[];   // vlastné čakajúce objednávky tejto strany (pri nákupe Dopyty, pri predaji Ponuky)
   fresh?: ((i: number) => number) | undefined;   // čerstvosť i-teho predávaného kvetu (postavy platia cena × čerstvosť)
   orderRoom: boolean;              // ešte smie zadať objednávku (limit podľa reputácie)
   state: RowState;
@@ -35,7 +36,7 @@ export interface RowInput {
   busy(on: boolean): void;         // počas ťahania sa okno neprekresľuje
 }
 
-const COL = { ink: '#2b2116', muted: '#7a6a4a', violet: '#6b3fa0', violetSoft: '#ece3f7', violetPale: 'rgba(107,63,160,.32)', bars: '#c9b48a', plot: '#faf3e2' };
+const COL = { ink: '#2b2116', muted: '#7a6a4a', violet: '#6b3fa0', violetSoft: '#ece3f7', violetPale: 'rgba(107,63,160,.32)', edge: '#8b5a2b', bars: '#c9b48a', plot: '#faf3e2' };
 const HANDLE = 30;   // výška pásu s úchytom nad grafom
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 const W = 24; // šírka ikony v páse aj s medzerou
@@ -148,7 +149,9 @@ export function tradeRow(r: RowInput): HTMLElement {
   }
   trade.append(go); row.append(trade);
   const hint = el('div', 'hint'); hint.setAttribute('aria-live', 'polite');
-  if (q) row.append(hint);
+  // vlastné čakajúce objednávky tej istej strany: v grafe šrafovaný stĺpik, pod riadkom krátky popis
+  const ownLine = el('div', 'own');
+  if (q) row.append(hint, ownLine);
 
   let sc: Scale = scaleOf(1, []), price = 1;
   // trhová cena: najlepšia cena v knihe za 1 kus (pri nákupe najlacnejšia ponuka, pri predaji najvyšší dopyt) – nezávisí
@@ -268,12 +271,25 @@ export function tradeRow(r: RowInput): HTMLElement {
       if (left <= 0 || (side === 'buy' ? l.p > price : l.p < price)) break;
       const k = Math.min(l.n, left); taken.set(l.p, (taken.get(l.p) ?? 0) + k); left -= k;
     }
-    const topMax = Math.max(1, ...inBook.values()), hMax = base - top - 12;
+    const topMax = Math.max(1, ...inBook.values(), ...r.own.map(o => o.n)), hMax = base - top - 12;
     for (const [p, k] of inBook) {
       if (p < sc.lo || p > sc.hi) continue;
       const bw = Math.max(3, Math.min(6, (x(p + 0.5) - x(p - 0.5)) * 0.7)), hh = Math.max(3, (k / topMax) * hMax), th = hh * Math.min(1, (taken.get(p) ?? 0) / k);
       g.fillStyle = COL.violetPale; g.fillRect(x(p) - bw / 2, base - hh + th, bw, hh - th);
       if (th > 0) { g.fillStyle = advColor(sc, p, side); g.fillRect(x(p) - bw / 2, base - hh, bw, th); }
+    }
+    // vlastné čakajúce objednávky tejto strany (Dopyt pri nákupe, Ponuka pri predaji): šrafovaný stĺpik s obrysom
+    // vo farbe objednávky – v knihe proti nim obchod nie je, len aby hráč videl, kde jeho objednávka stojí
+    const ownCol = side === 'buy' ? COL.violet : COL.edge;
+    for (const o of r.own) {
+      if (o.p < sc.lo || o.p > sc.hi) continue;
+      const bw = 7, hh = Math.max(6, (o.n / topMax) * hMax), bx = x(o.p) - bw / 2, by = base - hh;
+      g.save(); g.beginPath(); g.rect(bx, by, bw, hh); g.clip();
+      g.fillStyle = side === 'buy' ? 'rgba(107,63,160,.18)' : 'rgba(139,90,43,.18)'; g.fillRect(bx, by, bw, hh);
+      g.strokeStyle = ownCol; g.lineWidth = 1.2;
+      g.beginPath(); for (let k = -bw; k < hh + bw; k += 4) { g.moveTo(bx, by + k + bw); g.lineTo(bx + bw, by + k); } g.stroke();
+      g.restore();
+      g.strokeStyle = ownCol; g.lineWidth = 1.5; g.strokeRect(bx + 0.75, by + 0.75, bw - 1.5, hh - 1.5);
     }
   }
 
@@ -284,7 +300,7 @@ export function tradeRow(r: RowInput): HTMLElement {
       // na posuvníku musí byť predvolená cena, zvolená cena a kniha až kúsok za to, čo by objednávka mohla zobrať
       const reach: number[] = []; let got = 0;
       for (const l of lv) { if (got > n * 2 + 3) break; reach.push(l.p + (side === 'buy' ? 1 : -1)); got += l.n; }
-      sc = scaleOf(market(), trades(), [defPrice(n), ...reach, ...(st.price != null ? [st.price] : [])]);
+      sc = scaleOf(market(), trades(), [defPrice(n), ...reach, ...r.own.map(o => o.p), ...(st.price != null ? [st.price] : [])]);
       if (resetPrice || st.price == null) { st.price = null; price = defPrice(n); }
       else price = st.price;
       price = Math.max(1, Math.round(price));
@@ -309,6 +325,8 @@ export function tradeRow(r: RowInput): HTMLElement {
       // porovnanie s trhovou cenou a koľko kusov je v knihe za túto cenu alebo lepšiu (na všetko to objednávka dosiahne);
       // cena za kus je na úchyte
       const diff = Math.round(Math.abs(price / sc.market - 1) * 100);
+      ownLine.textContent = r.own.length ? `${side === 'buy' ? '🏷️ Tvoj dopyt' : '🏷️ Tvoja ponuka'}: ${r.own.map(o => `${String(o.n)} ks za ${String(o.p)} 🪙`).join(', ')} · v Moje` : '';
+      ownLine.hidden = !r.own.length;
       hint.innerHTML = '';
       if (price === sc.market || !diff) hint.append(el('b', '', 'trhová cena'));
       else { const s = el('span', 'adv', `${String(diff)} % ${price > sc.market ? 'nad' : 'pod'} trhom`); s.style.color = advColor(sc, price, side); hint.append(s); }
