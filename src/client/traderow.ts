@@ -10,12 +10,12 @@
 //    Predvolená cena je tá, za ktorú sa celý počet vybaví naraz.
 //  - Tlačidlo: Kúpiť hneď / Predať hneď (okamžitý príkaz) alebo Dopyt / Ponuka (limitná objednávka), suma a cena za kus.
 // Tovar bez knihy (elixíry, ľad, zvädnuté kvety…) má len pás kusov a tlačidlo – trh ho vykúpi za pevnú cenu.
-import * as Bk from '../shared/book.ts';
-import type { Level } from '../shared/book.ts';
+import * as Qt from '../shared/quote.ts';
+import type { Scale, Side } from '../shared/quote.ts';
 import type { ItemId } from '../shared/data.ts';
 import type { ClientMessage, MarketItemView } from '../shared/protocol.ts';
 
-export type Side = 'buy' | 'sell';
+export type { Side } from '../shared/quote.ts';
 // Čo si riadok pamätá medzi prekresleniami okna (správy zo servera okno prekreslia): počet a zvolená cena
 export interface RowState { n?: number; price?: number | null }
 export interface RowInput {
@@ -48,41 +48,6 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
   return e;
 }
 
-// ---- Mierka posuvníka ----
-interface Scale { market: number; lo: number; hi: number; P: number[]; toX(p: number): number; toP(x: number): number }
-function quantile(tr: readonly [number, number][], q: number): number {
-  const tot = tr.reduce((a, t) => a + t[1], 0);
-  let acc = 0;
-  for (const [p, n] of tr) { acc += n; if (acc >= q * tot) return p; }
-  const last = tr[tr.length - 1];
-  return last ? last[0] : 0;
-}
-// tr = rozdelenie cien [cena, kusy] zoradené podľa ceny
-// must = ceny, ktoré musia byť na posuvníku (predvolená cena, úrovne knihy pre zvolený počet)
-export function scaleOf(market: number, tr: readonly [number, number][], must: readonly number[] = []): Scale {
-  const data = tr.length ? tr : [[market, 1] as [number, number]];
-  const q = [0.1, 0.25, 0.75, 0.9].map(v => quantile(data, v));
-  const reach = Math.max(0, ...must.map(p => Math.abs(p - market) + 2));
-  const span = Math.max(4, reach, Math.ceil(Math.max(market - (q[0] ?? market), (q[3] ?? market) - market) * 1.25));
-  const lo = Math.max(1, market - span), hi = market + span;
-  const count = new Map(data), sum = data.reduce((a, t) => a + t[1], 0), avg = sum / Math.max(1, hi - lo + 1);
-  const weight = (p: number): number => Math.min(1.4, Math.max(0.75, 0.75 + 0.35 * ((count.get(p) ?? 0) + (count.get(p + 1) ?? 0)) / Math.max(1, 2 * avg)));
-  const xs = new Map<number, number>();
-  const half = (a: number, b: number, x0: number): void => {
-    const ws: number[] = [];
-    for (let p = a; p < b; p++) ws.push(weight(p));
-    const s = ws.reduce((x, w) => x + w, 0) || 1;
-    let x = x0; xs.set(a, x);
-    ws.forEach((w, i) => { x += 0.5 * w / s; xs.set(a + i + 1, x); });
-  };
-  half(lo, market, 0); half(market, hi, 0.5);
-  if (lo === market) xs.set(lo, 0.5);
-  const at = (p: number): number => xs.get(p) ?? 0;
-  const toX = (p: number): number => { if (p <= lo) return at(lo); if (p >= hi) return 1; const f = Math.floor(p); return at(f) + (at(f + 1) - at(f)) * (p - f); };
-  const toP = (x: number): number => { if (x <= at(lo)) return lo; for (let p = lo; p < hi; p++) if (x <= at(p + 1)) return p + (x - at(p)) / Math.max(1e-9, at(p + 1) - at(p)); return hi; };
-  const clamp = (v: number): number => Math.max(lo, Math.min(hi, v));
-  return { market, lo, hi, P: [lo, clamp(q[0] ?? market), clamp(q[1] ?? market), market, clamp(q[2] ?? market), clamp(q[3] ?? market), hi], toX, toP };
-}
 // Farba výhodnosti ceny: na trhovej cene čierna, ďalej od nej zelenejšia (lepšie pre hráča) alebo červenšia (horšie)
 function advColor(sc: Scale, price: number, side: Side): string {
   const better = side === 'buy' ? price < sc.market : price > sc.market;
@@ -104,34 +69,11 @@ export function trend(hist: readonly number[], cur: number, side: Side): { angle
 
 export function tradeRow(r: RowInput): HTMLElement {
   const { id, side, q } = r;
-  // kniha, s ktorou riadok obchoduje: lv = objednávky iných, all = aj vlastné. Na vlastnú objednávku server neobchoduje –
-  // prekryv sa v oboch zruší (pri nákupe tvoj tovar z ponuky na vyzdvihnutie, pri predaji záloha dopytu späť) – preto sa
-  // vlastné kusy pri prechode knihou rátajú do počtu, ale za 0 mincí
-  const book: Level[] = q ? (side === 'buy' ? q.a : q.b) : [];
-  const isMine = (l: Level): boolean => !!l.id && r.mine.has(l.id);
-  const lv: Level[] = book.filter(l => !isMine(l)), all = book;
-  const bookAvail = all.reduce((a, l) => a + l.n, 0);
-  // cena, za ktorú sa k kusov vybaví naraz (posledná potrebná úroveň knihy; ak kniha nestačí, jej posledná úroveň)
-  const thresh = (k: number): number | null => { let got = 0, p: number | null = null; for (const l of all) { got += l.n; p = l.p; if (got >= k) break; } return p; };
-  const walk = (k: number, lim: number): { n: number; total: number } => {
-    const ok = all.filter(l => (side === 'buy' ? l.p <= lim : l.p >= lim)).map(l => (isMine(l) ? { p: 0, n: l.n, w: l.w } : l)), w = Bk.walk(ok, k, r.fresh);
-    return { n: w.n, total: w.total };
-  };
-  // čo stojí / vynesie k kusov za cenu p: čo kniha vezme hneď, za jej ceny, a zvyšok (čaká v dopyte / ponuke) za p
-  const quote = (k: number, p: number): { now: boolean; total: number } => {
-    if (!q) return { now: true, total: k * r.fixed };
-    const w = walk(k, p);
-    return { now: w.n >= k, total: w.total + (k - w.n) * p };
-  };
-  // koľko mincí treba mať pri nákupe: okamžitý nákup = súčet, dopyt si server zálohuje celý k × p (rozdiel vráti)
-  const need = (k: number, p: number): number => { const t = quote(k, p); return t.now ? t.total : k * p; };
-  const defPrice = (k: number): number => thresh(k) ?? (q ? q.p : r.fixed);
-  const limit = (): number => {
-    if (side === 'sell') return Math.max(1, r.have);
-    let k = 1;
-    while (k < 99 && need(k + 1, defPrice(k + 1)) <= r.coins) k++;
-    return k;
-  };
+  // ceny riadku (spoločné so serverovými testami, src/shared/quote.ts): kniha, s ktorou riadok obchoduje, a vlastné
+  // objednávky v nej (rátajú sa do počtu za 0 mincí – prekryv sa zruší)
+  const Q = Qt.quoter(q ? (side === 'buy' ? q.a : q.b) : null, side, r.mine, { fixed: r.fixed, fallback: q ? q.p : r.fixed, fresh: r.fresh });
+  const { lv, all, isMine, bookAvail, thresh, walk, quote, need, defPrice } = Q;
+  const limit = (): number => Q.limit(r.coins, r.have);
   const st = r.state;
   let n = Math.max(1, Math.min(limit(), st.n ?? (side === 'sell' ? r.have : 1)));
   st.n = n;
@@ -158,10 +100,10 @@ export function tradeRow(r: RowInput): HTMLElement {
   const ownLine = el('div', 'own');
   if (q) row.append(hint, ownLine);
 
-  let sc: Scale = scaleOf(1, []), price = 1;
+  let sc: Scale = Qt.scaleOf(1, []), price = 1;
   // trhová cena: najlepšia cena v knihe za 1 kus (pri nákupe najlacnejšia ponuka, pri predaji najvyšší dopyt) – nezávisí
   // od zvoleného počtu, takže stred posuvníka a čiara trhu pri zmene počtu stoja na mieste
-  const market = (): number => (q ? lv[0]?.p ?? q.p : r.fixed);
+  const market = (): number => Q.market();
   const trades = (): [number, number][] => {
     if (!q) return [];
     if (q.t.length) return q.t;
@@ -313,7 +255,7 @@ export function tradeRow(r: RowInput): HTMLElement {
       // na posuvníku musí byť predvolená cena, zvolená cena a kniha až kúsok za to, čo by objednávka mohla zobrať
       const reach: number[] = []; let got = 0;
       for (const l of lv) { if (got > n * 2 + 3) break; reach.push(l.p + (side === 'buy' ? 1 : -1)); got += l.n; }
-      sc = scaleOf(market(), trades(), [defPrice(n), ...reach, ...r.own.map(o => o.p), ...(st.price != null ? [st.price] : [])]);
+      sc = Qt.scaleOf(market(), trades(), [defPrice(n), ...reach, ...r.own.map(o => o.p), ...(st.price != null ? [st.price] : [])]);
       if (resetPrice || st.price == null) { st.price = null; price = defPrice(n); }
       else price = st.price;
       price = Math.max(1, Math.round(price));

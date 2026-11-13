@@ -192,7 +192,9 @@ test('vlastný dopyt a ponuka sa neobchodujú: prekryv sa v oboch zruší (zruš
   const ages0 = ages(save(w, 'bob').fb?.[FL], w.tick);
   run(w, act('order', 'bob', { id: FL, side: 'sell', n: 3, p }));
   const coins0 = save(w, 'bob').coins = 5000, tr0 = (must(w.market.books[FL]).tr || []).length, news0 = w.market.news.length;
+  const c0 = coins(w), u0 = units(w, FL);
   const r = E.commitBatch(w, [act('order', 'bob', { id: FL, side: 'buy', n: 5, p: p + 2 })], SPEC);
+  assert.deepStrictEqual([coins(w), units(w, FL)], [c0, u0], 'mince ani kvety nepribudli ani nezmizli');
   assert.ok(r.outbox.some(m => m.to === 'bob' && /sám od seba nekúpiš, prekryv sa zrušil/.test(textOf(m))));
   const mine = players(w, FL);
   assert.strictEqual(mine.length, 1, 'ponuka celá zrušená, v knihe ostal len dopyt');
@@ -210,11 +212,31 @@ test('okamžitý nákup cez vlastnú ponuku: jej prekryv sa zruší (tovar na vy
   run(w, act('order', 'bob', { id: FL, side: 'sell', n: 2, p }));
   run(w, act('order', 'ana', { id: FL, side: 'sell', n: 3, p: p + 5 }));
   save(w, 'bob').coins = 5000;
+  const c0 = coins(w), u0 = units(w, FL);
   run(w, act('buy', 'bob', { id: FL, n: 4, lim: p + 5 }));
+  assert.deepStrictEqual([coins(w), units(w, FL)], [c0, u0], 'mince ani kvety nepribudli ani nezmizli');
   assert.deepStrictEqual([boxed(w, 'bob', FL), save(w, 'bob').inv[FL]], [2, 2], 'vlastné 2 na vyzdvihnutie, 2 kúpené od Any do batohu');
   assert.strictEqual(save(w, 'bob').coins, 5000 - 2 * (p + 5));
   assert.strictEqual(players(w, FL).filter(o => o.pl === 'bob').length, 0, 'bobova ponuka je preč');
   assert.strictEqual(must(players(w, FL).find(o => o.pl === 'ana')).rem, 1);
+  invariants(w);
+});
+
+test('okamžitý predaj do vlastného dopytu: jeho prekryv sa zruší (záloha späť, kusy ostanú v batohu), zvyšok sa predá iným', () => {
+  const w = makeWorld(45), id: ItemId = 'seed_ruza', p = topBid(w, id) + 10;
+  save(w, 'bob').coins = 5000; save(w, 'ana').coins = 5000;
+  give(save(w, 'bob'), id, 6, w.tick);
+  run(w, act('order', 'bob', { id, side: 'buy', n: 3, p }));
+  run(w, act('order', 'ana', { id, side: 'buy', n: 2, p: p - 1 }));
+  const c0 = coins(w), u0 = units(w, id), bob0 = save(w, 'bob').coins;
+  const r = E.commitBatch(w, [act('sell', 'bob', { id, n: 4, lim: p - 1 })], SPEC);
+  assert.deepStrictEqual([coins(w), units(w, id)], [c0, u0], 'mince ani semienka nepribudli ani nezmizli');
+  assert.strictEqual(save(w, 'bob').coins, bob0 + 3 * p + (p - 1), 'záloha 3 zrušených kusov dopytu späť + 1 kus predaný Ane');
+  assert.deepStrictEqual([save(w, 'bob').inv[id], boxed(w, 'bob', id), boxed(w, 'ana', id)], [5, 0, 1], 'bobovi ubudol len predaný kus, Ana ho má na vyzdvihnutie');
+  assert.strictEqual(players(w, id).filter(o => o.pl === 'bob').length, 0, 'bobov dopyt je preč');
+  assert.strictEqual(must(players(w, id).find(o => o.pl === 'ana')).rem, 1);
+  assert.ok(r.outbox.some(m => m.to === 'bob' && /sám sebe nepredáš/.test(textOf(m))));
+  assert.ok(r.outbox.some(m => m.to === 'bob' && /Predané: 1×/.test(textOf(m))));
   invariants(w);
 });
 
@@ -419,4 +441,52 @@ test('graf pri posuvníku: kniha si pamätá obchody (cena, kusy) za posledné d
   assert.deepStrictEqual(Mkt.tradeHist(w.market, FL, w.tick), []);
   run(w, act('buy', 'ana', { id: FL, n: 1, lim: p }));
   assert.deepStrictEqual(must(w.market.books[FL]).tr, [[w.tick, p, 1]]);
+});
+
+// Náhodné poradie všetkého, čo hráči na trhu robia (Dopyt, Ponuka, okamžitý nákup a predaj, zrušenie, vyzdvihnutie)
+// medzi plynúcim časom (vypršanie, vädnutie, návštevy postáv, ráno veľkoobchodník). Po každej akcii: kniha v poriadku
+// a mince aj tovar sa len presunuli (nič nepribudlo ani nezmizlo); po každom posune času: kniha v poriadku.
+test('náhodné poradie akcií a času: kniha je vždy v poriadku, akcie hráčov mince ani tovar nevytvoria ani nezničia', () => {
+  const ITEMS: ItemId[] = [FL, 'seed_ruza', 'compost'], who = ['ana', 'bob'];
+  let actions = 0, applied = 0, steps = 0;
+  for (let seed = 1; seed <= 4; seed++) {
+    let a = seed * 7919 >>> 0;
+    const r = (): number => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 2 ** 32; };
+    const pick = <T>(xs: readonly T[]): T => must(xs[Math.floor(r() * xs.length)]);
+    const w = makeWorld(500 + seed), life = D.SPECIES.ruza.life * TPD;
+    const atStall = (): void => { w.presence = who.map(key => ({ key, name: key, area: 'garden' as const, x: Actions.STALL.x + r() - 0.5, y: Actions.STALL.y + 1, scav: null })); };
+    atStall();
+    for (const key of who) { save(w, key).coins = 3000; for (const id of ITEMS) give(save(w, key), id, 15, w.tick - Math.floor(r() * life * 0.8)); }
+    for (let step = 0; step < 220; step++, steps++) {
+      const x = r();
+      if (x < 0.12) {           // čas plynie (hodiny až deň)
+        w.presence = [];
+        E.advanceTo(w, w.tick + 1 + Math.floor(r() * TPD), SPEC);
+        atStall();
+        invariants(w);
+        continue;
+      }
+      if (x < 0.16) { const key = pick(who); give(save(w, key), pick(ITEMS), 1 + Math.floor(r() * 5), w.tick - Math.floor(r() * life * 0.5)); continue; }
+      const key = pick(who), id = pick(ITEMS), sv = save(w, key);
+      const bid = Mkt.levels(w.market, id, 'buy', w.tick)[0]?.p ?? 5, ask = Mkt.levels(w.market, id, 'sell', w.tick)[0]?.p ?? bid + 5;
+      const near = (p: number): number => Math.max(1, Math.round(p * (0.8 + r() * 0.4)));
+      let input: E.Input;
+      if (x < 0.4) { const side = r() < 0.5 ? 'buy' as const : 'sell' as const; input = act('order', key, { id, side, n: 1 + Math.floor(r() * 5), p: near(side === 'buy' ? bid : ask) }); }
+      else if (x < 0.55) input = act('buy', key, { id, n: 1 + Math.floor(r() * 6), lim: near(ask) });
+      else if (x < 0.7) input = act('sell', key, { id, n: 1 + Math.floor(r() * 6), lim: near(bid) });
+      else if (x < 0.85) { const ids = sv.orders || []; if (!ids.length) continue; input = act('cancelOrder', key, { id: pick(ids) }); }
+      else { const box = Object.keys(sv.box?.inv || {}) as ItemId[]; if (!box.length) continue; input = act('collect', key, { id: pick(box) }); }
+      // zvädnuté kvety nemajú knihu: len batohy a na vyzdvihnutie
+      const wilted = (): number => who.reduce((n, k) => n + (save(w, k).inv.wilted || 0) + boxed(w, k, 'wilted'), 0);
+      // Jano kúpené semienka hneď zasadí (jano_sell prinesie dvakrát toľko kvetov) – tie sa rátajú ako stále jestvujúce.
+      // Dáta udalosti sú v engine neznámeho typu (unknown); jano_sell má { sp, n } (market.ts, npcBought)
+      const planted = (): number => w.events.filter(e => e.type === 'jano_sell' && (e.data as { sp?: string }).sp === 'ruza').reduce((n, e) => n + ((e.data as { n?: number }).n ?? 0) / 2, 0);
+      const all = (): number[] => [...ITEMS.map(i => units(w, i) + (i === 'seed_ruza' ? planted() : 0)), wilted()], c0 = coins(w), u0 = all();
+      const out = run(w, input);
+      actions++; if (out.applied.length) applied++;
+      assert.deepStrictEqual([coins(w), ...all()], [c0, ...u0], `svet ${String(seed)}, krok ${String(step)}: ${input.type} ${JSON.stringify(input.data)}`);
+      invariants(w);
+    }
+  }
+  assert.ok(actions >= 500 && applied >= 300, `akcií: ${String(actions)}, vykonaných: ${String(applied)} (krokov ${String(steps)})`);
 });
