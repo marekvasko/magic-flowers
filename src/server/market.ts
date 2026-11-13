@@ -61,6 +61,8 @@ const isFlower = B.isFlowerItem;
 // mkOf ich vezme z výrezov – buď celý trh a všetky uloženia (udalosti trhu: market:*, save:*), alebo úzke kľúče
 // (akcia hráča nad jedným tovarom: bookKeys).
 export interface Trade { item: ItemId; k: number; pay: number; buyer: Order; seller: Order }
+// Zrušený prekryv dvoch objednávok toho istého hráča: k kusov z dopytu b aj z ponuky a
+export interface SelfCancel { item: ItemId; k: number; buyer: Order; seller: Order }
 // Kontext návrhu, ktorý kniha potrebuje (náhoda, plánovanie vypršania, prítomnosť, správy hráčom)
 export type MkCtx = Pick<GameCtx, 'tick' | 'rng' | 'presence' | 'schedule' | 'scheduleUnique' | 'cancel'> & { emit(msg: Msg): void };
 export interface Mk {
@@ -73,6 +75,7 @@ export interface Mk {
   entry(item: ItemId): { stock: number; fest?: number };
   news(text: string): void;
   trades: Trade[];
+  selfx: SelfCancel[];
   requote: Set<ItemId>;
 }
 export function mkOf(s: GameSlices, ctx: MkCtx, actor: PlayerKey | null): Mk {
@@ -80,7 +83,7 @@ export function mkOf(s: GameSlices, ctx: MkCtx, actor: PlayerKey | null): Mk {
   const seeds = maybe(s, 'market:seed_*'), flowers = maybe(s, 'market:fl_*'), compost = maybe(s, 'market:compost');
   const part = all ?? (seeds && flowers && compost ? { seeds, flowers, compost } : null);
   return {
-    tick: ctx.tick, ctx, actor, trades: [], requote: new Set(),
+    tick: ctx.tick, ctx, actor, trades: [], selfx: [], requote: new Set(),
     book: item => must(all ? all.books[item] : books ? books[item] : maybe(s, `market:book:${item}:*`)),
     npc: id => must(all ? all.npcs[id] : npcs ? npcs[id] : maybe(s, `market:npc:${id}`)),
     save: key => (saves ? saves[key] : maybe(s, `save:${key}`)),
@@ -141,7 +144,7 @@ export function visitItems(m: Market, npc: Trader, tick: number): ItemId[] {
 // Trh nad celým svetom (založenie a prevod trhu pri načítaní)
 export function mkWorld(world: Pick<GameWorld, 'saves' | 'tick'>, m: Market, ctx: MkCtx | null): Mk {
   return {
-    tick: world.tick, ctx, actor: null, trades: [], requote: new Set(),
+    tick: world.tick, ctx, actor: null, trades: [], selfx: [], requote: new Set(),
     book: item => must(m.books[item]), npc: id => m.npcs[id], save: key => world.saves[key], entry: item => entryOf(m, item),
     news: text => { P.news(m, world.tick, text); }
   };
@@ -246,9 +249,29 @@ export function settle(mk: Mk, item: ItemId): void {
 function crossOnce(mk: Mk, item: ItemId): boolean {
   const book = mk.book(item), asks = side(book, 'sell', mk.tick);
   for (const b of side(book, 'buy', mk.tick)) for (const a of asks) {
-    if (a.p <= b.p && !sameOwner(a, b) && fill(mk, item, b, a)) return true;
+    if (a.p > b.p) continue;
+    if (!sameOwner(a, b)) { if (fill(mk, item, b, a)) return true; continue; }
+    if (a.pl != null && selfCancel(mk, item, b, a)) return true;
   }
   return false;
+}
+// Sám so sebou sa neobchoduje (#112): keď sa dopyt a ponuka toho istého hráča prekrývajú, prekrývajúca sa časť sa
+// v oboch zruší (ako „decrement and cancel“ na burze) – nijaký obchod, nijaký záznam v histórii cien ani v správach.
+// Dopytu sa vráti záloha za zrušené kusy (mince hneď), ponuke tovar: z čakajúcej ponuky na vyzdvihnutie na trhu,
+// z okamžitého príkazu späť do batohu (z neho práve odišiel). Postavy sa v knihe len obchádzajú.
+function selfCancel(mk: Mk, item: ItemId, b: Order, a: Order): boolean {
+  const k = Math.min(b.rem, a.rem), sv = mk.save(must(a.pl));
+  if (k <= 0 || !sv) return false;
+  const back = Math.min(b.coins, k * b.p);
+  b.rem -= k; b.coins -= back; sv.coins += back;
+  const batches = takeEscrow(item, a, k, mk.tick);
+  I.addItems(a.ioc ? I.playerC(sv) : boxC(sv), item, k, mk.tick, batches);
+  if (!b.ioc) b.cx = (b.cx || 0) + k;
+  if (!a.ioc) a.cx = (a.cx || 0) + k;
+  mk.selfx.push({ item, k, buyer: { ...b }, seller: { ...a } });
+  if (a.rem <= 0) drop(mk, item, a);
+  if (b.rem <= 0) { if (b.coins > 0) { sv.coins += b.coins; b.coins = 0; } drop(mk, item, b); }
+  return true;
 }
 // Čakajúca strana obchodu (jej limit je cena): okamžitý príkaz nikdy nečaká; cenník veľkoobchodníka čaká vždy (jeho ďalší
 // stupeň nastúpi až po obchode, ale je to stále ten istý vypísaný cenník); inak skôr zadaná objednávka.
@@ -481,7 +504,7 @@ export function wiltOrder(s: GameSlices, item: ItemId, n: number, ctx: GameCtx):
 // ---------- Hráč ----------
 // Okamžitý (ioc) alebo limitný príkaz hráča key nad tovarom item: n kusov za najviac / aspoň p za kus.
 // Vráti chybu (nič sa nestalo) alebo výsledok: vybavené kusy a mince, koľko čaká v knihe.
-export function playerOrder(mk: Mk, item: ItemId, key: PlayerKey, name: string, s: OrderSide, n: number, p: number, ioc: boolean): { err: string } | { got: number; coins: number; rest: number; o: Order } {
+export function playerOrder(mk: Mk, item: ItemId, key: PlayerKey, name: string, s: OrderSide, n: number, p: number, ioc: boolean): { err: string } | { got: number; coins: number; rest: number; cx: number; o: Order } {
   const sv = must(mk.save(key)), tick = mk.tick, sp = speciesOf(item);
   if (!B.isBookItem(item) || D.isTool(item)) return { err: 'Toto sa na trhu neobchoduje.' };
   const minRep = sp && item.startsWith('seed_') ? D.MIN_SEED_REP[sp] : undefined;
@@ -504,13 +527,22 @@ export function playerOrder(mk: Mk, item: ItemId, key: PlayerKey, name: string, 
   settle(mk, item);
   let got = 0, paid = 0;
   for (const t of mk.trades) if ((s === 'buy' ? t.buyer : t.seller).pl === key && (s === 'buy' ? t.buyer : t.seller).n === o.n && t.item === item) { got += t.k; paid += t.pay; }
+  // prekryv s vlastnou objednávkou druhej strany sa zrušil (selfCancel)
+  let cx = 0;
+  for (const x of mk.selfx) if (x.item === item && (s === 'buy' ? x.buyer : x.seller).n === o.n) cx += x.k;
   const live = mk.book(item).orders[String(o.n)];
   if (ioc && live) withdraw(mk, item, live);
-  return { got, coins: paid, rest: !ioc && live ? live.rem : 0, o };
+  return { got, coins: paid, rest: !ioc && live ? live.rem : 0, cx, o };
 }
 
 // Obchody z návrhu oznámi: hráčom v hre správou, ostatným do súhrnu po prihlásení; obchody hráčov (nie s veľkoobchodníkom)
 // aj do správ na trhu. Hráč, ktorý návrh spustil, dostane súhrn od akcie.
+// Správa hráčovi o zrušenom prekryve s jeho vlastnou objednávkou druhej strany (s = strana novej objednávky)
+export function selfCancelText(item: ItemId, s: OrderSide, k: number): string {
+  return s === 'buy'
+    ? `🏷️ ${String(k)}× ${D.itemName(item)} z tvojej ponuky – sám od seba nekúpiš, prekryv sa zrušil; tovar čaká na vyzdvihnutie v Moje.`
+    : `🏷️ ${String(k)}× ${D.itemName(item)} pre tvoj dopyt – sám sebe nepredáš, prekryv sa zrušil; záloha dopytu sa ti vrátila.`;
+}
 export function announce(mk: Mk): void {
   const online = new Set((mk.ctx?.presence || []).map(p => p.key));
   for (const t of mk.trades) {
@@ -760,6 +792,7 @@ export function ordersView(m: Market | null, sv: PlayerSave, tick: number): Orde
     if (!r || !o) continue;
     const v: OrderView = { id, item: r.item, side: o.side, p: o.p, q: o.q, rem: o.rem, coins: o.coins, exp: o.exp };
     if (o.dead) v.dead = o.dead;
+    if (o.cx) v.cx = o.cx;
     const fr = o.side === 'sell' ? freshOf(r.item, o, tick) : undefined;
     if (fr != null) v.fr = fr;
     out.push(v);

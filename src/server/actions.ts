@@ -54,12 +54,13 @@ function instant(s: GameSlices, d: ActionInputs['buy'], side: OrderSide, ctx: Ga
   const mk = Mkt.mkOf(s, ctx, d.key), other = Mkt.side(mk.book(item), side === 'buy' ? 'sell' : 'buy', ctx.tick).some(o => o.pl !== d.key);
   const r = Mkt.playerOrder(mk, item, d.key, nameOf(ctx, d.key), side, d.n, lim, true);
   if ('err' in r) { ctx.reject(r.err); return; }
-  if (!r.got) {
+  if (r.cx) ctx.emit(toast$(d.key, Mkt.selfCancelText(item, side, r.cx), 'gift'));
+  if (!r.got && !r.cx) {
     if (!other) ctx.reject(side === 'buy' ? 'Vypredané. Veľkoobchodník príde o pár dní.' : 'Toto teraz nikto nekúpi.');
     ctx.reject(side === 'buy' ? 'Za túto cenu tu teraz nikto nepredáva.' : 'Za túto cenu to teraz nikto nekúpi.');
   }
   Mkt.announce(mk);
-  ctx.emit(toast$(d.key, `${side === 'buy' ? 'Kúpené' : 'Predané'}: ${String(r.got)}× ${D.itemName(item)} za ${String(r.coins)} 🪙`));
+  if (r.got) ctx.emit(toast$(d.key, `${side === 'buy' ? 'Kúpené' : 'Predané'}: ${String(r.got)}× ${D.itemName(item)} za ${String(r.coins)} 🪙`));
 }
 
 // Dáta akcií hráča (vstupy enginu; key = kľúč konajúceho hráča – server ho doplní, rovnaký ako actor)
@@ -758,10 +759,11 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
       const mk = Mkt.mkOf(s, ctx, d.key), r = Mkt.playerOrder(mk, item, d.key, nameOf(ctx, d.key), d.side, d.n, d.p, false);
       if ('err' in r) { ctx.reject(r.err); return; }
       Mkt.announce(mk);
+      if (r.cx) ctx.emit(toast$(d.key, Mkt.selfCancelText(item, d.side, r.cx), 'gift'));
       const name = D.itemName(item), buy = d.side === 'buy';
       const now = r.got ? `${buy ? 'Kúpené' : 'Predané'} hneď ${String(r.got)}× ${name} za ${String(r.coins)} 🪙${buy ? ' (čaká v Moje)' : ''}. ` : '';
       const wait = r.rest ? `${buy ? 'Dopyt' : 'Ponuka'}: ${String(r.rest)}× ${name} za ${String(d.p)} 🪙/ks čaká v knihe (Moje).` : '';
-      ctx.emit(toast$(d.key, '🏷️ ' + (now + wait).trim(), 'gift'));
+      if (now || wait) ctx.emit(toast$(d.key, '🏷️ ' + (now + wait).trim(), 'gift'));
     }
   },
   // Vyzdvihnutie tovaru z trhu (d: { key, id: tovar }): z Moje → Na vyzdvihnutie do batohu – len pri stánku

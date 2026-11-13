@@ -186,6 +186,38 @@ test('kvety na vyzdvihnutie vädnú ako v batohu: zvädnuté ostanú na trhu, vy
   invariants(w);
 });
 
+test('vlastný dopyt a ponuka sa neobchodujú: prekryv sa v oboch zruší (zrušené kusy), bez obchodu a záznamu v histórii', () => {
+  const w = makeWorld(43), p = topBid(w, FL) + 10, life = D.SPECIES.ruza.life * TPD;
+  give(save(w, 'bob'), FL, 3, w.tick - Math.floor(life / 3));
+  const ages0 = ages(save(w, 'bob').fb?.[FL], w.tick);
+  run(w, act('order', 'bob', { id: FL, side: 'sell', n: 3, p }));
+  const coins0 = save(w, 'bob').coins = 5000, tr0 = (must(w.market.books[FL]).tr || []).length, news0 = w.market.news.length;
+  const r = E.commitBatch(w, [act('order', 'bob', { id: FL, side: 'buy', n: 5, p: p + 2 })], SPEC);
+  assert.ok(r.outbox.some(m => m.to === 'bob' && /sám od seba nekúpiš, prekryv sa zrušil/.test(textOf(m))));
+  const mine = players(w, FL);
+  assert.strictEqual(mine.length, 1, 'ponuka celá zrušená, v knihe ostal len dopyt');
+  const o = must(mine[0]);
+  assert.deepStrictEqual([o.side, o.q, o.rem, o.cx, o.coins], ['buy', 5, 2, 3, 2 * (p + 2)], 'dopyt: 3 zrušené, 2 čakajú so zálohou');
+  assert.strictEqual(save(w, 'bob').coins, coins0 - 2 * (p + 2), 'za zrušené kusy záloha späť');
+  assert.deepStrictEqual(ages(save(w, 'bob').box?.fb[FL], w.tick), ages0, 'kvety z ponuky čakajú na vyzdvihnutie, tie isté s vekom');
+  assert.deepStrictEqual([(must(w.market.books[FL]).tr || []).length, w.market.news.length], [tr0, news0], 'nijaký obchod v histórii ani v správach');
+  invariants(w);
+});
+
+test('okamžitý nákup cez vlastnú ponuku: jej prekryv sa zruší (tovar na vyzdvihnutie), zvyšok sa kúpi od iných', () => {
+  const w = makeWorld(44), p = topBid(w, FL) + 10;
+  give(save(w, 'bob'), FL, 2, w.tick); give(save(w, 'ana'), FL, 3, w.tick);
+  run(w, act('order', 'bob', { id: FL, side: 'sell', n: 2, p }));
+  run(w, act('order', 'ana', { id: FL, side: 'sell', n: 3, p: p + 5 }));
+  save(w, 'bob').coins = 5000;
+  run(w, act('buy', 'bob', { id: FL, n: 4, lim: p + 5 }));
+  assert.deepStrictEqual([boxed(w, 'bob', FL), save(w, 'bob').inv[FL]], [2, 2], 'vlastné 2 na vyzdvihnutie, 2 kúpené od Any do batohu');
+  assert.strictEqual(save(w, 'bob').coins, 5000 - 2 * (p + 5));
+  assert.strictEqual(players(w, FL).filter(o => o.pl === 'bob').length, 0, 'bobova ponuka je preč');
+  assert.strictEqual(must(players(w, FL).find(o => o.pl === 'ana')).rem, 1);
+  invariants(w);
+});
+
 test('zrušenie vráti zálohu; limit otvorených objednávok podľa reputácie; cudziu objednávku zrušiť nejde', () => {
   const w = makeWorld(5), p = Math.max(1, Math.floor(topBid(w, FL) / 2));
   for (let i = 0; i < B.orderLimit(0); i++) assert.strictEqual(run(w, act('order', 'ana', { id: FL, side: 'buy', n: 2, p })).applied.length, 1);

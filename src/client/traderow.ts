@@ -36,7 +36,7 @@ export interface RowInput {
   busy(on: boolean): void;         // počas ťahania sa okno neprekresľuje
 }
 
-const COL = { ink: '#2b2116', muted: '#7a6a4a', violet: '#6b3fa0', violetSoft: '#ece3f7', violetPale: 'rgba(107,63,160,.32)', edge: '#8b5a2b', bars: '#c9b48a', plot: '#faf3e2' };
+const COL = { ink: '#2b2116', muted: '#7a6a4a', violet: '#6b3fa0', violetSoft: '#ece3f7', violetPale: 'rgba(107,63,160,.32)', edge: '#8b5a2b', cancel: '#b3a796', bars: '#c9b48a', plot: '#faf3e2' };
 const HANDLE = 30;   // výška pásu s úchytom nad grafom
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 const W = 24; // šírka ikony v páse aj s medzerou
@@ -104,12 +104,17 @@ export function trend(hist: readonly number[], cur: number, side: Side): { angle
 
 export function tradeRow(r: RowInput): HTMLElement {
   const { id, side, q } = r;
-  const lv: Level[] = q ? (side === 'buy' ? q.a : q.b).filter(l => !l.id || !r.mine.has(l.id)) : [];
-  const bookAvail = lv.reduce((a, l) => a + l.n, 0);
+  // kniha, s ktorou riadok obchoduje: lv = objednávky iných, all = aj vlastné. Na vlastnú objednávku server neobchoduje –
+  // prekryv sa v oboch zruší (pri nákupe tvoj tovar z ponuky na vyzdvihnutie, pri predaji záloha dopytu späť) – preto sa
+  // vlastné kusy pri prechode knihou rátajú do počtu, ale za 0 mincí
+  const book: Level[] = q ? (side === 'buy' ? q.a : q.b) : [];
+  const isMine = (l: Level): boolean => !!l.id && r.mine.has(l.id);
+  const lv: Level[] = book.filter(l => !isMine(l)), all = book;
+  const bookAvail = all.reduce((a, l) => a + l.n, 0);
   // cena, za ktorú sa k kusov vybaví naraz (posledná potrebná úroveň knihy; ak kniha nestačí, jej posledná úroveň)
-  const thresh = (k: number): number | null => { let got = 0, p: number | null = null; for (const l of lv) { got += l.n; p = l.p; if (got >= k) break; } return p; };
+  const thresh = (k: number): number | null => { let got = 0, p: number | null = null; for (const l of all) { got += l.n; p = l.p; if (got >= k) break; } return p; };
   const walk = (k: number, lim: number): { n: number; total: number } => {
-    const ok = lv.filter(l => (side === 'buy' ? l.p <= lim : l.p >= lim)), w = Bk.walk(ok, k, r.fresh);
+    const ok = all.filter(l => (side === 'buy' ? l.p <= lim : l.p >= lim)).map(l => (isMine(l) ? { p: 0, n: l.n, w: l.w } : l)), w = Bk.walk(ok, k, r.fresh);
     return { n: w.n, total: w.total };
   };
   // čo stojí / vynesie k kusov za cenu p: čo kniha vezme hneď, za jej ceny, a zvyšok (čaká v dopyte / ponuke) za p
@@ -264,16 +269,16 @@ export function tradeRow(r: RowInput): HTMLElement {
     }
     // stĺpiky likvidity nad jazdcom: kusy v knihe za každú cenu (všetky objednávky spolu), bledofialové; kusy, ktoré si
     // objednávka s touto cenou a počtom zoberie (od najlepšej ceny), sa zafarbia farbou ceny zhora nadol
-    const inBook = new Map<number, number>(), taken = new Map<number, number>();
+    const inBook = new Map<number, number>(), taken = new Map<number, number>(), ownTaken = new Map<number, number>();
     for (const l of lv) inBook.set(l.p, (inBook.get(l.p) ?? 0) + l.n);
     let left = n;
-    for (const l of lv) {
+    for (const l of all) {
       if (left <= 0 || (side === 'buy' ? l.p > price : l.p < price)) break;
-      const k = Math.min(l.n, left); taken.set(l.p, (taken.get(l.p) ?? 0) + k); left -= k;
+      const k = Math.min(l.n, left), m = isMine(l) ? ownTaken : taken; m.set(l.p, (m.get(l.p) ?? 0) + k); left -= k;
     }
     // vlastné objednávky: tie v knihe, ktorú riadok ukazuje (pri nákupe tvoje Ponuky, pri predaji tvoje Dopyty), sú
-    // šrafovaný kus navrchu stĺpika ceny – sám so sebou hráč neobchoduje, takže sa nikdy nezafarbia ako zobraté; tie
-    // druhej strany (pri nákupe tvoje Dopyty, pri predaji tvoje Ponuky) samostatný šrafovaný stĺpik od osi.
+    // šrafovaný kus navrchu stĺpika ceny; čo by objednávka z nich „zobrala“, sa zruší (sivé, zhora); tie druhej strany
+    // (pri nákupe tvoje Dopyty, pri predaji tvoje Ponuky) samostatný šrafovaný stĺpik od osi.
     // Farba podľa druhu: Dopyt fialový, Ponuka hnedá.
     const bookSide: Side = side === 'buy' ? 'sell' : 'buy';
     const ownAt = (s2: Side): Map<number, number> => { const m = new Map<number, number>(); for (const o of r.own) if (o.side === s2) m.set(o.p, (m.get(o.p) ?? 0) + o.n); return m; };
@@ -286,7 +291,7 @@ export function tradeRow(r: RowInput): HTMLElement {
       g.fillStyle = COL.violetPale; g.fillRect(x(p) - bw / 2, base - hh + th, bw, hh - th);
       if (th > 0) { g.fillStyle = advColor(sc, p, side); g.fillRect(x(p) - bw / 2, base - hh, bw, th); }
     }
-    const hatch = (p: number, k: number, under: number, s2: Side): void => {
+    const hatch = (p: number, k: number, under: number, s2: Side, cut = 0): void => {
       if (p < sc.lo || p > sc.hi) return;
       const col = s2 === 'buy' ? COL.violet : COL.edge, bw = 7, hh = Math.max(6, (k / topMax) * hMax), bx = x(p) - bw / 2, by = base - under - hh;
       g.save(); g.beginPath(); g.rect(bx, by, bw, hh); g.clip();
@@ -294,9 +299,10 @@ export function tradeRow(r: RowInput): HTMLElement {
       g.strokeStyle = col; g.lineWidth = 1.2;
       g.beginPath(); for (let t = -bw; t < hh + bw; t += 4) { g.moveTo(bx, by + t + bw); g.lineTo(bx + bw, by + t); } g.stroke();
       g.restore();
+      if (cut > 0) { g.fillStyle = COL.cancel; g.fillRect(bx, by, bw, hh * Math.min(1, cut / k)); }
       g.strokeStyle = col; g.lineWidth = 1.5; g.strokeRect(bx + 0.75, by + 0.75, bw - 1.5, hh - 1.5);
     };
-    for (const [p, k] of inOwn) hatch(p, k, inBook.has(p) ? Math.max(3, ((inBook.get(p) ?? 0) / topMax) * hMax) : 0, bookSide);
+    for (const [p, k] of inOwn) hatch(p, k, inBook.has(p) ? Math.max(3, ((inBook.get(p) ?? 0) / topMax) * hMax) : 0, bookSide, ownTaken.get(p) ?? 0);
     for (const [p, k] of outOwn) hatch(p, k, 0, side);
   }
 
