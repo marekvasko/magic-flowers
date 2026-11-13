@@ -123,6 +123,8 @@ test('čiastočný obchod: dopyt na 5, ponuka 3 → 3 kúpené, 2 čakajú so z�
   assert.match(run(w, act('collect', 'ana', { id: FL })).rejected[0]?.reject ?? '', /pri trhovom stánku/, 'od domčeka sa nevyzdvihne');
   for (const t of ['buy', 'sell'] as const) assert.match(run(w, act(t, 'ana', { id: FL, n: 1, lim: p })).rejected[0]?.reject ?? '', /pri trhovom stánku/, `od domčeka sa ani ${t === 'buy' ? 'nekúpi' : 'nepredá'}`);
   assert.match(run(w, act('order', 'ana', { id: FL, side: 'buy', n: 1, p })).rejected[0]?.reject ?? '', /pri trhovom stánku/, 'ani nezadá objednávka');
+  assert.match(run(w, act('buyTool', 'ana', { id: 'lamp' })).rejected[0]?.reject ?? '', /pri trhovom stánku/, 'ani nekúpi náradie (Vylepšiť je na trhu)');
+  assert.match(run(w, act('upgrade', 'ana', { kind: 'can' })).rejected[0]?.reject ?? '', /pri trhovom stánku/, 'ani vylepšenie');
   atStall(w, 'ana');
   run(w, act('collect', 'ana', { id: FL }));
   assert.deepStrictEqual([save(w, 'ana').inv[FL], save(w, 'ana').box], [5, undefined], 'vyzdvihnuté do batohu');
@@ -495,15 +497,15 @@ test('náhodné poradie akcií a času: kniha je vždy v poriadku, akcie hráčo
     const r = (): number => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 2 ** 32; };
     const pick = <T>(xs: readonly T[]): T => must(xs[Math.floor(r() * xs.length)]);
     const w = makeWorld(500 + seed), life = D.SPECIES.ruza.life * TPD;
-    const atStall = (): void => { w.presence = who.map(key => ({ key, name: key, area: 'garden' as const, x: Actions.STALL.x + r() - 0.5, y: Actions.STALL.y + 1, scav: null })); };
-    atStall();
+    const placeAll = (): void => { w.presence = who.map(key => ({ key, name: key, area: 'garden' as const, x: Actions.STALL.x + r() - 0.5, y: Actions.STALL.y + 1, scav: null })); };
+    placeAll();
     for (const key of who) { save(w, key).coins = 3000; for (const id of ITEMS) give(save(w, key), id, 15, w.tick - Math.floor(r() * life * 0.8)); }
     for (let step = 0; step < 220; step++, steps++) {
       const x = r();
       if (x < 0.12) {           // čas plynie (hodiny až deň)
         w.presence = [];
         E.advanceTo(w, w.tick + 1 + Math.floor(r() * TPD), SPEC);
-        atStall();
+        placeAll();
         invariants(w);
         continue;
       }

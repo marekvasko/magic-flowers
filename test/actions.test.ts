@@ -432,6 +432,7 @@ test('ľadovňa a sklad: stavba, naplnenie ľadom pri ľadovni, vylepšenia (spo
   const L = D.ICEHOUSE.lot; pr(w, 0).x = L.x0 + 1; pr(w, 0).y = L.y0 + 1;
   r = E.commitBatch(w, [act('fillIce', 'ana', { n: 2 })], SPEC);
   assert.deepStrictEqual([w.icehouse.ice, save(w, 'ana').inv.ice], [2, 1]);
+  toStall(w, 'ana', 'bob'); // vylepšenia sa kupujú na trhu
   r = E.commitBatch(w, [act('upgrade', 'ana', { kind: 'plots' }), act('upgrade', 'bob', { kind: 'can' })], SPEC);
   assert.deepStrictEqual([w.up.plots, save(w, 'bob').up.can], [2, 1]);
   assert.ok(must(r.applied[0]).writes.has('up') && !must(r.applied[1]).writes.has('up'));
@@ -566,6 +567,7 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
     // predaj kvetu, dar, sklad (pri domčeku nie sú → toast), ľadovňa bez ľadu, zákazka
     A.send({ t: 'sell', id: `fl_${SP}`, n: 1 });
     await A.wait('toast', m => /Predané: 1×/.test(m.text));
+    B.send({ t: 'move', x: px, y: py, dir: 0, ar: 0 }); // späť od stánku
     A.send({ t: 'store', id: `fl_${SP}`, n: 1 });
     await A.wait('toast', m => /Sklad je v domčeku/.test(m.text));
     B.send({ t: 'icehouse', n: 1 });

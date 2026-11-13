@@ -58,14 +58,13 @@ function advColor(sc: Scale, price: number, side: Side): string {
 }
 
 // Trend ceny za posledné dni (TREND_DAYS denných cien späť): farba stopy ceny od sivohnedej (do 3 %) po sýtu zelenú
-// (pohyb hráčovi pomáha: pri nákupe zlacnenie, pri predaji zdraženie) alebo červenú pri 20 %; angle = sklon šípky
-// podľa veľkosti pohybu (rovno → skoro kolmo)
+// (pohyb hráčovi pomáha: pri nákupe zlacnenie, pri predaji zdraženie) alebo červenú pri 20 %
 const TREND_DAYS = 3;
-export function trend(hist: readonly number[], cur: number, side: Side): { angle: number; color: string } {
+export function trend(hist: readonly number[], cur: number, side: Side): { color: string } {
   const old = hist[Math.max(0, hist.length - 1 - TREND_DAYS)] ?? cur, pct = old ? (cur - old) / old : 0, a = Math.abs(pct);
-  if (a < 0.03) return { angle: 0, color: 'rgb(138,122,98)' };
+  if (a < 0.03) return { color: 'rgb(138,122,98)' };
   const good = side === 'buy' ? pct < 0 : pct > 0, k = Math.min(1, a / 0.2) ** 0.7, from = [138, 122, 98], to = good ? [30, 150, 60] : [210, 45, 35];
-  return { angle: Math.min(80, 15 + a / 0.2 * 65) * Math.sign(pct), color: `rgb(${from.map((v, i) => Math.round(v + ((to[i] ?? v) - v) * k)).join(',')})` };
+  return { color: `rgb(${from.map((v, i) => Math.round(v + ((to[i] ?? v) - v) * k)).join(',')})` };
 }
 
 export function tradeRow(r: RowInput): HTMLElement {
@@ -76,7 +75,11 @@ export function tradeRow(r: RowInput): HTMLElement {
   const { lv, all, isMine, bookAvail, thresh, walk, quote, need, defPrice } = Q;
   const limit = (): number => Q.limit(r.coins, r.have);
   const st = r.state;
-  if (side === 'sell' && st.have !== r.have) { delete st.n; st.have = r.have; }
+  // zmena batohu: kto mal zvolené „všetko“, má zas všetko; inak sa zvolený počet len zmenší, ak by ho už nemal
+  if (side === 'sell' && st.have !== r.have) {
+    if (st.n == null || st.n >= (st.have ?? 0)) delete st.n; else st.n = Math.min(st.n, r.have);
+    st.have = r.have;
+  }
   let n = Math.max(1, Math.min(limit(), st.n ?? (side === 'sell' ? r.have : 1)));
   st.n = n;
 
@@ -257,7 +260,9 @@ export function tradeRow(r: RowInput): HTMLElement {
       // na posuvníku musí byť predvolená cena, zvolená cena a kniha až kúsok za to, čo by objednávka mohla zobrať
       const reach: number[] = []; let got = 0;
       for (const l of lv) { if (got > n * 2 + 3) break; reach.push(l.p + (side === 'buy' ? 1 : -1)); got += l.n; }
-      sc = Qt.scaleOf(market(), trades(), [defPrice(n), ...reach, ...r.own.map(o => o.p), ...(st.price != null ? [st.price] : [])]);
+      // vlastné objednávky mierku nenaťahujú (Dopyt za 1 mincu by ju roztiahol na obe strany); mimo mierky ich
+      // ukáže len riadok pod posuvníkom
+      sc = Qt.scaleOf(market(), trades(), [defPrice(n), ...reach, ...(st.price != null ? [st.price] : [])]);
       if (resetPrice || st.price == null) { st.price = null; price = defPrice(n); }
       else price = st.price;
       price = Math.max(1, Math.round(price));
