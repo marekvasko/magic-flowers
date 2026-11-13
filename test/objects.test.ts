@@ -135,6 +135,7 @@ test('cheat: pozemok sa vráti na pôvodné miesto aj odstráni; bez pozemku sa 
   assert.strictEqual(Obj.lotOf(w.objects, 'dielna'), null);
   assert.ok(Obj.rectIdx(D.DIELNA.lot).every(i => must(w.tiles[i]).g === 'grass'));
   assert.deepStrictEqual(rejects(w, { op: 'lot', v: 'dielna', at: null }), ['the building has no lot']);
+  for (const what of ['dielna', 'loom'] as const) assert.deepStrictEqual(rejects(w, { op: 'building', what, on: true }), ['the building has no lot; place one first']);
   save(w, 'ana').coins = 1000; save(w, 'ana').rep = 1000;
   assert.strictEqual(Dielna.buildDielna(w.dielna, w.tiles, save(w, 'ana'), w.objects), 'Pre Dielňu zatiaľ nie je vymeraný pozemok.');
   assert.ok(!Dielna.nearDielna({ area: 'garden', x: 16, y: 28 }, w.objects));

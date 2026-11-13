@@ -159,6 +159,7 @@ export const PROPOSERS: { cheat: GameProposer<CheatData> } = {
         case 'ground': { each(d.is, i => groundAt(s, d.area, i, d.g), ctx); return; }
         case 'building': {
           const tiles = sl(s, 'tile:garden:*'), dl = s.dielna;
+          if (d.on && !Obj.lotOf(s.objects, d.what === 'icehouse' ? 'icehouse' : 'dielna')) ctx.reject('the building has no lot; place one first'); // krosná stavajú aj Dielňu
           if (d.what === 'icehouse') {
             if (d.on && !s.icehouse.built) { s.plotsUsed = Math.max(0, s.plotsUsed - clearLot(tiles, Ice.lotIdx(s.objects))); s.icehouse.built = true; s.icehouse.ice = 0; s.icehouse.bl = 0; }
             if (!d.on && s.icehouse.built) { Ice.setIce(s.icehouse, s.storage, ctx.tick, 0); s.icehouse.built = false; s.icehouse.bl = 0; }
