@@ -5,8 +5,8 @@
 //  - Posuvník ceny: stred = trhová cena (najlepšia cena v knihe za 1 kus – nemení sa s počtom), na oboch stranách rovnaký
 //    počet mincí podľa 10. a 90. percentilu cien obchodov (a celej knihy); každá minca má skoro rovnakú dĺžku (kde sa veľa
 //    obchodovalo, najviac asi 2× dlhšiu). V grafe stĺpiky likvidity: kusy v knihe za každú cenu; kusy, ktoré si objednávka
-//    zoberie, sa zafarbia farbou ceny zhora nadol. Fialová zóna = obchod sa vybaví hneď. Pod čiarou trhu šípka trendu
-//    ceny za posledné dni. Úchyt s cenou a šípkami ‹ › je nad grafom; ťahá sa kdekoľvek po posuvníku.
+//    zoberie, sa zafarbia farbou ceny zhora nadol. Fialová zóna = obchod sa vybaví hneď. Cez graf stopa
+//    ceny po dňoch (zhora najstaršia, slabne; dole dnešná). Úchyt s cenou a šípkami ‹ › je nad grafom; ťahá sa kdekoľvek po posuvníku.
 //    Predvolená cena je tá, za ktorú sa celý počet vybaví naraz.
 //  - Tlačidlo: Kúpiť hneď / Predať hneď (okamžitý príkaz) alebo Dopyt / Ponuka (limitná objednávka), suma a cena za kus.
 // Tovar bez knihy (elixíry, ľad, zvädnuté kvety…) má len pás kusov a tlačidlo – trh ho vykúpi za pevnú cenu.
@@ -90,9 +90,9 @@ function advColor(sc: Scale, price: number, side: Side): string {
   return `rgb(${a.map((v, i) => Math.round(v + ((b[i] ?? v) - v) * t)).join(',')})`;
 }
 
-// Trend ceny za posledné dni (TREND_DAYS denných cien späť): sklon šípky podľa veľkosti pohybu (rovno do 3 %, potom
-// plynulo až skoro kolmo pri 20 %) a farba od sivohnedej po sýtu zelenú (pohyb hráčovi pomáha: pri nákupe zlacnenie,
-// pri predaji zdraženie) alebo červenú
+// Trend ceny za posledné dni (TREND_DAYS denných cien späť): farba stopy ceny od sivohnedej (do 3 %) po sýtu zelenú
+// (pohyb hráčovi pomáha: pri nákupe zlacnenie, pri predaji zdraženie) alebo červenú pri 20 %; angle = sklon šípky
+// podľa veľkosti pohybu (rovno → skoro kolmo)
 const TREND_DAYS = 3;
 export function trend(hist: readonly number[], cur: number, side: Side): { angle: number; color: string } {
   const old = hist[Math.max(0, hist.length - 1 - TREND_DAYS)] ?? cur, pct = old ? (cur - old) / old : 0, a = Math.abs(pct);
@@ -209,7 +209,7 @@ export function tradeRow(r: RowInput): HTMLElement {
       g.setLineDash([2, 2]); g.strokeStyle = COL.violet; g.lineWidth = 1.2;
       g.beginPath(); g.moveTo(edgeX, top); g.lineTo(edgeX, base); g.stroke(); g.setLineDash([]);
     }
-    // os a značky percentilov (bez popisu trhu – ten nesie šípka trendu), čiarkovaná čiara trhu
+    // os a značky percentilov (bez popisu trhu – trh je čiarkovaná čiara), čiarkovaná čiara trhu
     g.strokeStyle = COL.bars; g.lineWidth = 1; g.beginPath(); g.moveTo(6, base + 0.5); g.lineTo(w - 6, base + 0.5); g.stroke();
     g.font = `700 10px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'top';
     const shownAt = [x(sc.market)];
@@ -221,14 +221,28 @@ export function tradeRow(r: RowInput): HTMLElement {
     }
     g.setLineDash([3, 3]); g.strokeStyle = COL.ink; g.globalAlpha = 0.5;
     g.beginPath(); g.moveTo(x(sc.market) + 0.5, top); g.lineTo(x(sc.market) + 0.5, base); g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
-    // šípka trendu pod osou na konci čiary trhu
-    {
-      const t = trend(q.h, q.p, side), a = -t.angle * Math.PI / 180, cx = x(sc.market) + 0.5, cy = base + 8.5, rr = 5.5;
-      const dx = Math.cos(a) * rr, dy = Math.sin(a) * rr, an = Math.atan2(dy, dx), hh = 4;
-      g.strokeStyle = t.color; g.lineWidth = 2.2; g.lineCap = 'round'; g.lineJoin = 'round';
-      g.beginPath(); g.moveTo(cx - dx, cy - dy); g.lineTo(cx + dx, cy + dy);
-      g.moveTo(cx + dx - hh * Math.cos(an - 0.65), cy + dy - hh * Math.sin(an - 0.65)); g.lineTo(cx + dx, cy + dy);
-      g.lineTo(cx + dx - hh * Math.cos(an + 0.65), cy + dy - hh * Math.sin(an + 0.65)); g.stroke();
+    // stopa ceny: denné ceny (q.h, najstaršia hore) a dnešná dole pri osi ako hladká krivka cez graf – zhora slabne
+    // do stratena, dole je najsýtejšia; farba podľa trendu za posledné dni (šedá, zelená / červená). Denné ceny sú
+    // ceny veľkoobchodníka (pri predaji iná úroveň než dopyty), preto sa kreslí pomer k dnešnej cene: stopa končí
+    // na čiare trhu a ukazuje, ako sa cena hýbala
+    const hist = [...q.h, q.p];
+    if (hist.length >= 2 && q.p > 0) {
+      const t = trend(q.h, q.p, side), y0 = top + 4, y1 = base - 3, last = hist.length - 1;
+      const pts = hist.map((p, i): [number, number] => [x(Math.max(sc.lo, Math.min(sc.hi, sc.market * p / q.p))), y0 + (y1 - y0) * i / last]);
+      const at = (i: number): [number, number] => pts[Math.max(0, Math.min(last, i))] ?? [0, 0];
+      const fade = g.createLinearGradient(0, y0, 0, y1);
+      fade.addColorStop(0, t.color.replace('rgb(', 'rgba(').replace(')', ',0)'));
+      fade.addColorStop(1, t.color.replace('rgb(', 'rgba(').replace(')', ',0.85)'));
+      g.strokeStyle = fade; g.lineWidth = 2; g.lineCap = 'round'; g.lineJoin = 'round';
+      g.beginPath(); g.moveTo(...at(0));
+      // Catmull-Rom cez denné body → kubické Bézierove úseky (hladká krivka, prechádza každým dňom)
+      for (let i = 0; i < last; i++) {
+        const [ax, ay] = at(i - 1), [bx, by] = at(i), [cx, cy] = at(i + 1), [dx, dy] = at(i + 2);
+        g.bezierCurveTo(bx + (cx - ax) / 6, by + (cy - ay) / 6, cx - (dx - bx) / 6, cy - (dy - by) / 6, cx, cy);
+      }
+      g.stroke();
+      const [ex, ey] = at(last);
+      g.fillStyle = t.color; g.beginPath(); g.arc(ex, ey, 2.8, 0, Math.PI * 2); g.fill();
     }
     // jazdec: čiara od úchytu po os, úchyt nad grafom (cena a šípky ‹ ›). Pri okraji sa úchyt nevycentruje nad cenou –
     // jeho dolný roh na strane hrotu je vtedy skoro ostrý a hrot z neho plynule vychádza
