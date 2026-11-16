@@ -64,6 +64,7 @@ export const M = {
   APPLE: 80, BLOSSOM_W: 81, BLOSSOM_P: 82, MOSS: 83, LICHEN: 84, STONE_LIGHT: 85,
   LEAF_DARK: 86, LEAF_DARK2: 87, WOOD_END: 88, ROTWOOD: 89, SAP: 90, // Les divov: tmavé lístie obrov, čelo a práchnivé drevo kmeňa, svietiaca živica
   SILK: 91, SILK_DARK: 92, // hodvábne prikrývky (izolácia ľadovne, krosná v Dielni)
+  SOIL: 93, // hlina v prázdnych truhlíkoch a črepníkoch (#182)
   INVIS: 63 // neviditeľná náhrada jemného modelu v hrubej mriežke (tieň, zatienenie, výber)
 };
 // Farby podľa ročného obdobia [jar, leto, jeseň, zima]; emis = svieti v noci
@@ -90,7 +91,7 @@ export const PALETTE: Readonly<Partial<Record<MatId, readonly string[]>>> = {
   [M.MOSS]: ['#6f9a3c', '#5f8a34', '#7d7a36', '#6f9a3c'], [M.LICHEN]: ['#c9c27a'], [M.STONE_LIGHT]: ['#b3aea6'],
   [M.LEAF_DARK]: ['#2f5a2c', '#24482a', '#7a4a22', '#24482a'], [M.LEAF_DARK2]: ['#26502a', '#1d3d23', '#5e3a1c', '#1d3d23'],
   [M.WOOD_END]: ['#a8865a'], [M.ROTWOOD]: ['#4a3826'], [M.SAP]: ['#ffcf3a'],
-  [M.SILK]: ['#f3e9d2'], [M.SILK_DARK]: ['#c9b48e']
+  [M.SILK]: ['#f3e9d2'], [M.SILK_DARK]: ['#c9b48e'], [M.SOIL]: ['#4b3524']
 };
 export const EMISSIVE: Readonly<Partial<Record<MatId, string>>> = { [M.WINDOW]: '#ffd27a', [M.BREW]: '#9dffb8', [M.LANTERN]: '#ffe9a8', [M.FIRE]: '#ff9a3a', [M.FLAME]: '#ffe07a', [M.BREW_LIGHT]: '#d8ffe4', [M.SAP]: '#ffd84a' };
 export function colorOf(mat: MatId, season: number): string { const p = PALETTE[mat] || ['#ff00ff']; return (p[Math.min(season, p.length - 1)] || p[0]) ?? '#ff00ff'; }
@@ -230,14 +231,10 @@ function cicmanyHouse(season: number): FineModel {
     fbox(x0, 8, 14, x0 + 3, 12, 14, 0);
     fbox(x0, 8, 13, x0 + 3, 12, 13, (x, y) => (x === x0 + 1 || y === 10) ? M.ORN : M.WINDOW);
     for (let y = 7; y <= 13; y++) for (let x = x0 - 1; x <= x0 + 4; x++) if (y === 7 || y === 13 || x === x0 - 1 || x === x0 + 4) put(x, y, 14, M.ORN);
-    // okenice: tenké dosky na stene; truhlík sa nadol zužuje (klin hore nohami), kvety rôzne vysoké
+    // okenice: tenké dosky na stene; truhlík sa nadol zužuje (klin hore nohami) a je prázdny – len hlina (kvety si doň zasadia hráči)
     for (const xs of [x0 - 3, x0 - 2, x0 + 5, x0 + 6]) for (let y = 8; y <= 12; y++) put(xs, y, 15, y === 10 ? M.LOG_DARK : M.SHUTTER, y === 10 ? SH.doska('z-') : SH.platna('z-'));
     for (let x = x0 - 1; x <= x0 + 4; x++) { put(x, 6, 15, M.PLANK_DARK, SH.klin('z-', 'y-')); put(x, 7, 15, M.PLANK_DARK); put(x, 7, 16, M.PLANK_DARK); }
-    for (let x = x0 - 1; x <= x0 + 4; x++) for (const z of [15, 16]) {
-      const hv = hash(x, 8, z);
-      put(x, 8, z, hv < 0.35 ? M.FL_RED : hv < 0.6 ? M.FL_PINK : M.LEAF, hv >= 0.25 && hash(x, 9, z) < 0.5 ? SH.doska() : 0);
-      if (hv < 0.25) put(x, 9, z, M.FL_RED, SH.hrot());
-    }
+    for (let x = x0 - 1; x <= x0 + 4; x++) for (const z of [15, 16]) put(x, 8, z, x === x0 - 1 || x === x0 + 4 || z === 16 ? M.PLANK_DARK : M.SOIL, z === 15 && x >= x0 && x <= x0 + 3 ? SH.platna() : SH.doska());
   }
   frontWindow(3); frontWindow(17);
   // bočné okná
@@ -297,7 +294,7 @@ function chimneyCap(C: FineCanvas, x0: number, y: number, z0: number): void {
 const strawVar = (x: number, y: number, z: number): MatId => { const h = hash(x, y, z + 7); return (y % 2 === 0 && h < 0.7) || h < 0.2 ? M.STRAW_DARK : M.STRAW; };
 
 // Babkina chalupa: vybielená drevenica s modrým soklom, doškovo-slamená valbová strecha,
-// malé okná s muškátmi, dvere s pántami, komín, zväzky sušených bylín pod odkvapom a lavička.
+// malé okná s prázdnymi črepníkmi, dvere s pántami, komín, zväzky sušených bylín pod odkvapom a lavička.
 function babkaHut(season: number): FineModel {
   const C = fineCanvas(3, 2, 34), { put, fbox } = C;
   fbox(0, 0, 0, 23, 1, 15, stoneVar);                                   // kamenný základ
@@ -307,13 +304,13 @@ function babkaHut(season: number): FineModel {
   C.slopes([M.PLASTER, M.BAND_BLUE, M.LOG_DARK], { y0: 2, y1: 2, mat: stoneVar });         // skosený vrch základu
   for (let x = 1; x <= 22; x++) { put(x, 16, 1, M.LOG_DARK); put(x, 16, 14, M.LOG_DARK); }  // väznica pod strechou
   for (let z = 1; z <= 14; z++) { put(1, 16, z, M.LOG_DARK); put(22, 16, z, M.LOG_DARK); }
-  // predné okná: zapustené sklo, tmavý rám a priečky, kvetináč s muškátom na parapete
+  // predné okná: zapustené sklo, tmavý rám a priečky, prázdne črepníky na parapete
   for (const x0 of [3, 18]) {
     fbox(x0, 7, 14, x0 + 2, 10, 14, 0);
     fbox(x0, 7, 13, x0 + 2, 10, 13, (x, y) => (x === x0 + 1 || y === 9) ? M.PLANK_DARK : M.WINDOW);
     for (let y = 6; y <= 11; y++) for (let x = x0 - 1; x <= x0 + 3; x++) if (y === 6 || y === 11 || x === x0 - 1 || x === x0 + 3) put(x, y, 14, M.PLANK_DARK);
-    // muškáty: črepník sa nadol zužuje, tenká stonka, kvet
-    for (const px of [x0, x0 + 2]) { put(px, 6, 15, M.PLANK_DARK, SH.doska('y+')); put(px, 7, 15, M.CLAY, SH.hrot('y-')); put(px, 8, 15, M.HERB_GREEN, SH.stlpik()); put(px, 9, 15, M.FL_RED, SH.doska()); }
+    // prázdne črepníky na parapete (nadol sa zužujú), v nich len hlina – kvety si do nich zasadia hráči
+    for (const px of [x0, x0 + 2]) { put(px, 6, 15, M.PLANK_DARK, SH.doska('y+')); put(px, 7, 15, M.CLAY, SH.hrot('y-')); put(px, 8, 15, M.SOIL, SH.platna()); }
     put(x0 + 1, 6, 15, M.PLANK_DARK, SH.doska('y+')); // parapet
   }
   // bočné okná
