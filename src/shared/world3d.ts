@@ -256,7 +256,7 @@ function cicmanyHouse(season: number): FineModel {
   fbox(9, 0, 16, 14, 2, 16, M.STONE); fbox(9, 0, 17, 14, 0, 17, M.STONE);
   for (let x = 9; x <= 14; x++) put(x, 1, 17, M.STONE, SH.doska());
   // lampáš pri dverách: visí na tenkom ramene, so strieškou
-  put(16, 11, 15, M.LANTERN); put(16, 12, 15, M.LOG_DARK, SH.hrot()); put(16, 12, 14, M.LOG_DARK, SH.stlpik('z+'));
+  put(16, 11, 15, M.LANTERN); put(16, 12, 15, M.LOG_DARK, SH.zuzeny()); put(16, 12, 14, M.LOG_DARK, SH.stlpik('z+'));
   // strecha: sedlová so šindľami, presah 3 na bokoch a 2 vpredu/vzadu, zapustený štít
   for (let k = 0; k < 10; k++) {
     const y = 19 + k, za = -2 + k, zb = 17 - k;
@@ -313,7 +313,7 @@ function babkaHut(season: number): FineModel {
     fbox(x0, 7, 13, x0 + 2, 10, 13, (x, y) => (x === x0 + 1 || y === 9) ? M.PLANK_DARK : M.WINDOW);
     for (let y = 6; y <= 11; y++) for (let x = x0 - 1; x <= x0 + 3; x++) if (y === 6 || y === 11 || x === x0 - 1 || x === x0 + 3) put(x, y, 14, M.PLANK_DARK);
     // prázdne črepníky na parapete (nadol sa zužujú), v nich len hlina – kvety si do nich zasadia hráči
-    for (const px of [x0, x0 + 2]) { put(px, 6, 15, M.PLANK_DARK, SH.doska('y+')); put(px, 7, 15, M.CLAY, SH.hrot('y-')); put(px, 8, 15, M.SOIL, SH.platna()); }
+    for (const px of [x0, x0 + 2]) { put(px, 6, 15, M.PLANK_DARK, SH.doska('y+')); put(px, 7, 15, M.CLAY, SH.zuzeny('y-')); put(px, 8, 15, M.SOIL, SH.platna()); }
     put(x0 + 1, 6, 15, M.PLANK_DARK, SH.doska('y+')); // parapet
   }
   // bočné okná
@@ -348,7 +348,7 @@ function babkaHut(season: number): FineModel {
     const col = must(herbs[hi++ % herbs.length]);
     // zväzok: hore zviazaný do špičky, dolu sa rozširuje
     put(x, 16, 16, M.ROPE, SH.stlpik());
-    put(x, 15, 16, col, SH.hrot()); put(x, 14, 16, col === M.CHAMOMILE ? M.FL_YELLOW : col); put(x, 13, 16, col);
+    put(x, 15, 16, col, SH.zuzeny()); put(x, 14, 16, col === M.CHAMOMILE ? M.FL_YELLOW : col); put(x, 13, 16, col);
   }
   // lavička pri dverách
   for (const x of [15, 19]) for (const y of [0, 1]) put(x, y, 16, M.PLANK_DARK, SH.stlpik()); // tenké nohy
@@ -410,7 +410,7 @@ function marketStall(season: number): FineModel {
   // kvety a črepníky na zadnej polici
   for (let x = 3; x <= 20; x += 3) { put(x, 10, 0, M.CLAY); put(x, 11, 0, must(fl[(x / 3) % fl.length | 0])); }
   // vrecia so semienkami pri stánku
-  for (const [x, z] of [[-3, 5], [-2, 2], [24, 5]] as const) { fbox(x, 0, z, x + 1, 2, z + 1, M.SACK); put(x, 3, z, M.ROPE, SH.hrot()); }
+  for (const [x, z] of [[-3, 5], [-2, 2], [24, 5]] as const) { fbox(x, 0, z, x + 1, 2, z + 1, M.SACK); put(x, 3, z, M.ROPE, SH.stlpik()); }
   // šikmá markíza: vzadu vyššie, vpredu nižšie, pásy po 3 minikockách, zúbkovaný okraj
   for (let z = -3; z <= 10; z++) {
     const y = 21 - Math.floor((z + 3) / 2);
@@ -430,7 +430,7 @@ function marketStall(season: number): FineModel {
   // písmená na prednej (južnej) strane tabule – tú vidno z predvoleného pohľadu
   (['T', 'R', 'H'] as const).forEach((ch, i) => { FONT[ch].forEach((row, ry) => { row.split('').forEach((bit, rx) => { if (bit === '1') put(7 + i * 4 + rx, 27 - ry, -2, M.ORN); }); }); });
   // lampáš na prednom stĺpiku
-  put(23, 12, 7, M.LANTERN); put(23, 13, 7, M.LOG_DARK, SH.hrot()); put(22, 13, 7, M.LOG_DARK, SH.stlpik('x+'));
+  put(23, 12, 7, M.LANTERN); put(23, 13, 7, M.LOG_DARK, SH.zuzeny()); put(22, 13, 7, M.LOG_DARK, SH.stlpik('x+'));
   if (season === 3) C.snow([M.AWN_RED, M.AWN_WHITE, M.SIGN], 15);
   return C.done();
 }
@@ -710,8 +710,8 @@ function dockModel(season: number): FineModel {
   fbox(1, DOCK_DECK, -2, 6, DOCK_DECK, 17, (x, y, z) => (z % 3 === 0 ? M.PLANK_DARK : M.PLANK)); // dosky naprieč (kúsok na breh)
   fbox(1, DOCK_DECK - 1, -2, 1, DOCK_DECK - 1, 15, M.LOG_DARK); fbox(6, DOCK_DECK - 1, -2, 6, DOCK_DECK - 1, 15, M.LOG_DARK); // nosníky (nad vodou)
   for (const z of [0, 7, 14]) for (const x of [0, 7]) fbox(x, 0, z, x, DOCK_DECK + (z === 0 ? 3 : 1), z, M.LOG); // kolíky
-  put(0, DOCK_DECK + 4, 0, M.LOG_DARK, SH.hrot()); put(7, DOCK_DECK + 4, 0, M.LOG_DARK, SH.hrot()); // zahrotené kolíky
-  for (const z of [7, 14]) for (const x of [0, 7]) put(x, DOCK_DECK + 2, z, M.LOG, SH.hrot());
+  put(0, DOCK_DECK + 4, 0, M.LOG_DARK, SH.zuzeny()); put(7, DOCK_DECK + 4, 0, M.LOG_DARK, SH.zuzeny()); // kolíky so zúženým vrchom
+  for (const z of [7, 14]) for (const x of [0, 7]) put(x, DOCK_DECK + 2, z, M.LOG, SH.zuzeny());
   put(0, DOCK_DECK + 2, 1, M.ROPE, SH.stlpik('z+')); put(0, DOCK_DECK + 2, 2, M.ROPE, SH.stlpik('z+')); put(1, DOCK_DECK + 1, 2, M.ROPE, SH.doska()); // lano na kolíku
   fbox(1, DOCK_DECK + 1, 14, 2, DOCK_DECK + 1, 15, M.SACK); put(5, DOCK_DECK + 1, 15, M.POT); // vrecko a kanvička pri brehu
   if (season === 3) C.snow([M.PLANK, M.PLANK_DARK, M.SACK, M.LOG], DOCK_DECK);
@@ -939,7 +939,7 @@ const PIECES: readonly (readonly [SH.Family, number, MatId])[] = [
   ['nizkyA', SH.nizky('x+')[0], M.AWN_RED], ['nizkyB', SH.nizky('x+')[1], M.AWN_WHITE],
   ['narozieN', SH.narozieN('x+', 'z+'), M.STRAW], ['uzlabieN', SH.uzlabieN('x+', 'z+'), M.ROOF_RED],
   ['doska', SH.doska(), M.PLANK], ['platna', SH.platna(), M.SHUTTER], ['stlpik', SH.stlpik(), M.LOG_DARK],
-  ['hrot', SH.hrot(), M.DARKSTONE], ['strieska', SH.strieska('x+'), M.RIDGE]
+  ['zuzeny', SH.zuzeny(), M.DARKSTONE], ['strieska', SH.strieska('x+'), M.RIDGE]
 ];
 function piecesModel(): FineModel {
   const C = fineCanvas(4, 1, 2);

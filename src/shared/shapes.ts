@@ -80,9 +80,9 @@ const FAMILIES = {
   stlpik: {
     name: 'Stĺpik', arity: 1, build: (ax: Dir) => [DIRS.filter(d => axisOf(d) !== axisOf(ax)).map(d => le(comb([0.25, ONE], [-1, along(d)])))]
   },
-  // hrot: ihlan s vrcholom v strede hornej strany (vrch komína, kolíka, veže)
-  hrot: {
-    name: 'Hrot', arity: 1, build: (up: Dir) => [DIRS.filter(d => axisOf(d) !== axisOf(up)).map(d => le(comb([1, along(up)], [-2, along(d)])))]
+  // zúžený: zrezaný ihlan – plná podstava, hore štvorec polovičnej šírky (vrch kolíka, strieška lampáša, črepník hore nohami)
+  zuzeny: {
+    name: 'Zúžený', arity: 1, build: (up: Dir) => [DIRS.filter(d => axisOf(d) !== axisOf(up)).map(d => le(comb([1, along(up)], [-4, along(d)])))]
   },
   // strieška: hrebeň strechy v jednej bunke – stúpa z oboch strán osi side do stredu
   strieska: {
@@ -217,7 +217,7 @@ export const uzlabieN = (h1: Dir, h2: Dir, up: Dir = 'y+'): number => shapeId('u
 export const doska = (side: Dir = 'y-'): number => shapeId('doska', side);
 export const platna = (side: Dir = 'y-'): number => shapeId('platna', side);
 export const stlpik = (axis: Dir = 'y+'): number => shapeId('stlpik', axis);
-export const hrot = (up: Dir = 'y+'): number => shapeId('hrot', up);
+export const zuzeny = (up: Dir = 'y+'): number => shapeId('zuzeny', up);
 export const strieska = (side: Dir, up: Dir = 'y+'): number => shapeId('strieska', side, up);
 
 // Otočenie o 90° okolo zvislej osi (ako world3d.rotateY: +x → +z → −x → −z): ROT_Y[id] = id otočeného dielika
