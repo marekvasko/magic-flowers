@@ -24,6 +24,7 @@ import * as Ice from './ice.ts';
 import * as Dielna from './dielna.ts';
 import * as Dock from './dock.ts';
 import * as Obj from '../shared/objects.ts';
+import * as Zahon from './zahon.ts';
 import * as Areas from './areas.ts';
 import * as P from './presence.ts';
 import * as Debug from './debug.ts';
@@ -339,7 +340,7 @@ function getRoom(id: string): Room {
   I.syncAll(I.storageC(storageOf(room), room.icehouse), room.tick);
   for (const sv of Object.values(room.saves)) if (sv && sv.inv) I.syncAll(I.playerC(sv), room.tick);
   // odvodené počítadlá sa pri načítaní vždy prepočítajú (staré uloženia ich nemajú; chyba by sa sama opravila)
-  room.plotsUsed = Econ.plotsUsedOf(room.tiles, room.hory);
+  room.plotsUsed = Econ.plotsUsedOf(room.tiles, room.hory, room.objects);
   room.maxRep = Econ.maxRepOf(room.saves);
   const live = E.liveCtx<Presence, Msg>(room, 'ekonomika'); // jediná akcia nad živým svetom: založenie trhu, nástenky a pavučín
   Econ.initEconomy(room, live);
@@ -505,7 +506,7 @@ function velocity(p: Player): { vx: number; vy: number } {
 function playerByKey(room: Room, key: string | undefined): Player | null { for (const p of room.players.values()) if (p.key === key) return p; return null; }
 
 const SIM: E.Spec<Room, Presence, Msg> = {
-  proposers: { ...Events.PROPOSERS, ...Actions.PROPOSERS, ...Spiders.PROPOSERS, ...Dock.PROPOSERS, ...Cheats.PROPOSERS, ...Vehicles.PROPOSERS, ...Vehicles.EVENTS }, periodic: Events.PERIODIC.concat(Spiders.PERIODIC, Vehicles.PERIODIC, Dock.PERIODIC), presence: presenceOf, clock,
+  proposers: { ...Events.PROPOSERS, ...Actions.PROPOSERS, ...Spiders.PROPOSERS, ...Dock.PROPOSERS, ...Cheats.PROPOSERS, ...Vehicles.PROPOSERS, ...Vehicles.EVENTS, ...Zahon.PROPOSERS }, periodic: Events.PERIODIC.concat(Spiders.PERIODIC, Vehicles.PERIODIC, Dock.PERIODIC), presence: presenceOf, clock,
   slice: (world, key) => { const s = Spiders.slice(world, key); return s === undefined ? E.sliceOf(world, key) : s; }, // pavúky: spider:<id>, kz:<plocha>
   // denník najprv (nech záznam nechýba), potom správy hráčom; chyba pri posielaní nesmie zhodiť simuláciu ani server;
   // nakoniec záznam pre ladiacu stránku (kto dávku spustil, rozhodnutia filtra, časy častí)
@@ -617,7 +618,7 @@ function notify(room: Room, out: BatchOut<Presence, Msg>): void {
 }
 // Fúrik a sane (#158) pre klientov: kto ich drží a kto v nich sedí, číslom pripojeného hráča (ako v správe pl)
 // Umiestnené objekty pre klientov (#178): celý zoznam (je krátky)
-function objectsMsg(room: Room): ServerMessage { return { t: 'objects', list: room.objects.list.map(o => ({ ...o })) }; }
+function objectsMsg(room: Room): ServerMessage { return { t: 'objects', list: room.objects.list.map(Zahon.objectView) }; }
 function vehiclesMsg(room: Room): ServerMessage {
   return { t: 'vehicles', list: Vehicles.view(room.vehicles, key => { const p = playerByKey(room, key); return p ? { id: p.id, name: p.name } : null; }) };
 }
@@ -818,6 +819,7 @@ function toInput(room: Room, pl: Player, e: InboxEntry, presence: Presence[], in
     case 'icehouse': return mk('fillIce', { n: Number(m['n']) | 0 });
     case 'buyLoom': case 'masterWeave': case 'loomStart': case 'loomTake': return mk(m.t, {});
     case 'veh': { const v = Vehicles.toInput(m); return v ? mk(v.type, v.data) : no('invalid vehicle message'); } // fúrik a sane (#158)
+    case 'zahon': { if (pl.sleep) return no('player is asleep'); const z = Zahon.toInput(m); return z ? mk(z.type, z.data) : no('invalid záhon message'); } // záhon (#179)
   }
   return no('invalid message');
 }

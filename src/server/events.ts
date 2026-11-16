@@ -6,7 +6,7 @@
 import * as D from '../shared/data.ts';
 import type { Season } from '../shared/data.ts';
 import type { ToastKind } from '../shared/protocol.ts';
-import type { PlayerKey, PlayerSave, Weather } from '../shared/save.ts';
+import type { Plant, PlayerKey, PlayerSave, Soil, Weather } from '../shared/save.ts';
 import { entries, lookup, must } from '../shared/util.ts';
 import * as E from './engine.ts';
 import * as Econ from './economy.ts';
@@ -20,6 +20,7 @@ import * as Scav from './scavenge.ts';
 import * as Dielna from './dielna.ts';
 import * as Vehicles from './vehicles.ts';
 import type { Tile } from './world.ts';
+import * as Obj from '../shared/objects.ts';
 
 const TPD = D.TICKS_PER_DAY;
 
@@ -28,8 +29,12 @@ const TPD = D.TICKS_PER_DAY;
 export function growPlant(tiles: readonly Tile[], i: number, tick: number, se: Season, eternal: boolean): void {
   const t = must(tiles[i]), s = t.s, p = s && s.p;
   if (!s || !p || p.d) return;
+  growOne(p, s, D.isShade(tiles, i % D.W, Math.floor(i / D.W)), tick, se, eternal);
+}
+// Ranný rast jednej rastliny p v pôde s (poliata w, pohnojená r, druh pôdy k) – na políčku aj na bode záhonu (#179)
+export function growOne(p: Plant, s: Pick<Soil, 'w' | 'r' | 'k'>, shade: boolean, tick: number, se: Season, eternal: boolean): void {
+  if (p.d) return;
   const sp = D.SPECIES[p.sp];
-  const x = i % D.W, y = Math.floor(i / D.W);
   const inSeason = sp.seasons.includes(se) || p.b || eternal;
   if (!inSeason) {
     // Mráz zničí všetko nezimné; inak má rastlina 2 dni milosti a kvitnúca vydrží.
@@ -53,7 +58,6 @@ export function growPlant(tiles: readonly Tile[], i: number, tick: number, se: S
   let g = (watered || p.dry < tol) ? 1 : 0;
   let bad = g === 0;
   if (!inSeason) { g *= 0.5; bad = true; }
-  const shade = D.isShade(tiles, x, y);
   const lightOk = sp.light === 'any' || (sp.light === 'shade') === shade;
   if (!lightOk) { g *= 0.5; bad = true; }
   const soilOk = !sp.soil || sp.soil === s.k || (sp.soil === 'sand' && s.k === 'rock') || (sp.soil === 'rich' && s.r);
@@ -67,10 +71,14 @@ export function growPlant(tiles: readonly Tile[], i: number, tick: number, se: S
 // Divá rastlina vyklíčila – hráč sa konečne dozvie, čo z nej bude (saves = uloženia hráčov, kvôli herbáru)
 export function revealWild(tiles: readonly Tile[], saves: Partial<Record<PlayerKey, PlayerSave>>, i: number): void {
   const s = must(tiles[i]).s, p = s && s.p;
-  if (!s || !p || !p.wild || p.d || !(p.prog > 0)) return;
+  if (s && p) revealOne(p, s.o, saves);
+}
+// Divá rastlina p vyklíčila: do herbára pribudne tomu, kto políčko prekopal či záhon položil (owner)
+export function revealOne(p: Plant, owner: PlayerKey, saves: Partial<Record<PlayerKey, PlayerSave>>): void {
+  if (!p.wild || p.d || !(p.prog > 0)) return;
   delete p.wild;
   // do herbára pribudne tomu, kto políčko prekopal (pole je spoločné, preto už bez osobnej správy)
-  const sv = s.o ? saves[s.o] : undefined;
+  const sv = owner ? saves[owner] : undefined;
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- uloženia spred herbára pole seen nemajú
   if (sv && sv.seen && !sv.seen.includes(p.sp)) sv.seen.push(p.sp);
 }
@@ -92,16 +100,21 @@ export interface EventInputs {
 const OWN: { [T in keyof EventInputs]: GameProposer<EventInputs[T]> } = {
   // Ráno o 6:00: rastliny rastú, počasie, ľad, trh, kompostéry a nástenka.
   dawn: {
-    keys: (d, w) => E.mergeKeys({ writes: ['tile:garden:*', 'tile:hory:*', 'save:*', 'scav', 'weather', 'glacierFed'], reads: ['eternal'] }, Econ.DAWN.keys(d, w)),
+    keys: (d, w) => E.mergeKeys({ writes: ['tile:garden:*', 'tile:hory:*', 'save:*', 'scav', 'weather', 'glacierFed', 'objects'], reads: ['eternal'] }, Econ.DAWN.keys(d, w)),
     run(s, d, ctx) {
       const tick = ctx.tick, day = D.dayOfTick(tick), se = D.seasonOf(day), tiles = sl(s, 'tile:garden:*');
       for (let i = 0; i < tiles.length; i++) { growPlant(tiles, i, tick, se, s.eternal); revealWild(tiles, sl(s, 'save:*'), i); }
       const hory = sl(s, 'tile:hory:*'); // vodné kvety v plese (#38)
       for (let i = 0; i < hory.length; i++) growPlant(hory, i, tick, se, s.eternal);
+      // záhony (#179): každý kvet rastie ako na políčku, poliaty a pohnojený je celý záhon naraz
+      const zs = Obj.zahony(s.objects);
+      for (const z of zs) for (const sp of z.spots) if (sp.p) { growOne(sp.p, { w: z.w, r: z.r, k: 'normal' }, D.isShade(tiles, z.x, z.y), tick, se, s.eternal); revealOne(sp.p, z.o, sl(s, 'save:*')); }
+      if ((day - 1) % D.DAYS_PER_SEASON === 0) for (const z of zs) z.r = 0; // kompost v záhone vydrží do konca obdobia
       Scav.prune(s.scav, tick);
       const r = ctx.rng.rand();
       s.weather = se === 3 ? (r < 0.4 ? 'snow' : 'sun') : (r < (se === 0 ? 0.35 : 0.25) ? 'rain' : 'sun');
       for (const t of tiles) if (t.s) t.s.w = s.weather === 'rain' || t.s.k === 'water' ? 1 : 0; // vodné kvety sú vždy poliate
+      for (const z of zs) z.w = s.weather === 'rain' ? 1 : 0;
       // otvory vo vode zamrznú, ľadovec sa topí a v daždi/snehu dorastie – najviac raz za deň (dážď z elixíru pred ránom sa ráta)
       Ice.dawnIce(tiles, sl(s, 'tile:hory:*'), se, s.glacierFed === day ? null : s.weather, Ice.occupied(ctx.presence));
       if (lookup(D.GLACIER_GROW, s.weather)) s.glacierFed = day;

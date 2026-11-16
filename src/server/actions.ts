@@ -12,6 +12,7 @@ import type { FxKind, ToastKind, WishKind } from '../shared/protocol.ts';
 import * as B from '../shared/book.ts';
 import type { Objects, OrderSide, PlayerKey, PlayerSave } from '../shared/save.ts';
 import * as Obj from '../shared/objects.ts';
+import type * as Zahon from './zahon.ts';
 import { keys, lookup, must } from '../shared/util.ts';
 import * as E from './engine.ts';
 import * as Econ from './economy.ts';
@@ -112,7 +113,7 @@ export interface ActionInputs {
   compostWilted: { key: PlayerKey };
 }
 // Vstup z rozkladu kliknutia (resolveAct): akcia hráča alebo akcia s pavučinou
-type ActInputs = ActionInputs & Pick<SpiderInputs, 'pullStart' | 'clearWeb'> & Pick<Dock.DockInputs, 'board' | 'unboard'>;
+type ActInputs = ActionInputs & Pick<SpiderInputs, 'pullStart' | 'clearWeb'> & Pick<Dock.DockInputs, 'board' | 'unboard'> & Pick<Zahon.ZahonInputs, 'zahonPlace'>;
 export type ActInput = { [T in keyof ActInputs]: { type: T; data: ActInputs[T] } }[keyof ActInputs];
 const input = <T extends keyof ActInputs>(type: T, data: ActInputs[T]): { type: T; data: ActInputs[T] } => ({ type, data });
 
@@ -181,10 +182,11 @@ const tileKeys = (idx: readonly number[]): string[] => idx.map(i => `tile:garden
 // Políčka z výrezov ako „pole“ indexované políčkom (pre revealWild a spol.; ostatné miesta sú prázdne)
 function tilesFrom(s: GameSlices, idx: readonly number[]): Tile[] { const t: Tile[] = []; for (const i of idx) t[i] = garden(s, i); return t; }
 // Dážď (elixír, studňa): počasie, polievanie záhrady; živí aj ľadovec, najviac raz za deň (glacierFed)
-const RAIN_KEYS = ['weather', 'tile:garden:*', 'tile:hory:*', 'glacierFed'];
+const RAIN_KEYS = ['weather', 'tile:garden:*', 'tile:hory:*', 'glacierFed', 'objects'];
 function rain(s: GameSlices, ctx: GameCtx): void {
   s.weather = 'rain';
   for (const t of sl(s, 'tile:garden:*')) if (t.s) t.s.w = 1;
+  for (const z of Obj.zahony(s.objects)) z.w = 1; // aj záhony (#179)
   const day = D.dayOfTick(ctx.tick);
   if (s.glacierFed === day) return;
   s.glacierFed = day;
@@ -282,6 +284,15 @@ export function resolveAct(world: GameWorld, presence: readonly Presence[] | nul
       return input('potion', { key, kind: item.slice(3), area, x, y });
     }
     return none();
+  }
+  // Záhon (#179): ťuknutie naň otvorí priblížený pohľad u klienta – tu sa s ním nič nerobí; záhon z lišty sa kladie na čistú trávu
+  if (Obj.zahonAt(world.objects, x, y)) return null;
+  if (item.startsWith('zahon_')) {
+    const v = item.slice(6);
+    if (!D.isZahonFrame(v)) return null;
+    if (t.s) return { toast: 'Najprv zarovnaj motykou.' };
+    if (t.g !== 'grass' || world.objects.list.some(o => o.area === 'garden' && Obj.inRect(Obj.objRect(o), x, y))) return { toast: 'Záhon sa kladie na čistú trávu.' };
+    return input('zahonPlace', { key, i, v });
   }
   // Studňa prianí a voda do krhly
   if (t.g === 'well' && item !== 'can') return input('well', { key });
@@ -422,10 +433,11 @@ export const PROPOSERS: { [T in keyof ActionInputs]: GameProposer<ActionInputs[T
 
   // --- políčka záhrady (d: { key, i }) ---
   till: {
-    keys: d => ({ writes: [`tile:garden:${d.i}`, 'plotsUsed'], reads: ['up', 'weather'] }),
+    keys: d => ({ writes: [`tile:garden:${d.i}`, 'plotsUsed'], reads: ['up', 'weather', 'objects'] }),
     run(s, d, ctx) {
       const t = garden(s, d.i);
       if (t.s) ctx.reject('Tu už je záhon.');
+      if (Obj.zahonAt(s.objects, d.i % D.W, Math.floor(d.i / D.W))) ctx.reject(null); // pod záhonom (#179) sa nekope
       const k = D.TILLABLE[t.g];
       if (!k || t.g === 'ring') ctx.reject(null);
       const lim = Econ.plotLimit(s.up);
