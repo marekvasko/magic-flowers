@@ -2,20 +2,30 @@
 // poloha slnka a mäkké tiene. Zdieľa ho klient (3D vykresľovanie) aj server (neskôr: hodiny slnka pre rastliny).
 import * as D from './data.ts';
 import type { Ground } from './data.ts';
+import * as SH from './shapes.ts';
+import type { Dir } from './shapes.ts';
 import { keys, lookup, must } from './util.ts';
 
 // Materiál podkocky či minikocky (číslo z M; 0 = vzduch)
 export type MatId = number;
-// Model z minikociek: rozmery a materiál každej minikocky (data[(z * sy + y) * sx + x])
-export interface FineModel { sx: number; sy: number; sz: number; data: Uint8Array }
+// Model z minikociek: rozmery a materiál každej minikocky (data[(z * sy + y) * sx + x]);
+// shape = dielik každej minikocky (shapes.ts, 0 = plná kocka) – chýba, keď je model len z kociek (#182)
+export interface FineModel { sx: number; sy: number; sz: number; data: Uint8Array; shape?: Uint8Array | undefined }
 // Materiál bodu modelu: číslo alebo podľa polohy (kresba, odtiene)
 export type MatFn = (x: number, y: number, z: number, n: number) => MatId;
 type Shade = MatId | ((x: number, y: number, z: number) => MatId);
 // Plátno modelu s pôdorysom tw × td polí: minikocky, kváder, čiara, sneh na vrchu
+// put(…, s) = dielik s (shapes.ts; bez neho plná kocka), gets = dielik bunky, paint = len materiál (tvar ostane),
+// slopes = vyplní schody strechy klinmi, nárožiami a úžľabiami, round = zaoblí kúty v pôdoryse (pozri fineCanvas)
+export interface SlopeOpts { y0?: number; y1?: number; mat?: Shade; down?: boolean; course?: number }
 export interface FineCanvas extends FineModel {
-  W2: number; D2: number;
-  put: (x: number, y: number, z: number, m: MatId) => void;
+  W2: number; D2: number; shape: Uint8Array;
+  put: (x: number, y: number, z: number, m: MatId, s?: number) => void;
   getf: (x: number, y: number, z: number) => MatId;
+  gets: (x: number, y: number, z: number) => number;
+  paint: (x: number, y: number, z: number, m: MatId) => void;
+  slopes: (mats: readonly MatId[], opts?: SlopeOpts) => void;
+  round: (mats: readonly MatId[], opts?: SlopeOpts) => void;
   fbox: (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, m: Shade) => void;
   line: (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, m: MatId) => void;
   snow: (mats: readonly MatId[], minY?: number) => void;
@@ -54,6 +64,7 @@ export const M = {
   APPLE: 80, BLOSSOM_W: 81, BLOSSOM_P: 82, MOSS: 83, LICHEN: 84, STONE_LIGHT: 85,
   LEAF_DARK: 86, LEAF_DARK2: 87, WOOD_END: 88, ROTWOOD: 89, SAP: 90, // Les divov: tmavé lístie obrov, čelo a práchnivé drevo kmeňa, svietiaca živica
   SILK: 91, SILK_DARK: 92, // hodvábne prikrývky (izolácia ľadovne, krosná v Dielni)
+  SOIL: 93, // hlina v prázdnych truhlíkoch a črepníkoch (#182)
   INVIS: 63 // neviditeľná náhrada jemného modelu v hrubej mriežke (tieň, zatienenie, výber)
 };
 // Farby podľa ročného obdobia [jar, leto, jeseň, zima]; emis = svieti v noci
@@ -80,7 +91,7 @@ export const PALETTE: Readonly<Partial<Record<MatId, readonly string[]>>> = {
   [M.MOSS]: ['#6f9a3c', '#5f8a34', '#7d7a36', '#6f9a3c'], [M.LICHEN]: ['#c9c27a'], [M.STONE_LIGHT]: ['#b3aea6'],
   [M.LEAF_DARK]: ['#2f5a2c', '#24482a', '#7a4a22', '#24482a'], [M.LEAF_DARK2]: ['#26502a', '#1d3d23', '#5e3a1c', '#1d3d23'],
   [M.WOOD_END]: ['#a8865a'], [M.ROTWOOD]: ['#4a3826'], [M.SAP]: ['#ffcf3a'],
-  [M.SILK]: ['#f3e9d2'], [M.SILK_DARK]: ['#c9b48e']
+  [M.SILK]: ['#f3e9d2'], [M.SILK_DARK]: ['#c9b48e'], [M.SOIL]: ['#4b3524']
 };
 export const EMISSIVE: Readonly<Partial<Record<MatId, string>>> = { [M.WINDOW]: '#ffd27a', [M.BREW]: '#9dffb8', [M.LANTERN]: '#ffe9a8', [M.FIRE]: '#ff9a3a', [M.FLAME]: '#ffe07a', [M.BREW_LIGHT]: '#d8ffe4', [M.SAP]: '#ffd84a' };
 export function colorOf(mat: MatId, season: number): string { const p = PALETTE[mat] || ['#ff00ff']; return (p[Math.min(season, p.length - 1)] || p[0]) ?? '#ff00ff'; }
@@ -122,28 +133,78 @@ export const FM = 4; // okraj modelu v minikockách (= pol bloku), aby sedel s h
 // Domček v štýle Čičmian: zrub s bielymi ornamentmi, šindľová strecha, okná s okenicami a truhlíkmi.
 // Súradnice fx, fy, fz sú v minikockách od rohu pôdorysu (3×2 polia = 24×16) a od vrchu zeme.
 // Plátno z minikociek pre model s pôdorysom tw × td polí: pomocníci na kocku, kváder, čiaru a sneh.
-function fineCanvas(tw: number, td: number, sy: number): FineCanvas {
+const SIDE4 = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const, DIAG4 = [[1, 1], [1, -1], [-1, 1], [-1, -1]] as const;
+export function fineCanvas(tw: number, td: number, sy: number): FineCanvas {
   const W2 = tw * FINE, D2 = td * FINE, sx = W2 + 2 * FM, sz = D2 + 2 * FM;
-  const data = new Uint8Array(sx * sy * sz);
+  const data = new Uint8Array(sx * sy * sz), shape = new Uint8Array(sx * sy * sz);
   const at = (x: number, y: number, z: number): number => ((z + FM) * sy + y) * sx + (x + FM);
   const ok = (x: number, y: number, z: number): boolean => x >= -FM && x < W2 + FM && y >= 0 && y < sy && z >= -FM && z < D2 + FM;
-  const put = (x: number, y: number, z: number, m: MatId): void => { if (ok(x, y, z)) data[at(x, y, z)] = m; };
+  const put = (x: number, y: number, z: number, m: MatId, s?: number): void => { if (ok(x, y, z)) { data[at(x, y, z)] = m; shape[at(x, y, z)] = m ? s || 0 : 0; } };
+  const paint = (x: number, y: number, z: number, m: MatId): void => { if (m && getf(x, y, z)) data[at(x, y, z)] = m; };
   const getf = (x: number, y: number, z: number): MatId => ok(x, y, z) ? data[at(x, y, z)] ?? 0 : 0;
+  const gets = (x: number, y: number, z: number): number => ok(x, y, z) ? shape[at(x, y, z)] ?? 0 : 0;
   const fbox = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, m: Shade): void => { for (let z = z0; z <= z1; z++) for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) put(x, y, z, typeof m === 'function' ? m(x, y, z) : m); };
   const line = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, m: MatId): void => {
     const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), Math.abs(z1 - z0), 1);
     for (let i = 0; i <= n; i++) put(Math.round(x0 + (x1 - x0) * i / n), Math.round(y0 + (y1 - y0) * i / n), Math.round(z0 + (z1 - z0) * i / n), m);
   };
-  // v zime: najvyššia minikocka vybraných materiálov v každom stĺpci sa zmení na sneh
+  // v zime: najvyššia minikocka vybraných materiálov v každom stĺpci sa zmení na sneh (dielik si nechá tvar)
   const snow = (mats: readonly MatId[], minY?: number): void => {
     for (let z = -FM; z < D2 + FM; z++) for (let x = -FM; x < W2 + FM; x++) for (let y = sy - 1; y >= (minY || 0); y--) {
       const m = getf(x, y, z);
       if (!m) continue;
-      if (mats.includes(m)) put(x, y, z, M.SNOW);
+      if (mats.includes(m)) data[at(x, y, z)] = M.SNOW;
       break;
     }
   };
-  return { sx, sy, sz, data, W2, D2, put, getf, fbox, line, snow, done: () => ({ sx, sy, sz, data }) };
+  // Schody → šikmá plocha: prázdna bunka, ktorá stojí na kocke a z boku sa opiera o kocku z materiálov mats,
+  // dostane dielik podľa toho, o čo sa opiera – o jednu stranu klin, o dve susedné úžľabie, len o roh nárožie.
+  // Materiál je ako bočná kocka (vzor strechy pokračuje), alebo opts.mat. Schody strechy 1 : 1 sa tak vyhladia.
+  // opts.down: to isté hore nohami – bunka visí pod kockou (spodok presahu, brucho hrnca).
+  // opts.course = n: každý n-tý rad (od y0) je nízky – stúpa len do polovice bunky a nad ním ostane schodík
+  // vysoký pol minikocky, ako rad šindľov, ktorý prekrýva ten pod sebou.
+  const cube = (x: number, y: number, z: number): MatId => (gets(x, y, z) ? 0 : getf(x, y, z));
+  const slopes = (mats: readonly MatId[], opts?: SlopeOpts): void => {
+    const todo: [number, number, number, MatId, number][] = [];
+    const inMats = (x: number, y: number, z: number): boolean => { const m = cube(x, y, z); return !!m && mats.includes(m); };
+    const dir = (dx: number, dz: number): Dir => (dx > 0 ? 'x+' : dx < 0 ? 'x-' : dz > 0 ? 'z+' : 'z-');
+    const up: Dir = opts?.down ? 'y-' : 'y+', below = opts?.down ? 1 : -1;
+    for (let y = Math.max(opts?.down ? 0 : 1, opts?.y0 ?? 0); y <= Math.min(sy - (opts?.down ? 2 : 1), opts?.y1 ?? sy - 1); y++) for (let z = -FM; z < D2 + FM; z++) for (let x = -FM; x < W2 + FM; x++) {
+      if (getf(x, y, z) || !cube(x, y + below, z)) continue;
+      const side = SIDE4.filter(([dx, dz]) => inMats(x + dx, y, z + dz));
+      const [a, b] = side;
+      let s = 0, from: readonly [number, number] | undefined = a;
+      const low = !!opts?.course && (y - (opts.y0 ?? 0)) % opts.course === opts.course - 1;
+      if (side.length === 1 && a) s = low ? SH.nizky(dir(a[0], a[1]), up)[0] : SH.klin(dir(a[0], a[1]), up);
+      else if (side.length === 2 && a && b && a[0] !== -b[0]) s = (low ? SH.uzlabieN : SH.uzlabie)(dir(a[0], a[1]), dir(b[0], b[1]), up);
+      else if (!side.length) {
+        const diag = DIAG4.filter(([dx, dz]) => inMats(x + dx, y, z + dz));
+        from = diag[0];
+        if (diag.length === 1 && from) s = (low ? SH.narozieN : SH.narozie)(dir(from[0], 0), dir(0, from[1]), up);
+      }
+      if (!s || !from) continue;
+      const m = opts?.mat;
+      todo.push([x, y, z, m === undefined ? getf(x + from[0], y, z + from[1]) : typeof m === 'function' ? m(x, y, z) : m, s]);
+    }
+    for (const [x, y, z, m, s] of todo) put(x, y, z, m, s);
+  };
+  // Zaoblenie v pôdoryse: prázdna bunka v kúte medzi dvoma kockami z mats dostane zvislý klin (šikmá stena 45°) –
+  // z kruhu poskladaného z kociek je mnohouholník bez zubov
+  const round = (mats: readonly MatId[], opts?: SlopeOpts): void => {
+    const todo: [number, number, number, MatId, number][] = [];
+    const inMats = (x: number, y: number, z: number): boolean => { const m = cube(x, y, z); return !!m && mats.includes(m); };
+    const dir = (dx: number, dz: number, k: number): Dir => (dx * k > 0 ? 'x+' : dx * k < 0 ? 'x-' : dz * k > 0 ? 'z+' : 'z-');
+    for (let y = Math.max(0, opts?.y0 ?? 0); y <= Math.min(sy - 1, opts?.y1 ?? sy - 1); y++) for (let z = -FM; z < D2 + FM; z++) for (let x = -FM; x < W2 + FM; x++) {
+      if (getf(x, y, z)) continue;
+      const side = SIDE4.filter(([dx, dz]) => inMats(x + dx, y, z + dz)), [a, b] = side;
+      if (side.length !== 2 || !a || !b || a[0] === -b[0]) continue;
+      const m = opts?.mat;
+      todo.push([x, y, z, m === undefined ? getf(x + a[0], y, z + a[1]) : typeof m === 'function' ? m(x, y, z) : m, SH.klin(dir(a[0], a[1], 1), dir(b[0], b[1], -1))]);
+    }
+    for (const [x, y, z, m, s] of todo) put(x, y, z, m, s);
+  };
+  // model bez dielikov ostane len z kociek (shape chýba)
+  return { sx, sy, sz, data, shape, W2, D2, put, paint, getf, gets, fbox, line, snow, slopes, round, done: () => (shape.some(v => v) ? { sx, sy, sz, data, shape } : { sx, sy, sz, data }) };
 }
 
 function cicmanyHouse(season: number): FineModel {
@@ -153,6 +214,7 @@ function cicmanyHouse(season: number): FineModel {
   fbox(0, 0, 0, 23, 2, 15, (x, y, z) => hash(x, y, z + 99) < 0.3 ? M.DARKSTONE : M.STONE);
   // zrubové steny: trámy po 3 minikockách, medzi nimi tmavá drážka
   fbox(1, 3, 1, 22, 18, 14, (x, y, z) => outer(x, z) && (y - 3) % 3 === 2 ? M.LOG_DARK : M.LOG);
+  C.slopes([M.LOG, M.LOG_DARK], { y0: 3, y1: 3, mat: stoneVar }); // skosený vrch sokla okolo stien
   // na rohoch prečnievajú konce trámov (striedavo)
   for (let y = 3; y <= 18; y++) {
     if (((y - 3) / 3 | 0) % 2 || (y - 3) % 3 === 2) continue;
@@ -172,10 +234,10 @@ function cicmanyHouse(season: number): FineModel {
     fbox(x0, 8, 14, x0 + 3, 12, 14, 0);
     fbox(x0, 8, 13, x0 + 3, 12, 13, (x, y) => (x === x0 + 1 || y === 10) ? M.ORN : M.WINDOW);
     for (let y = 7; y <= 13; y++) for (let x = x0 - 1; x <= x0 + 4; x++) if (y === 7 || y === 13 || x === x0 - 1 || x === x0 + 4) put(x, y, 14, M.ORN);
-    fbox(x0 - 3, 8, 15, x0 - 2, 12, 15, (x, y) => y === 10 ? M.LOG_DARK : M.SHUTTER);
-    fbox(x0 + 5, 8, 15, x0 + 6, 12, 15, (x, y) => y === 10 ? M.LOG_DARK : M.SHUTTER);
-    fbox(x0 - 1, 6, 15, x0 + 4, 7, 16, M.PLANK_DARK);
-    for (let x = x0 - 1; x <= x0 + 4; x++) for (const z of [15, 16]) { const hv = hash(x, 8, z); put(x, 8, z, hv < 0.35 ? M.FL_RED : hv < 0.6 ? M.FL_PINK : M.LEAF); if (hv < 0.25) put(x, 9, z, M.FL_RED); }
+    // okenice: tenké dosky na stene; truhlík sa nadol zužuje (klin hore nohami) a je prázdny – len hlina (kvety si doň zasadia hráči)
+    for (const xs of [x0 - 3, x0 - 2, x0 + 5, x0 + 6]) for (let y = 8; y <= 12; y++) put(xs, y, 15, y === 10 ? M.LOG_DARK : M.SHUTTER, y === 10 ? SH.doska('z-') : SH.platna('z-'));
+    for (let x = x0 - 1; x <= x0 + 4; x++) { put(x, 6, 15, M.PLANK_DARK, SH.klin('z-', 'y-')); put(x, 7, 15, M.PLANK_DARK); put(x, 7, 16, M.PLANK_DARK); }
+    for (let x = x0 - 1; x <= x0 + 4; x++) for (const z of [15, 16]) put(x, 8, z, x === x0 - 1 || x === x0 + 4 || z === 16 ? M.PLANK_DARK : M.SOIL, z === 15 && x >= x0 && x <= x0 + 3 ? SH.platna() : SH.doska());
   }
   frontWindow(3); frontWindow(17);
   // bočné okná
@@ -188,10 +250,13 @@ function cicmanyHouse(season: number): FineModel {
   fbox(10, 3, 14, 13, 13, 14, 0);
   fbox(10, 3, 13, 13, 13, 13, (x) => x % 2 ? M.PLANK_DARK : M.DOOR);
   for (let y = 3; y <= 14; y++) for (let x = 9; x <= 14; x++) if (y === 14 || x === 9 || x === 14) put(x, y, 14, M.ORN);
-  put(12, 8, 14, M.HANDLE);
-  fbox(9, 0, 16, 14, 2, 17, M.STONE);
-  // lampáš pri dverách
-  put(16, 11, 15, M.LANTERN); put(16, 12, 15, M.LOG_DARK); put(16, 12, 14, M.LOG_DARK);
+  put(12, 8, 14, M.HANDLE, SH.stlpik('z+'));
+  for (let x = 10; x <= 13; x++) put(x, 3, 15, 0); // prah bez skosenia
+  // dva kamenné schody: vyšší pri dverách, nižší s doskou navrchu
+  fbox(9, 0, 16, 14, 2, 16, M.STONE); fbox(9, 0, 17, 14, 0, 17, M.STONE);
+  for (let x = 9; x <= 14; x++) put(x, 1, 17, M.STONE, SH.doska());
+  // lampáš pri dverách: visí na tenkom ramene, so strieškou
+  put(16, 11, 15, M.LANTERN); put(16, 12, 15, M.LOG_DARK, SH.zuzeny()); put(16, 12, 14, M.LOG_DARK, SH.stlpik('z+'));
   // strecha: sedlová so šindľami, presah 3 na bokoch a 2 vpredu/vzadu, zapustený štít
   for (let k = 0; k < 10; k++) {
     const y = 19 + k, za = -2 + k, zb = 17 - k;
@@ -202,6 +267,9 @@ function cicmanyHouse(season: number): FineModel {
       else if (x >= 1 && x <= 22 && z >= 1 && z <= 14) put(x, y, z, x === 1 || x === 22 ? M.PLANK : M.LOG);
     }
   }
+  const ROOF = [M.SHINGLE, M.SHINGLE_DARK, M.RIDGE, M.PLANK_DARK];
+  C.slopes(ROOF, { y0: 20, course: 3 });  // schody strechy → šikmá plocha, každý tretí rad šindľov so schodíkom
+  C.slopes(ROOF, { y0: 19, down: true }); // aj zospodu presahu
   // ornament a okrúhle okienko v štíte
   for (const xs of [1, 22]) {
     for (let y = 20; y <= 26; y++) for (let z = 3; z <= 12; z++) if (getf(xs, y, z) === M.PLANK && ((y + z) % 3 === 0)) put(xs, y, z, M.ORN);
@@ -209,30 +277,44 @@ function cicmanyHouse(season: number): FineModel {
   }
   // komín
   fbox(16, 19, 4, 18, 31, 6, (x, y, z) => y === 31 ? M.DARKSTONE : hash(x, y, z) < 0.4 ? M.DARKSTONE : M.STONE);
+  chimneyCap(C, 16, 31, 4);
   // v zime sneh na všetkom, čo je navrchu strechy
   if (season === 3) C.snow([M.SHINGLE, M.SHINGLE_DARK, M.RIDGE, M.PLANK_DARK], 19);
   return C.done();
 }
 
 const stoneVar = (x: number, y: number, z: number): MatId => hash(x, y, z + 99) < 0.3 ? M.DARKSTONE : M.STONE;
+// Hlava komína 3 × 3 (y = vrchná vrstva): rozšírená rímsa, nad ňou nízky veniec okolo čierneho prieduchu
+function chimneyCap(C: FineCanvas, x0: number, y: number, z0: number): void {
+  for (let dz = -1; dz <= 3; dz++) for (let dx = -1; dx <= 3; dx++) {
+    const hx: Dir | null = dx < 0 ? 'x+' : dx > 2 ? 'x-' : null, hz: Dir | null = dz < 0 ? 'z+' : dz > 2 ? 'z-' : null;
+    if (hx && hz) C.put(x0 + dx, y, z0 + dz, M.DARKSTONE, SH.narozie(hx, hz, 'y-'));
+    else if (hx || hz) C.put(x0 + dx, y, z0 + dz, M.DARKSTONE, SH.klin(hx ?? hz ?? 'x+', 'y-'));
+    else if (dx === 1 && dz === 1) C.put(x0 + dx, y, z0 + dz, M.POT);
+    else C.put(x0 + dx, y + 1, z0 + dz, M.DARKSTONE, SH.doska());
+  }
+}
 const strawVar = (x: number, y: number, z: number): MatId => { const h = hash(x, y, z + 7); return (y % 2 === 0 && h < 0.7) || h < 0.2 ? M.STRAW_DARK : M.STRAW; };
 
 // Babkina chalupa: vybielená drevenica s modrým soklom, doškovo-slamená valbová strecha,
-// malé okná s muškátmi, dvere s pántami, komín, zväzky sušených bylín pod odkvapom a lavička.
+// malé okná s prázdnymi črepníkmi, dvere s pántami, komín, zväzky sušených bylín pod odkvapom a lavička.
 function babkaHut(season: number): FineModel {
   const C = fineCanvas(3, 2, 34), { put, fbox } = C;
   fbox(0, 0, 0, 23, 1, 15, stoneVar);                                   // kamenný základ
   const outer = (x: number, z: number): boolean => x === 1 || x === 22 || z === 1 || z === 14;
   fbox(1, 2, 1, 22, 16, 14, (x, y, z) => outer(x, z) && y <= 3 ? M.BAND_BLUE : M.PLASTER); // biele steny, modrý sokel
   for (const x of [1, 22]) for (const z of [1, 14]) fbox(x, 2, z, x, 16, z, M.LOG_DARK);   // nárožné trámy
+  C.slopes([M.PLASTER, M.BAND_BLUE, M.LOG_DARK], { y0: 2, y1: 2, mat: stoneVar });         // skosený vrch základu
   for (let x = 1; x <= 22; x++) { put(x, 16, 1, M.LOG_DARK); put(x, 16, 14, M.LOG_DARK); }  // väznica pod strechou
   for (let z = 1; z <= 14; z++) { put(1, 16, z, M.LOG_DARK); put(22, 16, z, M.LOG_DARK); }
-  // predné okná: zapustené sklo, tmavý rám a priečky, kvetináč s muškátom na parapete
+  // predné okná: zapustené sklo, tmavý rám a priečky, prázdne črepníky na parapete
   for (const x0 of [3, 18]) {
     fbox(x0, 7, 14, x0 + 2, 10, 14, 0);
     fbox(x0, 7, 13, x0 + 2, 10, 13, (x, y) => (x === x0 + 1 || y === 9) ? M.PLANK_DARK : M.WINDOW);
     for (let y = 6; y <= 11; y++) for (let x = x0 - 1; x <= x0 + 3; x++) if (y === 6 || y === 11 || x === x0 - 1 || x === x0 + 3) put(x, y, 14, M.PLANK_DARK);
-    for (const px of [x0, x0 + 2]) { put(px, 7, 15, M.CLAY); put(px, 8, 15, M.HERB_GREEN); put(px, 9, 15, M.FL_RED); }
+    // prázdne črepníky na parapete (nadol sa zužujú), v nich len hlina – kvety si do nich zasadia hráči
+    for (const px of [x0, x0 + 2]) { put(px, 6, 15, M.PLANK_DARK, SH.doska('y+')); put(px, 7, 15, M.CLAY, SH.zuzeny('y-')); put(px, 8, 15, M.SOIL, SH.platna()); }
+    put(x0 + 1, 6, 15, M.PLANK_DARK, SH.doska('y+')); // parapet
   }
   // bočné okná
   for (const [xs, xg] of [[22, 21], [1, 2]] as const) {
@@ -243,30 +325,34 @@ function babkaHut(season: number): FineModel {
   // dvere s pántami a prahom
   fbox(10, 2, 14, 13, 12, 14, 0);
   fbox(10, 2, 13, 13, 12, 13, (x) => x === 11 ? M.PLANK_DARK : M.PLANK);
-  for (const y of [4, 10]) { put(10, y, 14, M.DARKSTONE); put(11, y, 14, M.DARKSTONE); }
-  put(13, 7, 14, M.HANDLE);
+  for (const y of [4, 10]) { put(10, y, 14, M.DARKSTONE, SH.platna('z-')); put(11, y, 14, M.DARKSTONE, SH.platna('z-')); } // tenké pánty
+  put(13, 7, 14, M.HANDLE, SH.stlpik('z+'));
   for (let y = 2; y <= 13; y++) for (let x = 9; x <= 14; x++) if (y === 13 || x === 9 || x === 14) put(x, y, 14, M.LOG_DARK);
-  fbox(9, 0, 16, 14, 1, 17, stoneVar);
+  for (let x = 10; x <= 13; x++) put(x, 2, 15, 0); // prah bez skosenia
+  fbox(9, 0, 16, 14, 1, 16, stoneVar); fbox(9, 0, 17, 14, 0, 17, stoneVar); // dva schody
   // valbová strecha zo slamy: sklon 1:1 na všetky strany, hrubý presah
   for (let k = 0; k < 12; k++) {
     const x0 = -3 + k, x1 = 26 - k, z0 = -3 + k, z1 = 18 - k;
     if (z0 > z1) break;
     fbox(x0, 17 + k, z0, x1, 17 + k, z1, (x, y, z) => (z0 === z1 || z0 + 1 === z1) ? M.STRAW_DARK : strawVar(x, y, z));
   }
+  C.slopes([M.STRAW, M.STRAW_DARK], { y0: 18, course: 3 });
+  C.slopes([M.STRAW, M.STRAW_DARK], { y0: 17, down: true });
   // komín
   fbox(17, 17, 5, 19, 30, 7, (x, y) => y >= 29 ? M.DARKSTONE : M.PLASTER);
+  chimneyCap(C, 17, 30, 5);
   // zväzky sušených bylín pod odkvapom
   const herbs = [M.LAVENDER, M.CHAMOMILE, M.FL_RED, M.HERB_GREEN];
   let hi = 0;
   for (const x of [2, 5, 7, 16, 19, 21]) {
     const col = must(herbs[hi++ % herbs.length]);
-    put(x, 16, 16, M.ROPE);
-    fbox(x, 13, 16, x, 15, 16, col);
-    if (col === M.CHAMOMILE) put(x, 14, 16, M.FL_YELLOW);
+    // zväzok: hore zviazaný do špičky, dolu sa rozširuje
+    put(x, 16, 16, M.ROPE, SH.stlpik());
+    put(x, 15, 16, col, SH.zuzeny()); put(x, 14, 16, col === M.CHAMOMILE ? M.FL_YELLOW : col); put(x, 13, 16, col);
   }
   // lavička pri dverách
-  fbox(15, 0, 16, 15, 1, 16, M.PLANK_DARK); fbox(19, 0, 16, 19, 1, 16, M.PLANK_DARK);
-  fbox(15, 2, 16, 19, 2, 17, M.PLANK);
+  for (const x of [15, 19]) for (const y of [0, 1]) put(x, y, 16, M.PLANK_DARK, SH.stlpik()); // tenké nohy
+  for (let x = 15; x <= 19; x++) for (const z of [16, 17]) put(x, 2, z, M.PLANK, SH.doska()); // sedadlo z dosky
   if (season === 3) C.snow([M.STRAW, M.STRAW_DARK, M.DARKSTONE], 17);
   return C.done();
 }
@@ -297,7 +383,7 @@ function cauldronModel(season: number): FineModel {
   // trojnožka a reťaz
   const top = [3.5, 18, 3.5] as const;
   for (const [x, z] of [[-2, -1], [9, 1], [3, 9]] as const) line(x, 0, z, top[0], top[1], top[2], M.LOG_DARK);
-  for (let y = 12; y <= 17; y++) put(3, y, 3, y % 2 ? M.DARKSTONE : M.STONE);
+  for (let y = 12; y <= 17; y++) put(3, y, 3, y % 2 ? M.DARKSTONE : M.STONE, SH.stlpik()); // tenká reťaz
   // varecha opretá o okraj
   line(6, 10, 2, 9, 15, -1, M.PLANK);
   if (season === 3) C.snow([M.LOG_DARK], 0);
@@ -324,20 +410,27 @@ function marketStall(season: number): FineModel {
   // kvety a črepníky na zadnej polici
   for (let x = 3; x <= 20; x += 3) { put(x, 10, 0, M.CLAY); put(x, 11, 0, must(fl[(x / 3) % fl.length | 0])); }
   // vrecia so semienkami pri stánku
-  for (const [x, z] of [[-3, 5], [-2, 2], [24, 5]] as const) { fbox(x, 0, z, x + 1, 2, z + 1, M.SACK); put(x, 3, z, M.ROPE); }
+  for (const [x, z] of [[-3, 5], [-2, 2], [24, 5]] as const) { fbox(x, 0, z, x + 1, 2, z + 1, M.SACK); put(x, 3, z, M.ROPE, SH.stlpik()); }
   // šikmá markíza: vzadu vyššie, vpredu nižšie, pásy po 3 minikockách, zúbkovaný okraj
   for (let z = -3; z <= 10; z++) {
     const y = 21 - Math.floor((z + 3) / 2);
     for (let x = 0; x <= 23; x++) put(x, y, z, Math.floor(x / 3) % 2 ? M.AWN_WHITE : M.AWN_RED);
   }
-  for (let x = 0; x <= 23; x++) if (x % 3 !== 2) put(x, 21 - Math.floor(13 / 2) - 1, 10, Math.floor(x / 3) % 2 ? M.AWN_WHITE : M.AWN_RED);
+  // schody markízy vyplnené nízkymi klinmi (sklon 1 : 2) – plátno je navrchu hladké
+  const [awnLow, awnHigh] = SH.nizky('z-');
+  for (let p = 1; p <= 6; p++) for (let x = 0; x <= 23; x++) {
+    const z0 = -3 + 2 * p, m = Math.floor(x / 3) % 2 ? M.AWN_WHITE : M.AWN_RED;
+    put(x, 22 - p, z0, m, awnHigh); put(x, 22 - p, z0 + 1, m, awnLow);
+  }
+  // zúbky: trojuholníky špicom nadol
+  for (let x = 0; x <= 23; x++) if (x % 3 !== 2) put(x, 21 - Math.floor(13 / 2) - 1, 10, Math.floor(x / 3) % 2 ? M.AWN_WHITE : M.AWN_RED, SH.klin(x % 3 ? 'x-' : 'x+', 'y-'));
   // tabuľa s nápisom TRH nad markízou
   fbox(6, 21, -3, 17, 28, -3, M.SIGN);
   fbox(7, 20, -3, 7, 21, -3, M.LOG_DARK); fbox(16, 20, -3, 16, 21, -3, M.LOG_DARK);
   // písmená na prednej (južnej) strane tabule – tú vidno z predvoleného pohľadu
   (['T', 'R', 'H'] as const).forEach((ch, i) => { FONT[ch].forEach((row, ry) => { row.split('').forEach((bit, rx) => { if (bit === '1') put(7 + i * 4 + rx, 27 - ry, -2, M.ORN); }); }); });
   // lampáš na prednom stĺpiku
-  put(23, 12, 7, M.LANTERN); put(23, 13, 7, M.LOG_DARK); put(22, 13, 7, M.LOG_DARK);
+  put(23, 12, 7, M.LANTERN); put(23, 13, 7, M.LOG_DARK, SH.zuzeny()); put(22, 13, 7, M.LOG_DARK, SH.stlpik('x+'));
   if (season === 3) C.snow([M.AWN_RED, M.AWN_WHITE, M.SIGN], 15);
   return C.done();
 }
@@ -351,6 +444,7 @@ function wellModel(season: number): FineModel {
     if (d <= 4.4 && d >= 2.4) put(x, y, z, y === 5 ? M.STONE : stoneVar(x, y, z));
     else if (d < 2.4 && y <= 2) put(x, y, z, y === 2 ? M.WATER_DEEP : M.DARKSTONE);
   }
+  C.round([M.STONE, M.DARKSTONE], { y1: 5 }); // obruba bez zubov
   // stĺpy a hriadeľ rumpálu
   fbox(-1, 6, 3, -1, 13, 4, M.LOG_DARK); fbox(8, 6, 3, 8, 13, 4, M.LOG_DARK);
   fbox(0, 11, 3, 7, 11, 4, M.LOG);
@@ -358,10 +452,11 @@ function wellModel(season: number): FineModel {
   // kľuka
   put(9, 11, 3, M.HANDLE); put(10, 11, 3, M.HANDLE); put(10, 10, 3, M.HANDLE); put(10, 9, 3, M.HANDLE);
   // lano s vedrom nad vodou
-  for (let y = 7; y <= 10; y++) put(4, y, 4, M.ROPE);
+  for (let y = 7; y <= 10; y++) put(4, y, 4, M.ROPE, SH.stlpik()); // tenké lano
   fbox(3, 5, 3, 5, 6, 5, (x, y, z) => (x === 4 && z === 4 && y === 6) ? 0 : y === 6 ? M.DARKSTONE : M.PLANK_DARK);
   // sedlová strieška
   for (let k = 0; k < 5; k++) fbox(-2, 14 + k, -1 + k, 9, 14 + k, 8 - k, (x, y, z) => k === 4 ? M.RIDGE : (z === -1 + k || z === 8 - k) ? ((x % 2) ? M.SHINGLE : M.SHINGLE_DARK) : M.PLANK_DARK);
+  C.slopes([M.SHINGLE, M.SHINGLE_DARK, M.RIDGE], { y0: 15, course: 2 });
   if (season === 3) C.snow([M.SHINGLE, M.SHINGLE_DARK, M.RIDGE, M.PLANK_DARK], 14);
   return C.done();
 }
@@ -550,6 +645,16 @@ function icehouseModel(season: number, ins?: number): FineModel {
     for (const x of [-1 + k, 16 - k]) fbox(x, y, 1, x, y, 15, (xx, yy, z) => quilt(xx, yy, z));
   }
   if ((ins ?? 0) >= 3) fbox(7, 22, 1, 8, 22, 15, M.SILK); // aj cez hrebeň
+  // strmá strecha 2 : 1 bez schodov: každý schod (2 minikocky vysoký) vyplnia dva dieliky nízkeho klinu položeného na bok;
+  // kde na schode leží prikrývka, je šikmá plocha z nej
+  for (let k = 1; k <= 8; k++) for (const [x, away] of [[-2 + k, 'x-'], [17 - k, 'x+']] as const) {
+    const [thin, thick] = SH.nizky('y-', away), y = 5 + 2 * k;
+    for (let z = 0; z <= 16; z++) {
+      const m = C.getf(x, y, z) || (z % 2 ? M.SHINGLE : M.SHINGLE_DARK);
+      put(x, y, z, m, thick);
+      if (k % 3) put(x, y + 1, z, m, thin); // každý tretí rad šindľov so schodíkom
+    }
+  }
   if (season === 3) C.snow([M.SHINGLE, M.SHINGLE_DARK, M.RIDGE, M.PLANK_DARK, M.SILK, M.SILK_DARK], 5);
   return C.done();
 }
@@ -571,7 +676,8 @@ function dielnaModel(season: number, loom?: number | boolean): FineModel {
     const y = 13 + k;
     fbox(-1, y, -1 + k, 16, y, 17 - k, (x, yy, z) => (z === -1 + k || z === 17 - k) ? (x % 2 ? M.SHINGLE : M.SHINGLE_DARK) : M.PLANK_DARK);
   }
-  fbox(-1, 22, 7, 16, 22, 9, M.RIDGE);
+  for (let x = -1; x <= 16; x++) { put(x, 22, 7, M.RIDGE, SH.klin('z+')); put(x, 22, 8, M.RIDGE); put(x, 22, 9, M.RIDGE, SH.klin('z-')); } // hrebenáč so skosenými bokmi
+  C.slopes([M.SHINGLE, M.SHINGLE_DARK, M.RIDGE], { y0: 14, course: 3 });
   // tabuľa s pílou nad vchodom
   fbox(5, 14, 17, 10, 16, 17, M.SIGN);
   fbox(6, 15, 18, 9, 15, 18, M.STONE_LIGHT); put(10, 15, 18, M.PLANK); put(6, 14, 18, M.STONE_LIGHT); put(8, 14, 18, M.STONE_LIGHT);
@@ -604,8 +710,9 @@ function dockModel(season: number): FineModel {
   fbox(1, DOCK_DECK, -2, 6, DOCK_DECK, 17, (x, y, z) => (z % 3 === 0 ? M.PLANK_DARK : M.PLANK)); // dosky naprieč (kúsok na breh)
   fbox(1, DOCK_DECK - 1, -2, 1, DOCK_DECK - 1, 15, M.LOG_DARK); fbox(6, DOCK_DECK - 1, -2, 6, DOCK_DECK - 1, 15, M.LOG_DARK); // nosníky (nad vodou)
   for (const z of [0, 7, 14]) for (const x of [0, 7]) fbox(x, 0, z, x, DOCK_DECK + (z === 0 ? 3 : 1), z, M.LOG); // kolíky
-  put(0, DOCK_DECK + 4, 0, M.LOG_DARK); put(7, DOCK_DECK + 4, 0, M.LOG_DARK);
-  fbox(0, DOCK_DECK + 2, 1, 0, DOCK_DECK + 2, 2, M.ROPE); put(1, DOCK_DECK + 1, 2, M.ROPE); // lano na kolíku
+  put(0, DOCK_DECK + 4, 0, M.LOG_DARK, SH.zuzeny()); put(7, DOCK_DECK + 4, 0, M.LOG_DARK, SH.zuzeny()); // kolíky so zúženým vrchom
+  for (const z of [7, 14]) for (const x of [0, 7]) put(x, DOCK_DECK + 2, z, M.LOG, SH.zuzeny());
+  put(0, DOCK_DECK + 2, 1, M.ROPE, SH.stlpik('z+')); put(0, DOCK_DECK + 2, 2, M.ROPE, SH.stlpik('z+')); put(1, DOCK_DECK + 1, 2, M.ROPE, SH.doska()); // lano na kolíku
   fbox(1, DOCK_DECK + 1, 14, 2, DOCK_DECK + 1, 15, M.SACK); put(5, DOCK_DECK + 1, 15, M.POT); // vrecko a kanvička pri brehu
   if (season === 3) C.snow([M.PLANK, M.PLANK_DARK, M.SACK, M.LOG], DOCK_DECK);
   return C.done();
@@ -615,7 +722,7 @@ function edgeModel(season: number): FineModel {
   const C = fineCanvas(1, 1, 12), { put, fbox } = C;
   fbox(0, 0, 3, 0, 8, 4, M.LOG);
   fbox(-1, 9, 3, 1, 9, 4, M.ROOF_RED); fbox(-1, 10, 3, 1, 10, 4, M.WALL_WHITE); put(0, 11, 3, M.ROOF_RED); put(0, 11, 4, M.ROOF_RED);
-  fbox(0, 5, 5, 0, 5, 10, M.ROPE); // lano k ďalšiemu kolíku (o políčko južnejšie) – susedné značky sa tak nikde neprekrývajú
+  for (let z = 5; z <= 10; z++) put(0, 5, z, M.ROPE, SH.stlpik('z+')); // tenké lano k ďalšiemu kolíku (o políčko južnejšie) – susedné značky sa tak nikde neprekrývajú
   if (season === 3) C.snow([M.ROOF_RED, M.WALL_WHITE]);
   return C.done();
 }
@@ -632,7 +739,10 @@ function pondModel(kind: 'dock' | 'edge', season: number): FineModel {
 function rotate90(f: FineModel): FineModel {
   const { sx, sy, sz, data } = f, out = new Uint8Array(data.length);
   for (let j = 0; j < sz; j++) for (let y = 0; y < sy; y++) for (let i = 0; i < sx; i++) out[(j * sy + y) * sx + i] = data[((sx - 1 - i) * sy + y) * sx + j] ?? 0;
-  return { sx, sy, sz, data: out };
+  if (!f.shape) return { sx, sy, sz, data: out };
+  const sh = new Uint8Array(data.length);
+  for (let j = 0; j < sz; j++) for (let y = 0; y < sy; y++) for (let i = 0; i < sx; i++) sh[(j * sy + y) * sx + i] = SH.ROT_Y[f.shape[((sx - 1 - i) * sy + y) * sx + j] ?? 0] ?? 0;
+  return { sx, sy, sz, data: out, shape: sh };
 }
 const treeCache = new Map<string, FineModel>();
 // over = vlastné parametre (editor generátorov): model sa vtedy postaví nanovo a neukladá sa do cache
@@ -778,11 +888,12 @@ function mossTop(C: FineCanvas, se: number): void {
     const m = C.getf(x, y, z);
     if (!m) continue;
     const h = hash(x, y, z + 71);
-    if (se === 3) { if (h < 0.5 && y >= 2) C.put(x, y + 1, z, M.SNOW); }
-    else if (h < 0.3) C.put(x, y, z, M.MOSS); else if (h < 0.38) C.put(x, y, z, M.LICHEN);
+    if (se === 3) { if (h < 0.5 && y >= 2) { if (C.gets(x, y, z)) C.paint(x, y, z, M.SNOW); else C.put(x, y + 1, z, M.SNOW); } } // na šikmom dieliku sneh leží v ňom
+    else if (h < 0.3) C.paint(x, y, z, M.MOSS); else if (h < 0.38) C.paint(x, y, z, M.LICHEN);
     break;
   }
 }
+const ROCK_MATS = [M.DARKSTONE, M.STONE_LIGHT, M.STONE];
 type RockKind = 'balvan' | 'kopa' | 'plocha';
 const ROCK_BUILD: Readonly<Record<RockKind, (C: FineCanvas) => void>> = {
   balvan(C) {
@@ -805,7 +916,7 @@ function rockModel(kind: RockKind, season: number, rot: number): FineModel {
   const known = rockCache.get(key);
   if (known) return known;
   let f: FineModel;
-  if (rot === 0) { const C = fineCanvas(1, 1, 12); ROCK_BUILD[kind](C); mossTop(C, season); f = C.done(); }
+  if (rot === 0) { const C = fineCanvas(1, 1, 12); ROCK_BUILD[kind](C); C.slopes(ROCK_MATS); C.round(ROCK_MATS); mossTop(C, season); f = C.done(); } // skosené hrany (#182)
   else f = rotate90(rockModel(kind, season, rot - 1));
   rockCache.set(key, f);
   return f;
@@ -815,7 +926,28 @@ function rockModel(kind: RockKind, season: number, rot: number): FineModel {
 export function rotateY(f: FineModel): FineModel {
   const { sx, sy, sz, data } = f, out = new Uint8Array(data.length);
   for (let j = 0; j < sx; j++) for (let y = 0; y < sy; y++) for (let i = 0; i < sz; i++) out[(j * sy + y) * sz + i] = data[((sz - 1 - i) * sy + y) * sx + j] ?? 0;
-  return { sx: sz, sy, sz: sx, data: out };
+  if (!f.shape) return { sx: sz, sy, sz: sx, data: out };
+  const sh = new Uint8Array(data.length); // dieliky sa otočia s modelom
+  for (let j = 0; j < sx; j++) for (let y = 0; y < sy; y++) for (let i = 0; i < sz; i++) sh[(j * sy + y) * sz + i] = SH.ROT_Y[f.shape[((sz - 1 - i) * sy + y) * sx + j] ?? 0] ?? 0;
+  return { sx: sz, sy, sz: sx, data: out, shape: sh };
+}
+// Katalóg stavebných dielikov (#182) pre /debug: každá rodina raz (v poradí PIECES zľava), v štyroch radoch
+// otočená o 0°, 90°, 180° a 270° okolo zvislej osi. Hra ho nepoužíva.
+const PIECES: readonly (readonly [SH.Family, number, MatId])[] = [
+  ['klin', SH.klin('x+'), M.SHINGLE], ['narozie', SH.narozie('x+', 'z+'), M.STRAW], ['uzlabie', SH.uzlabie('x+', 'z+'), M.ROOF_RED],
+  ['roh', SH.roh('x+', 'y-', 'z+'), M.STONE], ['zrezany', SH.zrezany('x-', 'y-', 'z-'), M.STONE_LIGHT],
+  ['nizkyA', SH.nizky('x+')[0], M.AWN_RED], ['nizkyB', SH.nizky('x+')[1], M.AWN_WHITE],
+  ['narozieN', SH.narozieN('x+', 'z+'), M.STRAW], ['uzlabieN', SH.uzlabieN('x+', 'z+'), M.ROOF_RED],
+  ['doska', SH.doska(), M.PLANK], ['platna', SH.platna(), M.SHUTTER], ['stlpik', SH.stlpik(), M.LOG_DARK],
+  ['zuzeny', SH.zuzeny(), M.DARKSTONE], ['strieska', SH.strieska('x+'), M.RIDGE]
+];
+function piecesModel(): FineModel {
+  const C = fineCanvas(4, 1, 2);
+  PIECES.forEach(([, id, mat], col) => {
+    let s = id;
+    for (let row = 0; row < 4; row++) { C.put(col * 2, 0, row * 2, mat, s); s = SH.ROT_Y[s] ?? 0; }
+  });
+  return C.done();
 }
 // Zoznam všetkých jemných modelov pre prehliadač modelov v /debug (#79). Hra ho nepoužíva.
 // build(season, rot) → { sx, sy, sz, data }; stromy, kry a kamene sa otáčajú ako v hre, budovy cez rotateY.
@@ -823,7 +955,7 @@ export const TREE_NAMES: Readonly<Record<TreeKindAll, string>> = { buk: 'Buk', d
 const ROCK_NAMES: Readonly<Record<RockKind, string>> = { balvan: 'Balvan', kopa: 'Kopa kameňov', plocha: 'Plochý kameň' };
 const turned = (build: (season: number) => FineModel) => (season: number, rot?: number): FineModel => { let f = build(season); for (let i = 0; i < (rot || 0); i++) f = rotateY(f); return f; };
 // Model v prehliadači /debug: id, meno, skupina, ako sa volá v kóde, pôdorys v poliach, druh a stavba (obdobie, otočenie)
-export interface FineModelEntry { id: string; name: string; group: string; fn: string; tiles: [number, number]; kind?: string | number; build: (season: number, rot?: number) => FineModel }
+export interface FineModelEntry { id: string; name: string; group: string; fn: string; tiles: [number, number]; kind?: string | number; note?: string; build: (season: number, rot?: number) => FineModel }
 export const FINE_MODELS: FineModelEntry[] = [
   { id: 'house', name: 'Čičmanský domček', group: 'Buildings', fn: 'cicmanyHouse', tiles: [3, 2], build: turned(cicmanyHouse) },
   { id: 'hut', name: 'Babkina chalupa', group: 'Buildings', fn: 'babkaHut', tiles: [3, 2], build: turned(babkaHut) },
@@ -843,7 +975,11 @@ export const FINE_MODELS: FineModelEntry[] = [
   // Les divov: obrovské stromy (3 tvary, kmeň na 2 × 2 políčkach) a spadnuté kmene
   ...[0, 1, 2].map((v): FineModelEntry => ({ id: 'giant-' + v, name: `Obor, tvar ${v + 1}`, group: 'Les divov', fn: `giantModel(shape = ${v})`, tiles: [2, 2], kind: 'obor', build: (se, rot) => giantModel(se, rot || 0, v) })),
   { id: 'log', name: 'Spadnutý kmeň', group: 'Les divov', fn: 'logModel(shrooms = false)', tiles: [1, 1], build: (se, rot) => logModel(se, rot || 0, false) },
-  { id: 'log-shrooms', name: 'Spadnutý kmeň s hubami', group: 'Les divov', fn: 'logModel(shrooms = true)', tiles: [1, 1], build: (se, rot) => logModel(se, rot || 0, true) }
+  { id: 'log-shrooms', name: 'Spadnutý kmeň s hubami', group: 'Les divov', fn: 'logModel(shrooms = true)', tiles: [1, 1], build: (se, rot) => logModel(se, rot || 0, true) },
+  {
+    id: 'pieces', name: 'Stavebné dieliky', group: 'Pieces (shapes.ts)', fn: 'piecesModel', tiles: [4, 1], build: turned(piecesModel),
+    note: `Building pieces (#182): a voxel can be one of ${SH.SHAPES.length - 1} pieces instead of a plain cube. Left to right: ${PIECES.map(([f]) => SH.FAMILY_NAMES[f]).join(', ')}; each row is the piece turned by 90°. All other orientations (upside-down, on the side) exist too.`
+  }
 ];
 
 // Ktorý druh stromu rastie na políčku (deterministicky); pri babkinej chalúpke je ovocný sad.
@@ -892,18 +1028,18 @@ function fineModels(tiles: readonly GroundTile[], season: number, w: number, are
     if (i < 0) continue;
     const tx = i % w, ty = (i / w) | 0;
     const m = buildingModel(ft, season, ft.v ? ft.v(st) : 0);
-    out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: ft.g, ox: tx - FM / FINE, oy: groundHeight('grass') / R, oz: ty - FM / FINE, tile: { x: tx + ft.tile[0], y: ty + ft.tile[1] } });
+    out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, shape: m.shape, type: ft.g, ox: tx - FM / FINE, oy: groundHeight('grass') / R, oz: ty - FM / FINE, tile: { x: tx + ft.tile[0], y: ty + ft.tile[1] } });
   }
   // mólo (#160): model na prvom políčku móla, stojí na dne jazierka; ťuknutie vyberie koniec móla pri loďke
   const di = tiles.findIndex(t => t.g === 'dock');
   if (di >= 0) {
     const m = pondModel('dock', season), tx = di % w, ty = (di / w) | 0;
-    out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'dock', ox: tx - FM / FINE, oy: groundHeight('water') / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.6 });
+    out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, shape: m.shape, type: 'dock', ox: tx - FM / FINE, oy: groundHeight('water') / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.6 });
   }
   if (area === 'garden') for (const p of D.POND_EDGE) { // okraj mapy pri jazierku: kolíky s bójkami (cesta do Močiara)
     if (tiles[p.y * w + p.x]?.g !== 'water') continue;
     const m = pondModel('edge', season);
-    out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'edge', ox: p.x - FM / FINE, oy: groundHeight('water') / R, oz: p.y - FM / FINE, tile: { x: p.x, y: p.y }, invis: 0.9 });
+    out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, shape: m.shape, type: 'edge', ox: p.x - FM / FINE, oy: groundHeight('water') / R, oz: p.y - FM / FINE, tile: { x: p.x, y: p.y }, invis: 0.9 });
   }
   for (let i = 0; i < tiles.length; i++) {
     const g = must(tiles[i]).g;
@@ -912,7 +1048,7 @@ function fineModels(tiles: readonly GroundTile[], season: number, w: number, are
     const tx = i % w, ty = (i / w) | 0, kind = g === 'spruce' ? (hash(tx, ty, 11) < 0.75 ? 'smrek' : 'borovica') : treeKind(tx, ty, area);
     const m = treeModel(kind, season, Math.floor(hash(tx, ty, 13) * 4));
     // dáta modelu sú zdieľané medzi rovnakými stromami – vlastný je len obal s pozíciou
-    out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'tree', kind, ox: tx - FM / FINE, oy: groundHeight(g) / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.25 });
+    out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, shape: m.shape, type: 'tree', kind, ox: tx - FM / FINE, oy: groundHeight(g) / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.25 });
   }
   const ROCK_KINDS = keys(ROCK_BUILD);
   let rockN = 0;
@@ -920,7 +1056,7 @@ function fineModels(tiles: readonly GroundTile[], season: number, w: number, are
     if (must(tiles[i]).g !== 'boulder') continue;
     const tx = i % w, ty = (i / w) | 0, kind = must(ROCK_KINDS[rockN++ % ROCK_KINDS.length]); // striedame tvary, nech je vidno všetky
     const m = rockModel(kind, season, Math.floor(hash(tx, ty, 15) * 4));
-    out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'rock', kind, ox: tx - FM / FINE, oy: groundHeight('boulder') / R, oz: ty - FM / FINE, tile: { x: tx, y: ty } });
+    out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, shape: m.shape, type: 'rock', kind, ox: tx - FM / FINE, oy: groundHeight('boulder') / R, oz: ty - FM / FINE, tile: { x: tx, y: ty } });
   }
   for (let i = 0; i < tiles.length; i++) {
     const g = must(tiles[i]).g;
@@ -928,16 +1064,16 @@ function fineModels(tiles: readonly GroundTile[], season: number, w: number, are
     const tx = i % w, ty = (i / w) | 0, rot = Math.floor(hash(tx, ty, 21) * 4);
     if (g === 'giant') {
       const kind = Math.floor(hash(tx, ty, 23) * GIANT_KINDS), m = giantModel(season, rot, kind);
-      out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'giant', kind, ox: tx - FM / FINE, oy: groundHeight(g) / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.3 });
+      out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, shape: m.shape, type: 'giant', kind, ox: tx - FM / FINE, oy: groundHeight(g) / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.3 });
     } else {
       const m = logModel(season, rot, hash(tx, ty, 25) < 0.35);
-      out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'log', ox: tx - FM / FINE, oy: groundHeight(g) / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.3 });
+      out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, shape: m.shape, type: 'log', ox: tx - FM / FINE, oy: groundHeight(g) / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.3 });
     }
   }
   for (let i = 0; i < tiles.length; i++) {
     if (must(tiles[i]).g !== 'bush') continue;
     const tx = i % w, ty = (i / w) | 0, m = bushModel(season, Math.floor(hash(tx, ty, 17) * 4), hash(tx, ty, 19) < 0.4);
-    out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'bush', ox: tx - FM / FINE, oy: groundHeight('bush') / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.3 });
+    out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, shape: m.shape, type: 'bush', ox: tx - FM / FINE, oy: groundHeight('bush') / R, oz: ty - FM / FINE, tile: { x: tx, y: ty }, invis: 0.3 });
   }
   return out;
 }

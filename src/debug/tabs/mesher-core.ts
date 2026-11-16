@@ -34,7 +34,7 @@ export function atlasPixels(b: Pick<Baked, 'color' | 'ao'>, which: 'color' | 'em
 
 // Počty: steny minikociek bez zlúčenia (ako kedysi), zlúčené obdĺžniky, trojuholníky, zaplnenie obrázkov, pamäť
 export interface MeshStats {
-  voxelFaces: number; quads: number; trisBefore: number; trisAfter: number;
+  voxelFaces: number; quads: number; shaped: number; vertices: number; trisBefore: number; trisAfter: number;
   color: { W: number; H: number; used: number; bytes: number }; ao: { W: number; H: number; used: number; bytes: number };
   meshBytes: number;
 }
@@ -49,7 +49,7 @@ export function meshStats(f: FineModel, b: Baked): MeshStats {
   let cu = 0, au = 0;
   for (const q of b.quads) { cu += q.w * q.h; au += (q.w + 1) * (q.h + 1); }
   return {
-    voxelFaces: faces, quads: b.quads.length, trisBefore: faces * 2, trisAfter: b.quads.length * 2,
+    voxelFaces: faces, quads: b.quads.length, shaped: b.shaped, vertices: b.P.length / 3, trisBefore: faces * 2, trisAfter: b.I.length / 3,
     color: { W: b.color.W, H: b.color.H, used: cu, bytes: b.color.data.length },
     ao: { W: b.ao.W, H: b.ao.H, used: au, bytes: b.ao.data.length },
     meshBytes: b.P.byteLength + b.N.byteLength + b.UV.byteLength + b.UV2.byteLength + b.I.byteLength
