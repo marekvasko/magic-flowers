@@ -2264,7 +2264,7 @@ void main() {
     };
     spiders3d.overlay(c, ppb, t); // oči pavúkov v tme
     for (const o of S.others.values()) { const co = chars.get(o.id); if (co) label(co, o.name, o.e, typeof o.id === 'number' ? S.bubbles[o.id] : undefined); }
-    const mo = chars.get('me'); if (mo) label(mo, S.name, S.myEmote, S.bubbles[S.id]);
+    const mo = chars.get('me'); if (mo && zoomEase < 0.3) label(mo, S.name, S.myEmote, S.bubbles[S.id]);
     if (babka) label(babka, 'Babka', null, null);
     if (master) label(master, 'Majster hodvábu', null, null);
 
