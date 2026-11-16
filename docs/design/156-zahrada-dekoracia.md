@@ -100,9 +100,9 @@ Today `lotIdx()` in `ice.ts` and `dielna.ts` hard-codes the 2×2 lots. With the 
 - Validation lives on the server (`actions.ts`) and is shared with the client (`src/shared/`), so the detail view
   can grey out invalid spots before sending.
 
-**Ground cover:** a spot can hold a cover instead of a flower: grass or a kind of stone, bought as inventory items
-(the stone kind depends on what the player buys). Covers ignore spacing, may go on the keep-out ring, can be picked up
-again and don't count against the permit. Details and open questions in #179.
+**Ground cover:** a spot can hold a cover instead of a flower: trávnik, štrk, okruhliaky or plochý kameň, bought by
+the bucket (16 spots). Covers ignore zones, go on the inner 6 × 6 (the ring is the frame), can be picked up again and
+don't count against the permit. Implementation decisions to confirm are listed in #179.
 
 ## 6. Growth reuse
 
