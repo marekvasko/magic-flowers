@@ -182,8 +182,10 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
         kv('Footprint', `${tw} × ${td} tiles`, `+ ${W.FM} voxel margin each side`),
         kv('Height', `${top} voxels`, `${(top / F).toFixed(2)} blocks`),
         kv('Voxels', s.voxels.toLocaleString('en'), `${(100 * s.voxels / f.data.length).toFixed(1)} % of the box`),
+        kv('Pieces', (f.shape ? f.shape.reduce((n, v) => n + (v ? 1 : 0), 0) : 0).toLocaleString('en'), 'voxels that are not plain cubes'),
         kv('Materials', String(s.mats.length), (SEASONS[se] ?? '') + ' colours'),
         kv('Build + mesh', `${ms.toFixed(0)} ms`, st.grid ? '16 models' : '1 model')),
+      ...(e.note ? [h('div', { class: 'muted', style: 'margin-top:8px' }, e.note)] : []),
       h('h3', null, `Materials (${SEASONS[se] ?? ''})`),
       h('div', { class: 'as-mats' }, s.mats.map(([m, n]) => h('span', { title: `material ${m}: ${W.colorOf(m, se)}${W.EMISSIVE[m] ? ', glows at night' : ''}` },
         h('span', { class: 'as-sw', style: `background:${W.colorOf(m, se)}` }), `${matName(W, m)}${W.EMISSIVE[m] ? ' ✦' : ''}`, h('span', { class: 'muted' }, n.toLocaleString('en'))))));

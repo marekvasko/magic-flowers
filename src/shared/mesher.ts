@@ -3,6 +3,9 @@
 // kocky ostane len toľko trojuholníkov, koľko treba na obrys povrchu. Používa to zem (podkocky) aj jemné modely.
 // Zdieľa ho klient (render3d.ts) aj testy; nezávisí od Three.js.
 
+import { FULL_COVER } from './shapes.ts';
+import type { Shape, ShapeFace } from './shapes.ts';
+
 // Os mriežky (x, y, z) a bod / bunka v nej
 export type Axis = 0 | 1 | 2;
 export type Vec3 = [number, number, number];
@@ -138,12 +141,17 @@ export function pack(rects: readonly (readonly [number, number])[]): { W: number
   return { W, H: Math.max(1, y + rowH), at };
 }
 
-// Farba steny minikocky: [r, g, b, žiarenie] v 0..1
-export type Look = (m: number, x: number, y: number, z: number, f: number) => readonly number[];
+// Farba steny minikocky: [r, g, b, žiarenie] v 0..1; n = normála steny dielika (šikmé steny), inak rozhoduje f
+export type Look = (m: number, x: number, y: number, z: number, f: number, n?: Readonly<Vec3>) => readonly number[];
+// Dielik bunky (shapes.ts), alebo null pre plnú kocku a prázdno; mimo mriežky null
+export type ShapeAt = (x: number, y: number, z: number) => Shape | null;
 export interface Baked {
-  quads: Quad[]; P: Float32Array; N: Int8Array; UV: Float32Array; UV2: Float32Array; I: Uint16Array | Uint32Array;
+  quads: Quad[]; shaped: number; P: Float32Array; N: Float32Array; UV: Float32Array; UV2: Float32Array; I: Uint16Array | Uint32Array;
   color: { W: number; H: number; data: Uint8Array }; ao: { W: number; H: number; data: Uint8Array };
 }
+const SIDE_DIR: readonly Readonly<Vec3>[] = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+// Stena dielika v sieti: bunka, stena tvaru a rad w rovnakých dielikov po osi ax (-1 = jedna bunka)
+interface ShapedFace { cell: Vec3; face: ShapeFace; ax: number; w: number }
 // Model s vypečenou textúrou: sieť je len povrch (steny sa zlúčia bez ohľadu na materiál a tieň) a všetko ostatné
 // je v dvoch obrázkoch modelu:
 //   color – 1 texel na stenu minikocky (bez interpolácie): RGB = look(m, x, y, z, f) a alfa = žiarenie;
@@ -151,15 +159,51 @@ export interface Baked {
 //           interpoláciou – presne ako kedysi zatienenie vo vrcholoch (v zlúčenom obdĺžniku sú rohy spojité).
 // Každý obdĺžnik má okraj 1 texel (kópia krajných), aby nepresnosť na hrane nesiahla do suseda v obrázku.
 //   look(m, x, y, z, f) → [r, g, b, žiarenie] v 0..1; aoCurve[0..3] = jas pre zatienenie 0 (najtmavší) až 3
-// Vráti { quads, P (v bunkách), N, UV, UV2, I, color: { W, H, data }, ao: { W, H, data } }.
-export function bakeModel(dims: Readonly<Vec3>, get: CellGet, occ: Occludes, look: Look, aoCurve: readonly number[]): Baked {
-  const solid = (x: number, y: number, z: number): number => (get(x, y, z) ? 1 : 0);
-  const quads = greedy(dims, solid, (m, nb) => !nb, () => false);
-  const cp = pack(quads.map(q => [q.w + 2, q.h + 2])), ap = pack(quads.map(q => [q.w + 3, q.h + 3]));
+// Dieliky (#182, shapeAt): bunka s dielikom nie je plná kocka. Kocky sa zlučujú ako doteraz (stena kocky sa nekreslí
+// len tam, kde ju sused zakrýva celú), steny dielikov idú do siete za obdĺžniky: stena na strane kocky sa nekreslí,
+// keď ju sused zakrýva; šikmé steny rovnakých dielikov v rade sa zlúčia do jednej (1 texel farby na dielik).
+// Steny dielikov majú plný jas zatienenia; dielik s malým objemom rohy susedov nezatieňuje.
+// Vráti { quads, shaped (počet stien dielikov), P (v bunkách), N, UV, UV2, I, color: { W, H, data }, ao: { W, H, data } }.
+export function bakeModel(dims: Readonly<Vec3>, get: CellGet, occ: Occludes, look: Look, aoCurve: readonly number[], shapeAt?: ShapeAt): Baked {
+  const sh: ShapeAt = shapeAt ?? (() => null);
+  // 1 = kocka, 64 + bity celých zakrytých strán = dielik
+  const solid = (x: number, y: number, z: number): number => { if (!get(x, y, z)) return 0; const s = sh(x, y, z); return s ? 64 | s.full : 1; };
+  const quads = greedy(dims, solid, (m, nb, ax, sg) => m === 1 && (nb < 64 ? !nb : !((nb >> (ax * 2 + (sg > 0 ? 1 : 0))) & 1)), () => false);
+  const aoGet: CellGet = shapeAt ? (x, y, z) => { const m = get(x, y, z); if (!m) return 0; const s = sh(x, y, z); return s && !s.occ ? 0 : m; } : get;
+  // steny dielikov
+  const sfaces: ShapedFace[] = [];
+  if (shapeAt) {
+    const [nx, ny, nz] = dims, merged = new Uint8Array(nx * ny * nz);
+    const coverAt = (x: number, y: number, z: number, f: number): number => { if (!get(x, y, z)) return 0; const s = sh(x, y, z); return s ? s.cover[f] ?? 0 : FULL_COVER; };
+    for (let z = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+      const s = get(x, y, z) ? sh(x, y, z) : null;
+      if (!s) continue;
+      for (const face of s.faces) {
+        if (face.side < 0) continue;
+        const d = SIDE_DIR[face.side] ?? [0, 0, 0], mine = s.cover[face.side] ?? 0;
+        if ((coverAt(x + d[0], y + d[1], z + d[2], face.side ^ 1) & mine) !== mine) sfaces.push({ cell: [x, y, z], face, ax: -1, w: 1 });
+      }
+      if (merged[(z * ny + y) * nx + x]) continue;
+      const ax = s.prism.indexOf(true), r: Vec3 = [x, y, z];
+      let w = 1;
+      if (ax >= 0) for (;;) {
+        r[ax] = (ax === 0 ? x : ax === 1 ? y : z) + w;
+        if ((r[ax] ?? 0) >= (dims[ax] ?? 0) || !get(r[0], r[1], r[2]) || sh(r[0], r[1], r[2]) !== s) break;
+        merged[(r[2] * ny + r[1]) * nx + r[0]] = 1;
+        w++;
+      }
+      for (const face of s.faces) if (face.side < 0) sfaces.push({ cell: [x, y, z], face, ax, w });
+    }
+  }
+  const nq = quads.length;
+  const cp = pack([...quads.map((q): [number, number] => [q.w + 2, q.h + 2]), ...sfaces.map((f): [number, number] => [f.w + 2, 3])]);
+  const ap = pack([...quads.map((q): [number, number] => [q.w + 3, q.h + 3]), [3, 3]]); // posledný: plný jas pre steny dielikov
   const col = new Uint8Array(cp.W * cp.H * 4), ao = new Uint8Array(ap.W * ap.H);
-  const n = quads.length, P = new Float32Array(n * 12), N = new Int8Array(n * 12);
-  const UV = new Float32Array(n * 8), UV2 = new Float32Array(n * 8);
-  const I = n * 4 > 65535 ? new Uint32Array(n * 6) : new Uint16Array(n * 6);
+  let nv = nq * 4, ni = nq * 6;
+  for (const f of sfaces) { nv += f.face.pts.length; ni += (f.face.pts.length - 2) * 3; }
+  const P = new Float32Array(nv * 3), N = new Float32Array(nv * 3);
+  const UV = new Float32Array(nv * 2), UV2 = new Float32Array(nv * 2);
+  const I = nv > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
   const c: Vec3 = [0, 0, 0], clamp = (v: number, a: number, b: number): number => (v < a ? a : v > b ? b : v);
   quads.forEach((q, k) => {
     const { ax, sg, d, u, v, w, h } = q, [, ua, va] = AXES[ax], f = faceIndex(q);
@@ -178,9 +222,9 @@ export function bakeModel(dims: Readonly<Vec3>, get: CellGet, occ: Occludes, loo
       const cu = clamp(i, 0, w), cv = clamp(j, 0, h), ci = Math.min(cu, w - 1), cj = Math.min(cv, h - 1);
       const p = cell(ci, cj);
       c[ax] = d + sg;
-      const nb = get(c[0], c[1], c[2]);
+      const nb = aoGet(c[0], c[1], c[2]);
       c[ax] = d;
-      const bits = faceAo(get, occ, p, ax, sg, nb), du = cu - ci, dv = cv - cj;
+      const bits = faceAo(aoGet, occ, p, ax, sg, nb), du = cu - ci, dv = cv - cj;
       ao[(oy + 1 + j) * ap.W + ox + 1 + i] = Math.round((aoCurve[(bits >> ((du * 2 + dv) * 2)) & 3] ?? 0) * 255);
     }
     const corners = CORNERS[sg < 0 ? 1 : 0];
@@ -193,5 +237,33 @@ export function bakeModel(dims: Readonly<Vec3>, get: CellGet, occ: Occludes, loo
     });
     I.set([k * 4, k * 4 + 1, k * 4 + 2, k * 4, k * 4 + 2, k * 4 + 3], k * 6);
   });
-  return { quads, P, N, UV, UV2, I, color: { W: cp.W, H: cp.H, data: col }, ao: { W: ap.W, H: ap.H, data: ao } };
+  // steny dielikov: vejár trojuholníkov, farba 1 texel na dielik radu, zatienenie = plný jas
+  const [wx, wy] = ap.at[nq] ?? [0, 0];
+  for (let j = 0; j < 3; j++) for (let i = 0; i < 3; i++) ao[(wy + j) * ap.W + wx + i] = Math.round((aoCurve[3] ?? 1) * 255);
+  let vi = nq * 4, ii = nq * 6;
+  sfaces.forEach((sf, k) => {
+    const { cell, face, ax, w } = sf, n = face.n, [cx, cy] = cp.at[nq + k] ?? [0, 0];
+    const dom = Math.abs(n[0]) >= Math.abs(n[1]) && Math.abs(n[0]) >= Math.abs(n[2]) ? 0 : Math.abs(n[1]) >= Math.abs(n[2]) ? 1 : 2;
+    const f = dom * 2 + (n[dom] > 0 ? 0 : 1);
+    for (let i = -1; i <= w; i++) {
+      c[0] = cell[0]; c[1] = cell[1]; c[2] = cell[2];
+      if (ax >= 0) c[ax] = (cell[ax] ?? 0) + clamp(i, 0, w - 1);
+      const rgbe = look(get(c[0], c[1], c[2]), c[0], c[1], c[2], f, n);
+      for (let j = 0; j < 3; j++) {
+        const o = ((cy + j) * cp.W + cx + 1 + i) * 4;
+        for (let t = 0; t < 4; t++) col[o + t] = Math.round(clamp(rgbe[t] ?? 0, 0, 1) * 255);
+      }
+    }
+    const v0 = vi;
+    for (const pt of face.pts) {
+      const t = ax >= 0 ? pt[ax] ?? 0 : 0.5; // poloha po rade: 0 = začiatok prvého dielika, 1 = koniec posledného
+      for (let a = 0; a < 3; a++) P[vi * 3 + a] = (cell[a] ?? 0) + (pt[a] ?? 0) * (a === ax ? w : 1);
+      N.set(n, vi * 3);
+      UV[vi * 2] = (cx + 1 + (ax >= 0 ? t * w : 0.5)) / cp.W; UV[vi * 2 + 1] = (cy + 1.5) / cp.H;
+      UV2[vi * 2] = (wx + 1.5) / ap.W; UV2[vi * 2 + 1] = (wy + 1.5) / ap.H;
+      vi++;
+    }
+    for (let j = 1; j + 1 < face.pts.length; j++) { I[ii++] = v0; I[ii++] = v0 + j; I[ii++] = v0 + j + 1; }
+  });
+  return { quads, shaped: sfaces.length, P, N, UV, UV2, I, color: { W: cp.W, H: cp.H, data: col }, ao: { W: ap.W, H: ap.H, data: ao } };
 }
