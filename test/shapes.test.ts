@@ -22,7 +22,7 @@ function volume(s: SH.Shape): number {
 test('dieliky: katalóg má všetky rodiny v každom otočení a zmestí sa do bajtu', () => {
   const count: Partial<Record<SH.Family, number>> = {};
   for (const s of shapes()) count[s.family] = (count[s.family] ?? 0) + 1;
-  assert.deepStrictEqual(count, { klin: 12, narozie: 24, uzlabie: 24, roh: 8, zrezany: 8, nizkyA: 24, nizkyB: 24, narozieN: 24, uzlabieN: 24, doska: 6, platna: 6, stlpik: 3, hrot: 6, strieska: 12 });
+  assert.deepStrictEqual(count, { klin: 12, narozie: 24, uzlabie: 24, roh: 8, zrezany: 8, nizkyA: 24, nizkyB: 24, narozieN: 24, uzlabieN: 24, doska: 6, platna: 6, stlpik: 3, zuzeny: 6, strieska: 12 });
   assert.ok(SH.SHAPES.length <= 256);
   assert.strictEqual(SH.SHAPES[0], undefined, '0 je plná kocka');
   shapes().forEach((s, i) => { assert.strictEqual(s.id, i + 1); });
@@ -34,7 +34,7 @@ test('dieliky: katalóg má všetky rodiny v každom otočení a zmestí sa do b
 });
 
 test('dieliky: povrch je uzavretý, steny smerujú von a objem sedí', () => {
-  const VOL: Record<SH.Family, number> = { klin: 1 / 2, narozie: 1 / 3, uzlabie: 2 / 3, roh: 1 / 6, zrezany: 5 / 6, nizkyA: 1 / 4, nizkyB: 3 / 4, narozieN: 1 / 6, uzlabieN: 1 / 3, doska: 1 / 2, platna: 1 / 4, stlpik: 1 / 4, hrot: 1 / 3, strieska: 1 / 2 };
+  const VOL: Record<SH.Family, number> = { klin: 1 / 2, narozie: 1 / 3, uzlabie: 2 / 3, roh: 1 / 6, zrezany: 5 / 6, nizkyA: 1 / 4, nizkyB: 3 / 4, narozieN: 1 / 6, uzlabieN: 1 / 3, doska: 1 / 2, platna: 1 / 4, stlpik: 1 / 4, zuzeny: 7 / 12, strieska: 1 / 2 };
   for (const s of shapes()) {
     const label = `${s.family} ${s.dirs.join(' ')}`;
     // každá hrana je v povrchu práve raz v každom smere
