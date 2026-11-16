@@ -544,7 +544,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
 
   // kde je majster hodvábu teraz (podľa herného času, ako na serveri); null = je preč (leto, zima)
   const masterNow = (): D.MasterPos | null => D.masterAt(S.day, curMin(), S.dielna.loom); // po kúpe krosien už nechodí
-  const onDielnaLot = (tx: number, ty: number): boolean => Obj.inRect(Obj.lotRect({ list: S.objects, nid: 0 }, 'dielna'), tx, ty);
+  const onDielnaLot = (tx: number, ty: number): boolean => Obj.inRect(Obj.lotRect({ list: S.objects }, 'dielna'), tx, ty);
   function doAction(tx: number, ty: number): void {
     const a = ctxAction(tx, ty);
     if (!a) return;
