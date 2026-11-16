@@ -143,12 +143,14 @@ export function pack(rects: readonly (readonly [number, number])[]): { W: number
 
 // Farba steny minikocky: [r, g, b, žiarenie] v 0..1; n = normála steny dielika (šikmé steny), inak rozhoduje f
 export type Look = (m: number, x: number, y: number, z: number, f: number, n?: Readonly<Vec3>) => readonly number[];
+// (n dostane look len pri šikmej stene dielika – vtedy vracia farbu bez tieňovania strany, to je vo vrcholoch)
 // Dielik bunky (shapes.ts), alebo null pre plnú kocku a prázdno; mimo mriežky null
 export type ShapeAt = (x: number, y: number, z: number) => Shape | null;
 export interface Baked {
-  quads: Quad[]; shaped: number; P: Float32Array; N: Float32Array; UV: Float32Array; UV2: Float32Array; I: Uint16Array | Uint32Array;
+  quads: Quad[]; shaped: number; P: Float32Array; N: Float32Array; S: Float32Array; UV: Float32Array; UV2: Float32Array; I: Uint16Array | Uint32Array;
   color: { W: number; H: number; data: Uint8Array }; ao: { W: number; H: number; data: Uint8Array };
 }
+const must3 = (a: Float32Array, i: number, k: number): number => a[i * 3 + k] ?? 0;
 const SIDE_DIR: readonly Readonly<Vec3>[] = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
 // Stena dielika v sieti: bunka, stena tvaru a rad w rovnakých dielikov po osi ax (-1 = jedna bunka)
 interface ShapedFace { cell: Vec3; face: ShapeFace; ax: number; w: number }
@@ -163,8 +165,14 @@ interface ShapedFace { cell: Vec3; face: ShapeFace; ax: number; w: number }
 // len tam, kde ju sused zakrýva celú), steny dielikov idú do siete za obdĺžniky: stena na strane kocky sa nekreslí,
 // keď ju sused zakrýva; šikmé steny rovnakých dielikov v rade sa zlúčia do jednej (1 texel farby na dielik).
 // Steny dielikov majú plný jas zatienenia; dielik s malým objemom rohy susedov nezatieňuje.
+// Mäkké hrany: šikmé steny dielikov majú vo vrchole priemer normál všetkých šikmých stien, ktoré sa v ňom stretajú –
+// nárožie, hrebeň či skosený kameň tak nemajú ostrý zlom svetla. Kde sa vrcholu dotýka viditeľná stena kocky,
+// platí jej normála (pri viacerých ich priemer). Normála závisí len od polohy vrcholu, takže svetlo je
+// cez spoločné hrany spojité; do radu sa preto zlúčia len dieliky, ktorých vrcholy sú „rovné“ (jediná normála).
+// Tieňovanie strany týchto stien nie je vo farbe (look s n vracia farbu bez neho), ale vo vrchole: S = shade(normála);
+// pre ostatné vrcholy je S = 1.
 // Vráti { quads, shaped (počet stien dielikov), P (v bunkách), N, UV, UV2, I, color: { W, H, data }, ao: { W, H, data } }.
-export function bakeModel(dims: Readonly<Vec3>, get: CellGet, occ: Occludes, look: Look, aoCurve: readonly number[], shapeAt?: ShapeAt): Baked {
+export function bakeModel(dims: Readonly<Vec3>, get: CellGet, occ: Occludes, look: Look, aoCurve: readonly number[], shapeAt?: ShapeAt, shade?: (n: Readonly<Vec3>) => number): Baked {
   const sh: ShapeAt = shapeAt ?? (() => null);
   // 1 = kocka, 64 + bity celých zakrytých strán = dielik
   const solid = (x: number, y: number, z: number): number => { if (!get(x, y, z)) return 0; const s = sh(x, y, z); return s ? 64 | s.full : 1; };
@@ -172,8 +180,42 @@ export function bakeModel(dims: Readonly<Vec3>, get: CellGet, occ: Occludes, loo
   const aoGet: CellGet = shapeAt ? (x, y, z) => { const m = get(x, y, z); if (!m) return 0; const s = sh(x, y, z); return s && !s.occ ? 0 : m; } : get;
   // steny dielikov
   const sfaces: ShapedFace[] = [];
+  // normály šikmých stien vo vrcholoch: kľúč polohy → rôzne normály, ktoré sa tam stretajú
+  const meet = new Map<number, Vec3[]>();
+  const vkey = (x: number, y: number, z: number): number => (Math.round(z * 8) * 4096 + Math.round(y * 8)) * 4096 + Math.round(x * 8);
+  const bent = new Set<number>(); // vrcholy, ktorých normálu určujú steny kociek
+  const flat = (x: number, y: number, z: number, s: Shape): boolean => s.faces.every(f => f.side >= 0 || f.pts.every(p => { const k = vkey(x + p[0], y + p[1], z + p[2]); return !bent.has(k) && (meet.get(k)?.length ?? 1) === 1; }));
   if (shapeAt) {
     const [nx, ny, nz] = dims, merged = new Uint8Array(nx * ny * nz);
+    for (let z = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+      const s = get(x, y, z) ? sh(x, y, z) : null;
+      if (s) for (const face of s.faces) if (face.side < 0) for (const p of face.pts) {
+        const k = vkey(x + p[0], y + p[1], z + p[2]), list = meet.get(k), n = face.n;
+        if (!list) meet.set(k, [[n[0], n[1], n[2]]]);
+        else if (!list.some(o => Math.abs(o[0] - n[0]) + Math.abs(o[1] - n[1]) + Math.abs(o[2] - n[2]) < 1e-4)) list.push([n[0], n[1], n[2]]);
+      }
+    }
+    // viditeľné steny kociek, ktoré sa vrcholu dotýkajú, majú prednosť: šikmá stena má pri kocke normálu jej steny
+    // (kocka ostáva rovná), takže skosenie medzi dvoma stenami kociek je svetlom zaoblená hrana bez zlomu
+    for (const k of [...meet.keys()]) {
+      const list: Vec3[] = [];
+      const X = (k % 4096) / 8, Y = (Math.floor(k / 4096) % 4096) / 8, Z = Math.floor(k / 16777216) / 8;
+      if (X % 1 || Y % 1 || Z % 1) continue;
+      for (let i = 0; i < 8; i++) {
+        const d: Vec3 = [i & 1 ? -1 : 0, i & 2 ? -1 : 0, i & 4 ? -1 : 0], c: Vec3 = [X + d[0], Y + d[1], Z + d[2]];
+        if (c[0] < 0 || c[1] < 0 || c[2] < 0 || c[0] >= nx || c[1] >= ny || c[2] >= nz || solid(c[0], c[1], c[2]) !== 1) continue;
+        for (const a of [0, 1, 2] as const) {
+          const sg = d[a] ? 1 : -1, q: Vec3 = [c[0], c[1], c[2]];
+          q[a] += sg;
+          const nb = solid(q[0], q[1], q[2]);
+          if (nb >= 64 ? (nb >> (a * 2 + (sg > 0 ? 1 : 0))) & 1 : nb) continue;
+          const n: Vec3 = [0, 0, 0];
+          n[a] = sg;
+          if (!list.some(o => o[0] === n[0] && o[1] === n[1] && o[2] === n[2])) list.push(n);
+        }
+      }
+      if (list.length) { meet.set(k, list); bent.add(k); }
+    }
     const coverAt = (x: number, y: number, z: number, f: number): number => { if (!get(x, y, z)) return 0; const s = sh(x, y, z); return s ? s.cover[f] ?? 0 : FULL_COVER; };
     for (let z = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
       const s = get(x, y, z) ? sh(x, y, z) : null;
@@ -186,9 +228,9 @@ export function bakeModel(dims: Readonly<Vec3>, get: CellGet, occ: Occludes, loo
       if (merged[(z * ny + y) * nx + x]) continue;
       const ax = s.prism.indexOf(true), r: Vec3 = [x, y, z];
       let w = 1;
-      if (ax >= 0) for (;;) {
+      if (ax >= 0 && flat(x, y, z, s)) for (;;) {
         r[ax] = (ax === 0 ? x : ax === 1 ? y : z) + w;
-        if ((r[ax] ?? 0) >= (dims[ax] ?? 0) || !get(r[0], r[1], r[2]) || sh(r[0], r[1], r[2]) !== s) break;
+        if ((r[ax] ?? 0) >= (dims[ax] ?? 0) || !get(r[0], r[1], r[2]) || sh(r[0], r[1], r[2]) !== s || !flat(r[0], r[1], r[2], s)) break;
         merged[(r[2] * ny + r[1]) * nx + r[0]] = 1;
         w++;
       }
@@ -202,7 +244,7 @@ export function bakeModel(dims: Readonly<Vec3>, get: CellGet, occ: Occludes, loo
   let nv = nq * 4, ni = nq * 6;
   for (const f of sfaces) { nv += f.face.pts.length; ni += (f.face.pts.length - 2) * 3; }
   const P = new Float32Array(nv * 3), N = new Float32Array(nv * 3);
-  const UV = new Float32Array(nv * 2), UV2 = new Float32Array(nv * 2);
+  const UV = new Float32Array(nv * 2), UV2 = new Float32Array(nv * 2), S = new Float32Array(nv).fill(1);
   const I = nv > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
   const c: Vec3 = [0, 0, 0], clamp = (v: number, a: number, b: number): number => (v < a ? a : v > b ? b : v);
   quads.forEach((q, k) => {
@@ -248,7 +290,7 @@ export function bakeModel(dims: Readonly<Vec3>, get: CellGet, occ: Occludes, loo
     for (let i = -1; i <= w; i++) {
       c[0] = cell[0]; c[1] = cell[1]; c[2] = cell[2];
       if (ax >= 0) c[ax] = (cell[ax] ?? 0) + clamp(i, 0, w - 1);
-      const rgbe = look(get(c[0], c[1], c[2]), c[0], c[1], c[2], f, n);
+      const rgbe = look(get(c[0], c[1], c[2]), c[0], c[1], c[2], f, face.side < 0 ? n : undefined);
       for (let j = 0; j < 3; j++) {
         const o = ((cy + j) * cp.W + cx + 1 + i) * 4;
         for (let t = 0; t < 4; t++) col[o + t] = Math.round(clamp(rgbe[t] ?? 0, 0, 1) * 255);
@@ -258,12 +300,22 @@ export function bakeModel(dims: Readonly<Vec3>, get: CellGet, occ: Occludes, loo
     for (const pt of face.pts) {
       const t = ax >= 0 ? pt[ax] ?? 0 : 0.5; // poloha po rade: 0 = začiatok prvého dielika, 1 = koniec posledného
       for (let a = 0; a < 3; a++) P[vi * 3 + a] = (cell[a] ?? 0) + (pt[a] ?? 0) * (a === ax ? w : 1);
-      N.set(n, vi * 3);
+      // šikmá stena: priemer normál, ktoré sa vo vrchole stretajú, a tieňovanie strany podľa neho
+      let vn: Readonly<Vec3> = n;
+      const list = face.side < 0 ? meet.get(vkey(must3(P, vi, 0), must3(P, vi, 1), must3(P, vi, 2))) : undefined;
+      if (list && (list.length > 1 || bent.has(vkey(must3(P, vi, 0), must3(P, vi, 1), must3(P, vi, 2))))) {
+        let sx = 0, sy = 0, sz = 0;
+        for (const o of list) { sx += o[0]; sy += o[1]; sz += o[2]; }
+        const len = Math.hypot(sx, sy, sz);
+        if (len > 1e-6) vn = [sx / len, sy / len, sz / len];
+      }
+      N.set(vn, vi * 3);
+      if (face.side < 0) S[vi] = shade ? shade(vn) : 1;
       UV[vi * 2] = (cx + 1 + (ax >= 0 ? t * w : 0.5)) / cp.W; UV[vi * 2 + 1] = (cy + 1.5) / cp.H;
       UV2[vi * 2] = (wx + 1.5) / ap.W; UV2[vi * 2 + 1] = (wy + 1.5) / ap.H;
       vi++;
     }
     for (let j = 1; j + 1 < face.pts.length; j++) { I[ii++] = v0; I[ii++] = v0 + j; I[ii++] = v0 + j + 1; }
   });
-  return { quads, shaped: sfaces.length, P, N, UV, UV2, I, color: { W: cp.W, H: cp.H, data: col }, ao: { W: ap.W, H: ap.H, data: ao } };
+  return { quads, shaped: sfaces.length, P, N, S, UV, UV2, I, color: { W: cp.W, H: cp.H, data: col }, ao: { W: ap.W, H: ap.H, data: ao } };
 }

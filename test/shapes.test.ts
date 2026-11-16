@@ -149,6 +149,25 @@ test('sieť: steny medzi susedmi – plná strana dielika zakryje kocku, čiasto
   assert.strictEqual(area(cube), 5);
 });
 
+test('sieť: mäkké hrany – šikmá stena má pri kocke normálu jej steny, tieňovanie strany je vo vrcholoch', () => {
+  // klin opretý o kocku, ktorá je o bunku vyššie: horná hrana šikmej steny sa dotýka vrchu aj boku kocky
+  const b = bakeFine(model(4, 4, 3, [[1, 0, 1, SH.klin('x+')], [2, 0, 1, 0], [2, 1, 1, 0]]), 1);
+  const at = (i: number): number[] => [must(b.P[i * 3]), must(b.P[i * 3 + 1]), must(b.P[i * 3 + 2]), must(b.N[i * 3]), must(b.N[i * 3 + 1]), must(b.N[i * 3 + 2]), must(b.S[i])];
+  const verts = Array.from({ length: b.P.length / 3 }, (_, i) => at(i)).slice(b.quads.length * 4).filter(v => must(v[3]) < -0.1); // šikmá stena klinu (jediná smeruje k −x)
+  assert.strictEqual(verts.length, 4);
+  for (const [x, y, , nx, ny, , sh] of verts) {
+    // hore: priemer bokov kociek, ktoré sa rohu dotýkajú (−x a ±z) – vodorovná normála, tieňovanie ako bok
+    if (y === 1) { assert.strictEqual(x, 2); assert.ok(must(nx) < -0.5 && Math.abs(must(ny)) < 1e-5, 'hore: normála bokov kocky'); assert.ok(must(sh) >= 0.62 - 1e-5 && must(sh) <= 0.8 + 1e-5); }
+    else assert.ok(Math.abs(must(nx) + Math.SQRT1_2) < 1e-5 && Math.abs(must(sh) - 0.81) < 1e-5, 'dolu: vlastná normála, tieňovanie medzi vrchom a bokom');
+  }
+  // steny kociek majú tieňovanie vo farbe: S = 1
+  for (let i = 0; i < b.quads.length * 4; i++) assert.strictEqual(b.S[i], 1);
+  // rad klinov bez kociek pri vrcholoch ostane zlúčený, pri kocke sa rad rozdelí na dieliky
+  const row = (extra: readonly (readonly [number, number, number, number])[]): number => bakeFine(model(4, 4, 6, [[1, 0, 1, SH.klin('x+')], [1, 0, 2, SH.klin('x+')], [1, 0, 3, SH.klin('x+')], ...extra]), 1).shaped;
+  assert.strictEqual(row([]), 3 + 2 + 1);
+  assert.strictEqual(row([[2, 0, 1, 0], [2, 0, 2, 0], [2, 0, 3, 0]]), 2 + 3, 'chrbty zakryté, šikmé steny po jednej');
+});
+
 test('modely: budovy majú dieliky, otočenie ich otočí a sneh im nechá tvar', () => {
   const entry = (id: string): W.FineModelEntry => must(W.FINE_MODELS.find(m => m.id === id));
   for (const id of ['house', 'hut', 'icehouse', 'dielna', 'stall', 'well', 'dock']) {

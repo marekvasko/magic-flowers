@@ -24,9 +24,9 @@ export function bakeFine(f: FineModel, se: number): Baked {
   return MS.bakeModel([sx, sy, sz], get, v => !!v, (m, x, y, z, fi, n) => {
     let c = cols.get(m);
     if (!c) { c = hex(W.colorOf(m, se)); cols.set(m, c); }
-    const vary = 0.94 + W.hash(x, y, z) * 0.12, sh = n ? shadeOf(n) : must(FACE_SHADE[fi]);
+    const vary = 0.94 + W.hash(x, y, z) * 0.12, sh = n ? 1 : must(FACE_SHADE[fi]); // šikmé steny dielikov: tieňovanie strany je vo vrcholoch (mäkké hrany)
     return [Math.min(1, c[0] * vary) * sh, Math.min(1, c[1] * vary) * sh, Math.min(1, c[2] * vary) * sh, W.EMISSIVE[m] ? 1 : 0];
-  }, AO_CURVE, shapeAt);
+  }, AO_CURVE, shapeAt, shadeOf);
 }
 
 // Obdĺžnik každého zlúčeného obdĺžnika v oboch obrázkoch (v texeloch, bez okraja 1 texel) – zo súradníc UV a UV2 siete
