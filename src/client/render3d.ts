@@ -11,7 +11,7 @@ import * as MS from '../shared/mesher.ts';
 import type { Baked, Quad } from '../shared/mesher.ts';
 import type { Look } from '../shared/data.ts';
 import type { PlantView } from '../shared/protocol.ts';
-import type { GardenObject } from '../shared/save.ts';
+import type { LotObject } from '../shared/save.ts';
 import { must } from '../shared/util.ts';
 import { Art } from './art.ts';
 import { AO_CURVE, FACE_SHADE, bakeFine } from './finebake.ts';
@@ -502,10 +502,10 @@ export function create(api: Render3DApi): Render3D {
   }
   // Pozemok budovy pod políčkom i (#178): kolíky sú v rohoch pozemku. Správa objects môže prísť po políčkach – preto je
   // roh pozemku aj v podpise políčka (refreshGround), aby sa po nej prekreslilo.
-  function lotAt(i: number): GardenObject | undefined {
+  function lotAt(i: number): LotObject | undefined {
     if (S.area !== 'garden' || S.tiles[i]?.g !== 'lot') return undefined;
     const x = i % S.W, y = (i / S.W) | 0;
-    return S.objects.find(o => Obj.inRect(Obj.rectAt(o.x, o.y), x, y));
+    return S.objects.find((o): o is LotObject => o.kind === 'lot' && Obj.inRect(Obj.rectAt(o.x, o.y), x, y));
   }
   function drawTile(i: number, se: number, t: number): void {
     const tl = must(S.tiles[i]), x = i % S.W, y = (i / S.W) | 0;

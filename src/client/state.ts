@@ -3,8 +3,8 @@
 import type { AreaId, BrewHint, Ground, ItemId, Look, MasterPos, PotionId, SpeciesId } from '../shared/data.ts';
 import type { WebOverrides } from '../shared/webs.ts';
 import type { Other } from '../shared/players.ts';
-import type { BatchesView, CornerView, PlayerView, ServerMessage, SpiderKind, TileView, VehicleView, WebView } from '../shared/protocol.ts';
-import type { Contract, Dock, GardenObject, Icehouse, Weather, WorldMode } from '../shared/save.ts';
+import type { BatchesView, CornerView, ObjectView, PlayerView, ServerMessage, SpiderKind, TileView, VehicleView, WebView } from '../shared/protocol.ts';
+import type { Contract, Dock, Icehouse, Weather, WorldMode } from '../shared/save.ts';
 import type { FadeConfig, FadeOverrides, Render3D } from './render3d.ts';
 
 export type MsgOf<T extends ServerMessage['t']> = Extract<ServerMessage, { t: T }>;
@@ -49,7 +49,7 @@ export interface ClientState {
   sel: ItemId | ''; area: AreaId; areaSeq: number; W: number; H: number; tilesGen: number; worldGen?: number; storageRate: number;
   icehouse: Icehouse; dielna: { built: boolean; loom: boolean }; loom: MsgOf<'me'>['loom']; eternal: boolean; names: string[];
   dock?: Dock; // mólo a loďka (#160): stavba, poloha loďky, kto v nej sedí, zima
-  objects: GardenObject[]; // umiestnené objekty (#178): pozemky budov
+  objects: ObjectView[]; // umiestnené objekty (#178, #179): pozemky budov, záhony
   keys: Partial<Record<Dir, boolean>>; kbd?: boolean; stick: Pt; path: Pt[] | null; pendingAct: (Pt & { onTile?: boolean }) | null;
   tapMark: (Pt & { t: number; act: boolean }) | null; lastSent: string; sentAt: number;
   fx: Fx[]; screenFx: ScreenFx[]; bubbles: Partial<Record<number, { text: string; until: number }>>; modal: { refresh: () => void } | null; modalHold?: boolean; modalPending?: boolean;

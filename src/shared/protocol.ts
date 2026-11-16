@@ -6,7 +6,7 @@
 // typuje ich engine (fáza 3). Správa webbed ide aj klientovi.
 import type { AreaId, BrewHint, Ground, ItemId, Look, PotionId, SpeciesId, UpgradeId } from './data.ts';
 import type { Level } from './book.ts';
-import type { ActiveFestival, Contract, CornerArea, Dock, GardenObject, Icehouse, OrderSide, Plant, Soil, VehicleId, Weather, WorldMode } from './save.ts';
+import type { ActiveFestival, Contract, CornerArea, Dock, Icehouse, LotObject, OrderSide, Plant, Soil, VehicleId, ZahonObject, ZahonSpot, Weather, WorldMode } from './save.ts';
 
 // ---- Klient → server ----
 export type Emote = 'dance' | 'wave' | 'heart' | 'laugh' | 'flower';
@@ -44,6 +44,10 @@ export type ClientMessageType = ClientMessage['t'];
 // Políčko, ako ho vidí klient: zem, na záhrade pôda (druh divej rastliny je skrytý ako 'wild'), v horách ľad a otvor vo vode
 export interface PlantView extends Omit<Plant, 'sp'> { sp: SpeciesId | 'wild' }
 export interface SoilView extends Omit<Soil, 'p'> { p: PlantView | null }
+// Záhon pre klienta (#179): divé semienko bez druhu, kým nevyklíči (ako na políčku)
+export interface ZahonSpotView extends Omit<ZahonSpot, 'p'> { p?: PlantView }
+export interface ZahonView extends Omit<ZahonObject, 'spots'> { spots: ZahonSpotView[] }
+export type ObjectView = LotObject | ZahonView;
 export interface TileView {
   g: Ground;
   s?: SoilView | null;
@@ -161,7 +165,7 @@ export type ServerMessage =
   | { t: 'shove'; x: number; y: number }                   // stará pradlena hráča odhodila
   | { t: 'brewed'; k: PotionId; hint?: BrewHint }        // hint len pri slize (rada kotlíka)
   | ({ t: 'dock' } & Dock)                                 // mólo a loďka (#160): stavba, poloha loďky, kto v nej sedí, zima
-  | { t: 'objects'; list: GardenObject[] }                 // umiestnené objekty (#178): pozemky budov
+  | { t: 'objects'; list: ObjectView[] }                   // umiestnené objekty (#178, #179): pozemky budov, záhony
   | { t: 'error'; text: string }
   | { t: 'vehicles'; list: VehicleView[] };                 // fúrik a sane (#158): všetky, pri každej zmene
 export type ServerMessageType = ServerMessage['t'];
