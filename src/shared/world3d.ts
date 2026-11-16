@@ -17,7 +17,7 @@ type Shade = MatId | ((x: number, y: number, z: number) => MatId);
 // Plátno modelu s pôdorysom tw × td polí: minikocky, kváder, čiara, sneh na vrchu
 // put(…, s) = dielik s (shapes.ts; bez neho plná kocka), gets = dielik bunky, paint = len materiál (tvar ostane),
 // slopes = vyplní schody strechy klinmi, nárožiami a úžľabiami, round = zaoblí kúty v pôdoryse (pozri fineCanvas)
-export interface SlopeOpts { y0?: number; y1?: number; mat?: Shade; down?: boolean }
+export interface SlopeOpts { y0?: number; y1?: number; mat?: Shade; down?: boolean; course?: number }
 export interface FineCanvas extends FineModel {
   W2: number; D2: number; shape: Uint8Array;
   put: (x: number, y: number, z: number, m: MatId, s?: number) => void;
@@ -161,6 +161,8 @@ export function fineCanvas(tw: number, td: number, sy: number): FineCanvas {
   // dostane dielik podľa toho, o čo sa opiera – o jednu stranu klin, o dve susedné úžľabie, len o roh nárožie.
   // Materiál je ako bočná kocka (vzor strechy pokračuje), alebo opts.mat. Schody strechy 1 : 1 sa tak vyhladia.
   // opts.down: to isté hore nohami – bunka visí pod kockou (spodok presahu, brucho hrnca).
+  // opts.course = n: každý n-tý rad (od y0) je nízky – stúpa len do polovice bunky a nad ním ostane schodík
+  // vysoký pol minikocky, ako rad šindľov, ktorý prekrýva ten pod sebou.
   const cube = (x: number, y: number, z: number): MatId => (gets(x, y, z) ? 0 : getf(x, y, z));
   const slopes = (mats: readonly MatId[], opts?: SlopeOpts): void => {
     const todo: [number, number, number, MatId, number][] = [];
@@ -172,12 +174,13 @@ export function fineCanvas(tw: number, td: number, sy: number): FineCanvas {
       const side = SIDE4.filter(([dx, dz]) => inMats(x + dx, y, z + dz));
       const [a, b] = side;
       let s = 0, from: readonly [number, number] | undefined = a;
-      if (side.length === 1 && a) s = SH.klin(dir(a[0], a[1]), up);
-      else if (side.length === 2 && a && b && a[0] !== -b[0]) s = SH.uzlabie(dir(a[0], a[1]), dir(b[0], b[1]), up);
+      const low = !!opts?.course && (y - (opts.y0 ?? 0)) % opts.course === opts.course - 1;
+      if (side.length === 1 && a) s = low ? SH.nizky(dir(a[0], a[1]), up)[0] : SH.klin(dir(a[0], a[1]), up);
+      else if (side.length === 2 && a && b && a[0] !== -b[0]) s = (low ? SH.uzlabieN : SH.uzlabie)(dir(a[0], a[1]), dir(b[0], b[1]), up);
       else if (!side.length) {
         const diag = DIAG4.filter(([dx, dz]) => inMats(x + dx, y, z + dz));
         from = diag[0];
-        if (diag.length === 1 && from) s = SH.narozie(dir(from[0], 0), dir(0, from[1]), up);
+        if (diag.length === 1 && from) s = (low ? SH.narozieN : SH.narozie)(dir(from[0], 0), dir(0, from[1]), up);
       }
       if (!s || !from) continue;
       const m = opts?.mat;
@@ -265,7 +268,7 @@ function cicmanyHouse(season: number): FineModel {
     }
   }
   const ROOF = [M.SHINGLE, M.SHINGLE_DARK, M.RIDGE, M.PLANK_DARK];
-  C.slopes(ROOF, { y0: 20 });             // schody strechy → šikmá plocha
+  C.slopes(ROOF, { y0: 20, course: 3 });  // schody strechy → šikmá plocha, každý tretí rad šindľov so schodíkom
   C.slopes(ROOF, { y0: 19, down: true }); // aj zospodu presahu
   // ornament a okrúhle okienko v štíte
   for (const xs of [1, 22]) {
@@ -333,7 +336,7 @@ function babkaHut(season: number): FineModel {
     if (z0 > z1) break;
     fbox(x0, 17 + k, z0, x1, 17 + k, z1, (x, y, z) => (z0 === z1 || z0 + 1 === z1) ? M.STRAW_DARK : strawVar(x, y, z));
   }
-  C.slopes([M.STRAW, M.STRAW_DARK], { y0: 18 });
+  C.slopes([M.STRAW, M.STRAW_DARK], { y0: 18, course: 3 });
   C.slopes([M.STRAW, M.STRAW_DARK], { y0: 17, down: true });
   // komín
   fbox(17, 17, 5, 19, 30, 7, (x, y) => y >= 29 ? M.DARKSTONE : M.PLASTER);
@@ -453,7 +456,7 @@ function wellModel(season: number): FineModel {
   fbox(3, 5, 3, 5, 6, 5, (x, y, z) => (x === 4 && z === 4 && y === 6) ? 0 : y === 6 ? M.DARKSTONE : M.PLANK_DARK);
   // sedlová strieška
   for (let k = 0; k < 5; k++) fbox(-2, 14 + k, -1 + k, 9, 14 + k, 8 - k, (x, y, z) => k === 4 ? M.RIDGE : (z === -1 + k || z === 8 - k) ? ((x % 2) ? M.SHINGLE : M.SHINGLE_DARK) : M.PLANK_DARK);
-  C.slopes([M.SHINGLE, M.SHINGLE_DARK, M.RIDGE], { y0: 15 });
+  C.slopes([M.SHINGLE, M.SHINGLE_DARK, M.RIDGE], { y0: 15, course: 2 });
   if (season === 3) C.snow([M.SHINGLE, M.SHINGLE_DARK, M.RIDGE, M.PLANK_DARK], 14);
   return C.done();
 }
@@ -648,7 +651,8 @@ function icehouseModel(season: number, ins?: number): FineModel {
     const [thin, thick] = SH.nizky('y-', away), y = 5 + 2 * k;
     for (let z = 0; z <= 16; z++) {
       const m = C.getf(x, y, z) || (z % 2 ? M.SHINGLE : M.SHINGLE_DARK);
-      put(x, y, z, m, thick); put(x, y + 1, z, m, thin);
+      put(x, y, z, m, thick);
+      if (k % 3) put(x, y + 1, z, m, thin); // každý tretí rad šindľov so schodíkom
     }
   }
   if (season === 3) C.snow([M.SHINGLE, M.SHINGLE_DARK, M.RIDGE, M.PLANK_DARK, M.SILK, M.SILK_DARK], 5);
@@ -673,7 +677,7 @@ function dielnaModel(season: number, loom?: number | boolean): FineModel {
     fbox(-1, y, -1 + k, 16, y, 17 - k, (x, yy, z) => (z === -1 + k || z === 17 - k) ? (x % 2 ? M.SHINGLE : M.SHINGLE_DARK) : M.PLANK_DARK);
   }
   for (let x = -1; x <= 16; x++) { put(x, 22, 7, M.RIDGE, SH.klin('z+')); put(x, 22, 8, M.RIDGE); put(x, 22, 9, M.RIDGE, SH.klin('z-')); } // hrebenáč so skosenými bokmi
-  C.slopes([M.SHINGLE, M.SHINGLE_DARK, M.RIDGE], { y0: 14 });
+  C.slopes([M.SHINGLE, M.SHINGLE_DARK, M.RIDGE], { y0: 14, course: 3 });
   // tabuľa s pílou nad vchodom
   fbox(5, 14, 17, 10, 16, 17, M.SIGN);
   fbox(6, 15, 18, 9, 15, 18, M.STONE_LIGHT); put(10, 15, 18, M.PLANK); put(6, 14, 18, M.STONE_LIGHT); put(8, 14, 18, M.STONE_LIGHT);
@@ -884,11 +888,12 @@ function mossTop(C: FineCanvas, se: number): void {
     const m = C.getf(x, y, z);
     if (!m) continue;
     const h = hash(x, y, z + 71);
-    if (se === 3) { if (h < 0.5 && y >= 2) C.put(x, y + 1, z, M.SNOW); }
-    else if (h < 0.3) C.put(x, y, z, M.MOSS); else if (h < 0.38) C.put(x, y, z, M.LICHEN);
+    if (se === 3) { if (h < 0.5 && y >= 2) { if (C.gets(x, y, z)) C.paint(x, y, z, M.SNOW); else C.put(x, y + 1, z, M.SNOW); } } // na šikmom dieliku sneh leží v ňom
+    else if (h < 0.3) C.paint(x, y, z, M.MOSS); else if (h < 0.38) C.paint(x, y, z, M.LICHEN);
     break;
   }
 }
+const ROCK_MATS = [M.DARKSTONE, M.STONE_LIGHT, M.STONE];
 type RockKind = 'balvan' | 'kopa' | 'plocha';
 const ROCK_BUILD: Readonly<Record<RockKind, (C: FineCanvas) => void>> = {
   balvan(C) {
@@ -911,7 +916,7 @@ function rockModel(kind: RockKind, season: number, rot: number): FineModel {
   const known = rockCache.get(key);
   if (known) return known;
   let f: FineModel;
-  if (rot === 0) { const C = fineCanvas(1, 1, 12); ROCK_BUILD[kind](C); mossTop(C, season); f = C.done(); }
+  if (rot === 0) { const C = fineCanvas(1, 1, 12); ROCK_BUILD[kind](C); C.slopes(ROCK_MATS); C.round(ROCK_MATS); mossTop(C, season); f = C.done(); } // skosené hrany (#182)
   else f = rotate90(rockModel(kind, season, rot - 1));
   rockCache.set(key, f);
   return f;
@@ -932,11 +937,12 @@ const PIECES: readonly (readonly [SH.Family, number, MatId])[] = [
   ['klin', SH.klin('x+'), M.SHINGLE], ['narozie', SH.narozie('x+', 'z+'), M.STRAW], ['uzlabie', SH.uzlabie('x+', 'z+'), M.ROOF_RED],
   ['roh', SH.roh('x+', 'y-', 'z+'), M.STONE], ['zrezany', SH.zrezany('x-', 'y-', 'z-'), M.STONE_LIGHT],
   ['nizkyA', SH.nizky('x+')[0], M.AWN_RED], ['nizkyB', SH.nizky('x+')[1], M.AWN_WHITE],
+  ['narozieN', SH.narozieN('x+', 'z+'), M.STRAW], ['uzlabieN', SH.uzlabieN('x+', 'z+'), M.ROOF_RED],
   ['doska', SH.doska(), M.PLANK], ['platna', SH.platna(), M.SHUTTER], ['stlpik', SH.stlpik(), M.LOG_DARK],
   ['hrot', SH.hrot(), M.DARKSTONE], ['strieska', SH.strieska('x+'), M.RIDGE]
 ];
 function piecesModel(): FineModel {
-  const C = fineCanvas(3, 1, 2);
+  const C = fineCanvas(4, 1, 2);
   PIECES.forEach(([, id, mat], col) => {
     let s = id;
     for (let row = 0; row < 4; row++) { C.put(col * 2, 0, row * 2, mat, s); s = SH.ROT_Y[s] ?? 0; }
@@ -971,7 +977,7 @@ export const FINE_MODELS: FineModelEntry[] = [
   { id: 'log', name: 'Spadnutý kmeň', group: 'Les divov', fn: 'logModel(shrooms = false)', tiles: [1, 1], build: (se, rot) => logModel(se, rot || 0, false) },
   { id: 'log-shrooms', name: 'Spadnutý kmeň s hubami', group: 'Les divov', fn: 'logModel(shrooms = true)', tiles: [1, 1], build: (se, rot) => logModel(se, rot || 0, true) },
   {
-    id: 'pieces', name: 'Stavebné dieliky', group: 'Pieces (shapes.ts)', fn: 'piecesModel', tiles: [3, 1], build: turned(piecesModel),
+    id: 'pieces', name: 'Stavebné dieliky', group: 'Pieces (shapes.ts)', fn: 'piecesModel', tiles: [4, 1], build: turned(piecesModel),
     note: `Building pieces (#182): a voxel can be one of ${SH.SHAPES.length - 1} pieces instead of a plain cube. Left to right: ${PIECES.map(([f]) => SH.FAMILY_NAMES[f]).join(', ')}; each row is the piece turned by 90°. All other orientations (upside-down, on the side) exist too.`
   }
 ];

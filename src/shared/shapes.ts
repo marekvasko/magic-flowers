@@ -66,6 +66,13 @@ const FAMILIES = {
   // Položený na bok (up vodorovne) je z neho strmý sklon 2 : 1.
   nizkyA: { name: 'Nízky klin – spodok', arity: 2, build: (high: Dir, up: Dir) => [[le(comb([1, along(up)], [-0.5, along(high)]))]] },
   nizkyB: { name: 'Nízky klin – vrch', arity: 2, build: (high: Dir, up: Dir) => [[le(comb([1, along(up)], [-0.5, along(high)], [-0.5, ONE]))]] },
+  // nízke nárožie a úžľabie: rohy k spodku nízkeho klinu (stúpajú len do polovice bunky)
+  narozieN: { name: 'Nízke nárožie', arity: 3, build: (h1: Dir, h2: Dir, up: Dir) => [[le(comb([1, along(up)], [-0.5, along(h1)])), le(comb([1, along(up)], [-0.5, along(h2)]))]] },
+  uzlabieN: {
+    name: 'Nízke úžľabie', arity: 3, build: (h1: Dir, h2: Dir, up: Dir) => [
+      [le(comb([1, along(up)], [-0.5, along(h1)])), le(comb([1, along(h2)], [-1, along(h1)]), true)],
+      [le(comb([1, along(up)], [-0.5, along(h2)])), le(comb([1, along(h1)], [-1, along(h2)]), true)]]
+  },
   // doska pri strane side: polovičná a štvrtinová hrúbka
   doska: { name: 'Doska 1/2', arity: 1, build: (side: Dir) => [[le(comb([0.5, ONE], [-1, along(side)]))]] },
   platna: { name: 'Doska 1/4', arity: 1, build: (side: Dir) => [[le(comb([0.75, ONE], [-1, along(side)]))]] },
@@ -205,6 +212,8 @@ export const uzlabie = (h1: Dir, h2: Dir, up: Dir = 'y+'): number => shapeId('uz
 export const roh = (d1: Dir, d2: Dir, d3: Dir): number => shapeId('roh', d1, d2, d3);
 export const zrezany = (d1: Dir, d2: Dir, d3: Dir): number => shapeId('zrezany', d1, d2, d3);
 export const nizky = (high: Dir, up: Dir = 'y+'): [number, number] => [shapeId('nizkyA', high, up), shapeId('nizkyB', high, up)];
+export const narozieN = (h1: Dir, h2: Dir, up: Dir = 'y+'): number => shapeId('narozieN', h1, h2, up);
+export const uzlabieN = (h1: Dir, h2: Dir, up: Dir = 'y+'): number => shapeId('uzlabieN', h1, h2, up);
 export const doska = (side: Dir = 'y-'): number => shapeId('doska', side);
 export const platna = (side: Dir = 'y-'): number => shapeId('platna', side);
 export const stlpik = (axis: Dir = 'y+'): number => shapeId('stlpik', axis);
