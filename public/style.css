@@ -266,3 +266,10 @@ button { font: inherit; cursor: pointer; border: none; }
 .olegend span { display: inline-flex; align-items: center; gap: 4px; }
 .olegend i { width: 9px; height: 9px; border-radius: 3px; }
 .row.dead { background: #f6f1e8; }
+
+/* Priblížený záhon (#179): lišta hore (Späť, názov a stav, Zrušiť) a nápoveda nad lištou predmetov */
+.zbar { position: absolute; left: 8px; right: 8px; top: calc(env(safe-area-inset-top) + 66px); display: flex; gap: 6px; align-items: center; z-index: 6; }
+.zbar .ztitle { flex: 1; min-width: 0; background: #fff8e7; border: 3px solid #8b5a2b; border-radius: 14px; padding: 5px 9px; font-weight: 700; font-size: 13px; line-height: 1.25; }
+.zbar .btn { flex: none; padding: 8px 10px; border-radius: 14px; font-size: 14px; }
+.zhint { position: absolute; left: 14px; right: 14px; bottom: calc(env(safe-area-inset-bottom) + 190px); background: #fff8e7e8; border: 2px solid #c9a46a; border-radius: 14px; padding: 7px 12px; font-size: 13px; text-align: center; z-index: 6; pointer-events: none; }
+.zooming #toasts { top: calc(env(safe-area-inset-top) + 124px); } /* toasty pod lištou záhonu */

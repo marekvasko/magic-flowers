@@ -682,7 +682,7 @@ function timeMsg(room: Room): ServerMessage {
 // Udalosti a akcie nie sú nikdy v jednej dávke: dávka akcií sa vykoná v kroku, v ktorom správy prišli (svet sa medzi
 // rámcami nehýbe, takže to je práve aktuálny krok), až potom rámec posunie čas.
 const INBOX_MAX = 2000, PLAYER_INBOX_MAX = 100, DEFER_MAX = 3; // ochrana pred zaplavením: čo sa nezmestí (na svet, na hráča, odložené akcie), sa zahodí
-const MESSAGES = new Set(['move', 'act', 'jump', 'sleep', 'emote', 'buy', 'sell', 'order', 'cancelOrder', 'collect', 'upgrade', 'ctake', 'cdeliver', 'brew', 'wish', 'settings', 'store', 'unstore', 'compostWilted', 'buyTool', 'build', 'icehouse', 'buyLoom', 'masterWeave', 'loomStart', 'loomTake', 'chat', 'veh']);
+const MESSAGES = new Set(['move', 'act', 'jump', 'sleep', 'emote', 'buy', 'sell', 'order', 'cancelOrder', 'collect', 'upgrade', 'ctake', 'cdeliver', 'brew', 'wish', 'settings', 'store', 'unstore', 'compostWilted', 'buyTool', 'build', 'icehouse', 'buyLoom', 'masterWeave', 'loomStart', 'loomTake', 'chat', 'veh', 'zahon']);
 const PRESENCE_ONLY = new Set(['jump', 'sleep', 'emote', 'settings', 'chat']); // správy len o prítomnosti – engine ich nevidí
 const EMOTES: readonly Emote[] = ['dance', 'wave', 'heart', 'laugh', 'flower'];
 const WISHES: readonly WishKind[] = ['zlato', 'jar', 'poklad'];
