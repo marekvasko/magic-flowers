@@ -8,7 +8,7 @@ import type { FineModel } from '../../shared/world3d.ts';
 import { must } from '../../shared/util.ts';
 import { SHAPES, FULL_COVER } from '../../shared/shapes.ts';
 import type { Shape } from '../../shared/shapes.ts';
-import { bakeFine, shadeOf } from '../../client/finebake.ts';
+import { shadeOf } from '../../client/finebake.ts';
 import { Art } from '../../client/art.ts';
 
 type W3 = typeof World3D;
@@ -122,31 +122,6 @@ export function meshModel(W: W3, f: FineModel, season: number): { geo: THREE.Buf
   return { geo, bounds, faces: vi / 4 };
 }
 
-// Model presne ako v hre (#182): sieť a vypečené obrázky z bakeFine – zlúčené steny, dieliky s mäkkými hranami.
-// Farba × zatienenie rohov × tieňovanie strany vo vrcholoch (bez slnka a lámp). Vycentrovaný v x a z ako meshModel.
-export function bakedMesh(f: FineModel, season: number): { mesh: THREE.Mesh; bounds: THREE.Box3 } {
-  const b = bakeFine(f, season), geo = new THREE.BufferGeometry(), P = b.P.slice();
-  for (let i = 0; i < P.length; i += 3) { P[i] = (P[i] ?? 0) - f.sx / 2; P[i + 2] = (P[i + 2] ?? 0) - f.sz / 2; }
-  const C = new Float32Array(b.S.length * 3);
-  b.S.forEach((v, i) => { C[i * 3] = C[i * 3 + 1] = C[i * 3 + 2] = v; });
-  geo.setAttribute('position', new THREE.BufferAttribute(P, 3));
-  geo.setAttribute('color', new THREE.BufferAttribute(C, 3));
-  geo.setAttribute('uv', new THREE.BufferAttribute(b.UV, 2));
-  geo.setAttribute('uv1', new THREE.BufferAttribute(b.UV2, 2));
-  geo.setIndex(new THREE.BufferAttribute(b.I, 1));
-  geo.computeBoundingBox();
-  const tex = (img: { W: number; H: number; data: Uint8Array }, format: THREE.PixelFormat, filter: THREE.MagnificationTextureFilter): THREE.DataTexture => {
-    const t = new THREE.DataTexture(img.data, img.W, img.H, format, THREE.UnsignedByteType);
-    t.unpackAlignment = 1; t.flipY = false; t.generateMipmaps = false; t.colorSpace = THREE.NoColorSpace; t.magFilter = t.minFilter = filter;
-    t.needsUpdate = true;
-    return t;
-  };
-  const map = tex(b.color, THREE.RGBAFormat, THREE.NearestFilter), aoMap = tex(b.ao, THREE.RedFormat, THREE.LinearFilter);
-  aoMap.channel = 1;
-  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map, aoMap, vertexColors: true }));
-  return { mesh, bounds: geo.boundingBox ?? new THREE.Box3() };
-}
-
 // Zem pod modelom: plocha o pole väčšia na každú stranu a čiary hraníc polí (1 pole = FINE minikociek)
 function groundFor(W: W3, f: FineModel): THREE.Group {
   const F = W.FINE, tw = Math.round((f.sx - 2 * W.FM) / F), td = Math.round((f.sz - 2 * W.FM) / F);
@@ -172,10 +147,7 @@ function disposeTree(o: THREE.Object3D): void {
   o.traverse(c => {
     const g: unknown = 'geometry' in c ? c.geometry : null, mat: unknown = 'material' in c ? c.material : null;
     if (g instanceof THREE.BufferGeometry) g.dispose();
-    for (const m of [mat].flat()) if (m instanceof THREE.Material) {
-      if (m instanceof THREE.MeshBasicMaterial) { m.map?.dispose(); m.aoMap?.dispose(); }
-      m.dispose();
-    }
+    for (const m of [mat].flat()) if (m instanceof THREE.Material) m.dispose();
   });
 }
 
@@ -229,8 +201,8 @@ export function createViewer(host: HTMLElement, W: W3): Viewer {
     union = new THREE.Box3();
     cells = list.map(c => {
       const scene = new THREE.Scene();
-      const { mesh, bounds } = bakedMesh(c.model, c.season || 0);
-      scene.add(mesh);
+      const { geo, bounds } = meshModel(W, c.model, c.season || 0);
+      scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true })));
       scene.add(groundFor(W, c.model));
       union.union(bounds);
       return { scene, label: c.label || '' };

@@ -102,7 +102,6 @@ float forestSun() {
 const VERT = `
 #ifdef VOX
 attribute vec2 aoUv;
-attribute float faceShade; // tieňovanie strany šikmých stien dielikov (inde 1 – je vo vypečenej farbe)
 #else
 attribute vec3 color;
 attribute float ao;
@@ -115,7 +114,7 @@ varying vec2 vUv; varying vec3 vPos; varying vec4 vShadow; varying vec2 vUv2;
 void main() {
   vec4 wp = modelMatrix * vec4(position, 1.0);
 #ifdef VOX
-  vUv = uv; vUv2 = aoUv; vAo = faceShade;
+  vUv = uv; vUv2 = aoUv;
 #else
   vColor = color; vAo = ao; vEmis = emis; vTex = tex; vUv = uv;
 #endif
@@ -149,7 +148,7 @@ ${VOX_GLSL}
 void main() {
 #ifdef VOX
   vec4 tc = texture2D(voxColor, vUv);
-  vec3 base = tc.rgb * vAo; float em = tc.a, ao = texture2D(voxAo, vUv2).r, tx = 0.0; // modely nie sú zem
+  vec3 base = tc.rgb; float em = tc.a, ao = texture2D(voxAo, vUv2).r, tx = 0.0; // modely nie sú zem
 #else
   vec3 base = vTex > 0.5 ? texture2D(map, vUv).rgb * vColor : vColor;
   float em = vEmis, ao = vAo, tx = vTex;
@@ -742,7 +741,6 @@ export function create(api: Render3DApi): Render3D {
     geo.setAttribute('normal', new THREE.BufferAttribute(b.N, 3));
     geo.setAttribute('uv', new THREE.BufferAttribute(b.UV, 2));
     geo.setAttribute('aoUv', new THREE.BufferAttribute(b.UV2, 2));
-    geo.setAttribute('faceShade', new THREE.BufferAttribute(b.S, 1));
     geo.setIndex(new THREE.BufferAttribute(b.I, 1));
     geo.computeBoundingSphere();
     geo.computeBoundingBox();
