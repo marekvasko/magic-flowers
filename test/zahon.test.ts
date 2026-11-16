@@ -23,6 +23,7 @@ import type { Presence } from '../src/server/world.ts';
 import { SPEC, TPD, makeWorld, save } from './game-world.ts';
 import type { W } from './game-world.ts';
 import { isMsg, must, parseMsg, portOf } from './helpers.ts';
+import { SAVE_V15 } from './save-v15.fixture.ts';
 
 type Spec = E.Spec<W, Presence, Msg>;
 const spec: Spec = { ...SPEC, proposers: { ...SPEC.proposers, ...Zahon.PROPOSERS } };
@@ -197,6 +198,14 @@ test('záhon: načítanie uloženia – body v mriežke, kvet alebo pokryv, nepl
   assert.deepStrictEqual(o.list.map(x => x.id), [7]);
   assert.deepStrictEqual(must(Obj.zahony(o)[0]).spots, [{ sx: 1, sy: 1, p: { sp: 'mak', prog: 2, q: 3, dry: 0 } }, { sx: 3, sy: 3, c: 'kamen' }]);
   assert.strictEqual(o.nid, 10);
+});
+
+test('záhon: uloženie v15 zo servera (fixtúra) – štyri záhony s kvetmi a pokryvmi sa načítajú bez zmeny', () => {
+  const o = Obj.loadObjects(SAVE_V15.objects);
+  assert.deepStrictEqual(o, SAVE_V15.objects);
+  assert.deepStrictEqual(Obj.zahony(o).map(z => z.v), ['drevo', 'prut', 'kamen', 'tehla']);
+  assert.ok(Obj.zahony(o).every(z => z.spots.every(q => Z.inner(q.sx, q.sy))));
+  assert.strictEqual(Econ.plotsUsedOf([], [], o), 4);
 });
 
 // ---------- Server: správa 'zahon' prejde až k návrhu ----------
