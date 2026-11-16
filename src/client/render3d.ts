@@ -807,7 +807,7 @@ export function create(api: Render3DApi): Render3D {
       solidPart.tile = f.tile;
       solidPart.onBeforeRender = (_r, _sc, _cam, _g, mat) => { if (isVox(mat)) { voxUniforms.voxColor.value = t.color; voxUniforms.voxAo.value = t.ao; mat.uniformsNeedUpdate = true; } };
       scene.add(solidPart);
-      f = Object.assign({}, f, { data: parts.crown.data }); // ďalej sa stavia (a zoslabuje) len koruna
+      f = Object.assign({}, f, { data: parts.crown.data, shape: undefined }); // ďalej sa stavia (a zoslabuje) len koruna
     }
     const { geo, color, ao } = fineGeometry(f, se, old);
     const base = fineMain(f.type), fmesh = new FineMesh(geo, base);

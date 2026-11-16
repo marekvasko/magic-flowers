@@ -5,6 +5,7 @@ import * as W from '../shared/world3d.ts';
 import type { FineModel } from '../shared/world3d.ts';
 import * as MS from '../shared/mesher.ts';
 import type { Baked } from '../shared/mesher.ts';
+import { SHAPES } from '../shared/shapes.ts';
 import { must } from '../shared/util.ts';
 
 type V3 = [number, number, number];
@@ -13,16 +14,19 @@ export const AO_CURVE: readonly number[] = [0.5, 0.68, 0.84, 1];
 export const hex = (h: string): V3 => { const n = parseInt(h.slice(1), 16); return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; };
 
 // Model v obdobím se → sieť v minikockách (P v bunkách mriežky) a dva obrázky; pod modelom je zem (y < 0 je plné)
+// Tieňovanie steny dielika podľa normály: šikmá stena je medzi stranami, ku ktorým je naklonená
+export const shadeOf = (n: Readonly<V3>): number => n[0] * n[0] * must(FACE_SHADE[n[0] > 0 ? 0 : 1]) + n[1] * n[1] * must(FACE_SHADE[n[1] > 0 ? 2 : 3]) + n[2] * n[2] * must(FACE_SHADE[n[2] > 0 ? 4 : 5]);
 export function bakeFine(f: FineModel, se: number): Baked {
-  const { sx, sy, sz, data } = f;
+  const { sx, sy, sz, data, shape } = f;
   const get = (x: number, y: number, z: number): number => (y < 0 ? 1 : (x < 0 || z < 0 || x >= sx || y >= sy || z >= sz) ? 0 : data[(z * sy + y) * sx + x] ?? 0);
   const cols = new Map<number, V3>(); // pracujeme priamo v sRGB ako kresby z art.ts (bez prevodu farieb)
-  return MS.bakeModel([sx, sy, sz], get, v => !!v, (m, x, y, z, fi) => {
+  const shapeAt: MS.ShapeAt | undefined = shape && ((x, y, z) => (x < 0 || y < 0 || z < 0 || x >= sx || y >= sy || z >= sz) ? null : SHAPES[shape[(z * sy + y) * sx + x] ?? 0] ?? null);
+  return MS.bakeModel([sx, sy, sz], get, v => !!v, (m, x, y, z, fi, n) => {
     let c = cols.get(m);
     if (!c) { c = hex(W.colorOf(m, se)); cols.set(m, c); }
-    const vary = 0.94 + W.hash(x, y, z) * 0.12, sh = must(FACE_SHADE[fi]);
+    const vary = 0.94 + W.hash(x, y, z) * 0.12, sh = n ? shadeOf(n) : must(FACE_SHADE[fi]);
     return [Math.min(1, c[0] * vary) * sh, Math.min(1, c[1] * vary) * sh, Math.min(1, c[2] * vary) * sh, W.EMISSIVE[m] ? 1 : 0];
-  }, AO_CURVE);
+  }, AO_CURVE, shapeAt);
 }
 
 // Obdĺžnik každého zlúčeného obdĺžnika v oboch obrázkoch (v texeloch, bez okraja 1 texel) – zo súradníc UV a UV2 siete
