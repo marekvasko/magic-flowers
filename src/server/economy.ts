@@ -6,7 +6,8 @@ import * as D from '../shared/data.ts';
 import * as B from '../shared/book.ts';
 import type { Festival, FestivalId, GiverId, ItemId, SpeciesId, UpgradeId } from '../shared/data.ts';
 import type { MarketItemView, ServerMessage, UpcomingFestival } from '../shared/protocol.ts';
-import type { Contract, ContractKind, Contracts, Market, PlayerKey, PlayerSave, Trader } from '../shared/save.ts';
+import type { Contract, ContractKind, Contracts, Market, Objects, PlayerKey, PlayerSave, Trader } from '../shared/save.ts';
+import * as Obj from '../shared/objects.ts';
 import { entries, isRecord, keys, must } from '../shared/util.ts';
 import * as E from './engine.ts';
 import type { EngineEvent } from './engine.ts';
@@ -251,8 +252,12 @@ function takenSaves(s: GameSlices, c: Contract): Partial<Record<PlayerKey, Playe
 //   world.maxRep    – najvyššia reputácia medzi hráčmi (veľké zákazky od úrovne 2); udržiava každá zmena reputácie
 //   world.plotsUsed – počet obrobených políčok záhrady; udržiava kopanie a zarovnanie (server.ts)
 export function maxRepOf(saves: Partial<Record<PlayerKey, PlayerSave>>): number { let m = 0; for (const [, sv] of entries(saves)) m = Math.max(m, sv.rep || 0); return m; }
-// (hory = políčka hôr: vodné kvety v plese zaberajú miesto v tom istom povolení, #38)
-export function plotsUsedOf(tiles: readonly Tile[], hory?: readonly Tile[]): number { let n = 0; for (const t of tiles.concat(hory || [])) if (t.s) n++; return n; }
+// (hory = políčka hôr: vodné kvety v plese zaberajú miesto v tom istom povolení, #38; každý záhon zaberá 1 miesto, #179)
+export function plotsUsedOf(tiles: readonly Tile[], hory?: readonly Tile[], objects?: Objects | null): number {
+  let n = Obj.zahony(objects).length;
+  for (const t of tiles.concat(hory || [])) if (t.s) n++;
+  return n;
+}
 
 // Nová zákazka na nástenke c. Náhoda a plánovanie termínov cez ctx.
 function genContract(c: Contracts, tick: number, kind: ContractKind, ctx: E.Scheduler): Contract {

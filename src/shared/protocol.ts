@@ -4,7 +4,7 @@
 //  - ServerMessage: čo dostane klient (posiela server sám alebo ide z návrhov enginu cez ctx.emit)
 // Pokyny návrhov len pre server (joined, travel, me, scavStart, scavDone, pullStart, pullDone) klient nedostane;
 // typuje ich engine (fáza 3). Správa webbed ide aj klientovi.
-import type { AreaId, BrewHint, Ground, ItemId, Look, PotionId, SpeciesId, UpgradeId } from './data.ts';
+import type { AreaId, BrewHint, CoverId, Ground, ItemId, Look, PotionId, SpeciesId, UpgradeId, ZahonFrame } from './data.ts';
 import type { Level } from './book.ts';
 import type { ActiveFestival, Contract, CornerArea, Dock, Icehouse, LotObject, OrderSide, Plant, Soil, VehicleId, ZahonObject, ZahonSpot, Weather, WorldMode } from './save.ts';
 
@@ -28,6 +28,7 @@ export type ClientMessage =
   | { t: 'brew'; items: ItemId[] }                          // tri kvety fl_*
   | { t: 'wish'; kind: WishKind }
   | { t: 'buyTool'; id: 'pick' | 'lamp' }
+  | ZahonMessage
   | { t: 'build'; id: 'icehouse' | 'dielna' | 'dock' }
   | { t: 'icehouse'; n: number }                            // vložiť ľad do ľadovne
   | { t: 'compostWilted' | 'buyLoom' | 'masterWeave' | 'loomStart' | 'loomTake' | 'jump' }
@@ -126,6 +127,15 @@ export interface VehicleView {
   dn?: string | null;
   rn?: string | null;
 }
+// Záhon (#179): kúpa na trhu a práca s bodmi v priblíženom pohľade (id = záhon, sx/sy = bod 1–6, spots = ťah prstom)
+export type ZahonMessage =
+  | { t: 'zahon'; op: 'buy'; v: ZahonFrame }
+  | { t: 'zahon'; op: 'bucket'; c: CoverId }
+  | { t: 'zahon'; op: 'destroy' | 'water' | 'compost'; id: number }
+  | { t: 'zahon'; op: 'plant'; id: number; sx: number; sy: number; item: string }
+  | { t: 'zahon'; op: 'pick' | 'dig'; id: number; sx: number; sy: number }
+  | { t: 'zahon'; op: 'cover'; id: number; c: CoverId; spots: [number, number][] }
+  | { t: 'zahon'; op: 'uncover'; id: number; spots: [number, number][] };
 export type FxKind =
   | 'fairies' | 'glimmer' | 'dirt' | 'drops' | 'sparkle' | 'pop' | 'ice' | 'splash' | 'burp' | 'gift' | 'hearts' | 'wave' | 'brew'
   | 'gold' | 'rainbow' | 'cobweb';
