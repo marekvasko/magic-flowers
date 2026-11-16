@@ -93,9 +93,9 @@ Today `lotIdx()` in `ice.ts` and `dielna.ts` hard-codes the 2×2 lots. With the 
 - A flower takes one spot (sx, sy ∈ 0–7). Proposed rules:
   - **Keep-out margin:** the outer ring (sx or sy = 0 or 7) stays free in a záhon, so beds don't touch visually.
     A kvetináč only allows the middle 4×4, and a skalka only the spots between its rocks (fixed per model).
-  - **Spacing:** two flowers must be at least *d* spots apart (Chebyshev; the larger *d* of the two species counts).
-    *d* is a new `space` field in `SPECIES` from real planting distances: tile ≈ 1 m, spot ≈ 12.5 cm, *d* = distance ÷ 12.5 cm
-    (1 for bulbs, up to 6 for Ruža šípová; table in #179). Water plants can't go into a záhon.
+  - **Exclusion zones:** every flower has a *d* × *d* zone centred on its spot (*d* from real planting distances:
+    tile ≈ 1 m, spot ≈ 12.5 cm; table in #179). No two zones may overlap, whatever the species: Chebyshev distance
+    ≥ (*d*₁ + *d*₂) / 2. Flowers stand on the inner 6 × 6 spots, zones may reach over the frame. Water plants can't go in.
   - A záhon then holds 36 bulbs, 9 poppies, 4 sunflowers or 1 dog rose in its 6×6 inner area.
 - Validation lives on the server (`actions.ts`) and is shared with the client (`src/shared/`), so the detail view
   can grey out invalid spots before sending.
