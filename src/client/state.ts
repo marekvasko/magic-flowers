@@ -50,6 +50,7 @@ export interface ClientState {
   icehouse: Icehouse; dielna: { built: boolean; loom: boolean }; loom: MsgOf<'me'>['loom']; eternal: boolean; names: string[];
   dock?: Dock; // mólo a loďka (#160): stavba, poloha loďky, kto v nej sedí, zima
   objects: ObjectView[]; // umiestnené objekty (#178, #179): pozemky budov, záhony
+  zoom: { id: number } | null; // priblížený záhon (#179): kamera nad ním, ťuknutia idú na jeho body
   keys: Partial<Record<Dir, boolean>>; kbd?: boolean; stick: Pt; path: Pt[] | null; pendingAct: (Pt & { onTile?: boolean }) | null;
   tapMark: (Pt & { t: number; act: boolean }) | null; lastSent: string; sentAt: number;
   fx: Fx[]; screenFx: ScreenFx[]; bubbles: Partial<Record<number, { text: string; until: number }>>; modal: { refresh: () => void } | null; modalHold?: boolean; modalPending?: boolean;
@@ -68,7 +69,7 @@ export interface ClientState {
 // Stav, ktorý kreslí 3D pohľad (render3d.ts, spiders3d.ts, particles3d.ts): hra mu dá celé S, ladiaca stránka /debug
 // (záložka World) len to, čo pohľad naozaj číta – bez stavu budov a hráčov s id podľa odtlačku kľúča (reťazec)
 export type ViewOther = Pick<OtherPlayer, 'x' | 'y' | 'name' | 'look' | 'a' | 'dir' | 'e' | 'phase' | 'jz' | 'cr' | 'lp' | 'si' | 'wb'> & { id: number | string };
-export type ViewState = Pick<ClientState, 'W' | 'H' | 'tiles' | 'objects' | 'area' | 'tilesGen' | 'tick' | 'day' | 'weather' | 'me' | 'look' | 'name' | 'id'
+export type ViewState = Pick<ClientState, 'W' | 'H' | 'tiles' | 'objects' | 'zoom' | 'area' | 'tilesGen' | 'tick' | 'day' | 'weather' | 'me' | 'look' | 'name' | 'id'
   | 'myEmote' | 'sel' | 'anchors' | 'fx' | 'screenFx' | 'bubbles' | 'tapMark' | 'webs' | 'homes' | 'websGen' | 'corner' | 'cornerGen' | 'spiders'>
   & Partial<Pick<ClientState, 'icehouse' | 'dielna' | 'dock' | 'webLeft' | 'kbd' | 'mySi' | 'worldGen' | 'vehicles'>>
   & { others: ReadonlyMap<number | string, ViewOther> };

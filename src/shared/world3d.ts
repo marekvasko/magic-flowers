@@ -31,7 +31,7 @@ export interface Grid {
 // Políčko, ako ho dáva volajúci: druh zeme
 type GroundTile = { readonly g: Ground };
 // Stav budov mimo políčok: úroveň izolácie ľadovne a krosná v Dielni
-export interface BuildingState { ins?: number; loom?: boolean }
+export interface BuildingState { ins?: number; loom?: boolean; zahony?: readonly ZahonLook[] }
 // Smer k slnku
 export interface SunDir { x: number; y: number; z: number }
 export const R = 2;                   // podkocky na blok
@@ -610,40 +610,40 @@ function dockModel(season: number): FineModel {
   if (season === 3) C.snow([M.PLANK, M.PLANK_DARK, M.SACK, M.LOG], DOCK_DECK);
   return C.done();
 }
-// ---- Záhon (#179, návrh vzhľadu): 1 pole = 8 × 8 minikociek = 8 × 8 bodov záhonu ----
-// Záhon je z minikociek: vonkajší prstenec bodov je drevený rám, vnútri pôda a pokryvy (trávnik, štrk, okruhliaky,
-// plochý kameň). Kvety v ňom NIE sú z minikociek – sú to tie isté 2D sprity ako kvety na obyčajnom políčku, stoja na
-// svojich bodoch a sú veľké podľa rozostupu (render3d). ZAHON_DEMO je ukážkové osadenie na posúdenie vzhľadu.
-export type ZahonLook = 'empty' | 'travnik' | 'strk' | 'skalka';
-export const ZAHON_LOOKS: readonly { v: ZahonLook; name: string }[] = [
-  { v: 'empty', name: 'Záhon – prázdny' },
-  { v: 'travnik', name: 'Záhon – trávnik' },
-  { v: 'strk', name: 'Záhon – štrk' },
-  { v: 'skalka', name: 'Záhon – okruhliaky a plochý kameň' }
-];
-export interface ZahonSpot { sx: number; sy: number; sp: D.SpeciesId; d: number }
-export const ZAHON_DEMO: readonly { look: ZahonLook; spots: readonly ZahonSpot[] }[] = [
-  { look: 'empty', spots: [1, 2, 3, 4, 5, 6].flatMap(sy => [1, 2, 3, 4, 5, 6].map(sx => ({ sx, sy, sp: 'tulipan' as const, d: 1 }))) },
-  { look: 'travnik', spots: [1, 3, 5].flatMap(sy => [1, 3, 5].map(sx => ({ sx, sy, sp: (sx + sy) % 4 === 2 ? 'nevadza' as const : 'mak' as const, d: 2 }))) },
-  { look: 'strk', spots: [[2, 2], [2, 5], [5, 2], [5, 5]].map(([sx = 0, sy = 0]) => ({ sx, sy, sp: 'slnecnica' as const, d: 4 })) },
-  { look: 'skalka', spots: [[2, 2], [2, 5], [5, 2]].map(([sx = 0, sy = 0]) => ({ sx, sy, sp: 'levandula' as const, d: 3 })) },
-  { look: 'empty', spots: [] }
-];
-function zahonModel(season: number, look: ZahonLook): FineModel {
-  const C = fineCanvas(1, 1, 4), { put, fbox } = C;
+// ---- Záhon (#179): 1 pole = 8 × 8 minikociek = 8 × 8 bodov záhonu ----
+// Vonkajší prstenec bodov je rám (drevo, prútie, kamene, tehly), vnútri pôda a pokryvy na bodoch (trávnik, štrk,
+// okruhliaky, plochý kameň). Kvety v ňom nie sú z minikociek – sú to tie isté 2D sprity ako kvety na políčku (render3d).
+export interface ZahonLook { x: number; y: number; v: D.ZahonFrame; covers: readonly (readonly [number, number, D.CoverId])[] }
+const FRAME: Readonly<Record<D.ZahonFrame, (x: number, z: number) => MatId>> = {
+  drevo: (x, z) => ((x + z) % 2 ? M.PLANK : M.PLANK_DARK),
+  prut: (x, z) => ((x + z) % 2 ? M.STRAW : M.STRAW_DARK),
+  kamen: (x, z) => (hash(x, z, 3) < 0.5 ? M.STONE_LIGHT : M.STONE),
+  tehla: (x, z) => ((x + z) % 3 ? M.ROOF_RED : M.CLAY)
+};
+const COVER_MAT: Readonly<Record<D.CoverId, (x: number, z: number) => MatId>> = {
+  travnik: () => M.ALP, strk: (x, z) => (hash(x, z, 8) < 0.5 ? M.SCREE : M.PATH), okruhliaky: () => M.DIRT, kamen: () => M.STONE
+};
+export function zahonModel(season: number, look: Pick<ZahonLook, 'v' | 'covers'>): FineModel {
+  const C = fineCanvas(1, 1, 4), { put } = C;
   const ring = (x: number, z: number): boolean => x === 0 || x === 7 || z === 0 || z === 7;
-  const stonesOnRing = look === 'skalka';
+  const cover = new Map(look.covers.map(([sx, sy, c]) => [sy * 8 + sx, c]));
   for (let z = 0; z < 8; z++) for (let x = 0; x < 8; x++) {
-    if (!ring(x, z)) { put(x, 0, z, look === 'travnik' ? M.ALP : look === 'strk' ? (hash(x, z, 8) < 0.5 ? M.SCREE : M.PATH) : M.DIRT); continue; }
-    if (stonesOnRing) { put(x, 0, z, M.DIRT); put(x, 1, z, hash(x, z, 3) < 0.5 ? M.STONE_LIGHT : M.STONE); continue; } // okruhliaky namiesto dosiek
-    const corner = (x === 0 || x === 7) && (z === 0 || z === 7);
-    put(x, 0, z, M.PLANK_DARK); put(x, 1, z, corner ? M.LOG_DARK : (x + z) % 2 ? M.PLANK : M.PLANK_DARK);
-    if (corner) put(x, 2, z, M.LOG_DARK);
+    if (ring(x, z)) {
+      const corner = (x === 0 || x === 7) && (z === 0 || z === 7), m = FRAME[look.v](x, z);
+      put(x, 0, z, look.v === 'drevo' ? M.PLANK_DARK : m); put(x, 1, z, corner && look.v === 'drevo' ? M.LOG_DARK : m);
+      if (corner && look.v === 'drevo') put(x, 2, z, M.LOG_DARK);
+      continue;
+    }
+    const c = cover.get(z * 8 + x);
+    put(x, 0, z, c ? COVER_MAT[c](x, z) : M.DIRT);
+    if (c === 'okruhliaky') put(x, 1, z, hash(x, z, 4) < 0.5 ? M.STONE_LIGHT : M.STONE); // oblé kamene nad pôdou
+    if (c === 'travnik' && hash(x, z, 6) < 0.35) put(x, 1, z, M.HERB_GREEN); // trsy trávy
   }
-  if (look === 'skalka') { fbox(4, 0, 4, 6, 0, 6, M.STONE); put(5, 1, 5, M.STONE_LIGHT); } // plochý kameň
-  if (season === 3) C.snow([M.DIRT, M.PLANK, M.PLANK_DARK, M.LOG_DARK, M.STONE, M.STONE_LIGHT, M.ALP, M.PATH, M.SCREE]);
+  if (season === 3) C.snow([M.DIRT, M.PLANK, M.PLANK_DARK, M.LOG_DARK, M.STRAW, M.STRAW_DARK, M.STONE, M.STONE_LIGHT, M.ROOF_RED, M.CLAY, M.ALP, M.PATH, M.SCREE, M.HERB_GREEN]);
   return C.done();
 }
+// Ukážky v záložke Assets: štyri rámy prázdne a drevený so všetkými pokryvmi
+const ZAHON_DEMO_COVERS: ZahonLook['covers'] = [1, 2, 3, 4, 5, 6].flatMap(sy => [1, 2, 3, 4, 5, 6].map((sx): readonly [number, number, D.CoverId] => [sx, sy, must(D.COVER_IDS[Math.floor((sx - 1) / 3) + 2 * Math.floor((sy - 1) / 3)])]));
 // Značka okraja mapy pri jazierku (1 pole): kolík s červeno-bielou bójkou a lanom – tadiaľto raz loďka pôjde do Močiara
 function edgeModel(season: number): FineModel {
   const C = fineCanvas(1, 1, 12), { put, fbox } = C;
@@ -867,7 +867,8 @@ export const FINE_MODELS: FineModelEntry[] = [
   { id: 'dielna-loom', name: 'Dielňa s krosnami', group: 'Buildings', fn: 'dielnaModel(loom = true)', tiles: [2, 2], build: turned(se => dielnaModel(se, true)) },
   { id: 'dock', name: 'Mólo', group: 'Buildings', fn: 'dockModel', tiles: [1, 2], build: turned(dockModel) },
   { id: 'pond-edge', name: 'Značka okraja jazierka (Močiar)', group: 'Objects', fn: 'edgeModel', tiles: [1, 1], build: turned(edgeModel) },
-  ...ZAHON_LOOKS.map((l): FineModelEntry => ({ id: 'zahon-' + l.v, name: l.name, group: 'Objects', fn: `zahonModel(${l.v})`, tiles: [1, 1], build: turned(se => zahonModel(se, l.v)) })),
+  ...D.ZAHON_FRAMES.map((v): FineModelEntry => ({ id: 'zahon-' + v, name: D.ZAHON_NAMES[v], group: 'Objects', fn: `zahonModel(${v})`, tiles: [1, 1], build: turned(se => zahonModel(se, { v, covers: [] })) })),
+  { id: 'zahon-pokryvy', name: 'Záhon – trávnik, štrk, okruhliaky, plochý kameň', group: 'Objects', fn: 'zahonModel(drevo, pokryvy)', tiles: [1, 1], build: turned(se => zahonModel(se, { v: 'drevo', covers: ZAHON_DEMO_COVERS })) },
   { id: 'stall', name: 'Trh', group: 'Objects', fn: 'marketStall', tiles: [3, 1], build: turned(marketStall) },
   { id: 'well', name: 'Studňa', group: 'Objects', fn: 'wellModel', tiles: [1, 1], build: turned(wellModel) },
   { id: 'cauldron', name: 'Čarovný kotlík', group: 'Objects', fn: 'cauldronModel', tiles: [1, 1], build: turned(cauldronModel) },
@@ -928,6 +929,10 @@ function fineModels(tiles: readonly GroundTile[], season: number, w: number, are
     const tx = i % w, ty = (i / w) | 0;
     const m = buildingModel(ft, season, ft.v ? ft.v(st) : 0);
     out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: ft.g, ox: tx - FM / FINE, oy: groundHeight('grass') / R, oz: ty - FM / FINE, tile: { x: tx + ft.tile[0], y: ty + ft.tile[1] } });
+  }
+  if (area === 'garden') for (const z of st.zahony ?? []) { // záhony (#179): objekty, nie políčka
+    const m = zahonModel(season, z);
+    out.push({ sx: m.sx, sy: m.sy, sz: m.sz, data: m.data, type: 'zahon', ox: z.x - FM / FINE, oy: groundHeight('grass') / R, oz: z.y - FM / FINE, tile: { x: z.x, y: z.y }, invis: 1 });
   }
   // mólo (#160): model na prvom políčku móla, stojí na dne jazierka; ťuknutie vyberie koniec móla pri loďke
   const di = tiles.findIndex(t => t.g === 'dock');

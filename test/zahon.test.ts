@@ -2,6 +2,14 @@
 // a hnojenie celého záhonu, ranný rast, zrezanie, vykopanie, zrušenie, divé semienko, načítanie a správa pre klienta.
 import test from 'node:test';
 import assert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import net from 'node:net';
+import { spawn } from 'node:child_process';
+import type { ChildProcessByStdio } from 'node:child_process';
+import type { Readable } from 'node:stream';
+import WebSocket from 'ws';
 import * as D from '../src/shared/data.ts';
 import * as Obj from '../src/shared/objects.ts';
 import * as Z from '../src/shared/zahon.ts';
@@ -14,7 +22,7 @@ import type { Msg } from '../src/server/game.ts';
 import type { Presence } from '../src/server/world.ts';
 import { SPEC, TPD, makeWorld, save } from './game-world.ts';
 import type { W } from './game-world.ts';
-import { must } from './helpers.ts';
+import { isMsg, must, parseMsg, portOf } from './helpers.ts';
 
 type Spec = E.Spec<W, Presence, Msg>;
 const spec: Spec = { ...SPEC, proposers: { ...SPEC.proposers, ...Zahon.PROPOSERS } };
@@ -189,4 +197,36 @@ test('záhon: načítanie uloženia – body v mriežke, kvet alebo pokryv, nepl
   assert.deepStrictEqual(o.list.map(x => x.id), [7]);
   assert.deepStrictEqual(must(Obj.zahony(o)[0]).spots, [{ sx: 1, sy: 1, p: { sp: 'mak', prog: 2, q: 3, dry: 0 } }, { sx: 3, sy: 3, c: 'kamen' }]);
   assert.strictEqual(o.nid, 10);
+});
+
+// ---------- Server: správa 'zahon' prejde až k návrhu ----------
+function freePort(): Promise<number> { return new Promise(r => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = portOf(srv); srv.close(() => { r(p); }); }); }); }
+type Server = ChildProcessByStdio<null, Readable, Readable>;
+function startServer(dataDir: string, port: number): Promise<Server> {
+  const proc = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'src', 'server', 'server.ts')], {
+    env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir, DAY_SECONDS: '100000', JOURNAL: '0' }), stdio: ['ignore', 'pipe', 'pipe']
+  });
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => { reject(new Error('server sa nespustil')); }, 8000);
+    proc.stdout.on('data', (d: Buffer) => { if (/beží/.test(String(d))) { clearTimeout(t); resolve(proc); } });
+    proc.on('exit', c => { clearTimeout(t); reject(new Error('server skončil ' + String(c))); });
+  });
+}
+function stopServer(proc: Server): Promise<void> { return new Promise(r => { proc.removeAllListeners('exit'); proc.on('exit', () => { r(); }); proc.kill('SIGTERM'); }); }
+
+test('server: správa zahon (kúpa záhonu) prejde k návrhu – nový hráč pri stánku bez reputácie dostane odmietnutie', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-zahon-')), port = await freePort(), proc = await startServer(dir, port);
+  try {
+    const text = await new Promise<string>((resolve, reject) => {
+      const ws = new WebSocket('ws://127.0.0.1:' + port);
+      const t = setTimeout(() => { ws.close(); reject(new Error('bez odpovede')); }, 6000);
+      ws.on('open', () => { ws.send(JSON.stringify({ t: 'join', room: 'zahon', name: 'Eva' })); });
+      ws.on('message', raw => {
+        const m = parseMsg(raw);
+        if (isMsg(m, 'objects')) ws.send(JSON.stringify({ t: 'zahon', op: 'buy', v: 'drevo' }));
+        if (isMsg(m, 'toast') && /reputáciu|stánku|mincí/.test(m.text)) { clearTimeout(t); ws.close(); resolve(m.text); }
+      });
+    });
+    assert.strictEqual(text, 'Potrebuješ reputáciu úrovne 1.'); // nový hráč stojí pri stánku (D.SPAWN), reputáciu nemá
+  } finally { await stopServer(proc); fs.rmSync(dir, { recursive: true, force: true }); }
 });

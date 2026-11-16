@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import * as D from '../shared/data.ts';
 import * as Obj from '../shared/objects.ts';
+import * as ZH from '../shared/zahon.ts';
 import * as W from '../shared/world3d.ts';
 import type { FineInfo, FineModel, Grid, SunDir } from '../shared/world3d.ts';
 import * as MS from '../shared/mesher.ts';
@@ -397,7 +398,9 @@ export interface Render3DApi {
   noPlayer?: boolean;
   layers?: Partial<Record<'shadows' | 'lights' | 'particles', boolean>>;
   beforeRender?: () => void;
+  zoomMarks?: () => readonly ZoomMark[]; // priblížený záhon (#179): značky bodov
 }
+export interface ZoomMark { sx: number; sy: number; k: 'ok' | 'no' | 'hit' }
 // Zoslabovanie objektov pred hráčom (pozri FADE_DEFAULTS); v konzole window.MF_FADE prepíše len uvedené hodnoty
 export interface FadeBase {
   darkFrom: number; dir: 'facing' | 'camera'; min: number; edge: number; near: number; reach: number; width: number; spread: number;
@@ -446,7 +449,7 @@ export interface DebugView {
   particleObjs: THREE.Object3D[]; lights: THREE.Vector4[]; materials: THREE.ShaderMaterial[]; groundY: (x: number, y: number) => number;
 }
 export interface Render3D {
-  frame: (t: number) => void; resize: () => void; pick: (x: number, y: number) => Pt | null; seenAt: (x: number, z: number) => number;
+  frame: (t: number) => void; resize: () => void; pick: (x: number, y: number) => Pt | null; pickSpot: (x: number, y: number, tx: number, ty: number) => { sx: number; sy: number } | null; seenAt: (x: number, z: number) => number;
   screenToWorld: (vx: number, vy: number) => [number, number]; rotate: (k: number) => void; sunHoursAt: (x: number, y: number) => number | null;
   dir8: (a: number) => number; debugFades: () => { type: string; fade: number; want: number | null }[]; ripple: (x: number, z: number, amp?: number) => void;
   setWaterQuality: (q: string) => void; readonly waterQuality: WaterQuality; setParticleQuality: (q: string) => void; readonly particleQuality: string;
@@ -1409,6 +1412,7 @@ void main() {
     return sp;
   }
   const plantSprites = new Map<number, TileSprite>();
+  const ZAHON_SPRITE = 1 << 20; // kľúče spritov kvetov v záhonoch (#179) – za všetkými políčkami
   function plantKey(p: PlantView & { sp: D.SpeciesId }, night: boolean): { key: string; st: number; wil: boolean } {
     const st = D.stageOf(p), wil = st === 3 && !p.d && p.bt != null && (S.tick - p.bt) > 0.6 * D.SPECIES[p.sp].life * D.TICKS_PER_DAY;
     return { key: `${p.sp}|${st}|${p.d ? 1 : 0}|${night && p.sp === 'papradie' ? 1 : 0}|${wil ? 1 : 0}`, st, wil };
@@ -1445,6 +1449,25 @@ void main() {
         sp.scale.set(1, h, 1);
       }
       sp.position.set(x + 0.5, W.surfaceY(G(), x, y), y + 0.5);
+    }
+    // kvety v záhonoch (#179): tie isté sprity ako na políčku, na svojom bode, veľké podľa ochrannej zóny druhu
+    if (S.area === 'garden') for (const o of S.objects) {
+      if (o.kind !== 'zahon') continue;
+      for (const q of o.spots) {
+        const pl = q.p;
+        if (!pl) continue;
+        const i = ZAHON_SPRITE + o.id * 64 + q.sy * 8 + q.sx, wild = pl.sp === 'wild';
+        let key: string, draw: (c: CanvasRenderingContext2D) => void;
+        if (pl.sp === 'wild') { key = 'zw'; draw = c => { Art.plant(c, 'mak', 0, 32, 92, 60, 0, { dead: false, night, ready: false, wilting: false }); }; } // divé semienko: len klíčok, druh je tajný
+        else { const p = { ...pl, sp: pl.sp }, k = plantKey(p, night); key = 'p:' + k.key; draw = c => { Art.plant(c, p.sp, k.st, 32, 92, 60, 0, { dead: !!p.d, night, ready: false, wilting: k.wil }); }; }
+        seen.add(i);
+        let sp = plantSprites.get(i);
+        if (!sp) { sp = makeSprite(1, 1.5); sp.tile = { x: o.x, y: o.y }; plantSprites.set(i, sp); }
+        if (sp.key !== key) { sp.material.map = spriteTex(key, 64, 96, draw); sp.material.needsUpdate = true; sp.key = key; }
+        const d = wild ? 1 : ZH.spaceOf(pl.sp) ?? 1, w = 0.12 + d * 0.17;
+        sp.scale.set(w, w * 1.5, 1);
+        sp.position.set(o.x + (q.sx + 0.5) / ZH.SPOTS, W.surfaceY(G(), o.x, o.y) + 1 / ZH.SPOTS, o.y + (q.sy + 0.5) / ZH.SPOTS);
+      }
     }
     for (const [i, sp] of plantSprites) if (!seen.has(i)) { scene.remove(sp); plantSprites.delete(i); }
   }
@@ -1640,7 +1663,7 @@ void main() {
     const g = grid;
     const toCam = camera.position.clone().sub(camTarget).normalize(), hits = new Set<number>();
     const solid = cfg.solid;
-    const lower = (m: FineMesh | undefined, v: number): void => { const cur = m && out.get(m); if (m && !solid.includes(m.fineType) && !(cur != null && cur <= v)) out.set(m, v); };
+    const lower = (m: FineMesh | undefined, v: number): void => { const cur = m && out.get(m); if (m && m.fineType !== 'zahon' && !solid.includes(m.fineType) && !(cur != null && cur <= v)) out.set(m, v); }; // záhon (#179) je nízky – nezoslabuje sa
     let fx, fz;
     if (cfg.dir === 'camera') { const hl = Math.hypot(toCam.x, toCam.z) || 1; fx = toCam.x / hl; fz = toCam.z / hl; }
     else { const a = S.me.a != null ? S.me.a : dirAngle(S.me.dir || 0); fx = Math.cos(a); fz = Math.sin(a); }
@@ -1745,7 +1768,7 @@ void main() {
     renderer.autoClear = true;
   }
 
-  let viewDiag = D.VIEW_DIAG;
+  let viewDiag = D.VIEW_DIAG, zoomEase = 0;
   function resize(): void {
     const r = api.glCanvas.getBoundingClientRect();
     renderer.setSize(r.width, r.height, false);
@@ -1757,6 +1780,14 @@ void main() {
     camera.updateProjectionMatrix();
   }
   const camTarget = new THREE.Vector3();
+  // Priblížený záhon (#179): kamera plynulo prejde nad záhon a priblíži ho tak, že zaplní šírku obrazovky
+  const ZOOM_DIAG = 3.4;
+  function zoomTarget(): { x: number; y: number } | null {
+    const zm = S.zoom;
+    if (!zm || S.area !== 'garden') return null;
+    const o = S.objects.find(q => q.id === zm.id);
+    return o ? { x: o.x + 0.5, y: o.y + 0.5 } : null;
+  }
   function placeCamera(dt: number): void {
     if (api.placeCamera) {
       api.placeCamera(camera, camTarget, dt);
@@ -1765,8 +1796,8 @@ void main() {
     }
     yaw = lerp(yaw, yawTarget, Math.min(1, dt * 8));
     if (Math.abs(yaw - yawTarget) < 0.001) yaw = yawTarget;
-    const me = S.me, h = groundY(me.x, me.y);
-    camTarget.set(me.x, lerp(camTarget.y || h, h, Math.min(1, dt * 6)), me.y);
+    const me = S.me, zt = zoomTarget(), fx = zt ? zt.x : me.x, fz = zt ? zt.y : me.y, h = groundY(fx, fz), k = Math.min(1, dt * (zt || zoomEase > 0 ? 6 : 60));
+    camTarget.set(lerp(camTarget.x || fx, fx, k), lerp(camTarget.y || h, h, Math.min(1, dt * 6)), lerp(camTarget.z || fz, fz, k));
     const dist = 60;
     camera.position.set(camTarget.x + Math.sin(yaw) * Math.cos(PITCH) * dist, camTarget.y + Math.sin(PITCH) * dist, camTarget.z + Math.cos(yaw) * Math.cos(PITCH) * dist);
     camera.lookAt(camTarget);
@@ -1806,6 +1837,17 @@ void main() {
     return null;
   }
 
+  // Bod záhonu (#179) pod prstom: lúč do roviny pôdy záhonu (o 1 minikocku nad zemou); null = mimo záhonu
+  const soilPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hitPt = new THREE.Vector3();
+  function pickSpot(clientX: number, clientY: number, tx: number, ty: number): { sx: number; sy: number } | null {
+    const r = api.glCanvas.getBoundingClientRect();
+    ray.setFromCamera(new THREE.Vector2((clientX - r.left) / r.width * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1), camera);
+    soilPlane.constant = -(groundY(tx + 0.5, ty + 0.5) + 1 / ZH.SPOTS);
+    if (!ray.ray.intersectPlane(soilPlane, hitPt)) return null;
+    const sx = Math.floor((hitPt.x - tx) * ZH.SPOTS), sy = Math.floor((hitPt.z - ty) * ZH.SPOTS);
+    return sx >= 0 && sy >= 0 && sx < ZH.SPOTS && sy < ZH.SPOTS ? { sx, sy } : null;
+  }
+
   // ---------- Prekrytie: mená, bubliny, efekty, počasie ----------
   const ov = api.ovCtx;
   const v3 = new THREE.Vector3();
@@ -1817,8 +1859,10 @@ void main() {
   function pxPerBlock(): number { return api.ov.width / viewW; }
 
   // stav budov, ktorý nie je v políčkach (izolácia ľadovne, krosná v Dielni) – keď sa zmení, svet sa prestavia
-  const buildingState = (): { ins: number; loom: boolean } => ({ ins: D.insulLevel(S.icehouse?.bl), loom: S.dielna?.loom ?? false });
-  const stateSig = (): string => { const b = buildingState(); return b.ins + '|' + (b.loom ? 1 : 0); };
+  // záhony (#179): rám a pokryvy sú v sieti sveta – zmena pokryvu svet prestavia
+  const zahonLooks = (): W.ZahonLook[] => (S.area === 'garden' ? S.objects.flatMap(o => (o.kind === 'zahon' ? [{ x: o.x, y: o.y, v: o.v, covers: o.spots.flatMap(q => (q.c ? [[q.sx, q.sy, q.c] as const] : [])) }] : [])) : []);
+  const buildingState = (): W.BuildingState => ({ ins: D.insulLevel(S.icehouse?.bl), loom: S.dielna?.loom ?? false, zahony: zahonLooks() });
+  const stateSig = (): string => { const b = buildingState(); return String(b.ins) + '|' + (b.loom ? 1 : 0) + '|' + JSON.stringify(b.zahony); };
   let builtState: string | null = null;
   let babka: CharObj | null = null, master: CharObj | null = null, last = performance.now(), lastGround = 0;
   function frame(t: number): void {
@@ -1830,8 +1874,10 @@ void main() {
     if (builtSeason !== se || builtGen !== S.tilesGen || builtState !== stateSig()) { builtGen = S.tilesGen; builtState = stateSig(); buildMesh(se); holesSig = null; refreshGround(se, t, true); }
     S.worldGen = builtGen; // svet tejto verzie políčok je postavený (prechod medzi plochami čaká, kým je, a až potom ukáže meno)
     if (now - lastGround > 600) { refreshGround(se, t, false); lastGround = now; }
-    // v Lese divov (a cestou k nemu) je pohľad bližšie na hráča
-    const vd = D.viewDiagAt(S.area, S.me.y);
+    // v Lese divov (a cestou k nemu) je pohľad bližšie na hráča; priblížený záhon (#179) plynulo
+    const zt = zoomTarget();
+    zoomEase = zt ? Math.min(1, zoomEase + dt * 3) : Math.max(0, zoomEase - dt * 3);
+    const ze = zoomEase * zoomEase * (3 - 2 * zoomEase), vd = lerp(D.viewDiagAt(S.area, S.me.y), ZOOM_DIAG, ze);
     if (Math.abs(vd - viewDiag) > 0.01) { viewDiag = vd; resize(); }
     lighting(min, se);
     let tp = statsOn ? performance.now() : 0;
@@ -1906,6 +1952,7 @@ void main() {
       // po vlastnom prechode do inej plochy hráči zo starej plochy hneď zmiznú (je to za čiernou clonou)
       if (!o.alive && (o.vis <= 0 || o.seenArea !== S.area || id === 'babka' || id === 'master' || id === 'me')) { removeChar(id, o); continue; }
       if (o.vis < 1 || !o.alive) setCharVis(o, Math.max(0, Math.min(1, o.vis + (o.alive ? dt : -dt) / CHAR_FADE)));
+      if (id === 'me' && o.alive && zoomEase > 0) setCharVis(o, 1 - 0.75 * zoomEase); // priblížený záhon (#179): vlastná postavička nezakrýva body
       const lo = { seen: 1 };
       o.sp.material.color.setRGB(...lightAt(o.sp.position.x, o.sp.position.y, o.sp.position.z, lights, lights.length, lo));
       // v tme: kto je za dohľadom (a nesvieti mu lampáš), toho nevidno; cez stromy presvitá len vlastná postavička
@@ -1938,6 +1985,17 @@ void main() {
   function drawOverlay(t: number): void {
     const c = ov, cw = api.ov.width, ch = api.ov.height, ppb = pxPerBlock();
     c.clearRect(0, 0, cw, ch);
+    // priblížený záhon (#179): body, na ktoré sa dá (zelené) či nedá (sivé) to, čo je v ruke; vybraný bod svieti
+    const zt = zoomTarget(), marks = zt && zoomEase > 0.6 && api.zoomMarks ? api.zoomMarks() : [];
+    if (zt && marks.length) {
+      const tx = zt.x - 0.5, ty = zt.y - 0.5, h = groundY(zt.x, zt.y) + 1 / ZH.SPOTS + 0.01;
+      for (const m of marks) {
+        const p = project(tx + (m.sx + 0.5) / ZH.SPOTS, h, ty + (m.sy + 0.5) / ZH.SPOTS), r = ppb / ZH.SPOTS * (m.k === 'hit' ? 0.32 : 0.16);
+        c.fillStyle = m.k === 'ok' ? 'rgba(130,230,120,0.75)' : m.k === 'hit' ? 'rgba(169,120,224,0.9)' : 'rgba(60,60,60,0.35)';
+        c.beginPath(); c.arc(p.x, p.y, r, 0, Math.PI * 2); c.fill();
+        if (m.k === 'hit') { c.strokeStyle = '#fff'; c.lineWidth = Math.max(1.5, r * 0.25); c.stroke(); }
+      }
+    }
     // značka ťuknutia a cieľové políčko (klávesnica)
     const ring = (x: number, y: number, color: string, r: number): void => {
       const h = groundY(x, y);
@@ -1951,7 +2009,7 @@ void main() {
       if (age < 1) ring(S.tapMark.x, S.tapMark.y, S.tapMark.act && !D.isDark(S.area) ? `rgba(255,230,90,${1 - age})` : `rgba(255,255,255,${0.8 - age * 0.8})`, 0.5 + age * 0.4);
       else S.tapMark = null;
     }
-    if (S.kbd) { const f = api.frontTile(); if (f.x >= 0 && f.y >= 0 && f.x < S.W && f.y < S.H) ring(f.x, f.y, api.ctxAction(f.x, f.y) && !D.isDark(S.area) ? 'rgba(255,230,90,0.8)' : 'rgba(255,255,255,0.3)', 0.9); }
+    if (S.kbd && !S.zoom) { const f = api.frontTile(); if (f.x >= 0 && f.y >= 0 && f.x < S.W && f.y < S.H) ring(f.x, f.y, api.ctxAction(f.x, f.y) && !D.isDark(S.area) ? 'rgba(255,230,90,0.8)' : 'rgba(255,255,255,0.3)', 0.9); }
 
     // efekty (častice z S.fx sa hýbu po rovine sveta – ukotvíme ich do bodu vo svete)
     for (const p of S.fx) {
@@ -2067,7 +2125,7 @@ void main() {
     lightAt(x, groundY(x, z), z, lastLights, lastLights.length, o);
     return o.seen;
   }
-  return { frame, resize, pick, seenAt, screenToWorld, rotate, sunHoursAt, dir8, debugFades, ripple, setWaterQuality, get waterQuality() { return waterQuality; }, setParticleQuality: particles.setQuality, get particleQuality() { return particles.quality; }, setStats, stats, get yaw() { return yaw; }, debugView, invalidateShadows, dispose };
+  return { frame, resize, pick, pickSpot, seenAt, screenToWorld, rotate, sunHoursAt, dir8, debugFades, ripple, setWaterQuality, get waterQuality() { return waterQuality; }, setParticleQuality: particles.setQuality, get particleQuality() { return particles.quality; }, setStats, stats, get yaw() { return yaw; }, debugView, invalidateShadows, dispose };
 }
 
 
