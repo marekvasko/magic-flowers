@@ -429,7 +429,7 @@ export interface Render3DApi {
   beforeRender?: () => void;
   zoomMarks?: () => readonly ZoomMark[]; // priblížený záhon (#179): značky bodov
 }
-export interface ZoomMark { sx: number; sy: number; k: 'ok' | 'no' | 'hit' }
+export interface ZoomMark { sx: number; sy: number; k: 'no' | 'ring'; act?: boolean; age?: number } // age 0–1: zánik rámika ťuknutia
 // Zoslabovanie objektov pred hráčom (pozri FADE_DEFAULTS); v konzole window.MF_FADE prepíše len uvedené hodnoty
 export interface FadeBase {
   darkFrom: number; dir: 'facing' | 'camera'; min: number; edge: number; near: number; reach: number; width: number; spread: number;
@@ -2257,17 +2257,6 @@ void main() {
   function drawOverlay(t: number): void {
     const c = ov, cw = api.ov.width, ch = api.ov.height, ppb = pxPerBlock();
     c.clearRect(0, 0, cw, ch);
-    // priblížený záhon (#179): body, na ktoré sa dá (zelené) či nedá (sivé) to, čo je v ruke; vybraný bod svieti
-    const zt = zoomTarget(), marks = zt && zoomEase > 0.6 && api.zoomMarks ? api.zoomMarks() : [];
-    if (zt && marks.length) {
-      const tx = zt.x - 0.5, ty = zt.y - 0.5, h = groundY(zt.x, zt.y) + 1 / ZH.SPOTS + 0.01;
-      for (const m of marks) {
-        const p = project(tx + (m.sx + 0.5) / ZH.SPOTS, h, ty + (m.sy + 0.5) / ZH.SPOTS), r = ppb / ZH.SPOTS * (m.k === 'hit' ? 0.32 : 0.16);
-        c.fillStyle = m.k === 'ok' ? 'rgba(130,230,120,0.75)' : m.k === 'hit' ? 'rgba(169,120,224,0.9)' : 'rgba(60,60,60,0.35)';
-        c.beginPath(); c.arc(p.x, p.y, r, 0, Math.PI * 2); c.fill();
-        if (m.k === 'hit') { c.strokeStyle = '#fff'; c.lineWidth = Math.max(1.5, r * 0.25); c.stroke(); }
-      }
-    }
     // značka ťuknutia a cieľové políčko (klávesnica)
     const ring = (x: number, y: number, color: string, r: number): void => {
       const h = groundY(x, y);
@@ -2275,7 +2264,22 @@ void main() {
       c.strokeStyle = color; c.lineWidth = Math.max(2, ppb * 0.05);
       c.beginPath(); pts.forEach((p, i) => { if (i) c.lineTo(p.x, p.y); else c.moveTo(p.x, p.y); }); c.closePath(); c.stroke();
     };
-    if (S.tapMark) {
+    // priblížený záhon (#179): body, kam to, čo je v ruke, nejde, sú sivé; ťuknutý bod (a bod pod kurzorom klávesnice,
+    // body ťahu prstom) má ten istý rámik ako ťuknutie na zem – žltý, keď sa tam niečo stane, inak biely
+    const zt = zoomTarget(), marks = zt && zoomEase > 0.6 && api.zoomMarks ? api.zoomMarks() : [];
+    if (zt) {
+      const tx = zt.x - 0.5, ty = zt.y - 0.5, h = groundY(zt.x, zt.y) + 1 / ZH.SPOTS + 0.01;
+      const corners = (sx: number, sy: number, r: number): Pt[] => ([[0, 0], [1, 0], [1, 1], [0, 1]] as const).map(([a, b]) => project(tx + (sx + 0.5 + (a - 0.5) * r) / ZH.SPOTS, h, ty + (sy + 0.5 + (b - 0.5) * r) / ZH.SPOTS));
+      const path = (pts: Pt[]): void => { c.beginPath(); pts.forEach((p, i) => { if (i) c.lineTo(p.x, p.y); else c.moveTo(p.x, p.y); }); c.closePath(); };
+      for (const m of marks) {
+        if (m.k === 'no') { path(corners(m.sx, m.sy, 0.92)); c.fillStyle = 'rgba(70,70,70,0.42)'; c.fill(); continue; }
+        const age = m.age ?? 0;
+        path(corners(m.sx, m.sy, 0.7 + age * 0.4));
+        c.strokeStyle = m.act ? `rgba(255,230,90,${1 - age})` : `rgba(255,255,255,${0.8 - age * 0.8})`;
+        c.lineWidth = Math.max(2, ppb / ZH.SPOTS * 0.08); c.stroke();
+      }
+    }
+    if (S.tapMark && !S.zoom) {
       const age = (performance.now() - S.tapMark.t) / 600;
       // v temnej ploche sa nič nezvýrazňuje (ani to, na čo sa dá ťuknúť)
       if (age < 1) ring(S.tapMark.x, S.tapMark.y, S.tapMark.act && !D.isDark(S.area) ? `rgba(255,230,90,${1 - age})` : `rgba(255,255,255,${0.8 - age * 0.8})`, 0.5 + age * 0.4);
