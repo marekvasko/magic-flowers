@@ -1,8 +1,8 @@
 // Záhon v hre (#179): priblížený pohľad (B) – jediný spôsob, ako záhon upravovať. Ťuknutie na záhon kameru priblíži
 // nad neho (render3d: S.zoom), ťuknutie na bod urobí to, čo je v ruke: semienko zasadí, pokryv položí (ťahom prsta na
 // viac bodov), prázdna ruka zreže rozkvitnutý kvet alebo zoberie pokryv (aj ťahom), motyka vykopá kvet, krhla poleje
-// a kompost pohnojí celý záhon. Hore lišta: Späť, názov a stav záhonu, Zrušiť záhon. Klávesy: šípky = bod, E = akcia,
-// Esc = späť. Pravidlá bodov sú spoločné so serverom (shared/zahon.ts) – body, na ktoré to nejde, sú sivé.
+// a kompost pohnojí celý záhon, motyka na ráme záhon (s potvrdením) zruší. Hore názov a stav záhonu. Späť: ťuknutie
+// mimo záhonu alebo Esc. Klávesy: šípky = bod, E = akcia. Pravidlá bodov sú spoločné so serverom (shared/zahon.ts) – body, na ktoré to nejde, sú sivé.
 import * as D from '../shared/data.ts';
 import * as Obj from '../shared/objects.ts';
 import * as ZR from '../shared/zahon.ts';
@@ -44,13 +44,10 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
   const { S } = dp;
   let paint: { add: boolean; spots: Spot[] } | null = null, cursor: Spot = [3, 3], hit: Spot | null = null;
   const bar = el('div', 'zbar hidden'), title = el('div', 'ztitle'), hint = el('div', 'zhint hidden');
-  const back = el('button', 'btn zback', '← Späť'), del = el('button', 'btn gray zdel', 'Zrušiť záhon');
-  bar.append(back, title, del);
+  bar.append(title);
   dp.root.append(bar, hint);
-  back.onclick = () => { close(); };
-  del.onclick = () => {
-    const z = cur();
-    if (!z) return;
+  // Zrušenie záhonu: motykou na rám, s potvrdením
+  function askDestroy(z: ZahonView): void {
     dp.openModal('Zrušiť záhon?', body => {
       body.append(el('p', null, 'Rozkvitnuté kvety pôjdu do batohu, ostatné kvety zaniknú. Pokryvy sa vrátia do batohu. Záhon zmizne a uvoľní miesto v povolení na pole.'));
       const yes = el('button', 'btn', 'Zrušiť záhon'), no = el('button', 'btn gray', 'Nechať');
@@ -58,7 +55,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
       no.onclick = () => { dp.closeModal(); };
       body.append(el('div', 'btns', yes, no));
     });
-  };
+  }
 
   function cur(): ZahonView | null {
     const zm = S.zoom;
@@ -87,8 +84,9 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
       : sel.startsWith('cov_') ? 'Ťukni alebo potiahni prstom po bodoch – položíš pokryv. 🪣'
         : sel === 'can' ? 'Ťukni na záhon – jedno poliatie stačí na celý záhon. 💧'
           : sel === 'compost' ? 'Ťukni na záhon – kompost pohnojí celý záhon. 🟤'
-            : sel === 'hoe' ? 'Ťukni na kvet – motykou ho vykopeš. ⛏️'
+            : sel === 'hoe' ? 'Ťukni na kvet – motykou ho vykopeš. Motykou na rám zrušíš celý záhon. ⛏️'
               : 'Prázdnou rukou zrežeš rozkvitnutý kvet alebo zoberieš pokryv (aj ťahom prsta).';
+    hint.textContent += ' Ťukni mimo záhonu (Esc) – späť.';
   }
   const near = (z: ZahonView): boolean => S.area === 'garden' && Math.hypot(S.me.x - (z.x + 0.5), S.me.y - (z.y + 0.5)) <= 2.4;
   setInterval(() => { const z = cur(); if (S.zoom && (!z || !near(z))) close(); }, 300); // odišiel ďaleko / záhon zmizol
@@ -106,7 +104,8 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     }
     if (sel.startsWith('cov_')) { const c = sel.slice(4); if (D.isCoverId(c)) { dp.send({ t: 'zahon', op: 'cover', id: z.id, c, spots: [[sx, sy]] }); dp.sfx('pop'); } return; }
     if (sel === 'hoe') {
-      if (here?.p) { dp.send({ t: 'zahon', op: 'dig', id: z.id, sx, sy }); dp.sfx('dig'); } else dp.toast('Tu nič nerastie. Celý záhon zrušíš tlačidlom Zrušiť záhon hore.');
+      if (!ZR.inner(sx, sy)) { askDestroy(z); return; } // motyka na ráme = zrušiť celý záhon
+      if (here?.p) { dp.send({ t: 'zahon', op: 'dig', id: z.id, sx, sy }); dp.sfx('dig'); } else dp.toast('Tu nič nerastie. Celý záhon zrušíš motykou na ráme.');
       return;
     }
     if (ZR.blooming(here)) {
@@ -148,7 +147,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     }
     if (!tap && !p) return;
     const s = dp.pickSpot(cx, cy, z.x, z.y);
-    if (!s) return;
+    if (!s) { close(); return; } // ťuknutie mimo záhonu = späť
     cursor = [Math.max(1, Math.min(6, s.sx)), Math.max(1, Math.min(6, s.sy))];
     act(z, [s.sx, s.sy]);
   }
