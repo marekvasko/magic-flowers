@@ -107,7 +107,7 @@ test('záhon: položí sa len na čistú trávu, zaberá 1 miesto v povolení a 
   const me = must((w.presence || []).find(p => p.key === 'ana'));
   assert.deepStrictEqual(Actions.resolveAct(w, w.presence, me, { x, y, item: 'zahon_drevo' }), { toast: 'Najprv zarovnaj motykou.' });
   must(w.tiles[i]).s = null; w.plotsUsed = 0;
-  assert.deepStrictEqual(Actions.resolveAct(w, w.presence, me, { x, y, item: 'zahon_drevo' }), { type: 'zahonPlace', data: { key: 'ana', i, v: 'drevo' } });
+  assert.deepStrictEqual(Actions.resolveAct(w, w.presence, me, { x, y, item: 'zahon_drevo' }), { type: 'zahonPlace', data: { key: 'ana', i, v: 'drevo', sh: 'sq', rot: 0 } });
   act(w, 'zahonPlace', { i, v: 'drevo' });
   assert.deepStrictEqual([w.plotsUsed, Econ.plotsUsedOf(w.tiles, w.hory, w.objects), sv.inv.zahon_drevo, only(w).o], [1, 1, 1, 'ana']);
   assert.deepStrictEqual(rejects(w, 'zahonPlace', { i, v: 'drevo' }), ['Tu už niečo je.']);
@@ -234,6 +234,42 @@ test('záhon: dva záhony vedľa seba sa spoja – na spoločnej strane nie je r
   assert.ok(!Z.spotAt(only(w), 7, 3), 'z rámu zmizol'); // zoznam objektov sa pri zrušení nahradí – záhon znova zo sveta
   assert.strictEqual(sv.inv.cov_strk, 2, 'pokryv z rušeného záhonu je späť');
   assert.strictEqual(w.plotsUsed, 1);
+});
+
+test('rohový záhon (#186): šikmý a oblý tvar, otočenie, spája sa len na rovných stranách', () => {
+  // šikmý pri otočení 0: pravý uhol vľavo dole – rovné strany západ a juh, rám po uhlopriečke
+  const d0 = { sh: 'diag' as const, rot: 0 as const };
+  assert.deepStrictEqual(Z.fullSides(d0), ['w', 's']);
+  assert.deepStrictEqual(Z.fullSides({ sh: 'diag', rot: 1 }), ['n', 'w']);
+  assert.deepStrictEqual([Z.cellOf(d0, 5, 2), Z.cellOf(d0, 3, 3), Z.cellOf(d0, 2, 5), Z.cellOf(d0, 0, 4)], ['out', 'frame', 'in', 'frame']);
+  assert.strictEqual(Z.plantError({ ...d0, spots: [] }, 5, 2, 'tulipan'), 'Tu záhon nie je.');
+  assert.strictEqual(Z.plantError({ ...d0, spots: [] }, 2, 5, 'tulipan'), null);
+  // oblý: štvrťkruh so stredom vľavo dole
+  const r0 = { sh: 'round' as const, rot: 0 as const };
+  assert.deepStrictEqual([Z.cellOf(r0, 7, 0), Z.cellOf(r0, 6, 3), Z.cellOf(r0, 3, 4)], ['out', 'frame', 'in']);
+  let inside = 0;
+  for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) if (Z.cellOf(r0, x, y) === 'in') inside++;
+  assert.ok(inside > 20 && inside < 36, 'oblý má menej pôdy ako štvorec');
+  // spájanie: šikmý (rovné strany Z a J) sa spojí so záhonom na západe, nie na východe
+  const bed = (id: number, x: number, extra: { sh?: D.ZahonShape; rot?: 0 | 1 | 2 | 3 } = {}): { id: number; kind: 'zahon'; area: 'garden'; x: number; y: number; spots: Z.SpotLike[] } => ({ id, kind: 'zahon', area: 'garden', x, y: 5, spots: [], ...extra });
+  const mid = bed(1, 5, d0), west = bed(2, 4), east = bed(3, 6);
+  assert.ok(Z.joined(mid, west) && !Z.joined(mid, east));
+  assert.deepStrictEqual(Z.groupOf([mid, west, east], mid).map(b => b.id), [1, 2]);
+  assert.deepStrictEqual(Z.bedOf([mid, west, east], east).open.w, false, 'východný sused má na šikmom záhone rám');
+});
+
+test('rohový záhon (#186): kúpa za 40 🪙, položenie s otočením z náhľadu', () => {
+  const { w, i, x, y } = world(), sv = save(w, 'ana');
+  stand(w, 'ana', 12.5, 29.5);
+  assert.deepStrictEqual(rejects(w, 'zahonBuy', { v: 'kamen', sh: 'round' }), []);
+  assert.strictEqual(sv.inv.zahon_kamen_round, 1);
+  assert.strictEqual(D.itemName('zahon_kamen_round'), 'Oblý kamenný záhon');
+  stand(w, 'ana', x + 0.5, y + 0.5);
+  const me = must((w.presence || []).find(p => p.key === 'ana'));
+  assert.deepStrictEqual(Actions.resolveAct(w, w.presence, me, { x, y, item: 'zahon_kamen_round', rot: 2 }), { type: 'zahonPlace', data: { key: 'ana', i, v: 'kamen', sh: 'round', rot: 2 } });
+  act(w, 'zahonPlace', { i, v: 'kamen', sh: 'round', rot: 2 });
+  assert.deepStrictEqual([only(w).sh, only(w).rot, sv.inv.zahon_kamen_round ?? 0, w.plotsUsed], ['round', 2, 0, 1]);
+  assert.deepStrictEqual(Obj.loadObjects(JSON.parse(JSON.stringify(w.objects))).list.find(o => o.kind === 'zahon'), only(w), 'tvar a otočenie sa uložia');
 });
 
 // ---------- Server: správa 'zahon' prejde až k návrhu ----------

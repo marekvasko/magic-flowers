@@ -4,7 +4,7 @@
 //  - ServerMessage: čo dostane klient (posiela server sám alebo ide z návrhov enginu cez ctx.emit)
 // Pokyny návrhov len pre server (joined, travel, me, scavStart, scavDone, pullStart, pullDone) klient nedostane;
 // typuje ich engine (fáza 3). Správa webbed ide aj klientovi.
-import type { AreaId, BrewHint, CoverId, Ground, ItemId, Look, PotionId, SpeciesId, UpgradeId, ZahonFrame } from './data.ts';
+import type { AreaId, BrewHint, CoverId, Ground, ItemId, Look, PotionId, SpeciesId, UpgradeId, ZahonFrame, ZahonShape } from './data.ts';
 import type { Level } from './book.ts';
 import type { ActiveFestival, Contract, CornerArea, Dock, Icehouse, LotObject, OrderSide, Plant, Soil, VehicleId, ZahonObject, ZahonSpot, Weather, WorldMode } from './save.ts';
 
@@ -15,7 +15,7 @@ export type ClientMessage =
   | { t: 'join'; room: string; name: string; look?: Look | null }   // bez vzhľadu: z uloženia alebo predvolený
   // a = presný smer pohľadu, cr = plazí sa, lp = drží lampáš, ar = poradie plochy (pohyb z predchádzajúcej plochy sa zahodí)
   | { t: 'move'; x: number; y: number; dir: number; a?: number | undefined; cr?: boolean; lp?: boolean; ar: number }
-  | { t: 'act'; x: number; y: number; item: ItemId | '' }   // '' = prázdna ruka
+  | { t: 'act'; x: number; y: number; item: ItemId | ''; rot?: number }   // '' = prázdna ruka; rot = otočenie rohového záhonu (#186)
   | { t: 'store' | 'unstore'; id: ItemId; n: number }
   // trh (#112): okamžitý nákup / predaj n kusov (lim = najhoršia cena za kus, ktorú hráč videl – drahšie nekúpi, lacnejšie
   // nepredá); limitná objednávka (Dopyt / Ponuka) n kusov za p za kus; zrušenie objednávky (id '<tovar>#<n>')
@@ -129,7 +129,7 @@ export interface VehicleView {
 }
 // Záhon (#179): kúpa na trhu a práca s bodmi v priblíženom pohľade (id = záhon, sx/sy = bod 1–6, spots = ťah prstom)
 export type ZahonMessage =
-  | { t: 'zahon'; op: 'buy'; v: ZahonFrame }
+  | { t: 'zahon'; op: 'buy'; v: ZahonFrame; sh?: ZahonShape }
   | { t: 'zahon'; op: 'bucket'; c: CoverId }
   | { t: 'zahon'; op: 'destroy' | 'water' | 'compost'; id: number }
   | { t: 'zahon'; op: 'plant'; id: number; sx: number; sy: number; item: string }

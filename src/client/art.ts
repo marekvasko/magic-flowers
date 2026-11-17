@@ -725,9 +725,20 @@ export const Art = (() => {
       const P = (u: number, v: number): [number, number] => [32 + (u - v) * 26, 22 + (u + v) * 13];
       const quad = (pts: readonly (readonly [number, number])[], col: string): void => { c.fillStyle = col; c.beginPath(); pts.forEach(([x, y], k) => { if (k) c.lineTo(x, y); else c.moveTo(x, y); }); c.closePath(); c.fill(); };
       const [A, B, C2, Dd] = [P(0, 0), P(1, 0), P(1, 1), P(0, 1)];
-      quad([Dd, C2, [C2[0], C2[1] + 8], [Dd[0], Dd[1] + 8]], side); quad([B, C2, [C2[0], C2[1] + 8], [B[0], B[1] + 8]], side);
-      quad([A, B, C2, Dd], top);
-      quad([P(0.15, 0.15), P(0.85, 0.15), P(0.85, 0.85), P(0.15, 0.85)], '#6b4a2b');
+      const shape = id.endsWith('_diag') ? 'diag' : id.endsWith('_round') ? 'round' : 'sq';
+      if (shape === 'sq') {
+        quad([Dd, C2, [C2[0], C2[1] + 8], [Dd[0], Dd[1] + 8]], side); quad([B, C2, [C2[0], C2[1] + 8], [B[0], B[1] + 8]], side);
+        quad([A, B, C2, Dd], top);
+        quad([P(0.15, 0.15), P(0.85, 0.15), P(0.85, 0.85), P(0.15, 0.85)], '#6b4a2b');
+      } else { // rohový záhon (#186): šikmý trojuholník alebo štvrťkruh, pravý uhol v rohu (u, v) = (0, 1)
+        const edge = (k: number, inset: number): [number, number] => shape === 'diag'
+          ? [inset + (1 - 2 * inset) * k, inset + (1 - 2 * inset) * k]
+          : [(1 - inset) * Math.sin(k * Math.PI / 2), 1 - (1 - inset) * Math.cos(k * Math.PI / 2)];
+        const outline = (inset: number): [number, number][] => [P(inset, 1 - inset), ...Array.from({ length: 9 }, (_, k) => { const [u, v] = edge(k / 8, inset); return P(u, v); })];
+        quad([Dd, C2, [C2[0], C2[1] + 8], [Dd[0], Dd[1] + 8]], side);
+        quad(outline(0), top);
+        quad(outline(0.15), '#6b4a2b');
+      }
       for (const [u, v, col] of [[0.35, 0.35, '#e8486a'], [0.65, 0.4, '#f2c230'], [0.45, 0.65, '#8e7cc3'], [0.7, 0.7, '#e8486a']] as const) {
         const [x, y] = P(u, v); c.strokeStyle = '#3f8f2f'; c.lineWidth = 2; c.beginPath(); c.moveTo(x, y); c.lineTo(x, y - 7); c.stroke(); circ(c, x, y - 8, 3.5, col);
       }

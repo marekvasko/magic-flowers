@@ -83,7 +83,9 @@ export function loadObjects(saved: unknown): Objects {
       list.push({ id, area: 'garden', x, y, kind: 'lot', v, ...(typeof by === 'string' ? { o: by } : {}) });
     } else if (o['kind'] === 'zahon') {
       if (typeof v !== 'string' || !D.isZahonFrame(v) || x < 0 || y < 0 || x >= D.W || y >= D.H || !free(x, y, 1)) continue;
-      list.push({ id, area: 'garden', x, y, kind: 'zahon', v, w: o['w'] ? 1 : 0, r: o['r'] ? 1 : 0, spots: loadSpots(o['spots']), o: typeof by === 'string' ? by : '' });
+      const sh = o['sh'], rot = Number(o['rot']) & 3;
+      const shape = typeof sh === 'string' && D.isZahonCorner(sh) ? { sh, rot: rot as 0 | 1 | 2 | 3 } : {}; // rohový záhon (#186)
+      list.push({ id, area: 'garden', x, y, kind: 'zahon', v, ...shape, w: o['w'] ? 1 : 0, r: o['r'] ? 1 : 0, spots: loadSpots(o['spots']), o: typeof by === 'string' ? by : '' });
     }
   }
   const nid = Number(saved['nid']);

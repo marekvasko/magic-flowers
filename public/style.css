@@ -99,11 +99,11 @@ button { font: inherit; cursor: pointer; border: none; }
 .row .btns { display: flex; gap: 4px; }
 /* záhon na trhu (#179): rad ikon (rám) hneď vedľa ceny, vybraná má rámik */
 .row.zrow { flex-direction: column; align-items: stretch; gap: 6px; }
-.zrow .zline { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.zrow .zline { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
 .zrow .zseg { display: flex; gap: 3px; background: #f6ead0; border-radius: 12px; padding: 3px; }
-.zrow .zopt { width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: 9px; background: transparent; border: 2px solid transparent; }
+.zrow .zopt { width: 32px; height: 32px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: 9px; background: transparent; border: 2px solid transparent; }
 .zrow .zopt.on { background: #fff; border-color: #8b5a2b; }
-.row .zopt img { width: 30px; height: 30px; }
+.row .zopt img { width: 26px; height: 26px; }
 .btn { padding: 8px 10px; border-radius: 10px; background: #6b3fa0; color: #fff; font-weight: 700; font-size: 13px; white-space: nowrap; }
 .btn.alt { background: #3c7d3f; }
 .btn.gray { background: #b9a888; }

@@ -783,7 +783,7 @@ function toInput(room: Room, pl: Player, e: InboxEntry, presence: Presence[], in
       if (pl.sleep) return no('player is asleep');
       const me = presence.find(p => p.key === key);
       if (!me) return no('player not in presence');
-      const r = Actions.resolveAct(room, presence, me, { x: m['x'], y: m['y'], item: m['item'] });
+      const r = Actions.resolveAct(room, presence, me, { x: m['x'], y: m['y'], item: m['item'], rot: m['rot'] });
       if (!r) return no('nothing to do on that tile');
       if ('toast' in r) { toast(pl, r.toast); return no('refused before the engine: ' + r.toast); }
       if (pl.scav) { // kým hľadá: to isté políčko znova = stále hľadá; čokoľvek iné (čo by sa naozaj stalo) hľadanie preruší
