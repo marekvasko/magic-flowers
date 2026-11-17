@@ -88,6 +88,8 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
               : 'Prázdnou rukou zrežeš rozkvitnutý kvet alebo zoberieš pokryv (aj ťahom prsta).';
     hint.textContent += ' Ťukni mimo záhonu (Esc) – späť.';
   }
+  // Záhon so susedmi (spojené strany, kvety susedov kvôli zónam)
+  const bed = (z: ZahonView): ZahonView & { open: ZR.Open; near: ZR.SpotLike[] } => ZR.bedOf<ZahonView>(S.objects, z);
   const near = (z: ZahonView): boolean => S.area === 'garden' && Math.hypot(S.me.x - (z.x + 0.5), S.me.y - (z.y + 0.5)) <= 2.4;
   setInterval(() => { const z = cur(); if (S.zoom && (!z || !near(z))) close(); }, 300); // odišiel ďaleko / záhon zmizol
 
@@ -99,13 +101,13 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     if (sel === 'compost') { dp.send({ t: 'zahon', op: 'compost', id: z.id }); dp.sfx('pop'); return; }
     if (sel.startsWith('seed_') || D.isWild(sel)) {
       const sp = sel.startsWith('seed_') ? D.speciesOfItem(sel) : null;
-      const why = ZR.plantError(z, sx, sy, sp);
+      const why = ZR.plantError(bed(z), sx, sy, sp);
       if (why) { dp.toast(why); return; }
       dp.send({ t: 'zahon', op: 'plant', id: z.id, sx, sy, item: sel }); dp.sfx('pop'); return;
     }
     if (sel.startsWith('cov_')) { const c = sel.slice(4); if (D.isCoverId(c)) { dp.send({ t: 'zahon', op: 'cover', id: z.id, c, spots: [[sx, sy]] }); dp.sfx('pop'); } return; }
     if (sel === 'hoe') {
-      if (!ZR.inner(sx, sy)) { askDestroy(z); return; } // motyka na ráme = zrušiť celý záhon
+      if (ZR.isFrame(bed(z).open, sx, sy)) { askDestroy(z); return; } // motyka na ráme = zrušiť celý záhon
       if (here?.p) { dp.send({ t: 'zahon', op: 'dig', id: z.id, sx, sy }); dp.sfx('dig'); } else dp.toast('Tu nič nerastie. Celý záhon zrušíš motykou na ráme.');
       return;
     }
@@ -123,7 +125,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     if (!z) return;
     const s = dp.pickSpot(cx, cy, z.x, z.y);
     paint = null;
-    if (!s || !ZR.inner(s.sx, s.sy)) return;
+    if (!s || ZR.isFrame(bed(z).open, s.sx, s.sy)) return;
     if (S.sel.startsWith('cov_')) paint = { add: true, spots: [[s.sx, s.sy]] };
     else if (!S.sel && ZR.spotAt(z, s.sx, s.sy)?.c) paint = { add: false, spots: [[s.sx, s.sy]] };
   }
@@ -131,7 +133,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     const z = cur();
     if (!z) return;
     const s = dp.pickSpot(cx, cy, z.x, z.y);
-    if (paint && s && ZR.inner(s.sx, s.sy) && !paint.spots.some(([a, b]) => a === s.sx && b === s.sy)) paint.spots.push([s.sx, s.sy]);
+    if (paint && s && !ZR.isFrame(bed(z).open, s.sx, s.sy) && !paint.spots.some(([a, b]) => a === s.sx && b === s.sy)) paint.spots.push([s.sx, s.sy]);
   }
   function up(cx: number, cy: number, tap: boolean): void {
     const z = cur(), p = paint;
@@ -147,7 +149,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     if (!tap && !p) return;
     const s = dp.pickSpot(cx, cy, z.x, z.y);
     if (!s) { close(); return; } // ťuknutie mimo záhonu = späť
-    cursor = [Math.max(1, Math.min(6, s.sx)), Math.max(1, Math.min(6, s.sy))];
+    cursor = [s.sx, s.sy];
     act(z, [s.sx, s.sy]);
   }
   // Klávesnica: šípky posúvajú vybraný bod (v smere obrazovky ako pri chôdzi), E / Enter = akcia, Esc = späť
@@ -156,7 +158,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     if (!z) return false;
     const mv: Readonly<Partial<Record<string, Spot>>> = { ArrowUp: [0, -1], KeyW: [0, -1], ArrowDown: [0, 1], KeyS: [0, 1], ArrowLeft: [-1, 0], KeyA: [-1, 0], ArrowRight: [1, 0], KeyD: [1, 0] };
     const d = mv[code];
-    if (d) { cursor = [Math.max(1, Math.min(6, cursor[0] + d[0])), Math.max(1, Math.min(6, cursor[1] + d[1]))]; return true; }
+    if (d) { cursor = [Math.max(0, Math.min(7, cursor[0] + d[0])), Math.max(0, Math.min(7, cursor[1] + d[1]))]; return true; }
     if (code === 'KeyE' || code === 'Enter') { act(z, cursor); return true; }
     if (code === 'Escape') { close(); return true; }
     return false;
@@ -166,14 +168,15 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
   function marks(): readonly ZoomMark[] {
     const z = cur();
     if (!z) return [];
-    const sel = S.sel, out: ZoomMark[] = [];
+    const sel = S.sel, out: ZoomMark[] = [], b = bed(z);
     const can = (sx: number, sy: number): boolean | null => {
       const here = ZR.spotAt(z, sx, sy);
-      if (sel.startsWith('seed_') || D.isWild(sel)) return here?.p ? null : !ZR.plantError(z, sx, sy, sel.startsWith('seed_') ? D.speciesOfItem(sel) : null);
-      if (sel.startsWith('cov_')) return here?.p ? null : !ZR.coverError(z, sx, sy);
+      if (ZR.isFrame(b.open, sx, sy)) return null; // rám je vidno, netreba ho sivo značiť
+      if (sel.startsWith('seed_') || D.isWild(sel)) return here?.p ? null : !ZR.plantError(b, sx, sy, sel.startsWith('seed_') ? D.speciesOfItem(sel) : null);
+      if (sel.startsWith('cov_')) return here?.p ? null : !ZR.coverError(b, sx, sy);
       return null;
     };
-    for (let sy = 1; sy <= 6; sy++) for (let sx = 1; sx <= 6; sx++) if (can(sx, sy) === false) out.push({ sx, sy, k: 'no' });
+    for (let sy = 0; sy < ZR.SPOTS; sy++) for (let sx = 0; sx < ZR.SPOTS; sx++) if (can(sx, sy) === false) out.push({ sx, sy, k: 'no' });
     if (paint) for (const [sx, sy] of paint.spots) out.push({ sx, sy, k: 'ring', act: true });
     else if (S.kbd) out.push({ sx: cursor[0], sy: cursor[1], k: 'ring', act: useful(z, cursor) });
     const age = (performance.now() - tapAt.t) / 600;
@@ -184,9 +187,9 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
   function useful(z: ZahonView, [sx, sy]: Spot): boolean {
     const sel = S.sel, here = ZR.spotAt(z, sx, sy);
     if (sel === 'can' || sel === 'compost') return true;
-    if (sel.startsWith('seed_') || D.isWild(sel)) return !ZR.plantError(z, sx, sy, sel.startsWith('seed_') ? D.speciesOfItem(sel) : null);
-    if (sel.startsWith('cov_')) return !ZR.coverError(z, sx, sy);
-    if (sel === 'hoe') return !!here?.p || !ZR.inner(sx, sy);
+    if (sel.startsWith('seed_') || D.isWild(sel)) return !ZR.plantError(bed(z), sx, sy, sel.startsWith('seed_') ? D.speciesOfItem(sel) : null);
+    if (sel.startsWith('cov_')) return !ZR.coverError(bed(z), sx, sy);
+    if (sel === 'hoe') return !!here?.p || ZR.isFrame(bed(z).open, sx, sy);
     return ZR.blooming(here) || !!here?.c;
   }
   return { open, close, active: () => !!cur(), down, move, up, key, marks, refresh };
