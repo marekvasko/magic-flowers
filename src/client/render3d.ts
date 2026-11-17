@@ -1984,6 +1984,53 @@ void main() {
     renderer.autoClear = true;
   }
 
+  // Priblížený záhon (#179): záhon „pláva“ pred rozmazaným svetom. Svet sa nakreslí do textúry v štvrtinovom rozlíšení,
+  // tá sa roztiahne a rozmaže cez celú obrazovku (a trochu stmaví), potom sa vymaže hĺbka a nakreslí sa len záhon a jeho
+  // kvety (vrstva ZOOM_LAYER).
+  const ZOOM_LAYER = 6;
+  let zoomRT: THREE.WebGLRenderTarget | null = null;
+  const blurMat = new THREE.ShaderMaterial({
+    uniforms: { map: { value: null }, texel: { value: new THREE.Vector2(1, 1) }, amount: { value: 0 } },
+    vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: `uniform sampler2D map; uniform vec2 texel; uniform float amount; varying vec2 vUv;
+      void main() {
+        vec4 c = vec4(0.0); float w = 0.0;
+        for (int x = -3; x <= 3; x++) for (int y = -3; y <= 3; y++) {
+          float k = exp(-float(x * x + y * y) / 6.0);
+          c += texture2D(map, vUv + vec2(float(x), float(y)) * texel * amount * 1.6) * k; w += k;
+        }
+        c /= w;
+        float g = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+        gl_FragColor = vec4(mix(c.rgb, mix(vec3(g), c.rgb, 0.7) * 0.82, amount), 1.0);
+      }`,
+    depthTest: false, depthWrite: false
+  });
+  const blurScene = new THREE.Scene(), blurCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  blurScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), blurMat));
+  // Záhon a jeho kvety na vrstve ZOOM_LAYER (len ten priblížený)
+  function markZoomLayer(id: number | null, x: number, y: number): void {
+    for (const m of fineMeshes) { if (id !== null && m.fineType === 'zahon' && m.tile?.x === x && m.tile.y === y) m.layers.enable(ZOOM_LAYER); else m.layers.disable(ZOOM_LAYER); }
+    for (const [k, sp] of plantSprites) { if (id !== null && k >= ZAHON_SPRITE + id * 64 && k < ZAHON_SPRITE + (id + 1) * 64) sp.layers.enable(ZOOM_LAYER); else sp.layers.disable(ZOOM_LAYER); }
+  }
+  function renderZoomed(ze: number): void {
+    const size = renderer.getDrawingBufferSize(new THREE.Vector2()), w = Math.max(1, Math.floor(size.x / 4)), h = Math.max(1, Math.floor(size.y / 4));
+    if (!zoomRT || zoomRT.width !== w || zoomRT.height !== h) { zoomRT?.dispose(); zoomRT = new THREE.WebGLRenderTarget(w, h, { depthBuffer: true }); }
+    renderer.setRenderTarget(zoomRT);
+    renderWithSky(); // svet aj s oblohou, rozmaže sa
+    renderer.setRenderTarget(null);
+    blurMat.uniforms['map']!.value = zoomRT.texture; // eslint-disable-line @typescript-eslint/no-non-null-assertion -- uniformy sú definované vyššie
+    (blurMat.uniforms['texel']!.value as THREE.Vector2).set(1 / w, 1 / h); // eslint-disable-line @typescript-eslint/no-non-null-assertion -- uniformy sú definované vyššie
+    blurMat.uniforms['amount']!.value = ze; // eslint-disable-line @typescript-eslint/no-non-null-assertion -- uniformy sú definované vyššie
+    renderer.render(blurScene, blurCam);
+    const mask = camera.layers.mask;
+    renderer.autoClear = false;
+    renderer.clearDepth();
+    camera.layers.set(ZOOM_LAYER);
+    renderer.render(scene, camera);
+    camera.layers.mask = mask;
+    renderer.autoClear = true;
+  }
+
   let viewDiag = D.VIEW_DIAG, zoomEase = 0;
   function resize(): void {
     const r = api.glCanvas.getBoundingClientRect();
@@ -2169,7 +2216,6 @@ void main() {
       // po vlastnom prechode do inej plochy hráči zo starej plochy hneď zmiznú (je to za čiernou clonou)
       if (!o.alive && (o.vis <= 0 || o.seenArea !== S.area || id === 'babka' || id === 'master' || id === 'me')) { removeChar(id, o); continue; }
       if (o.vis < 1 || !o.alive) setCharVis(o, Math.max(0, Math.min(1, o.vis + (o.alive ? dt : -dt) / CHAR_FADE)));
-      if (id === 'me' && o.alive && zoomEase > 0) setCharVis(o, 1 - 0.75 * zoomEase); // priblížený záhon (#179): vlastná postavička nezakrýva body
       const lo = { seen: 1 };
       o.sp.material.color.setRGB(...lightAt(o.sp.position.x, o.sp.position.y, o.sp.position.z, lights, lights.length, lo));
       // v tme: kto je za dohľadom (a nesvieti mu lampáš), toho nevidno; cez stromy presvitá len vlastná postavička
@@ -2197,8 +2243,13 @@ void main() {
     if (statsOn) tp = performance.now();
     renderReflection();
     if (statsOn) { const q = performance.now(); passMs.refl = q - tp; tp = q; }
-    renderWithSky();
-    if (fading) drawOutlines();
+    const zf = zoomTarget(), zo = zf && S.zoom ? S.zoom.id : null;
+    markZoomLayer(zo, zf ? zf.x - 0.5 : 0, zf ? zf.y - 0.5 : 0);
+    if (zo !== null && zoomEase > 0.02) renderZoomed(zoomEase * zoomEase * (3 - 2 * zoomEase)); // priblížený záhon (#179)
+    else {
+      renderWithSky();
+      if (fading) drawOutlines();
+    }
     if (statsOn) passMs.scene = performance.now() - tp;
     drawOverlay(t);
   }

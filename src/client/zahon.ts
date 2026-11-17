@@ -170,6 +170,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     const sel = S.sel, out: ZoomMark[] = [];
     const ok = (sx: number, sy: number): boolean | null => {
       const here = ZR.spotAt(z, sx, sy);
+      if (here?.p && sel !== 'hoe' && sel !== '') return null; // obsadený bod kvetom netreba značiť – kvet tam vidno
       if (sel.startsWith('seed_') || D.isWild(sel)) return !ZR.plantError(z, sx, sy, sel.startsWith('seed_') ? D.speciesOfItem(sel) : null);
       if (sel.startsWith('cov_')) return !ZR.coverError(z, sx, sy);
       if (sel === 'hoe') return here?.p ? true : null;
