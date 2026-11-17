@@ -1682,6 +1682,11 @@ void main() {
     const t = S.tiles[y * S.W + x];
     return t && t.g === 'glacier' ? W.groundHeight('glacier') / R + (t.ice || 0) / D.GLACIER_LAYERS : W.surfaceY(grid, x, y);
   }
+  // Kde postava stojí: na zemi, v záhone (#179) na jeho pôde o 1/8 bloku vyššie
+  function standY(x: number, y: number): number {
+    const h = groundY(x, y);
+    return S.area === 'garden' && Obj.zahonAt({ list: S.objects }, Math.floor(x), Math.floor(y)) ? h + 1 / ZH.SPOTS : h;
+  }
   // Výška postavy pri zmene terénu (schod na skalku, ľad…): hore rýchly krok (~0,1 s), dolu pád so zrýchlením
   // ako pri skoku. Na porovnanie (ladenie): window.MF_STEP = 'snap' (hneď) | 'lerp' (pôvodný plynulý prechod).
   const STEP_UP_RATE = 28, STEP_FALL_G = 23;
@@ -1704,7 +1709,7 @@ void main() {
   function drawChar(id: CharId, x: number, z: number, look: Partial<Look> | null, a: number, phase: number, opts: CharOpts & { jz?: number; web?: number; seat?: { x: number; z: number; y: number } | null }, dt: number): CharObj {
     const o = charObj(id);
     if (opts.seat) { x = opts.seat.x; z = opts.seat.z; }
-    stepHeight(o, opts.seat ? opts.seat.y : groundY(x, z), dt);
+    stepHeight(o, opts.seat ? opts.seat.y : standY(x, z), dt);
     const jz = opts.jz || 0;
     o.ctx.clearRect(0, 0, 96, 128);
     const pose = { dir: opts.dance ? 0 : dir8(a), phase, o: Object.assign({ noShadow: true }, opts, { jz: 0 }) };
@@ -2123,7 +2128,7 @@ void main() {
 
   // stav budov, ktorý nie je v políčkach (izolácia ľadovne, krosná v Dielni) – keď sa zmení, svet sa prestavia
   // záhony (#179): rám a pokryvy sú v sieti sveta – zmena pokryvu svet prestavia
-  const zahonLooks = (): W.ZahonLook[] => (S.area === 'garden' ? S.objects.flatMap(o => (o.kind === 'zahon' ? [{ x: o.x, y: o.y, v: o.v, covers: o.spots.flatMap(q => (q.c ? [[q.sx, q.sy, q.c] as const] : [])) }] : [])) : []);
+  const zahonLooks = (): W.ZahonLook[] => (S.area === 'garden' ? S.objects.flatMap(o => (o.kind === 'zahon' ? [{ x: o.x, y: o.y, v: o.v, covers: o.spots.flatMap(q => (q.c ? [[q.sx, q.sy, q.c] as const] : [])), open: ZH.bedOf(S.objects, o).open }] : [])) : []);
   const buildingState = (): W.BuildingState => ({ ins: D.insulLevel(S.icehouse?.bl), loom: S.dielna?.loom ?? false, zahony: zahonLooks() });
   const stateSig = (): string => { const b = buildingState(); return String(b.ins) + '|' + (b.loom ? 1 : 0) + '|' + JSON.stringify(b.zahony); };
   let builtState: string | null = null;

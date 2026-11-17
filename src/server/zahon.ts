@@ -7,7 +7,7 @@
 import * as D from '../shared/data.ts';
 import type { CoverId, ItemId, ZahonFrame } from '../shared/data.ts';
 import type { FxKind, ObjectView, ServerMessage, ToastKind } from '../shared/protocol.ts';
-import type { GardenObject, PlayerKey, PlayerSave, ZahonObject } from '../shared/save.ts';
+import type { GardenObject, PlayerKey, PlayerSave, ZahonObject, ZahonSpot } from '../shared/save.ts';
 import * as Obj from '../shared/objects.ts';
 import * as Z from '../shared/zahon.ts';
 import { lookup, must } from '../shared/util.ts';
@@ -113,11 +113,19 @@ export const PROPOSERS: { [T in keyof ZahonInputs]: GameProposer<ZahonInputs[T]>
     run(s, d, ctx) {
       const z = zahon(s, d.id, ctx), sv = saveOf(s, d.key, ctx);
       const got: string[] = [];
-      for (const sp of z.spots) {
+      const gather = (b: ZahonObject, sp: ZahonSpot): void => {
         if (sp.c) give(sv, `cov_${sp.c}`, 1, ctx.tick);
-        else if (sp.p && Z.blooming(sp)) { const n = bunch(z, sp.p.q); give(sv, `fl_${sp.p.sp}`, n, ctx.tick); got.push(`${String(n)}× ${D.SPECIES[sp.p.sp].name}`); }
-      }
+        else if (sp.p && Z.blooming(sp)) { const n = bunch(b, sp.p.q); give(sv, `fl_${sp.p.sp}`, n, ctx.tick); got.push(`${String(n)}× ${D.SPECIES[sp.p.sp].name}`); }
+      };
+      for (const sp of z.spots) gather(z, sp);
       s.objects.list = s.objects.list.filter(o => o !== z);
+      // susedným záhonom sa na spoločnej strane vráti rám – čo na nej bolo, dopadne ako pri zrušení
+      for (const b of Obj.zahony(s.objects)) {
+        if (Math.abs(b.x - z.x) + Math.abs(b.y - z.y) !== 1) continue;
+        const open = Z.bedOf(s.objects.list, b).open;
+        for (const sp of b.spots.filter(q => Z.isFrame(open, q.sx, q.sy))) gather(b, sp);
+        b.spots = b.spots.filter(q => !Z.isFrame(open, q.sx, q.sy));
+      }
       s.plotsUsed = Math.max(0, s.plotsUsed - 1);
       ctx.emit(toast$(d.key, 'Záhon je preč.' + (got.length ? ' Do batohu: ' + got.join(', ') + '.' : '')));
       ctx.emit(fx$(z.x + 0.5, z.y + 0.5, 'dirt'));
@@ -131,7 +139,7 @@ export const PROPOSERS: { [T in keyof ZahonInputs]: GameProposer<ZahonInputs[T]>
       if (D.isWild(item)) {
         const ws = D.wildSeason(item);
         if (ws !== season(ctx.tick) && !s.eternal) ctx.reject(`Toto divé semienko je z obdobia ${must(D.SEASONS[ws]).toLowerCase()} – vtedy ho aj zasaď.`);
-        const err = Z.plantError(z, d.sx, d.sy, null);
+        const err = Z.plantError(Z.bedOf(s.objects.list, z), d.sx, d.sy, null);
         if (err) ctx.reject(err);
         if (!take(sv, item, 1, ctx.tick)) ctx.reject(null);
         const m = { flowers: sl(s, 'market:fl_*') };
@@ -142,7 +150,7 @@ export const PROPOSERS: { [T in keyof ZahonInputs]: GameProposer<ZahonInputs[T]>
       const spId = item.startsWith('seed_') ? item.slice(5) : '', sp = lookup(D.SPECIES, spId);
       if (!sp || !D.isSpeciesId(spId) || !D.isItemId(item)) { ctx.reject(null); return; }
       if (!sp.seasons.includes(season(ctx.tick)) && !s.eternal) ctx.reject(`${sp.name} sa sadí v období: ${sp.seasons.map(x => must(D.SEASONS[x])).join(', ')}.`);
-      const err = Z.plantError(z, d.sx, d.sy, spId);
+      const err = Z.plantError(Z.bedOf(s.objects.list, z), d.sx, d.sy, spId);
       if (err) ctx.reject(err);
       if (!take(sv, item, 1, ctx.tick)) ctx.reject(null);
       z.spots.push({ sx: d.sx, sy: d.sy, p: { sp: spId, prog: 0, q: 3, dry: 0 } });
@@ -154,9 +162,10 @@ export const PROPOSERS: { [T in keyof ZahonInputs]: GameProposer<ZahonInputs[T]>
     keys: d => ({ writes: ['objects', `save:${d.key}`] }),
     run(s, d, ctx) {
       const z = zahon(s, d.id, ctx), sv = saveOf(s, d.key, ctx), id: ItemId = `cov_${d.c}`;
+      const bed = Z.bedOf(s.objects.list, z);
       let n = 0, first: string | null = null;
-      for (const [sx, sy] of d.spots.slice(0, 36)) {
-        const why = Z.coverError(z, sx, sy), here = Z.spotAt(z, sx, sy);
+      for (const [sx, sy] of d.spots.slice(0, 64)) {
+        const why = Z.coverError(bed, sx, sy), here = Z.spotAt(z, sx, sy);
         if (why) { first ??= why; continue; }
         if (here?.c === d.c) continue;
         if (!take(sv, id, 1, ctx.tick)) { first ??= `Došiel ti pokryv: ${D.COVERS[d.c].name}. Kúp ďalšie vedro na trhu.`; break; }
@@ -173,7 +182,7 @@ export const PROPOSERS: { [T in keyof ZahonInputs]: GameProposer<ZahonInputs[T]>
     run(s, d, ctx) {
       const z = zahon(s, d.id, ctx), sv = saveOf(s, d.key, ctx);
       let n = 0;
-      for (const [sx, sy] of d.spots.slice(0, 36)) {
+      for (const [sx, sy] of d.spots.slice(0, 64)) {
         const here = Z.spotAt(z, sx, sy);
         if (!here?.c) continue;
         give(sv, `cov_${here.c}`, 1, ctx.tick);
@@ -239,7 +248,7 @@ const num = (v: unknown): number => (typeof v === 'number' && Number.isInteger(v
 function spotsOf(v: unknown): XY[] {
   if (!Array.isArray(v)) return [];
   const out: XY[] = [];
-  for (const p of v.slice(0, 64)) if (Array.isArray(p)) { const sx = num(p[0]), sy = num(p[1]); if (Z.inner(sx, sy) && !out.some(q => q[0] === sx && q[1] === sy)) out.push([sx, sy]); }
+  for (const p of v.slice(0, 64)) if (Array.isArray(p)) { const sx = num(p[0]), sy = num(p[1]); if (Z.inGrid(sx, sy) && !out.some(q => q[0] === sx && q[1] === sy)) out.push([sx, sy]); }
   return out;
 }
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');

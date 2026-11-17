@@ -613,7 +613,8 @@ function dockModel(season: number): FineModel {
 // ---- Záhon (#179): 1 pole = 8 × 8 minikociek = 8 × 8 bodov záhonu ----
 // Vonkajší prstenec bodov je rám (drevo, prútie, kamene, tehly), vnútri pôda a pokryvy na bodoch (trávnik, štrk,
 // okruhliaky, plochý kameň). Kvety v ňom nie sú z minikociek – sú to tie isté 2D sprity ako kvety na políčku (render3d).
-export interface ZahonLook { x: number; y: number; v: D.ZahonFrame; covers: readonly (readonly [number, number, D.CoverId])[] }
+// open = strany, kde susedí iný záhon (#179): tam rám nie je a záhony sa spoja
+export interface ZahonLook { x: number; y: number; v: D.ZahonFrame; covers: readonly (readonly [number, number, D.CoverId])[]; open?: { n: boolean; s: boolean; e: boolean; w: boolean } }
 const FRAME: Readonly<Record<D.ZahonFrame, (x: number, z: number) => MatId>> = {
   drevo: (x, z) => ((x + z) % 2 ? M.PLANK : M.PLANK_DARK),
   prut: (x, z) => ((x + z) % 2 ? M.STRAW : M.STRAW_DARK),
@@ -623,13 +624,14 @@ const FRAME: Readonly<Record<D.ZahonFrame, (x: number, z: number) => MatId>> = {
 const COVER_MAT: Readonly<Record<D.CoverId, (x: number, z: number) => MatId>> = {
   travnik: () => M.ALP, strk: (x, z) => (hash(x, z, 8) < 0.5 ? M.SCREE : M.PATH), okruhliaky: () => M.DIRT, kamen: () => M.STONE
 };
-export function zahonModel(season: number, look: Pick<ZahonLook, 'v' | 'covers'>): FineModel {
-  const C = fineCanvas(1, 1, 4), { put } = C;
-  const ring = (x: number, z: number): boolean => x === 0 || x === 7 || z === 0 || z === 7;
+export function zahonModel(season: number, look: Pick<ZahonLook, 'v' | 'covers' | 'open'>): FineModel {
+  const C = fineCanvas(1, 1, 4), { put } = C, o = look.open ?? { n: false, s: false, e: false, w: false };
+  const ring = (x: number, z: number): boolean => (x === 0 && !o.w) || (x === 7 && !o.e) || (z === 0 && !o.n) || (z === 7 && !o.s);
   const cover = new Map(look.covers.map(([sx, sy, c]) => [sy * 8 + sx, c]));
   for (let z = 0; z < 8; z++) for (let x = 0; x < 8; x++) {
     if (ring(x, z)) {
-      const corner = (x === 0 || x === 7) && (z === 0 || z === 7), m = FRAME[look.v](x, z);
+      // stĺpik len vo vonkajšom rohu (obe susedné strany majú rám)
+      const corner = ((x === 0 && !o.w) || (x === 7 && !o.e)) && ((z === 0 && !o.n) || (z === 7 && !o.s)), m = FRAME[look.v](x, z);
       put(x, 0, z, look.v === 'drevo' ? M.PLANK_DARK : m); put(x, 1, z, corner && look.v === 'drevo' ? M.LOG_DARK : m);
       if (corner && look.v === 'drevo') put(x, 2, z, M.LOG_DARK);
       continue;

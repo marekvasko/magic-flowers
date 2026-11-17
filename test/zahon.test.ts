@@ -208,6 +208,31 @@ test('záhon: uloženie v15 zo servera (fixtúra) – štyri záhony s kvetmi a 
   assert.strictEqual(Econ.plotsUsedOf([], [], o), 4);
 });
 
+test('záhon: dva záhony vedľa seba sa spoja – na spoločnej strane nie je rám a zóny kvetov platia aj cez hranicu', () => {
+  const { w, z } = withZahon(), sv = save(w, 'ana');
+  // druhý záhon napravo (x + 1); prázdna tráva, ak tam nie je, sa pre test vytvorí
+  const i2 = z.y * D.W + z.x + 1;
+  must(w.tiles[i2]).g = 'grass'; must(w.tiles[i2]).s = null;
+  sv.inv.zahon_tehla = 1;
+  act(w, 'zahonPlace', { i: i2, v: 'tehla' });
+  const [a, b] = Obj.zahony(w.objects);
+  const A = Z.bedOf(w.objects.list, must(a)), B = Z.bedOf(w.objects.list, must(b));
+  assert.deepStrictEqual([A.open, B.open], [{ n: false, s: false, e: true, w: false }, { n: false, s: false, e: false, w: true }]);
+  assert.ok(!Z.isFrame(A.open, 7, 3) && Z.isFrame(A.open, 0, 3) && Z.isFrame(A.open, 7, 0), 'spoločná strana nie je rám, rohy áno');
+  sv.inv.seed_slnecnica = 2; sv.inv.seed_mak = 2; sv.inv.cov_strk = 2;
+  assert.deepStrictEqual(rejects(w, 'zahonPlant', { id: must(a).id, sx: 7, sy: 3, item: 'seed_mak' }), [], 'na spoločnej strane sa sadí');
+  // slnečnica v susednom záhone na (1, 3) je od maku na (7, 3) vľavo vzdialená 2 body – potrebuje (4 + 2) / 2 = 3
+  assert.match(rejects(w, 'zahonPlant', { id: must(b).id, sx: 1, sy: 3, item: 'seed_slnecnica' })[0] ?? '', /Príliš blízko/);
+  assert.deepStrictEqual(rejects(w, 'zahonPlant', { id: must(b).id, sx: 2, sy: 3, item: 'seed_slnecnica' }), []);
+  act(w, 'zahonCover', { id: must(b).id, c: 'strk', spots: [[0, 6]] });
+  assert.ok(Z.spotAt(must(b), 0, 6)?.c, 'pokryv aj na spoločnej strane');
+  // zrušenie pravého záhonu: ľavému sa vráti rám a mak na ňom skončí ako pri zrušení (rastúci zanikne)
+  assert.deepStrictEqual(rejects(w, 'zahonDestroy', { id: must(b).id }), []);
+  assert.ok(!Z.spotAt(only(w), 7, 3), 'z rámu zmizol'); // zoznam objektov sa pri zrušení nahradí – záhon znova zo sveta
+  assert.strictEqual(sv.inv.cov_strk, 2, 'pokryv z rušeného záhonu je späť');
+  assert.strictEqual(w.plotsUsed, 1);
+});
+
 // ---------- Server: správa 'zahon' prejde až k návrhu ----------
 function freePort(): Promise<number> { return new Promise(r => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = portOf(srv); srv.close(() => { r(p); }); }); }); }
 type Server = ChildProcessByStdio<null, Readable, Readable>;
