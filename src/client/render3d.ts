@@ -11,7 +11,7 @@ import type { FineInfo, FineModel, Grid, SunDir } from '../shared/world3d.ts';
 import * as MS from '../shared/mesher.ts';
 import type { Baked, Quad } from '../shared/mesher.ts';
 import type { Look } from '../shared/data.ts';
-import type { PlantView } from '../shared/protocol.ts';
+import type { PlantView, ZahonView } from '../shared/protocol.ts';
 import type { LotObject } from '../shared/save.ts';
 import { must } from '../shared/util.ts';
 import { Art } from './art.ts';
@@ -400,7 +400,7 @@ export interface Render3DApi {
   beforeRender?: () => void;
   zoomMarks?: () => readonly ZoomMark[]; // priblížený záhon (#179): značky bodov
 }
-export interface ZoomMark { sx: number; sy: number; k: 'no' | 'ring'; act?: boolean; age?: number } // age 0–1: zánik rámika ťuknutia
+export interface ZoomMark { id: number; sx: number; sy: number; k: 'no' | 'ring'; act?: boolean; age?: number } // id = časť spojeného záhonu; age 0–1: zánik rámika ťuknutia
 // Zoslabovanie objektov pred hráčom (pozri FADE_DEFAULTS); v konzole window.MF_FADE prepíše len uvedené hodnoty
 export interface FadeBase {
   darkFrom: number; dir: 'facing' | 'camera'; min: number; edge: number; near: number; reach: number; width: number; spread: number;
@@ -449,7 +449,7 @@ export interface DebugView {
   particleObjs: THREE.Object3D[]; lights: THREE.Vector4[]; materials: THREE.ShaderMaterial[]; groundY: (x: number, y: number) => number;
 }
 export interface Render3D {
-  frame: (t: number) => void; resize: () => void; pick: (x: number, y: number) => Pt | null; pickSpot: (x: number, y: number, tx: number, ty: number) => { sx: number; sy: number } | null; seenAt: (x: number, z: number) => number;
+  frame: (t: number) => void; resize: () => void; pick: (x: number, y: number) => Pt | null; pickSpot: (x: number, y: number) => { id: number; sx: number; sy: number } | null; seenAt: (x: number, z: number) => number;
   screenToWorld: (vx: number, vy: number) => [number, number]; rotate: (k: number) => void; sunHoursAt: (x: number, y: number) => number | null;
   dir8: (a: number) => number; debugFades: () => { type: string; fade: number; want: number | null }[]; ripple: (x: number, z: number, amp?: number) => void;
   setWaterQuality: (q: string) => void; readonly waterQuality: WaterQuality; setParticleQuality: (q: string) => void; readonly particleQuality: string;
@@ -1773,9 +1773,9 @@ void main() {
     renderer.autoClear = true;
   }
 
-  // Priblížený záhon (#179): záhon „pláva“ pred rozmazaným svetom. Svet sa nakreslí do textúry v štvrtinovom rozlíšení,
-  // tá sa roztiahne a rozmaže cez celú obrazovku (a trochu stmaví), potom sa vymaže hĺbka a nakreslí sa len záhon a jeho
-  // kvety (vrstva ZOOM_LAYER).
+  // Priblížený záhon (#179): kamera hry sa nehýbe – zväčší sa len záhon. Svet sa nakreslí do textúry v štvrtinovom
+  // rozlíšení, tá sa roztiahne a rozmaže cez celú obrazovku (a trochu stmaví), potom sa vymaže hĺbka a záhon (spojený
+  // záhon: všetky jeho časti) a jeho kvety (vrstva ZOOM_LAYER) sa nakreslia vlastnou kamerou zoomCam – zväčšené a v strede.
   const ZOOM_LAYER = 6;
   let zoomRT: THREE.WebGLRenderTarget | null = null;
   const blurMat = new THREE.ShaderMaterial({
@@ -1796,10 +1796,23 @@ void main() {
   });
   const blurScene = new THREE.Scene(), blurCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   blurScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), blurMat));
-  // Záhon a jeho kvety na vrstve ZOOM_LAYER (len ten priblížený)
-  function markZoomLayer(id: number | null, x: number, y: number): void {
-    for (const m of fineMeshes) { if (id !== null && m.fineType === 'zahon' && m.tile?.x === x && m.tile.y === y) m.layers.enable(ZOOM_LAYER); else m.layers.disable(ZOOM_LAYER); }
-    for (const [k, sp] of plantSprites) { if (id !== null && k >= ZAHON_SPRITE + id * 64 && k < ZAHON_SPRITE + (id + 1) * 64) sp.layers.enable(ZOOM_LAYER); else sp.layers.disable(ZOOM_LAYER); }
+  // Záhon a jeho kvety na vrstve ZOOM_LAYER (len priblížený spojený záhon)
+  function markZoomLayer(beds: readonly ZahonView[]): void {
+    const ids = new Set(beds.map(b => b.id));
+    for (const m of fineMeshes) { if (m.fineType === 'zahon' && beds.some(b => m.tile?.x === b.x && m.tile.y === b.y)) m.layers.enable(ZOOM_LAYER); else m.layers.disable(ZOOM_LAYER); }
+    for (const [k, sp] of plantSprites) { if (k >= ZAHON_SPRITE && ids.has(Math.floor((k - ZAHON_SPRITE) / 64))) sp.layers.enable(ZOOM_LAYER); else sp.layers.disable(ZOOM_LAYER); }
+  }
+  // Kamera zväčšeného záhonu: ten istý smer ako kamera hry, stred plynulo zo stredu obrazovky na spojený záhon a výrez
+  // plynulo menší, kým záhon nezaplní šírku obrazovky (ze 0 = presne ako kamera hry)
+  const zoomCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400), zoomAt = new THREE.Vector3();
+  function placeZoomCam(g: ZoomGroup, ze: number): void {
+    const r = api.glCanvas.getBoundingClientRect(), need = D.viewSize(r.width, r.height, ZOOM_DIAG * Math.max(1, Math.hypot(g.w, g.h) / Math.SQRT2));
+    const k = lerp(1, need.w / Math.max(0.01, camera.right - camera.left), ze);
+    zoomCam.left = camera.left * k; zoomCam.right = camera.right * k; zoomCam.top = camera.top * k; zoomCam.bottom = camera.bottom * k;
+    zoomAt.set(lerp(camTarget.x, g.cx, ze), lerp(camTarget.y, groundY(g.cx, g.cy), ze), lerp(camTarget.z, g.cy, ze));
+    zoomCam.position.copy(camera.position).sub(camTarget).add(zoomAt);
+    zoomCam.quaternion.copy(camera.quaternion);
+    zoomCam.updateProjectionMatrix(); zoomCam.updateMatrixWorld();
   }
   function renderZoomed(ze: number): void {
     const size = renderer.getDrawingBufferSize(new THREE.Vector2()), w = Math.max(1, Math.floor(size.x / 4)), h = Math.max(1, Math.floor(size.y / 4));
@@ -1814,8 +1827,8 @@ void main() {
     const mask = camera.layers.mask;
     renderer.autoClear = false;
     renderer.clearDepth();
-    camera.layers.set(ZOOM_LAYER);
-    renderer.render(scene, camera);
+    zoomCam.layers.set(ZOOM_LAYER);
+    renderer.render(scene, zoomCam);
     camera.layers.mask = mask;
     renderer.autoClear = true;
   }
@@ -1832,13 +1845,18 @@ void main() {
     camera.updateProjectionMatrix();
   }
   const camTarget = new THREE.Vector3();
-  // Priblížený záhon (#179): kamera plynulo prejde nad záhon a priblíži ho tak, že zaplní šírku obrazovky
+  // Priblížený (spojený) záhon (#179): jeho časti, stred a rozmery v políčkach
   const ZOOM_DIAG = 3.4;
-  function zoomTarget(): { x: number; y: number } | null {
+  interface ZoomGroup { beds: ZahonView[]; cx: number; cy: number; w: number; h: number }
+  let zoomLast: ZoomGroup | null = null; // počas zatvárania sa záhon zmenšuje späť na svoje miesto
+  function zoomTarget(): ZoomGroup | null {
     const zm = S.zoom;
     if (!zm || S.area !== 'garden') return null;
-    const o = S.objects.find(q => q.id === zm.id);
-    return o ? { x: o.x + 0.5, y: o.y + 0.5 } : null;
+    const o = S.objects.find((q): q is ZahonView => q.kind === 'zahon' && q.id === zm.id);
+    if (!o) return null;
+    const beds = ZH.groupOf<ZahonView>(S.objects, o), xs = beds.map(b => b.x), ys = beds.map(b => b.y);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs) + 1, y0 = Math.min(...ys), y1 = Math.max(...ys) + 1;
+    return zoomLast = { beds, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0 };
   }
   function placeCamera(dt: number): void {
     if (api.placeCamera) {
@@ -1848,8 +1866,8 @@ void main() {
     }
     yaw = lerp(yaw, yawTarget, Math.min(1, dt * 8));
     if (Math.abs(yaw - yawTarget) < 0.001) yaw = yawTarget;
-    const me = S.me, zt = zoomTarget(), fx = zt ? zt.x : me.x, fz = zt ? zt.y : me.y, h = groundY(fx, fz), k = Math.min(1, dt * (zt || zoomEase > 0 ? 6 : 60));
-    camTarget.set(lerp(camTarget.x || fx, fx, k), lerp(camTarget.y || h, h, Math.min(1, dt * 6)), lerp(camTarget.z || fz, fz, k));
+    const me = S.me, h = groundY(me.x, me.y);
+    camTarget.set(me.x, lerp(camTarget.y || h, h, Math.min(1, dt * 6)), me.y);
     const dist = 60;
     camera.position.set(camTarget.x + Math.sin(yaw) * Math.cos(PITCH) * dist, camTarget.y + Math.sin(PITCH) * dist, camTarget.z + Math.cos(yaw) * Math.cos(PITCH) * dist);
     camera.lookAt(camTarget);
@@ -1889,15 +1907,21 @@ void main() {
     return null;
   }
 
-  // Bod záhonu (#179) pod prstom: lúč do roviny pôdy záhonu (o 1 minikocku nad zemou); null = mimo záhonu
+  // Bod záhonu (#179) pod prstom: lúč kamery zväčšeného záhonu do roviny pôdy (o 1 minikocku nad zemou) každej časti
+  // spojeného záhonu; null = mimo záhonu
   const soilPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hitPt = new THREE.Vector3();
-  function pickSpot(clientX: number, clientY: number, tx: number, ty: number): { sx: number; sy: number } | null {
+  function pickSpot(clientX: number, clientY: number): { id: number; sx: number; sy: number } | null {
+    const g = zoomTarget();
+    if (!g) return null;
     const r = api.glCanvas.getBoundingClientRect();
-    ray.setFromCamera(new THREE.Vector2((clientX - r.left) / r.width * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1), camera);
-    soilPlane.constant = -(groundY(tx + 0.5, ty + 0.5) + 1 / ZH.SPOTS);
-    if (!ray.ray.intersectPlane(soilPlane, hitPt)) return null;
-    const sx = Math.floor((hitPt.x - tx) * ZH.SPOTS), sy = Math.floor((hitPt.z - ty) * ZH.SPOTS);
-    return sx >= 0 && sy >= 0 && sx < ZH.SPOTS && sy < ZH.SPOTS ? { sx, sy } : null;
+    ray.setFromCamera(new THREE.Vector2((clientX - r.left) / r.width * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1), zoomCam);
+    for (const b of g.beds) {
+      soilPlane.constant = -(groundY(b.x + 0.5, b.y + 0.5) + 1 / ZH.SPOTS);
+      if (!ray.ray.intersectPlane(soilPlane, hitPt)) continue;
+      const sx = Math.floor((hitPt.x - b.x) * ZH.SPOTS), sy = Math.floor((hitPt.z - b.y) * ZH.SPOTS);
+      if (sx >= 0 && sy >= 0 && sx < ZH.SPOTS && sy < ZH.SPOTS) return { id: b.id, sx, sy };
+    }
+    return null;
   }
 
   // ---------- Prekrytie: mená, bubliny, efekty, počasie ----------
@@ -1926,11 +1950,11 @@ void main() {
     if (builtSeason !== se || builtGen !== S.tilesGen || builtState !== stateSig()) { builtGen = S.tilesGen; builtState = stateSig(); buildMesh(se); holesSig = null; refreshGround(se, t, true); }
     S.worldGen = builtGen; // svet tejto verzie políčok je postavený (prechod medzi plochami čaká, kým je, a až potom ukáže meno)
     if (now - lastGround > 600) { refreshGround(se, t, false); lastGround = now; }
-    // v Lese divov (a cestou k nemu) je pohľad bližšie na hráča; priblížený záhon (#179) plynulo
-    const zt = zoomTarget();
-    zoomEase = zt ? Math.min(1, zoomEase + dt * 3) : Math.max(0, zoomEase - dt * 3);
-    const ze = zoomEase * zoomEase * (3 - 2 * zoomEase), vd = lerp(D.viewDiagAt(S.area, S.me.y), ZOOM_DIAG, ze);
+    // v Lese divov (a cestou k nemu) je pohľad bližšie na hráča
+    const vd = D.viewDiagAt(S.area, S.me.y);
     if (Math.abs(vd - viewDiag) > 0.01) { viewDiag = vd; resize(); }
+    const zt = zoomTarget(); // priblížený záhon (#179) plynulo narastie a zmenší sa
+    zoomEase = zt ? Math.min(1, zoomEase + dt * 3) : Math.max(0, zoomEase - dt * 3);
     lighting(min, se);
     let tp = statsOn ? performance.now() : 0;
     updateShadowMap(min, se);
@@ -2027,9 +2051,9 @@ void main() {
     if (statsOn) tp = performance.now();
     renderReflection();
     if (statsOn) { const q = performance.now(); passMs.refl = q - tp; tp = q; }
-    const zf = zoomTarget(), zo = zf && S.zoom ? S.zoom.id : null;
-    markZoomLayer(zo, zf ? zf.x - 0.5 : 0, zf ? zf.y - 0.5 : 0);
-    if (zo !== null && zoomEase > 0.02) renderZoomed(zoomEase * zoomEase * (3 - 2 * zoomEase)); // priblížený záhon (#179)
+    const zg = zoomTarget() ?? (zoomEase > 0 ? zoomLast : null), ze = zoomEase * zoomEase * (3 - 2 * zoomEase);
+    markZoomLayer(zg && zoomEase > 0.02 ? zg.beds : []);
+    if (zg && zoomEase > 0.02) { placeZoomCam(zg, ze); renderZoomed(ze); } // priblížený záhon (#179)
     else {
       renderer.render(scene, camera);
       if (fading) drawOutlines();
@@ -2052,15 +2076,19 @@ void main() {
     // body ťahu prstom) má ten istý rámik ako ťuknutie na zem – žltý, keď sa tam niečo stane, inak biely
     const zt = zoomTarget(), marks = zt && zoomEase > 0.6 && api.zoomMarks ? api.zoomMarks() : [];
     if (zt) {
-      const tx = zt.x - 0.5, ty = zt.y - 0.5, h = groundY(zt.x, zt.y) + 1 / ZH.SPOTS + 0.01;
-      const corners = (sx: number, sy: number, r: number): Pt[] => ([[0, 0], [1, 0], [1, 1], [0, 1]] as const).map(([a, b]) => project(tx + (sx + 0.5 + (a - 0.5) * r) / ZH.SPOTS, h, ty + (sy + 0.5 + (b - 0.5) * r) / ZH.SPOTS));
+      const zppb = api.ov.width / Math.max(0.01, zoomCam.right - zoomCam.left);
+      const projZ = (x: number, y: number, z: number): Pt => { v3.set(x, y, z).project(zoomCam); return { x: (v3.x + 1) / 2 * cw, y: (1 - v3.y) / 2 * ch }; };
+      const corners = (m: ZoomMark, r: number): Pt[] => {
+        const b = zt.beds.find(q => q.id === m.id) ?? zt.beds[0], tx = b ? b.x : 0, ty = b ? b.y : 0, h = groundY(tx + 0.5, ty + 0.5) + 1 / ZH.SPOTS + 0.01;
+        return ([[0, 0], [1, 0], [1, 1], [0, 1]] as const).map(([a, q]) => projZ(tx + (m.sx + 0.5 + (a - 0.5) * r) / ZH.SPOTS, h, ty + (m.sy + 0.5 + (q - 0.5) * r) / ZH.SPOTS));
+      };
       const path = (pts: Pt[]): void => { c.beginPath(); pts.forEach((p, i) => { if (i) c.lineTo(p.x, p.y); else c.moveTo(p.x, p.y); }); c.closePath(); };
       for (const m of marks) {
-        if (m.k === 'no') { path(corners(m.sx, m.sy, 0.92)); c.fillStyle = 'rgba(70,70,70,0.42)'; c.fill(); continue; }
+        if (m.k === 'no') { path(corners(m, 0.92)); c.fillStyle = 'rgba(70,70,70,0.42)'; c.fill(); continue; }
         const age = m.age ?? 0;
-        path(corners(m.sx, m.sy, 0.7 + age * 0.4));
+        path(corners(m, 0.7 + age * 0.4));
         c.strokeStyle = m.act ? `rgba(255,230,90,${1 - age})` : `rgba(255,255,255,${0.8 - age * 0.8})`;
-        c.lineWidth = Math.max(2, ppb / ZH.SPOTS * 0.08); c.stroke();
+        c.lineWidth = Math.max(2, zppb / ZH.SPOTS * 0.08); c.stroke();
       }
     }
     if (S.tapMark && !S.zoom) {
