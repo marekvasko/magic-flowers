@@ -50,7 +50,7 @@ const near = (p: Presence | null | undefined, z: Pick<ZahonObject, 'x' | 'y'>): 
 function zahon(s: GameSlices, id: number, ctx: GameCtx): ZahonObject {
   const z = s.objects.list.find((o): o is ZahonObject => o.kind === 'zahon' && o.id === id);
   if (!z) return ctx.reject('Tento záhon už nie je.');
-  if (!near(ctx.actor, z)) ctx.reject('Podíď bližšie k záhonu.');
+  if (!Z.groupOf(s.objects.list, z).some(b => near(ctx.actor, b))) ctx.reject('Podíď bližšie k záhonu.'); // stačí byť pri spojenom záhone (jeden kus)
   return z;
 }
 // Stred bodu záhonu v súradniciach záhrady (efekty)

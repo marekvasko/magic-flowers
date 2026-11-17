@@ -60,3 +60,13 @@ export function coverError(z: HasSpots, sx: number, sy: number): string | null {
 }
 // Kvet na bode kvitne (dá sa zrezať)?
 export function blooming(s: SpotLike | undefined): boolean { const p = s?.p; return !!p && p.sp !== 'wild' && !p.d && p.prog >= D.SPECIES[p.sp].days; }
+// Spojený záhon (#179): všetky záhony spojené stranami so záhonom z (aj z samotný) – priblížený pohľad ich ukáže ako jeden kus
+export function groupOf<Z extends BedPos & { id: number }>(list: readonly (BedPos | Z)[], z: Z): Z[] {
+  const beds = list.filter((o): o is Z => o.kind === 'zahon' && o.area === z.area), out: Z[] = [z];
+  for (let k = 0; k < out.length; k++) {
+    const a = out[k];
+    if (!a) continue;
+    for (const b of beds) if (!out.includes(b) && Math.abs(b.x - a.x) + Math.abs(b.y - a.y) === 1) out.push(b);
+  }
+  return out;
+}
