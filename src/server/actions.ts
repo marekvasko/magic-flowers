@@ -233,7 +233,7 @@ export function migrateSave(sv: PlayerSave, tick: number): void {
 // podľa prítomnosti či plochy, nič sa nemení), alebo null (nič sa nedeje). world = svet (len číta), me = záznam
 // prítomnosti konajúceho hráča, presence = snímka všetkých. Stav políčka si návrh overí znova sám (kolá enginu).
 // m = správa act od klienta (neoverená: x, y sa zaokrúhlia na celé, item na reťazec)
-export function resolveAct(world: GameWorld, presence: readonly Presence[] | null | undefined, me: Presence, m: { x?: unknown; y?: unknown; item?: unknown }): ActInput | { toast: string } | null {
+export function resolveAct(world: GameWorld, presence: readonly Presence[] | null | undefined, me: Presence, m: { x?: unknown; y?: unknown; item?: unknown; rot?: unknown }): ActInput | { toast: string } | null {
   // eslint-disable-next-line @typescript-eslint/no-base-to-string -- item je od klienta v ľubovoľnom tvare; String() ako doteraz
   const x = Number(m.x) | 0, y = Number(m.y) | 0, item = String(m.item || '');
   const area = me.area, tiles = Areas.areaTiles(world, area), key = me.key;
@@ -288,11 +288,11 @@ export function resolveAct(world: GameWorld, presence: readonly Presence[] | nul
   // Záhon (#179): ťuknutie naň otvorí priblížený pohľad u klienta – tu sa s ním nič nerobí; záhon z lišty sa kladie na čistú trávu
   if (Obj.zahonAt(world.objects, x, y)) return null;
   if (item.startsWith('zahon_')) {
-    const v = item.slice(6);
-    if (!D.isZahonFrame(v)) return null;
+    const zi = D.zahonOfItem(item), rot = (Number(m.rot) & 3) as 0 | 1 | 2 | 3; // rohový záhon (#186): otočenie z náhľadu
+    if (!zi) return null;
     if (t.s) return { toast: 'Najprv zarovnaj motykou.' };
     if (t.g !== 'grass' || world.objects.list.some(o => o.area === 'garden' && Obj.inRect(Obj.objRect(o), x, y))) return { toast: 'Záhon sa kladie na čistú trávu.' };
-    return input('zahonPlace', { key, i, v });
+    return input('zahonPlace', { key, i, v: zi.v, sh: zi.sh, rot: zi.sh === 'sq' ? 0 : rot });
   }
   // Studňa prianí a voda do krhly
   if (t.g === 'well' && item !== 'can') return input('well', { key });

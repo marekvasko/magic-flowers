@@ -1973,7 +1973,7 @@ void main() {
 
   // stav budov, ktorý nie je v políčkach (izolácia ľadovne, krosná v Dielni) – keď sa zmení, svet sa prestavia
   // záhony (#179): rám a pokryvy sú v sieti sveta – zmena pokryvu svet prestavia
-  const zahonLooks = (): W.ZahonLook[] => (S.area === 'garden' ? S.objects.flatMap(o => (o.kind === 'zahon' ? [{ x: o.x, y: o.y, v: o.v, covers: o.spots.flatMap(q => (q.c ? [[q.sx, q.sy, q.c] as const] : [])), open: ZH.bedOf(S.objects, o).open, wet: !!o.w }] : [])) : []);
+  const zahonLooks = (): W.ZahonLook[] => (S.area === 'garden' ? S.objects.flatMap(o => (o.kind === 'zahon' ? [{ x: o.x, y: o.y, v: o.v, covers: o.spots.flatMap(q => (q.c ? [[q.sx, q.sy, q.c] as const] : [])), open: ZH.bedOf(S.objects, o).open, sh: o.sh, rot: o.rot, wet: !!o.w }] : [])) : []);
   const buildingState = (): W.BuildingState => ({ ins: D.insulLevel(S.icehouse?.bl), loom: S.dielna?.loom ?? false, zahony: zahonLooks() });
   const stateSig = (): string => { const b = buildingState(); return String(b.ins) + '|' + (b.loom ? 1 : 0) + '|' + JSON.stringify(b.zahony); };
   let builtState: string | null = null;
@@ -2137,13 +2137,23 @@ void main() {
         glow(corners(m, 0.7 + age * 0.4), m.act ? `rgba(255,230,90,${(1 - age).toFixed(2)})` : `rgba(255,255,255,${(0.8 - age * 0.8).toFixed(2)})`, Math.max(2, zppb / ZH.SPOTS * 0.08), zppb / ZH.SPOTS * 0.5);
       }
     }
+    // náhľad rohového záhonu pred položením (#186): tvar na políčku, otočený ako ho hráč otočil
+    if (S.placeZ && !S.zoom) {
+      const z = S.placeZ, zi = D.zahonOfItem(z.item), h = groundY(z.x + 0.5, z.y + 0.5) + 0.02;
+      // tvar pri otočení 0 (x doprava, y dole): šikmý = trojuholník s pravým uhlom vľavo dole, oblý = štvrťkruh so stredom tam
+      const base: [number, number][] = zi?.sh === 'diag' ? [[0, 0], [0, 1], [1, 1]] : [[0, 1], ...Array.from({ length: 13 }, (_, k): [number, number] => [Math.sin(k / 12 * Math.PI / 2), 1 - Math.cos(k / 12 * Math.PI / 2)])];
+      const pts = base.map(([u, v]) => { for (let k = 0; k < z.rot; k++) [u, v] = [1 - v, u]; return project(z.x + u, h, z.y + v); });
+      c.beginPath(); pts.forEach((p, i) => { if (i) c.lineTo(p.x, p.y); else c.moveTo(p.x, p.y); }); c.closePath();
+      c.fillStyle = 'rgba(255,230,90,0.28)'; c.fill();
+      c.strokeStyle = 'rgba(255,230,90,0.95)'; c.lineWidth = Math.max(2, ppb * 0.05); c.stroke();
+    }
     if (S.tapMark && !S.zoom) {
       const age = (performance.now() - S.tapMark.t) / 600;
       // v temnej ploche sa nič nezvýrazňuje (ani to, na čo sa dá ťuknúť)
       if (age < 1) ring(S.tapMark.x, S.tapMark.y, S.tapMark.act && !D.isDark(S.area) ? `rgba(255,230,90,${1 - age})` : `rgba(255,255,255,${0.8 - age * 0.8})`, 0.5 + age * 0.4);
       else S.tapMark = null;
     }
-    if (S.kbd && !S.zoom) { const f = api.frontTile(); if (f.x >= 0 && f.y >= 0 && f.x < S.W && f.y < S.H) ring(f.x, f.y, api.ctxAction(f.x, f.y) && !D.isDark(S.area) ? 'rgba(255,230,90,0.8)' : 'rgba(255,255,255,0.3)', 0.9); }
+    if (S.kbd && !S.zoom && !S.placeZ) { const f = api.frontTile(); if (f.x >= 0 && f.y >= 0 && f.x < S.W && f.y < S.H) ring(f.x, f.y, api.ctxAction(f.x, f.y) && !D.isDark(S.area) ? 'rgba(255,230,90,0.8)' : 'rgba(255,255,255,0.3)', 0.9); }
 
     // efekty (častice z S.fx sa hýbu po rovine sveta – ukotvíme ich do bodu vo svete)
     for (const p of S.fx) {

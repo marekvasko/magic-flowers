@@ -127,7 +127,8 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     if (here?.c) { dp.send({ t: 'zahon', op: 'uncover', id, spots: [[sx, sy]] }); dp.sfx('pop'); return; }
     if (here?.p) { const p = here.p; dp.toast(p.sp === 'wild' ? 'Divé semienko – čo z neho vyrastie? 🤔' : `${D.SPECIES[p.sp].name}${p.d ? ' – uhynula. Motykou ju vykopeš.' : ' – ešte rastie.'}`); }
   }
-  const frameAt = (s: PSpot): boolean => { const z = byId(s.id); return !z || ZR.isFrame(bed(z).open, s.sx, s.sy); };
+  const frameAt = (s: PSpot): boolean => { const z = byId(s.id); return !z || ZR.cellOf(bed(z), s.sx, s.sy) !== 'in'; };
+  const outside = (s: PSpot): boolean => { const z = byId(s.id); return !z || ZR.cellOf(bed(z), s.sx, s.sy) === 'out'; }; // tráva vedľa rohového záhonu
   // Ťah prstom: s pokryvom v ruke kladie, prázdnou rukou na pokryve zbiera (cez všetky časti spojeného záhonu)
   let last: { x: number; y: number } | null = null, dragged = false; // ťah, ktorý nekladie pokryv, posúva pohľad na susedné políčko
   // Pohľad sa vycentruje na časť záhonu id (políčko v strede obrazovky)
@@ -171,7 +172,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     }
     if (!tap && !p) return;
     const s = dp.pickSpot(cx, cy);
-    if (!s) { close(); return; } // ťuknutie mimo záhonu = späť
+    if (!s || outside(s)) { close(); return; } // ťuknutie mimo záhonu (aj na trávu vedľa rohového záhonu) = späť
     if (s.id !== z0.id) { focus(s.id); return; } // ťuknutie na susedné políčko záhonu: pohľad sa naň posunie
     cursor = s;
     act(s);
@@ -202,7 +203,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
       const b = bed(g);
       const can = (sx: number, sy: number): boolean | null => {
         const here = ZR.spotAt(g, sx, sy);
-        if (ZR.isFrame(b.open, sx, sy) || here?.p) return null; // rám a kvet je vidno, netreba ich sivo značiť
+        if (ZR.cellOf(b, sx, sy) !== 'in' || here?.p) return null; // rám, tráva mimo tvaru a kvet je vidno, netreba ich sivo značiť
         if (sel.startsWith('seed_') || D.isWild(sel)) return !ZR.plantError(b, sx, sy, sel.startsWith('seed_') ? D.speciesOfItem(sel) : null);
         if (sel.startsWith('cov_')) return !ZR.coverError(b, sx, sy);
         return null;

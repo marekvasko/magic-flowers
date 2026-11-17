@@ -5,7 +5,7 @@
 // pohľade (klient); záhon sa nepresúva, dá sa len zrušiť krompáčom: rozkvitnuté kvety idú do batohu, ostatné zaniknú,
 // pokryvy sa vrátia. Stav: world.objects (objekty kind 'zahon', save.ts ZahonObject).
 import * as D from '../shared/data.ts';
-import type { CoverId, ItemId, ZahonFrame } from '../shared/data.ts';
+import type { CoverId, ItemId, ZahonFrame, ZahonShape } from '../shared/data.ts';
 import type { FxKind, ObjectView, ServerMessage, ToastKind } from '../shared/protocol.ts';
 import type { GardenObject, PlayerKey, PlayerSave, ZahonObject, ZahonSpot } from '../shared/save.ts';
 import * as Obj from '../shared/objects.ts';
@@ -22,9 +22,9 @@ import type { Presence } from './world.ts';
 
 type XY = readonly [number, number];
 export interface ZahonInputs {
-  zahonBuy: { key: PlayerKey; v: ZahonFrame };
+  zahonBuy: { key: PlayerKey; v: ZahonFrame; sh?: ZahonShape };
   coverBuy: { key: PlayerKey; c: CoverId };
-  zahonPlace: { key: PlayerKey; i: number; v: ZahonFrame };
+  zahonPlace: { key: PlayerKey; i: number; v: ZahonFrame; sh?: ZahonShape; rot?: 0 | 1 | 2 | 3 };
   zahonDestroy: { key: PlayerKey; id: number };
   zahonPlant: { key: PlayerKey; id: number; sx: number; sy: number; item: string };
   zahonCover: { key: PlayerKey; id: number; c: CoverId; spots: XY[] };
@@ -74,8 +74,9 @@ export const PROPOSERS: { [T in keyof ZahonInputs]: GameProposer<ZahonInputs[T]>
       if (D.repLevel(sv.rep || 0) < D.ZAHON.rep) ctx.reject(`Potrebuješ reputáciu úrovne ${String(D.ZAHON.rep)}.`);
       if (sv.coins < D.ZAHON.price) ctx.reject('Nemáš dosť mincí. 🪙');
       sv.coins -= D.ZAHON.price;
-      give(sv, `zahon_${d.v}`, 1, ctx.tick);
-      ctx.emit(toast$(d.key, `${D.ZAHON.icon} Kúpil(a) si: ${D.ZAHON_NAMES[d.v]}. Vyber ho v lište a ťukni na čistú trávu.`, 'gift'));
+      const sh = d.sh ?? 'sq';
+      give(sv, D.zahonItem(d.v, sh), 1, ctx.tick);
+      ctx.emit(toast$(d.key, `${D.ZAHON.icon} Kúpil(a) si: ${D.zahonName(d.v, sh)}. Vyber ho v lište a ťukni na čistú trávu` + (sh === 'sq' ? '.' : ' – ďalším ťuknutím na to isté miesto ho otočíš.'), 'gift'));
     }
   },
   // vedro pokryvu (D.COVER_BUCKET bodov)
@@ -101,8 +102,9 @@ export const PROPOSERS: { [T in keyof ZahonInputs]: GameProposer<ZahonInputs[T]>
       if (s.objects.list.some(o => o.area === 'garden' && Obj.inRect(Obj.objRect(o), x, y))) ctx.reject('Tu už niečo je.');
       const lim = Econ.plotLimit(s.up);
       if (s.plotsUsed >= lim) ctx.reject(`Spoločné povolenie záhrady je na ${lim} miest a všetky sú obsadené (záhon zaberá jedno). Väčšie povolenie môže pre všetkých kúpiť ktokoľvek na trhu (záložka Vylepšiť).`);
-      if (!take(sv, `zahon_${d.v}`, 1, ctx.tick)) ctx.reject(null);
-      s.objects.list.push({ id: s.objects.nid++, area: 'garden', x, y, kind: 'zahon', v: d.v, w: 0, r: 0, spots: [], o: d.key });
+      const sh = d.sh ?? 'sq';
+      if (!take(sv, D.zahonItem(d.v, sh), 1, ctx.tick)) ctx.reject(null);
+      s.objects.list.push({ id: s.objects.nid++, area: 'garden', x, y, kind: 'zahon', v: d.v, ...(sh === 'sq' ? {} : { sh, rot: d.rot ?? 0 }), w: 0, r: 0, spots: [], o: d.key });
       s.plotsUsed++;
       ctx.emit(fx$(x + 0.5, y + 0.5, 'dirt'));
     }
@@ -124,8 +126,8 @@ export const PROPOSERS: { [T in keyof ZahonInputs]: GameProposer<ZahonInputs[T]>
       for (const b of Obj.zahony(s.objects)) {
         if (Math.abs(b.x - z.x) + Math.abs(b.y - z.y) !== 1) continue;
         const open = Z.bedOf(s.objects.list, b).open;
-        for (const sp of b.spots.filter(q => Z.isFrame(open, q.sx, q.sy))) gather(b, sp);
-        b.spots = b.spots.filter(q => !Z.isFrame(open, q.sx, q.sy));
+        for (const sp of b.spots.filter(q => Z.cellOf({ ...b, open }, q.sx, q.sy) !== 'in')) gather(b, sp);
+        b.spots = b.spots.filter(q => Z.cellOf({ ...b, open }, q.sx, q.sy) === 'in');
       }
       s.plotsUsed = Math.max(0, s.plotsUsed - 1);
       ctx.emit(toast$(d.key, 'Záhon je preč.' + (got.length ? ' Do batohu: ' + got.join(', ') + '.' : '')));
@@ -256,7 +258,7 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 export function toInput(m: JsonRecord): ZahonInput | null {
   const id = num(m['id']), sx = num(m['sx']), sy = num(m['sy']), v = str(m['v']), c = str(m['c']);
   switch (m['op']) {
-    case 'buy': return D.isZahonFrame(v) ? { type: 'zahonBuy', data: { v } } : null;
+    case 'buy': { const sh = str(m['sh']) || 'sq'; return D.isZahonFrame(v) && (sh === 'sq' || D.isZahonCorner(sh)) ? { type: 'zahonBuy', data: { v, sh } } : null; }
     case 'bucket': return D.isCoverId(c) ? { type: 'coverBuy', data: { c } } : null;
     case 'destroy': return { type: 'zahonDestroy', data: { id } };
     case 'plant': return { type: 'zahonPlant', data: { id, sx, sy, item: str(m['item']) } };

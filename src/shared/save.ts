@@ -2,7 +2,7 @@
 // Typ opisuje existujúci formát, nemení ho (#122, fáza 2). Staršie verzie prevedie migrate() na tento tvar.
 // Kľúč hráča (PlayerKey) je meno malými písmenami; v uloženiach sa ním odkazuje na hráča (saves, vlastník pôdy, zákazky…).
 // test/save-v14.fixture.ts drží uloženie zo skutočného servera a prekladač ho kontroluje voči SaveFile (npm run typecheck).
-import type { AreaId, Batch, CoverId, FestivalId, GiverId, Ground, ItemId, Look, SpeciesId, TillKind, ZahonFrame } from './data.ts';
+import type { AreaId, Batch, CoverId, FestivalId, GiverId, Ground, ItemId, Look, SpeciesId, TillKind, ZahonFrame, ZahonShape } from './data.ts';
 
 export type PlayerKey = string;
 export type Weather = 'sun' | 'rain' | 'snow';
@@ -254,6 +254,8 @@ export interface ZahonObject {
   y: number;
   kind: 'zahon';
   v: ZahonFrame;
+  sh?: ZahonShape;            // tvar (#186): bez neho štvorec; šikmý a oblý sú rohové záhony
+  rot?: 0 | 1 | 2 | 3;        // otočenie tvaru o 90° v smere hodinových ručičiek (nepoužíva sa pri štvorci)
   w: number;
   r: number;
   spots: ZahonSpot[];

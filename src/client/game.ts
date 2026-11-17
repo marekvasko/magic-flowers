@@ -46,7 +46,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     tiles: [], tick: 0, market: null, board: [], rep: 0, up: {}, canCap: 5, plotLimit: 8, plotsUsed: 0, maxActive: 1, orders: [], orderLimit: 2, box: {}, boxFb: {}, day: 1, min: 390, weather: 'sun', timeAt: 0, tickMs: 1000, daySeconds: 300, mode: 'running', storage: {},
     me: { x: D.SPAWN.x, y: D.SPAWN.y, dir: 0, phase: 0, moving: false, jz: 0, jv: 0, crawl: false }, crawlKey: false, crawlTgl: false, myEmote: null,
     others: new Map(), inv: {}, coins: 0, water: 20, recipes: [], seen: [], vily: false,
-    sel: 'hoe', area: 'garden', areaSeq: 0, W: D.W, H: D.H, tilesGen: 0, storageRate: D.STORAGE_AGE_RATE, icehouse: { built: false, ice: 0, bl: 0 }, dielna: { built: false, loom: false }, loom: { busy: false, mine: null, ready: 0 }, eternal: false, names: [], objects: [], zoom: null,
+    sel: 'hoe', area: 'garden', areaSeq: 0, W: D.W, H: D.H, tilesGen: 0, storageRate: D.STORAGE_AGE_RATE, icehouse: { built: false, ice: 0, bl: 0 }, dielna: { built: false, loom: false }, loom: { busy: false, mine: null, ready: 0 }, eternal: false, names: [], objects: [], zoom: null, placeZ: null,
     keys: {}, stick: { x: 0, y: 0 }, path: null, pendingAct: null, tapMark: null, lastSent: '', sentAt: 0,
     fx: [], screenFx: [], bubbles: {}, modal: null, cauldron: [], brewed: null, brewHint: null, anchors: {}, joined: false,
     skyTaps: [], tipIdx: Math.floor(Math.random() * D.TIPS.length), stuckT: 0,
@@ -586,9 +586,28 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       else plantInfo(tx, ty);
       return;
     }
+    if (a.l === 'Položiť záhon' && D.zahonOfItem(S.sel)?.sh !== 'sq') { cornerTap(tx, ty); return; } // rohový záhon (#186): náhľad a otáčanie
     if (a.l === 'Hľadať') { const me = S.me; send({ t: 'move', x: me.x, y: me.y, dir: me.dir, a: me.a, cr: me.crawl, lp: S.sel === 'lamp', ar: S.areaSeq }); } // server musí vedieť, že už stojím na políčku
     send({ t: 'act', x: tx, y: ty, item: S.sel });
     if (a.l === 'Kopať' || a.l === 'Vysekať ľad' || a.l === 'Ťahať hodváb') sfx('dig'); else if (a.l === 'Poliať' || a.l === 'Načrieť') sfx('water'); else sfx('pop');
+  }
+
+  // Rohový záhon (#186): prvé ťuknutie na trávu ukáže náhľad, ďalšie na to isté miesto ho otočí o 90°, ťuknutie inde
+  // (na počítači E) ho položí; R otočí, Esc zruší. Otočiť po položení sa nedá.
+  function cornerTap(tx: number, ty: number): void {
+    const z = S.placeZ;
+    if (z && z.x === tx && z.y === ty && z.item === S.sel) { z.rot = ((z.rot + 1) & 3) as 0 | 1 | 2 | 3; sfx('pop'); return; }
+    if (z) { placeCorner(); return; }
+    if (!D.isItemId(S.sel)) return;
+    S.placeZ = { x: tx, y: ty, rot: 0, item: S.sel };
+    toast('Ťukni na to isté miesto – záhon sa otočí. Ťukni inde (alebo E) – položíš ho.');
+  }
+  function placeCorner(): void {
+    const z = S.placeZ;
+    if (!z) return;
+    S.placeZ = null;
+    send({ t: 'act', x: z.x, y: z.y, item: z.item, rot: z.rot });
+    sfx('dig');
   }
 
   // ---------- Vstupy ----------
@@ -610,8 +629,9 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     if (k) { S.keys[k] = true; stopWalk(); e.preventDefault(); }
     if (e.code === 'Space') { if (!e.repeat) jump(); e.preventDefault(); }
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') S.crawlKey = true;
-    if (e.code === 'KeyE' || e.code === 'Enter') { const f = frontTile(); doAction(f.x, f.y); e.preventDefault(); }
-    if (e.code === 'Escape') closeModal();
+    if (e.code === 'KeyE' || e.code === 'Enter') { if (S.placeZ) placeCorner(); else { const f = frontTile(); doAction(f.x, f.y); } e.preventDefault(); }
+    if (e.code === 'KeyR' && S.placeZ) { S.placeZ.rot = ((S.placeZ.rot + 1) & 3) as 0 | 1 | 2 | 3; sfx('pop'); }
+    if (e.code === 'Escape') { closeModal(); S.placeZ = null; }
     if (/^Digit[1-9]$/.test(e.code)) { const ids = hotbarIds(); selectItem(ids[+e.code.slice(5) - 1] || ''); }
     if (e.code === 'KeyQ') { const ids: (ItemId | '')[] = [...hotbarIds(), '']; selectItem(ids[(ids.indexOf(S.sel) + 1) % ids.length]); }
     if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
@@ -793,6 +813,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     if (!R3) return;
     const tgt = R3.pick(cx, cy); // lúč do 3D scény
     if (!tgt) return;
+    if (S.placeZ && (tgt.x !== S.placeZ.x || tgt.y !== S.placeZ.y)) { placeCorner(); return; } // náhľad rohového záhonu: ťuknutie inde ho položí
     if (!tileAt(tgt.x, tgt.y)) return;
     const a = ctxAction(tgt.x, tgt.y);
     S.tapMark = { x: tgt.x, y: tgt.y, t: performance.now(), act: !!a };
@@ -849,7 +870,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     const rank = (id: string): number => { const k = id.replace(/^(seed_|fl_|po_)/, ''); const i = spOrder.indexOf(k); return i < 0 ? 99 : i; };
     return keys(S.inv).filter(id => (S.inv[id] ?? 0) > 0).sort((a, b) => order(a) - order(b) || rank(a) - rank(b));
   }
-  function selectItem(id: ItemId | '' | undefined): void { if (id == null) return; S.sel = id; renderHotbar(); Zh?.refresh(); }
+  function selectItem(id: ItemId | '' | undefined): void { if (id == null) return; S.sel = id; S.placeZ = null; renderHotbar(); Zh?.refresh(); }
   function renderHotbar(): void {
     const bar = $('hotbar');
     const ids = hotbarIds();
@@ -1183,9 +1204,15 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
           S.dock?.built ? 'Stojí' : null, DK.price, DK.rep, () => { send({ t: 'build', id: 'dock' }); }, Art.icon('dock'));
         // Záhony (#179): všetky druhy rovnako, líšia sa len rámom; pokryvy po vedrách
         body.appendChild(h('div', { class: 'row' }, h('b', null, `${D.ZAHON.icon} Záhony – kvety a kamene na jednom políčku`)));
-        for (const v of D.ZAHON_FRAMES) {
-          buyRow(D.ZAHON.icon, D.ZAHON_NAMES[v], 'Na jedno políčko trávy, zaberie 1 miesto v povolení. Kvety a pokryvy v ňom rozložíš po bodoch, krhla poleje celý záhon naraz.',
-            null, D.ZAHON.price, D.ZAHON.rep, () => { send({ t: 'zahon', op: 'buy', v }); }, Art.icon(`zahon_${v}`));
+        body.appendChild(h('div', { class: 'row' }, h('small', null, 'Na jedno políčko trávy, zaberie 1 miesto v povolení. Kvety a pokryvy v ňom rozložíš po bodoch, krhla poleje celý záhon naraz. Šikmý a oblý (rohový) záhon pred položením otočíš ďalším ťuknutím na to isté miesto.')));
+        for (const v of D.ZAHON_FRAMES) { // každý rám v troch tvaroch – štvorec, šikmý a oblý (#186), všetky za rovnakú cenu
+          const btns = D.ZAHON_SHAPES.map(sh => {
+            const b = h('button', { class: 'btn', title: D.zahonName(v, sh), onclick: () => { send({ t: 'zahon', op: 'buy', v, sh }); } }, h('img', { src: Art.icon(D.zahonItem(v, sh)), style: 'width:26px;height:26px;vertical-align:middle' }), String(D.ZAHON.price) + '🪙');
+            if (S.coins < D.ZAHON.price || lvl < D.ZAHON.rep) b.disabled = true;
+            return b;
+          });
+          body.appendChild(h('div', { class: 'row' }, h('img', { src: Art.icon(`zahon_${v}`), style: 'width:40px;height:40px' }),
+            h('div', { class: 'info' }, h('b', null, D.ZAHON_NAMES[v]), h('small', null, `štvorcový, šikmý, oblý · treba ⭐${String(D.ZAHON.rep)}`)), h('div', { class: 'btns' }, ...btns)));
         }
         for (const c of D.COVER_IDS) {
           const C = D.COVERS[c];
