@@ -42,7 +42,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string | null, .
 
 export function createZahon(dp: ZahonDeps): ClientZahon {
   const { S } = dp;
-  let paint: { add: boolean; spots: Spot[] } | null = null, cursor: Spot = [3, 3], hit: Spot | null = null;
+  let paint: { add: boolean; spots: Spot[] } | null = null, cursor: Spot = [3, 3], tapAt = { sx: 0, sy: 0, t: 0, act: false };
   const bar = el('div', 'zbar hidden'), title = el('div', 'ztitle'), hint = el('div', 'zhint hidden');
   bar.append(title);
   dp.root.append(bar, hint);
@@ -66,12 +66,12 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     const z = Obj.zahonAt({ list: S.objects }, tx, ty);
     if (!z) return;
     S.zoom = { id: z.id };
-    cursor = [3, 3]; hit = null; paint = null;
+    cursor = [3, 3]; paint = null;
     bar.classList.remove('hidden'); hint.classList.remove('hidden'); dp.root.classList.add('zooming');
     refresh();
   }
   function close(): void {
-    S.zoom = null; paint = null; hit = null;
+    S.zoom = null; paint = null;
     bar.classList.add('hidden'); hint.classList.add('hidden'); dp.root.classList.remove('zooming');
   }
   // Text lišty a nápoveda podľa toho, čo je v ruke
@@ -94,6 +94,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
   // Akcia na jednom bode (ťuknutie, kláves E)
   function act(z: ZahonView, [sx, sy]: Spot): void {
     const sel = S.sel, here = ZR.spotAt(z, sx, sy);
+    tapAt = { sx, sy, t: performance.now(), act: useful(z, [sx, sy]) };
     if (sel === 'can') { dp.send({ t: 'zahon', op: 'water', id: z.id }); dp.sfx('water'); return; }
     if (sel === 'compost') { dp.send({ t: 'zahon', op: 'compost', id: z.id }); dp.sfx('pop'); return; }
     if (sel.startsWith('seed_') || D.isWild(sel)) {
@@ -121,7 +122,6 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     const z = cur();
     if (!z) return;
     const s = dp.pickSpot(cx, cy, z.x, z.y);
-    hit = s ? [s.sx, s.sy] : null;
     paint = null;
     if (!s || !ZR.inner(s.sx, s.sy)) return;
     if (S.sel.startsWith('cov_')) paint = { add: true, spots: [[s.sx, s.sy]] };
@@ -131,7 +131,6 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     const z = cur();
     if (!z) return;
     const s = dp.pickSpot(cx, cy, z.x, z.y);
-    hit = s ? [s.sx, s.sy] : null;
     if (paint && s && ZR.inner(s.sx, s.sy) && !paint.spots.some(([a, b]) => a === s.sx && b === s.sy)) paint.spots.push([s.sx, s.sy]);
   }
   function up(cx: number, cy: number, tap: boolean): void {
@@ -157,32 +156,38 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     if (!z) return false;
     const mv: Readonly<Partial<Record<string, Spot>>> = { ArrowUp: [0, -1], KeyW: [0, -1], ArrowDown: [0, 1], KeyS: [0, 1], ArrowLeft: [-1, 0], KeyA: [-1, 0], ArrowRight: [1, 0], KeyD: [1, 0] };
     const d = mv[code];
-    if (d) { cursor = [Math.max(1, Math.min(6, cursor[0] + d[0])), Math.max(1, Math.min(6, cursor[1] + d[1]))]; hit = cursor; return true; }
+    if (d) { cursor = [Math.max(1, Math.min(6, cursor[0] + d[0])), Math.max(1, Math.min(6, cursor[1] + d[1]))]; return true; }
     if (code === 'KeyE' || code === 'Enter') { act(z, cursor); return true; }
     if (code === 'Escape') { close(); return true; }
     return false;
   }
-  // Značky bodov pre render3d: zelené = to, čo je v ruke, sa sem dá; sivé = nedá; vybraný bod svieti
+  // Značky bodov pre render3d: sivé = to, čo je v ruke, sem nejde (voľné body sa neznačia); rámik = ťuknutý bod
+  // (zanikne ako pri ťuknutí na zem), bod pod kurzorom klávesnice, body ťahu prstom
   function marks(): readonly ZoomMark[] {
     const z = cur();
     if (!z) return [];
     const sel = S.sel, out: ZoomMark[] = [];
-    const ok = (sx: number, sy: number): boolean | null => {
+    const can = (sx: number, sy: number): boolean | null => {
       const here = ZR.spotAt(z, sx, sy);
-      if (here?.p && sel !== 'hoe' && sel !== '') return null; // obsadený bod kvetom netreba značiť – kvet tam vidno
-      if (sel.startsWith('seed_') || D.isWild(sel)) return !ZR.plantError(z, sx, sy, sel.startsWith('seed_') ? D.speciesOfItem(sel) : null);
-      if (sel.startsWith('cov_')) return !ZR.coverError(z, sx, sy);
-      if (sel === 'hoe') return here?.p ? true : null;
-      if (!sel) return ZR.blooming(here) || here?.c ? true : null;
+      if (sel.startsWith('seed_') || D.isWild(sel)) return here?.p ? null : !ZR.plantError(z, sx, sy, sel.startsWith('seed_') ? D.speciesOfItem(sel) : null);
+      if (sel.startsWith('cov_')) return here?.p ? null : !ZR.coverError(z, sx, sy);
       return null;
     };
-    for (let sy = 1; sy <= 6; sy++) for (let sx = 1; sx <= 6; sx++) {
-      const k = ok(sx, sy);
-      if (k !== null) out.push({ sx, sy, k: k ? 'ok' : 'no' });
-    }
-    const hs = paint ? paint.spots : hit ? [hit] : [];
-    for (const [sx, sy] of hs) out.push({ sx, sy, k: 'hit' });
+    for (let sy = 1; sy <= 6; sy++) for (let sx = 1; sx <= 6; sx++) if (can(sx, sy) === false) out.push({ sx, sy, k: 'no' });
+    if (paint) for (const [sx, sy] of paint.spots) out.push({ sx, sy, k: 'ring', act: true });
+    else if (S.kbd) out.push({ sx: cursor[0], sy: cursor[1], k: 'ring', act: useful(z, cursor) });
+    const age = (performance.now() - tapAt.t) / 600;
+    if (age < 1) out.push({ sx: tapAt.sx, sy: tapAt.sy, k: 'ring', act: tapAt.act, age });
     return out;
+  }
+  // Urobí ťuknutie na bod niečo? (žltý či biely rámik)
+  function useful(z: ZahonView, [sx, sy]: Spot): boolean {
+    const sel = S.sel, here = ZR.spotAt(z, sx, sy);
+    if (sel === 'can' || sel === 'compost') return true;
+    if (sel.startsWith('seed_') || D.isWild(sel)) return !ZR.plantError(z, sx, sy, sel.startsWith('seed_') ? D.speciesOfItem(sel) : null);
+    if (sel.startsWith('cov_')) return !ZR.coverError(z, sx, sy);
+    if (sel === 'hoe') return !!here?.p || !ZR.inner(sx, sy);
+    return ZR.blooming(here) || !!here?.c;
   }
   return { open, close, active: () => !!cur(), down, move, up, key, marks, refresh };
 }
