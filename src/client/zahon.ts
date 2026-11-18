@@ -16,6 +16,8 @@ export interface ZahonDeps {
   send: (m: ClientMessage) => void;
   toast: (text: string) => void;
   pickSpot: (cx: number, cy: number) => PSpot | null;
+  pan: (x0: number, y0: number, x1: number, y1: number) => void;   // posun priblíženého záhonu ťahom prsta
+  follow: (id: number, sx: number, sy: number) => void;            // pohľad za kurzorom klávesnice
   sfx: (k: 'pop' | 'dig' | 'water') => void;
 }
 export interface ClientZahon {
@@ -66,7 +68,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     const z = Obj.zahonAt({ list: S.objects }, tx, ty);
     if (!z) return;
     S.zoom = { id: z.id };
-    cursor = { id: z.id, sx: 3, sy: 3 }; paint = null;
+    cursor = { id: z.id, sx: 3, sy: 3 }; paint = null; last = null;
     bar.classList.remove('hidden'); hint.classList.remove('hidden'); dp.root.classList.add('zooming');
     refresh();
   }
@@ -89,7 +91,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
             : sel === 'hoe' ? 'Ťukni na kvet – motykou ho vykopeš.'
               : sel === 'pick' ? 'Ťukni krompáčom na záhon – zrušíš ho. ⛏️'
               : 'Prázdnou rukou zrežeš rozkvitnutý kvet alebo zoberieš pokryv (aj ťahom prsta).';
-    hint.textContent += ' Ťukni mimo záhonu (Esc) – späť.';
+    hint.textContent += ' Ťahom prsta posunieš pohľad. Ťukni mimo záhonu (Esc) – späť.';
   }
   // Záhon so susedmi (spojené strany, kvety susedov kvôli zónam)
   const bed = (z: ZahonView): ZahonView & { open: ZR.Open; near: ZR.SpotLike[] } => ZR.bedOf<ZahonView>(S.objects, z);
@@ -126,10 +128,11 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
   }
   const frameAt = (s: PSpot): boolean => { const z = byId(s.id); return !z || ZR.isFrame(bed(z).open, s.sx, s.sy); };
   // Ťah prstom: s pokryvom v ruke kladie, prázdnou rukou na pokryve zbiera (cez všetky časti spojeného záhonu)
+  let last: { x: number; y: number } | null = null; // ťah, ktorý nekladie pokryv, posúva pohľad
   function down(cx: number, cy: number): void {
     if (!cur()) return;
     const s = dp.pickSpot(cx, cy);
-    paint = null;
+    paint = null; last = { x: cx, y: cy };
     if (!s || frameAt(s)) return;
     const z = byId(s.id);
     if (S.sel.startsWith('cov_')) paint = { add: true, spots: [s] };
@@ -137,12 +140,13 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
   }
   function move(cx: number, cy: number): void {
     if (!cur()) return;
+    if (!paint) { if (last) { dp.pan(last.x, last.y, cx, cy); last = { x: cx, y: cy }; } return; }
     const s = dp.pickSpot(cx, cy);
-    if (paint && s && !frameAt(s) && !paint.spots.some(q => q.id === s.id && q.sx === s.sx && q.sy === s.sy)) paint.spots.push(s);
+    if (s && !frameAt(s) && !paint.spots.some(q => q.id === s.id && q.sx === s.sx && q.sy === s.sy)) paint.spots.push(s);
   }
   function up(cx: number, cy: number, tap: boolean): void {
     const p = paint;
-    paint = null;
+    paint = null; last = null;
     if (!cur()) return;
     if (p && p.spots.length > 1) {
       const c = S.sel.slice(4);
@@ -169,7 +173,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     if (d) {
       const b = byId(cursor.id) ?? z, gx = b.x * ZR.SPOTS + cursor.sx + d[0], gy = b.y * ZR.SPOTS + cursor.sy + d[1];
       const nb = group(z).find(q => Math.floor(gx / ZR.SPOTS) === q.x && Math.floor(gy / ZR.SPOTS) === q.y);
-      if (nb) cursor = { id: nb.id, sx: gx - nb.x * ZR.SPOTS, sy: gy - nb.y * ZR.SPOTS };
+      if (nb) { cursor = { id: nb.id, sx: gx - nb.x * ZR.SPOTS, sy: gy - nb.y * ZR.SPOTS }; dp.follow(cursor.id, cursor.sx, cursor.sy); }
       return true;
     }
     if (code === 'KeyE' || code === 'Enter') { act(cursor); return true; }
