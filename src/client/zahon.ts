@@ -1,7 +1,7 @@
 // Záhon v hre (#179): priblížený pohľad (B) – jediný spôsob, ako záhon upravovať. Ťuknutie na záhon kameru priblíži
 // nad neho (render3d: S.zoom), ťuknutie na bod urobí to, čo je v ruke: semienko zasadí, pokryv položí (ťahom prsta na
 // viac bodov), prázdna ruka zreže rozkvitnutý kvet alebo zoberie pokryv (aj ťahom), motyka vykopá kvet, krhla poleje
-// a kompost pohnojí celý záhon, motyka na ráme záhon (s potvrdením) zruší. Hore názov a stav záhonu. Späť: ťuknutie
+// a kompost pohnojí celý záhon, krompáč záhon (s potvrdením) zruší. Hore názov a stav záhonu. Späť: ťuknutie
 // mimo záhonu alebo Esc. Klávesy: šípky = bod, E = akcia. Pravidlá bodov sú spoločné so serverom (shared/zahon.ts) – body, na ktoré to nejde, sú sivé.
 import * as D from '../shared/data.ts';
 import * as Obj from '../shared/objects.ts';
@@ -30,6 +30,7 @@ export interface ClientZahon {
   key: (code: string) => boolean;          // true = kláves použitý (šípky, E, Esc)
   marks: () => readonly ZoomMark[];
   refresh: () => void;                     // nová správa objects / me
+  destroyAt: (tx: number, ty: number) => void; // krompáčom na záhon v hre
 }
 
 type PSpot = { id: number; sx: number; sy: number }; // bod v časti spojeného záhonu
@@ -46,7 +47,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
   const bar = el('div', 'zbar hidden'), title = el('div', 'ztitle'), hint = el('div', 'zhint hidden');
   bar.append(title);
   dp.root.append(bar, hint);
-  // Zrušenie záhonu: motykou na rám, s potvrdením
+  // Zrušenie záhonu: krompáčom (v priblíženom pohľade aj priamo na záhon v hre), s potvrdením
   function askDestroy(z: ZahonView): void {
     dp.openModal('Zrušiť záhon?', body => {
       body.append(el('p', null, 'Rozkvitnuté kvety pôjdu do batohu, ostatné kvety zaniknú. Pokryvy sa vrátia do batohu. Záhon zmizne a uvoľní miesto v povolení na pole.'));
@@ -89,7 +90,8 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
       : sel.startsWith('cov_') ? 'Ťukni alebo potiahni prstom po bodoch – položíš pokryv. 🪣'
         : sel === 'can' ? 'Ťukni na záhon – jedno poliatie stačí na celú časť záhonu. 💧'
           : sel === 'compost' ? 'Ťukni na záhon – kompost pohnojí celú časť záhonu. 🟤'
-            : sel === 'hoe' ? 'Ťukni na kvet – motykou ho vykopeš. Motykou na rám zrušíš časť záhonu. ⛏️'
+            : sel === 'hoe' ? 'Ťukni na kvet – motykou ho vykopeš.'
+              : sel === 'pick' ? 'Ťukni krompáčom na záhon – zrušíš ho. ⛏️'
               : 'Prázdnou rukou zrežeš rozkvitnutý kvet alebo zoberieš pokryv (aj ťahom prsta).';
     hint.textContent += ' Ťukni mimo záhonu (Esc) – späť.';
   }
@@ -113,9 +115,9 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
       dp.send({ t: 'zahon', op: 'plant', id, sx, sy, item: sel }); dp.sfx('pop'); return;
     }
     if (sel.startsWith('cov_')) { const c = sel.slice(4); if (D.isCoverId(c)) { dp.send({ t: 'zahon', op: 'cover', id, c, spots: [[sx, sy]] }); dp.sfx('pop'); } return; }
+    if (sel === 'pick') { askDestroy(z); return; } // krompáč = zrušiť túto časť záhonu (s potvrdením)
     if (sel === 'hoe') {
-      if (ZR.isFrame(bed(z).open, sx, sy)) { askDestroy(z); return; } // motyka na ráme = zrušiť túto časť záhonu
-      if (here?.p) { dp.send({ t: 'zahon', op: 'dig', id, sx, sy }); dp.sfx('dig'); } else dp.toast('Tu nič nerastie. Časť záhonu zrušíš motykou na ráme.');
+      if (here?.p) { dp.send({ t: 'zahon', op: 'dig', id, sx, sy }); dp.sfx('dig'); } else dp.toast('Tu nič nerastie. Záhon zrušíš krompáčom. ⛏️');
       return;
     }
     if (ZR.blooming(here)) {
@@ -209,8 +211,11 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     if (sel === 'can' || sel === 'compost') return true;
     if (sel.startsWith('seed_') || D.isWild(sel)) return !ZR.plantError(bed(z), sx, sy, sel.startsWith('seed_') ? D.speciesOfItem(sel) : null);
     if (sel.startsWith('cov_')) return !ZR.coverError(bed(z), sx, sy);
-    if (sel === 'hoe') return !!here?.p || ZR.isFrame(bed(z).open, sx, sy);
+    if (sel === 'pick') return true;
+    if (sel === 'hoe') return !!here?.p;
     return ZR.blooming(here) || !!here?.c;
   }
-  return { open, close, active: () => !!cur(), down, move, up, key, marks, refresh };
+  // krompáčom na záhon v hre (bez priblíženia)
+  function destroyAt(tx: number, ty: number): void { const z = Obj.zahonAt({ list: S.objects }, tx, ty); if (z) askDestroy(z); }
+  return { open, close, active: () => !!cur(), down, move, up, key, marks, refresh, destroyAt };
 }
