@@ -1204,15 +1204,18 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
           S.dock?.built ? 'Stojí' : null, DK.price, DK.rep, () => { send({ t: 'build', id: 'dock' }); }, Art.icon('dock'));
         // Záhony (#179): všetky druhy rovnako, líšia sa len rámom; pokryvy po vedrách
         body.appendChild(h('div', { class: 'row' }, h('b', null, `${D.ZAHON.icon} Záhony – kvety a kamene na jednom políčku`)));
-        body.appendChild(h('div', { class: 'row' }, h('small', null, 'Na jedno políčko trávy, zaberie 1 miesto v povolení. Kvety a pokryvy v ňom rozložíš po bodoch, krhla poleje celý záhon naraz. Šikmý a oblý (rohový) záhon pred položením otočíš ďalším ťuknutím na to isté miesto.')));
-        for (const v of D.ZAHON_FRAMES) { // každý rám v troch tvaroch – štvorec, šikmý a oblý (#186), všetky za rovnakú cenu
+        body.appendChild(h('div', { class: 'row' }, h('small', null, 'Záhon zaberie 1 políčko trávy a 1 miesto v povolení. Šikmý a oblý (rohový) otočíš pred položením ďalším ťuknutím na to isté miesto.')));
+        const SHAPE_LABEL: Readonly<Record<D.ZahonShape, string>> = { sq: 'Štvorcový', diag: 'Šikmý', round: 'Oblý' };
+        for (const v of D.ZAHON_FRAMES) { // každý rám v troch tvaroch – štvorcový, šikmý a oblý (#186), všetky za rovnakú cenu
           const btns = D.ZAHON_SHAPES.map(sh => {
-            const b = h('button', { class: 'btn', title: D.zahonName(v, sh), onclick: () => { send({ t: 'zahon', op: 'buy', v, sh }); } }, h('img', { src: Art.icon(D.zahonItem(v, sh)), style: 'width:26px;height:26px;vertical-align:middle' }), String(D.ZAHON.price) + '🪙');
+            const b = h('button', { class: 'btn zshape', title: D.zahonName(v, sh), onclick: () => { send({ t: 'zahon', op: 'buy', v, sh }); } },
+              h('img', { src: Art.icon(D.zahonItem(v, sh)) }), h('span', null, SHAPE_LABEL[sh]), h('span', null, String(D.ZAHON.price) + '🪙'));
             if (S.coins < D.ZAHON.price || lvl < D.ZAHON.rep) b.disabled = true;
             return b;
           });
-          body.appendChild(h('div', { class: 'row' }, h('img', { src: Art.icon(`zahon_${v}`), style: 'width:40px;height:40px' }),
-            h('div', { class: 'info' }, h('b', null, D.ZAHON_NAMES[v]), h('small', null, `štvorcový, šikmý, oblý · treba ⭐${String(D.ZAHON.rep)}`)), h('div', { class: 'btns' }, ...btns)));
+          body.appendChild(h('div', { class: 'row zshop' },
+            h('div', { class: 'zhead' }, h('img', { src: Art.icon(`zahon_${v}`) }), h('b', null, D.ZAHON_NAMES[v]), h('small', null, `treba ⭐${String(D.ZAHON.rep)}`)),
+            h('div', { class: 'zbtns' }, ...btns)));
         }
         for (const c of D.COVER_IDS) {
           const C = D.COVERS[c];
