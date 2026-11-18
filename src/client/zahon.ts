@@ -1,7 +1,7 @@
 // Záhon v hre (#179): priblížený pohľad (B) – jediný spôsob, ako záhon upravovať. Ťuknutie na záhon kameru priblíži
 // nad neho (render3d: S.zoom), ťuknutie na bod urobí to, čo je v ruke: semienko zasadí, pokryv položí (ťahom prsta na
 // viac bodov), prázdna ruka zreže rozkvitnutý kvet alebo zoberie pokryv (aj ťahom), motyka vykopá kvet, krhla poleje
-// a kompost pohnojí celý záhon, krompáč záhon (s potvrdením) zruší. Hore názov a stav záhonu. Späť: ťuknutie
+// a kompost pohnojí celý záhon, krompáč záhon zruší (hneď, bez potvrdenia). Hore názov a stav záhonu. Späť: ťuknutie
 // mimo záhonu alebo Esc. Klávesy: šípky = bod, E = akcia. Pravidlá bodov sú spoločné so serverom (shared/zahon.ts) – body, na ktoré to nejde, sú sivé.
 import * as D from '../shared/data.ts';
 import * as Obj from '../shared/objects.ts';
@@ -15,8 +15,6 @@ export interface ZahonDeps {
   root: HTMLElement;                       // #game – sem príde lišta záhonu
   send: (m: ClientMessage) => void;
   toast: (text: string) => void;
-  openModal: (title: string, render: (body: HTMLElement) => void) => void;
-  closeModal: () => void;
   pickSpot: (cx: number, cy: number) => PSpot | null;
   sfx: (k: 'pop' | 'dig' | 'water') => void;
 }
@@ -47,15 +45,13 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
   const bar = el('div', 'zbar hidden'), title = el('div', 'ztitle'), hint = el('div', 'zhint hidden');
   bar.append(title);
   dp.root.append(bar, hint);
-  // Zrušenie záhonu: krompáčom (v priblíženom pohľade aj priamo na záhon v hre), s potvrdením
-  function askDestroy(z: ZahonView): void {
-    dp.openModal('Zrušiť záhon?', body => {
-      body.append(el('p', null, 'Rozkvitnuté kvety pôjdu do batohu, ostatné kvety zaniknú. Pokryvy sa vrátia do batohu. Záhon zmizne a uvoľní miesto v povolení na pole.'));
-      const yes = el('button', 'btn', 'Zrušiť záhon'), no = el('button', 'btn gray', 'Nechať');
-      yes.onclick = () => { dp.send({ t: 'zahon', op: 'destroy', id: z.id }); dp.closeModal(); close(); dp.sfx('dig'); };
-      no.onclick = () => { dp.closeModal(); };
-      body.append(el('div', 'btns', yes, no));
-    });
+  // Zrušenie záhonu krompáčom (v priblíženom pohľade aj priamo na záhon v hre) – hneď, bez okna s potvrdením.
+  // Ak bol priblížený a zo spojeného záhonu ostali ďalšie časti, pohľad ostane na nich.
+  function destroy(z: ZahonView): void {
+    dp.send({ t: 'zahon', op: 'destroy', id: z.id }); dp.sfx('dig');
+    if (S.zoom?.id !== z.id) return;
+    const rest = group(z).find(b => b.id !== z.id);
+    if (rest) S.zoom = { id: rest.id }; else close();
   }
 
   function cur(): ZahonView | null {
@@ -115,7 +111,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
       dp.send({ t: 'zahon', op: 'plant', id, sx, sy, item: sel }); dp.sfx('pop'); return;
     }
     if (sel.startsWith('cov_')) { const c = sel.slice(4); if (D.isCoverId(c)) { dp.send({ t: 'zahon', op: 'cover', id, c, spots: [[sx, sy]] }); dp.sfx('pop'); } return; }
-    if (sel === 'pick') { askDestroy(z); return; } // krompáč = zrušiť túto časť záhonu (s potvrdením)
+    if (sel === 'pick') { destroy(z); return; } // krompáč = zrušiť túto časť záhonu
     if (sel === 'hoe') {
       if (here?.p) { dp.send({ t: 'zahon', op: 'dig', id, sx, sy }); dp.sfx('dig'); } else dp.toast('Tu nič nerastie. Záhon zrušíš krompáčom. ⛏️');
       return;
@@ -216,6 +212,6 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     return ZR.blooming(here) || !!here?.c;
   }
   // krompáčom na záhon v hre (bez priblíženia)
-  function destroyAt(tx: number, ty: number): void { const z = Obj.zahonAt({ list: S.objects }, tx, ty); if (z) askDestroy(z); }
+  function destroyAt(tx: number, ty: number): void { const z = Obj.zahonAt({ list: S.objects }, tx, ty); if (z) destroy(z); }
   return { open, close, active: () => !!cur(), down, move, up, key, marks, refresh, destroyAt };
 }
