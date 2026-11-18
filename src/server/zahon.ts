@@ -2,7 +2,7 @@
 // (všetky druhy rámov rovnako: 40 🪙, reputácia 1), položí sa na čistú trávu a zaberá 1 miesto v spoločnom povolení,
 // nech je v ňom kvetov koľkokoľvek. Krhla polieva celý záhon naraz, kompost pohnojí celý záhon (do konca obdobia).
 // Kvety a pokryvy (trávnik, štrk, okruhliaky, plochý kameň – kupujú sa po vedrách) sa sadia a rozkladajú v priblíženom
-// pohľade (klient); záhon sa nepresúva, dá sa len zrušiť motykou: rozkvitnuté kvety idú do batohu, ostatné zaniknú,
+// pohľade (klient); záhon sa nepresúva, dá sa len zrušiť krompáčom: rozkvitnuté kvety idú do batohu, ostatné zaniknú,
 // pokryvy sa vrátia. Stav: world.objects (objekty kind 'zahon', save.ts ZahonObject).
 import * as D from '../shared/data.ts';
 import type { CoverId, ItemId, ZahonFrame } from '../shared/data.ts';
@@ -107,11 +107,12 @@ export const PROPOSERS: { [T in keyof ZahonInputs]: GameProposer<ZahonInputs[T]>
       ctx.emit(fx$(x + 0.5, y + 0.5, 'dirt'));
     }
   },
-  // zrušiť záhon motykou: rozkvitnuté kvety do batohu, ostatné zaniknú, pokryvy sa vrátia; miesto v povolení sa uvoľní
+  // zrušiť záhon krompáčom: rozkvitnuté kvety do batohu, ostatné zaniknú, pokryvy sa vrátia; miesto v povolení sa uvoľní
   zahonDestroy: {
     keys: d => ({ writes: ['objects', 'plotsUsed', `save:${d.key}`] }),
     run(s, d, ctx) {
       const z = zahon(s, d.id, ctx), sv = saveOf(s, d.key, ctx);
+      if (!sv.inv.pick) ctx.reject('Záhon zrušíš krompáčom – kúpiš ho na trhu (záložka Vylepšiť). ⛏️');
       const got: string[] = [];
       const gather = (b: ZahonObject, sp: ZahonSpot): void => {
         if (sp.c) give(sv, `cov_${sp.c}`, 1, ctx.tick);

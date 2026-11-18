@@ -154,7 +154,7 @@ test('záhon: jedno poliatie krhlou = celý záhon; ráno rastú všetky kvety, 
   assert.strictEqual(z.r, 1, 'kompost ostáva');
 });
 
-test('záhon: rozkvitnutý kvet sa zreže do batohu, motyka kvet vykopá, zrušenie vráti kvitnúce kvety a pokryvy a uvoľní miesto', () => {
+test('záhon: rozkvitnutý kvet sa zreže do batohu, motyka kvet vykopá, zrušenie krompáčom vráti kvitnúce kvety a pokryvy a uvoľní miesto', () => {
   const { w, z } = withZahon(), sv = save(w, 'ana');
   const days = D.SPECIES.mak.days;
   z.spots.push({ sx: 2, sy: 2, p: { sp: 'mak', prog: days, q: 3, dry: 0, bt: w.tick } }, { sx: 5, sy: 2, p: { sp: 'mak', prog: days, q: 2, dry: 0, bt: w.tick } },
@@ -166,6 +166,8 @@ test('záhon: rozkvitnutý kvet sa zreže do batohu, motyka kvet vykopá, zruše
   assert.deepStrictEqual(rejects(w, 'zahonPick', { id: z.id, sx: 2, sy: 5 }), ['Tu nič nekvitne.']);
   act(w, 'zahonDig', { id: z.id, sx: 2, sy: 5 });
   assert.ok(!Z.spotAt(z, 2, 5));
+  assert.deepStrictEqual(rejects(w, 'zahonDestroy', { id: z.id }), ['Záhon zrušíš krompáčom – kúpiš ho na trhu (záložka Vylepšiť). ⛏️']);
+  sv.inv.pick = 1;
   act(w, 'zahonDestroy', { id: z.id });
   assert.deepStrictEqual([sv.inv.fl_mak, sv.inv.cov_travnik, Obj.zahony(w.objects).length, w.plotsUsed], [5, 1, 0, 0]);
 });
@@ -227,6 +229,7 @@ test('záhon: dva záhony vedľa seba sa spoja – na spoločnej strane nie je r
   act(w, 'zahonCover', { id: must(b).id, c: 'strk', spots: [[0, 6]] });
   assert.ok(Z.spotAt(must(b), 0, 6)?.c, 'pokryv aj na spoločnej strane');
   // zrušenie pravého záhonu: ľavému sa vráti rám a mak na ňom skončí ako pri zrušení (rastúci zanikne)
+  sv.inv.pick = 1;
   assert.deepStrictEqual(rejects(w, 'zahonDestroy', { id: must(b).id }), []);
   assert.ok(!Z.spotAt(only(w), 7, 3), 'z rámu zmizol'); // zoznam objektov sa pri zrušení nahradí – záhon znova zo sveta
   assert.strictEqual(sv.inv.cov_strk, 2, 'pokryv z rušeného záhonu je späť');
