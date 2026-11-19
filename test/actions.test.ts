@@ -534,7 +534,7 @@ test('server: správy hráčov idú cez schránku a dávku akcií – stav, toas
   for (const k of ['ana', 'bob']) Object.assign(save(w, k), { x: px, y: py, area: 'garden', look: { shirt: '#000', hair: '#000', hat: false }, talked: true });
   give(save(w, 'ana'), `seed_${SP}`, 3, w.tick); give(save(w, 'ana'), `fl_${SP}`, 2, w.tick);
   w.icehouse = partial<Icehouse>({ built: false, ice: 0 }); Ice.applyIcehouse(w.icehouse, w.tiles, w.objects);
-  save(w, 'bob').rep = must(D.REP_LEVELS[D.ICEHOUSE.rep]); save(w, 'bob').coins = D.ICEHOUSE.price + 10;
+  save(w, 'bob').rep = must(D.REP_LEVELS[D.ICEHOUSE.rep]); save(w, 'bob').coins = D.ICEHOUSE.price + 500; // bob ešte kupuje semienko za trhovú cenu (aj 50 🪙) – na ľadovňu musí stačiť
   setStock(w, `seed_${SP}`, 1);
   save(w, 'ana').wellFern = 3; // voliteľné pole uloženia (studňa, #100): prežije prevod, načítanie aj uloženie
   // uloženie starého formátu (v9) – migrácia na serveri ho doplní

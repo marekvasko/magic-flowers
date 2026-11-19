@@ -99,7 +99,7 @@ test('objekty: pozemok sa smie dať len na voľnú trávu v záhrade', () => {
   assert.strictEqual(err(x, y, new Set([idx(x + 1, y + 1)])), 'the ground was changed by a cheat');
   // fúrik a sane parkujú pred Dielňou (V.VEHICLE_HOME) – tam pozemok nesmie byť ani na samej tráve
   const home = V.VEHICLE_HOME.furik, grass = (): { g: string } => ({ g: 'grass' });
-  assert.strictEqual(Obj.lotPlaceError(grass, { list: [], nid: 1 }, 'dielna', Math.floor(home.x), Math.floor(home.y), none), 'the cart and sledge park there');
+  assert.strictEqual(Obj.lotPlaceError(grass, { list: [] }, 'dielna', Math.floor(home.x), Math.floor(home.y), none), 'the cart and sledge park there');
 });
 
 test('cheat: pozemok ľadovne sa premiestni, pôvodné miesto je tráva; ľadovňa sa postaví na novom mieste a hráč ju nájde tam', () => {

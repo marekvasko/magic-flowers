@@ -719,6 +719,37 @@ export const Art = (() => {
       for (const x of [44, 58]) for (const y of [24, 40, 56]) { c.fillStyle = '#5a3d24'; c.fillRect(x, y, 3, 8); }
       for (let i = 0; i < 7; i++) { c.fillStyle = i % 2 ? '#c9a77a' : '#b08a5c'; c.fillRect(42, 14 + i * 7, 20, 6); }
       boat(c, 24, 40, 26, 5, { crew: [{ shirt: '#e05a5a', hair: '#5b3a1a', hat: true }, null] });
+    } else if (id.startsWith('zahon_')) { // záhon (#179): pohľad zhora šikmo – rám, pôda a kvietky
+      const F: Readonly<Partial<Record<string, readonly [string, string]>>> = { drevo: ['#b08a5c', '#7a5634'], prut: ['#d9b56a', '#a8853c'], kamen: ['#b9b4aa', '#85807a'], tehla: ['#c0533a', '#8a3a28'] };
+      const [top, side] = F[id.slice(6)] ?? ['#b08a5c', '#7a5634'];
+      const P = (u: number, v: number): [number, number] => [32 + (u - v) * 26, 22 + (u + v) * 13];
+      const quad = (pts: readonly (readonly [number, number])[], col: string): void => { c.fillStyle = col; c.beginPath(); pts.forEach(([x, y], k) => { if (k) c.lineTo(x, y); else c.moveTo(x, y); }); c.closePath(); c.fill(); };
+      const [A, B, C2, Dd] = [P(0, 0), P(1, 0), P(1, 1), P(0, 1)];
+      const shape = id.endsWith('_diag') ? 'diag' : id.endsWith('_round') ? 'round' : 'sq';
+      if (shape === 'sq') {
+        quad([Dd, C2, [C2[0], C2[1] + 8], [Dd[0], Dd[1] + 8]], side); quad([B, C2, [C2[0], C2[1] + 8], [B[0], B[1] + 8]], side);
+        quad([A, B, C2, Dd], top);
+        quad([P(0.15, 0.15), P(0.85, 0.15), P(0.85, 0.85), P(0.15, 0.85)], '#6b4a2b');
+      } else { // rohový záhon (#186): šikmý trojuholník alebo štvrťkruh, pravý uhol v rohu (u, v) = (0, 1)
+        const edge = (k: number, inset: number): [number, number] => shape === 'diag'
+          ? [inset + (1 - 2 * inset) * k, inset + (1 - 2 * inset) * k]
+          : [(1 - inset) * Math.sin(k * Math.PI / 2), 1 - (1 - inset) * Math.cos(k * Math.PI / 2)];
+        const outline = (inset: number): [number, number][] => [P(inset, 1 - inset), ...Array.from({ length: 9 }, (_, k) => { const [u, v] = edge(k / 8, inset); return P(u, v); })];
+        quad([Dd, C2, [C2[0], C2[1] + 8], [Dd[0], Dd[1] + 8]], side);
+        quad(outline(0), top);
+        quad(outline(0.15), '#6b4a2b');
+      }
+      for (const [u, v, col] of [[0.35, 0.35, '#e8486a'], [0.65, 0.4, '#f2c230'], [0.45, 0.65, '#8e7cc3'], [0.7, 0.7, '#e8486a']] as const) {
+        const [x, y] = P(u, v); c.strokeStyle = '#3f8f2f'; c.lineWidth = 2; c.beginPath(); c.moveTo(x, y); c.lineTo(x, y - 7); c.stroke(); circ(c, x, y - 8, 3.5, col);
+      }
+    } else if (id.startsWith('cov_')) { // vedro pokryvu (#179): plechové vedro s materiálom navrchu
+      const top: Readonly<Partial<Record<string, string>>> = { travnik: '#6fbf4a', strk: '#b8b0a0', okruhliaky: '#9a958d', kamen: '#8f8a84' };
+      c.fillStyle = '#9aa4ad'; c.beginPath(); c.moveTo(14, 24); c.lineTo(50, 24); c.lineTo(45, 58); c.lineTo(19, 58); c.closePath(); c.fill();
+      c.strokeStyle = '#6f7880'; c.lineWidth = 2; c.stroke();
+      c.strokeStyle = '#6f7880'; c.lineWidth = 2.5; c.beginPath(); c.arc(32, 24, 17, Math.PI, 0); c.stroke();
+      ell(c, 32, 24, 18, 6, 0, top[id.slice(4)] ?? '#999');
+      if (id === 'cov_okruhliaky' || id === 'cov_kamen') for (const [x, y] of [[24, 22], [33, 25], [40, 22]] as const) ell(c, x, y, id === 'cov_kamen' ? 6 : 4, 2.5, 0.2, '#c9c4bb');
+      if (id === 'cov_travnik') for (let k = 0; k < 6; k++) leaf(c, 18 + k * 5.5, 25, 8, -Math.PI / 2 + (k - 2.5) * 0.15, '#4f9a3c');
     } else if (/^wild_[0-3]$/.test(id)) { // divé semienko: hrsť semien v tráve s otáznikom
       for (let i = 0; i < 7; i++) leaf(c, 10 + i * 7, 58, 14 + (i % 3) * 4, -Math.PI / 2 + (i - 3) * 0.12, i % 2 ? '#7cb342' : '#558b2f');
       ell(c, 30, 40, 7, 4, 0.5, '#8d6e3f'); ell(c, 38, 44, 6, 3.5, -0.4, '#a1824a'); ell(c, 26, 47, 5, 3, 0.2, '#7a5a30');
