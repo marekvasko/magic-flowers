@@ -156,7 +156,7 @@ export function createVehicles(dp: VehiclesDeps): ClientVehicles {
 
   function near(v: VehicleView): boolean { return v.area === S.area && Math.hypot(S.me.x - v.x, S.me.y - v.y) <= V.VEHICLE_REACH + 0.3; }
   function atIcehouse(v: VehicleView): boolean {
-    const L = Obj.lotRect({ list: S.objects, nid: 0 }, 'icehouse'), c = L && Obj.center(L);
+    const L = Obj.lotRect({ list: S.objects }, 'icehouse'), c = L && Obj.center(L);
     return !!c && v.area === 'garden' && Math.hypot(v.x - c.x, v.y - c.y) <= V.VEHICLE_ICEHOUSE;
   }
   const send = (op: ClientMessage & { t: 'veh' }): void => { dp.send(op); };
