@@ -16,8 +16,8 @@ export interface ZahonDeps {
   send: (m: ClientMessage) => void;
   toast: (text: string) => void;
   pickSpot: (cx: number, cy: number) => PSpot | null;
-  pan: (x0: number, y0: number, x1: number, y1: number) => void;   // posun priblíženého záhonu ťahom prsta
-  follow: (id: number, sx: number, sy: number) => void;            // pohľad za kurzorom klávesnice
+  pan: (x0: number, y0: number, x1: number, y1: number) => void;   // pohľad ide za prstom
+  endPan: () => { dx: number; dy: number };                       // koniec ťahu: posun od stredového políčka (v políčkach)
   sfx: (k: 'pop' | 'dig' | 'water') => void;
 }
 export interface ClientZahon {
@@ -91,7 +91,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
             : sel === 'hoe' ? 'Motykou vykopeš kvet a zoberieš pokryv (štrk, kamene, trávnik) – ťuknutím alebo ťahom prsta.'
               : sel === 'pick' ? 'Ťukni krompáčom na záhon – zrušíš ho. ⛏️'
               : 'Prázdnou rukou zrežeš rozkvitnutý kvet alebo zoberieš pokryv (aj ťahom prsta).';
-    hint.textContent += ' Ťahom prsta posunieš pohľad. Ťukni mimo záhonu (Esc) – späť.';
+    hint.textContent += ' Susedné políčko: ťukni naň alebo potiahni. Mimo záhonu (Esc): späť.';
   }
   // Záhon so susedmi (spojené strany, kvety susedov kvôli zónam)
   const bed = (z: ZahonView): ZahonView & { open: ZR.Open; near: ZR.SpotLike[] } => ZR.bedOf<ZahonView>(S.objects, z);
@@ -129,11 +129,13 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
   }
   const frameAt = (s: PSpot): boolean => { const z = byId(s.id); return !z || ZR.isFrame(bed(z).open, s.sx, s.sy); };
   // Ťah prstom: s pokryvom v ruke kladie, prázdnou rukou na pokryve zbiera (cez všetky časti spojeného záhonu)
-  let last: { x: number; y: number } | null = null; // ťah, ktorý nekladie pokryv, posúva pohľad
+  let last: { x: number; y: number } | null = null, dragged = false; // ťah, ktorý nekladie pokryv, posúva pohľad na susedné políčko
+  // Pohľad sa vycentruje na časť záhonu id (políčko v strede obrazovky)
+  function focus(id: number): void { if (S.zoom?.id === id) return; S.zoom = { id }; refresh(); }
   function down(cx: number, cy: number): void {
     if (!cur()) return;
     const s = dp.pickSpot(cx, cy);
-    paint = null; last = { x: cx, y: cy };
+    paint = null; last = { x: cx, y: cy }; dragged = false;
     if (!s || frameAt(s)) return;
     const z = byId(s.id);
     if (S.sel.startsWith('cov_')) paint = { add: true, spots: [s] };
@@ -141,14 +143,22 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
   }
   function move(cx: number, cy: number): void {
     if (!cur()) return;
-    if (!paint) { if (last) { dp.pan(last.x, last.y, cx, cy); last = { x: cx, y: cy }; } return; }
+    if (!paint) { if (last) { dp.pan(last.x, last.y, cx, cy); last = { x: cx, y: cy }; dragged = true; } return; }
     const s = dp.pickSpot(cx, cy);
     if (s && !frameAt(s) && !paint.spots.some(q => q.id === s.id && q.sx === s.sx && q.sy === s.sy)) paint.spots.push(s);
   }
   function up(cx: number, cy: number, tap: boolean): void {
-    const p = paint;
+    const p = paint, z0 = cur();
     paint = null; last = null;
-    if (!cur()) return;
+    if (!z0) return;
+    // ťah bez pokladania: pohľad skočí na susedné políčko v smere ťahu (aj šikmo), ak je tam časť záhonu, inak sa vráti
+    if (dragged && !p) {
+      dragged = false;
+      const off = dp.endPan(), dx = Math.abs(off.dx) > 0.35 ? Math.sign(off.dx) : 0, dy = Math.abs(off.dy) > 0.35 ? Math.sign(off.dy) : 0;
+      const nb = (dx || dy) ? group(z0).find(b => b.x === z0.x + dx && b.y === z0.y + dy) : undefined;
+      if (nb) focus(nb.id);
+      if (!tap) return;
+    }
     if (p && p.spots.length > 1) {
       const c = S.sel.slice(4);
       for (const id of new Set(p.spots.map(q => q.id))) {
@@ -162,6 +172,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     if (!tap && !p) return;
     const s = dp.pickSpot(cx, cy);
     if (!s) { close(); return; } // ťuknutie mimo záhonu = späť
+    if (s.id !== z0.id) { focus(s.id); return; } // ťuknutie na susedné políčko záhonu: pohľad sa naň posunie
     cursor = s;
     act(s);
   }
@@ -174,7 +185,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     if (d) {
       const b = byId(cursor.id) ?? z, gx = b.x * ZR.SPOTS + cursor.sx + d[0], gy = b.y * ZR.SPOTS + cursor.sy + d[1];
       const nb = group(z).find(q => Math.floor(gx / ZR.SPOTS) === q.x && Math.floor(gy / ZR.SPOTS) === q.y);
-      if (nb) { cursor = { id: nb.id, sx: gx - nb.x * ZR.SPOTS, sy: gy - nb.y * ZR.SPOTS }; dp.follow(cursor.id, cursor.sx, cursor.sy); }
+      if (nb) { cursor = { id: nb.id, sx: gx - nb.x * ZR.SPOTS, sy: gy - nb.y * ZR.SPOTS }; focus(nb.id); }
       return true;
     }
     if (code === 'KeyE' || code === 'Enter') { act(cursor); return true; }

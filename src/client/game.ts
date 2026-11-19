@@ -693,7 +693,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     return { get on(): boolean { return on; }, set, tick };
   })();
   const gameEl = $('game'), joy = $('joy'), joyKnob = $('joyKnob');
-  Zh = createZahon({ S, root: gameEl, send, toast, pickSpot: (cx, cy) => R3?.pickSpot(cx, cy) ?? null, pan: (x0, y0, x1, y1) => { R3?.panZoom(x0, y0, x1, y1); }, follow: (id, sx, sy) => { R3?.zoomFollow(id, sx, sy); }, sfx });
+  Zh = createZahon({ S, root: gameEl, send, toast, pickSpot: (cx, cy) => R3?.pickSpot(cx, cy) ?? null, pan: (x0, y0, x1, y1) => { R3?.panZoom(x0, y0, x1, y1); }, endPan: () => R3?.endPan() ?? { dx: 0, dy: 0 }, sfx });
   const JOY_R = 50, DRAG_START = 10;
   const ptrs = new Map<number, { x0: number; y0: number; joy: boolean }>();
   let joyId: number | null = null, joyBase: Pt = { x: 0, y: 0 };
