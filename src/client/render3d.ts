@@ -1964,7 +1964,7 @@ void main() {
 
   // stav budov, ktorý nie je v políčkach (izolácia ľadovne, krosná v Dielni) – keď sa zmení, svet sa prestavia
   // záhony (#179): rám a pokryvy sú v sieti sveta – zmena pokryvu svet prestavia
-  const zahonLooks = (): W.ZahonLook[] => (S.area === 'garden' ? S.objects.flatMap(o => (o.kind === 'zahon' ? [{ x: o.x, y: o.y, v: o.v, covers: o.spots.flatMap(q => (q.c ? [[q.sx, q.sy, q.c] as const] : [])), open: ZH.bedOf(S.objects, o).open }] : [])) : []);
+  const zahonLooks = (): W.ZahonLook[] => (S.area === 'garden' ? S.objects.flatMap(o => (o.kind === 'zahon' ? [{ x: o.x, y: o.y, v: o.v, covers: o.spots.flatMap(q => (q.c ? [[q.sx, q.sy, q.c] as const] : [])), open: ZH.bedOf(S.objects, o).open, wet: !!o.w }] : [])) : []);
   const buildingState = (): W.BuildingState => ({ ins: D.insulLevel(S.icehouse?.bl), loom: S.dielna?.loom ?? false, zahony: zahonLooks() });
   const stateSig = (): string => { const b = buildingState(); return String(b.ins) + '|' + (b.loom ? 1 : 0) + '|' + JSON.stringify(b.zahony); };
   let builtState: string | null = null;
