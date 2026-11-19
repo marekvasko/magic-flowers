@@ -2333,12 +2333,19 @@ void main() {
         return ([[0, 0], [1, 0], [1, 1], [0, 1]] as const).map(([a, q]) => projZ(tx + (m.sx + 0.5 + (a - 0.5) * r) / ZH.SPOTS, h, ty + (m.sy + 0.5 + (q - 0.5) * r) / ZH.SPOTS));
       };
       const path = (pts: Pt[]): void => { c.beginPath(); pts.forEach((p, i) => { if (i) c.lineTo(p.x, p.y); else c.moveTo(p.x, p.y); }); c.closePath(); };
+      // žiarivý obrys (ako obrys objektov, za ktorými hráč stojí): mäkká žiara a ostrá čiara navrchu
+      const glow = (pts: Pt[], color: string, width: number, blur: number): void => {
+        path(pts); c.save(); c.lineJoin = 'round'; c.shadowColor = color; c.shadowBlur = blur; c.strokeStyle = color; c.lineWidth = width; c.stroke(); c.stroke(); c.restore();
+      };
+      // políčko v strede pohľadu: žiarivý obrys po okraji (jemne pulzuje)
+      if (zoomEase > 0.6) {
+        const tx = zt.fx - 0.5, ty = zt.fy - 0.5, h = groundY(zt.fx, zt.fy) + 1 / ZH.SPOTS + 0.02, a = 0.75 + 0.2 * Math.sin(t * 3);
+        glow(([[0, 0], [1, 0], [1, 1], [0, 1]] as const).map(([u, v]) => projZ(tx + u, h, ty + v)), `rgba(255,247,230,${a.toFixed(2)})`, Math.max(2, zppb * 0.03), zppb * 0.15);
+      }
       for (const m of marks) {
         if (m.k === 'no') { path(corners(m, 0.92)); c.fillStyle = 'rgba(70,70,70,0.42)'; c.fill(); continue; }
         const age = m.age ?? 0;
-        path(corners(m, 0.7 + age * 0.4));
-        c.strokeStyle = m.act ? `rgba(255,230,90,${1 - age})` : `rgba(255,255,255,${0.8 - age * 0.8})`;
-        c.lineWidth = Math.max(2, zppb / ZH.SPOTS * 0.08); c.stroke();
+        glow(corners(m, 0.7 + age * 0.4), m.act ? `rgba(255,230,90,${(1 - age).toFixed(2)})` : `rgba(255,255,255,${(0.8 - age * 0.8).toFixed(2)})`, Math.max(2, zppb / ZH.SPOTS * 0.08), zppb / ZH.SPOTS * 0.5);
       }
     }
     if (S.tapMark && !S.zoom) {
