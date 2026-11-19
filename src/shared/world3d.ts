@@ -54,6 +54,7 @@ export const M = {
   APPLE: 80, BLOSSOM_W: 81, BLOSSOM_P: 82, MOSS: 83, LICHEN: 84, STONE_LIGHT: 85,
   LEAF_DARK: 86, LEAF_DARK2: 87, WOOD_END: 88, ROTWOOD: 89, SAP: 90, // Les divov: tmavé lístie obrov, čelo a práchnivé drevo kmeňa, svietiaca živica
   SILK: 91, SILK_DARK: 92, // hodvábne prikrývky (izolácia ľadovne, krosná v Dielni)
+  SOIL_WET: 93, SOIL_WET2: 94, // poliata pôda záhonu (#179) – tmavšia, s vlhkými škvrnami
   INVIS: 63 // neviditeľná náhrada jemného modelu v hrubej mriežke (tieň, zatienenie, výber)
 };
 // Farby podľa ročného obdobia [jar, leto, jeseň, zima]; emis = svieti v noci
@@ -80,7 +81,8 @@ export const PALETTE: Readonly<Partial<Record<MatId, readonly string[]>>> = {
   [M.MOSS]: ['#6f9a3c', '#5f8a34', '#7d7a36', '#6f9a3c'], [M.LICHEN]: ['#c9c27a'], [M.STONE_LIGHT]: ['#b3aea6'],
   [M.LEAF_DARK]: ['#2f5a2c', '#24482a', '#7a4a22', '#24482a'], [M.LEAF_DARK2]: ['#26502a', '#1d3d23', '#5e3a1c', '#1d3d23'],
   [M.WOOD_END]: ['#a8865a'], [M.ROTWOOD]: ['#4a3826'], [M.SAP]: ['#ffcf3a'],
-  [M.SILK]: ['#f3e9d2'], [M.SILK_DARK]: ['#c9b48e']
+  [M.SILK]: ['#f3e9d2'], [M.SILK_DARK]: ['#c9b48e'],
+  [M.SOIL_WET]: ['#4b311b', '#4b311b', '#4b311b', '#4b311b'], [M.SOIL_WET2]: ['#3c2715', '#3c2715', '#3c2715', '#3c2715']
 };
 export const EMISSIVE: Readonly<Partial<Record<MatId, string>>> = { [M.WINDOW]: '#ffd27a', [M.BREW]: '#9dffb8', [M.LANTERN]: '#ffe9a8', [M.FIRE]: '#ff9a3a', [M.FLAME]: '#ffe07a', [M.BREW_LIGHT]: '#d8ffe4', [M.SAP]: '#ffd84a' };
 export function colorOf(mat: MatId, season: number): string { const p = PALETTE[mat] || ['#ff00ff']; return (p[Math.min(season, p.length - 1)] || p[0]) ?? '#ff00ff'; }
@@ -614,7 +616,8 @@ function dockModel(season: number): FineModel {
 // Vonkajší prstenec bodov je rám (drevo, prútie, kamene, tehly), vnútri pôda a pokryvy na bodoch (trávnik, štrk,
 // okruhliaky, plochý kameň). Kvety v ňom nie sú z minikociek – sú to tie isté 2D sprity ako kvety na políčku (render3d).
 // open = strany, kde susedí iný záhon (#179): tam rám nie je a záhony sa spoja
-export interface ZahonLook { x: number; y: number; v: D.ZahonFrame; covers: readonly (readonly [number, number, D.CoverId])[]; open?: { n: boolean; s: boolean; e: boolean; w: boolean } }
+// wet = poliaty (tmavšia pôda)
+export interface ZahonLook { x: number; y: number; v: D.ZahonFrame; covers: readonly (readonly [number, number, D.CoverId])[]; open?: { n: boolean; s: boolean; e: boolean; w: boolean }; wet?: boolean }
 const FRAME: Readonly<Record<D.ZahonFrame, (x: number, z: number) => MatId>> = {
   drevo: (x, z) => ((x + z) % 2 ? M.PLANK : M.PLANK_DARK),
   prut: (x, z) => ((x + z) % 2 ? M.STRAW : M.STRAW_DARK),
@@ -624,7 +627,7 @@ const FRAME: Readonly<Record<D.ZahonFrame, (x: number, z: number) => MatId>> = {
 const COVER_MAT: Readonly<Record<D.CoverId, (x: number, z: number) => MatId>> = {
   travnik: () => M.ALP, strk: (x, z) => (hash(x, z, 8) < 0.5 ? M.SCREE : M.PATH), okruhliaky: () => M.DIRT, kamen: () => M.STONE
 };
-export function zahonModel(season: number, look: Pick<ZahonLook, 'v' | 'covers' | 'open'>): FineModel {
+export function zahonModel(season: number, look: Pick<ZahonLook, 'v' | 'covers' | 'open' | 'wet'>): FineModel {
   const C = fineCanvas(1, 1, 4), { put } = C, o = look.open ?? { n: false, s: false, e: false, w: false };
   const ring = (x: number, z: number): boolean => (x === 0 && !o.w) || (x === 7 && !o.e) || (z === 0 && !o.n) || (z === 7 && !o.s);
   const cover = new Map(look.covers.map(([sx, sy, c]) => [sy * 8 + sx, c]));
@@ -637,11 +640,11 @@ export function zahonModel(season: number, look: Pick<ZahonLook, 'v' | 'covers' 
       continue;
     }
     const c = cover.get(z * 8 + x);
-    put(x, 0, z, c ? COVER_MAT[c](x, z) : M.DIRT);
+    put(x, 0, z, c ? COVER_MAT[c](x, z) : look.wet ? (hash(x, z, 9) < 0.3 ? M.SOIL_WET2 : M.SOIL_WET) : M.DIRT); // poliata pôda je tmavá
     if (c === 'okruhliaky') put(x, 1, z, hash(x, z, 4) < 0.5 ? M.STONE_LIGHT : M.STONE); // oblé kamene nad pôdou
     if (c === 'travnik' && hash(x, z, 6) < 0.35) put(x, 1, z, M.HERB_GREEN); // trsy trávy
   }
-  if (season === 3) C.snow([M.DIRT, M.PLANK, M.PLANK_DARK, M.LOG_DARK, M.STRAW, M.STRAW_DARK, M.STONE, M.STONE_LIGHT, M.ROOF_RED, M.CLAY, M.ALP, M.PATH, M.SCREE, M.HERB_GREEN]);
+  if (season === 3) C.snow([M.DIRT, M.SOIL_WET, M.SOIL_WET2, M.PLANK, M.PLANK_DARK, M.LOG_DARK, M.STRAW, M.STRAW_DARK, M.STONE, M.STONE_LIGHT, M.ROOF_RED, M.CLAY, M.ALP, M.PATH, M.SCREE, M.HERB_GREEN]);
   return C.done();
 }
 // Ukážky v záložke Assets: štyri rámy prázdne a drevený so všetkými pokryvmi

@@ -474,7 +474,9 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     // mimo záhrady sa nepestuje ani nehľadá – použiť sa dá len elixír
     if (S.area !== 'garden') return sel.startsWith('po_') ? { i: '🧪', l: 'Použiť' } : null;
     // záhon (#179): ťuknutie ho priblíži; záhon z lišty sa kladie na čistú trávu
-    if (Obj.zahonAt({ list: S.objects }, tx, ty)) return sel === 'pick' ? { i: '⛏️', l: 'Zrušiť záhon' } : { i: D.ZAHON.icon, l: 'Záhon' };
+    // nástroje na celý záhon pracujú rovno v hre (krhla, kompost, krompáč), ostatné záhon priblížia
+    const zh = Obj.zahonAt({ list: S.objects }, tx, ty);
+    if (zh) return sel === 'pick' ? { i: '⛏️', l: 'Zrušiť záhon' } : sel === 'can' ? { i: '💧', l: 'Poliať záhon' } : sel === 'compost' ? { i: '🟤', l: 'Pohnojiť záhon' } : { i: D.ZAHON.icon, l: 'Záhon' };
     const s = t.s, p = s?.p;
     if (sel.startsWith('zahon_')) return t.g === 'grass' && !s && !S.objects.some(o => Obj.inRect(Obj.objRect(o), tx, ty)) ? { i: D.ZAHON.icon, l: 'Položiť záhon' } : null;
     if (p && !p.d && D.stageOf(p) === 3) return (p.sp === 'papradie' && !D.isNight(curMin())) ? { i: '🌙', l: 'Čaká na noc' } : { i: '🧺', l: 'Zbierať' };
@@ -557,6 +559,11 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     if (a.ui) { openUI(a.ui); return; }
     if (a.l === 'Záhon') { Zh?.open(tx, ty); sfx('pop'); return; }
     if (a.l === 'Zrušiť záhon') { Zh?.destroyAt(tx, ty); return; }
+    if (a.l === 'Poliať záhon' || a.l === 'Pohnojiť záhon') {
+      const z = Obj.zahonAt({ list: S.objects }, tx, ty);
+      if (z) { send({ t: 'zahon', op: a.l === 'Poliať záhon' ? 'water' : 'compost', id: z.id }); sfx(a.l === 'Poliať záhon' ? 'water' : 'pop'); }
+      return;
+    }
     if (a.l === 'Hľadať' && !onTile(tx, ty)) { walkOnto(tx, ty); return; }
     if (a.info) {
       if (a.l === 'Huby') toast(D.isNight(curMin()) ? 'Huby slabo svietia… Skús tu zatancovať 💃' : 'Kruh z húb. Babka hovorí, že tu v noci tancujú víly. 🍄');
