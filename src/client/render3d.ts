@@ -478,7 +478,7 @@ export interface DebugView {
   particleObjs: THREE.Object3D[]; lights: THREE.Vector4[]; materials: THREE.ShaderMaterial[]; groundY: (x: number, y: number) => number;
 }
 export interface Render3D {
-  frame: (t: number) => void; resize: () => void; pick: (x: number, y: number) => Pt | null; pickSpot: (x: number, y: number) => { id: number; sx: number; sy: number } | null; panZoom: (x0: number, y0: number, x1: number, y1: number) => void; zoomFollow: (id: number, sx: number, sy: number) => void; seenAt: (x: number, z: number) => number;
+  frame: (t: number) => void; resize: () => void; pick: (x: number, y: number) => Pt | null; pickSpot: (x: number, y: number) => { id: number; sx: number; sy: number } | null; panZoom: (x0: number, y0: number, x1: number, y1: number) => void; endPan: () => { dx: number; dy: number }; seenAt: (x: number, z: number) => number;
   screenToWorld: (vx: number, vy: number) => [number, number]; rotate: (k: number) => void; sunHoursAt: (x: number, y: number) => number | null;
   dir8: (a: number) => number; debugFades: () => { type: string; fade: number; want: number | null }[]; ripple: (x: number, z: number, amp?: number) => void;
   setWaterQuality: (q: string) => void; readonly waterQuality: WaterQuality; setParticleQuality: (q: string) => void; readonly particleQuality: string;
@@ -2026,7 +2026,7 @@ void main() {
     const k = lerp(1, need.w / Math.max(0.01, camera.right - camera.left), ze);
     zoomCam.left = camera.left * k; zoomCam.right = camera.right * k; zoomCam.top = camera.top * k; zoomCam.bottom = camera.bottom * k;
     const c = zoomCenter ?? { x: g.cx, y: g.cy };
-    zoomAt.set(lerp(camTarget.x, c.x, ze), lerp(camTarget.y, groundY(c.x, c.y), ze), lerp(camTarget.z, c.y, ze));
+    zoomAt.set(lerp(camTarget.x, c.x, ze), lerp(camTarget.y, groundY(c.x, c.y) + 1 / ZH.SPOTS, ze), lerp(camTarget.z, c.y, ze)); // stred na pôde záhonu
     zoomCam.position.copy(camera.position).sub(camTarget).add(zoomAt);
     zoomCam.quaternion.copy(camera.quaternion);
     zoomCam.updateProjectionMatrix(); zoomCam.updateMatrixWorld();
@@ -2063,11 +2063,12 @@ void main() {
   }
   const camTarget = new THREE.Vector3();
   // Priblížený (spojený) záhon (#179): jeho časti, stred a rozmery v políčkach. Bod záhonu (1/8 políčka) je v priblížení
-  // rovnako veľký ako políčko v hre – uhlopriečka obrazovky má D.VIEW_DIAG bodov. Väčší spojený záhon sa posúva ťahom
-  // prsta (zoomCenter = stred pohľadu v políčkach, začína na ťuknutom záhone, nesmie z obdĺžnika spojeného záhonu).
+  // rovnako veľký ako políčko v hre – uhlopriečka obrazovky má D.VIEW_DIAG bodov. Pohľad je vždy vycentrovaný na jedno
+  // políčko – časť záhonu v S.zoom (zoomCenter k nej plynulo dobieha); počas ťahu prstom ide za prstom, po pustení
+  // klient vyberie susedné políčko (8 smerov) a pohľad sa naň docentruje.
   const ZOOM_DIAG = D.VIEW_DIAG / ZH.SPOTS;
-  let zoomCenter: { x: number; y: number } | null = null;
-  interface ZoomGroup { beds: ZahonView[]; cx: number; cy: number; w: number; h: number }
+  let zoomCenter: { x: number; y: number } | null = null, zoomDrag = false;
+  interface ZoomGroup { beds: ZahonView[]; cx: number; cy: number; w: number; h: number; fx: number; fy: number } // fx, fy = stred políčka v strede pohľadu
   let zoomLast: ZoomGroup | null = null; // počas zatvárania sa záhon zmenšuje späť na svoje miesto
   function zoomTarget(): ZoomGroup | null {
     const zm = S.zoom;
@@ -2077,8 +2078,7 @@ void main() {
     const beds = ZH.groupOf<ZahonView>(S.objects, o), xs = beds.map(b => b.x), ys = beds.map(b => b.y);
     const x0 = Math.min(...xs), x1 = Math.max(...xs) + 1, y0 = Math.min(...ys), y1 = Math.max(...ys) + 1;
     zoomCenter ??= { x: o.x + 0.5, y: o.y + 0.5 };
-    zoomCenter = { x: Math.max(x0, Math.min(x1, zoomCenter.x)), y: Math.max(y0, Math.min(y1, zoomCenter.y)) };
-    return zoomLast = { beds, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0 };
+    return zoomLast = { beds, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0, fx: o.x + 0.5, fy: o.y + 0.5 };
   }
   function placeCamera(dt: number): void {
     if (api.placeCamera) {
@@ -2157,15 +2157,14 @@ void main() {
     if (!zoomCenter) return;
     panPlane.constant = -groundY(zoomCenter.x, zoomCenter.y);
     if (!groundHit(x0, y0, panA) || !groundHit(x1, y1, panB)) return;
+    zoomDrag = true;
     zoomCenter = { x: zoomCenter.x + panA.x - panB.x, y: zoomCenter.y + panA.z - panB.z };
   }
-  // Kurzor klávesnice v priblížení: keď bod vyjde k okraju obrazovky, pohľad sa naň posunie
-  function zoomFollow(id: number, sx: number, sy: number): void {
-    const b = S.objects.find(q => q.id === id);
-    if (!b || !zoomCenter) return;
-    const x = b.x + (sx + 0.5) / ZH.SPOTS, y = b.y + (sy + 0.5) / ZH.SPOTS;
-    v3.set(x, groundY(x, y), y).project(zoomCam);
-    if (Math.abs(v3.x) > 0.6 || Math.abs(v3.y) > 0.6) zoomCenter = { x, y };
+  // Koniec ťahu: o koľko políčok sa pohľad posunul od stredového políčka (klient podľa toho vyberie suseda)
+  function endPan(): { dx: number; dy: number } {
+    zoomDrag = false;
+    const g = zoomTarget();
+    return g && zoomCenter ? { dx: zoomCenter.x - g.fx, dy: zoomCenter.y - g.fy } : { dx: 0, dy: 0 };
   }
 
   // ---------- Prekrytie: mená, bubliny, efekty, počasie ----------
@@ -2201,6 +2200,7 @@ void main() {
     const zt = zoomTarget(); // priblížený záhon (#179) plynulo narastie a zmenší sa
     zoomEase = zt ? Math.min(1, zoomEase + dt * 3) : Math.max(0, zoomEase - dt * 3);
     if (!zt && zoomEase <= 0) zoomCenter = null; // ďalšie priblíženie začne na ťuknutom záhone
+    if (zt && zoomCenter && !zoomDrag) { const k = Math.min(1, dt * 10); zoomCenter = { x: lerp(zoomCenter.x, zt.fx, k), y: lerp(zoomCenter.y, zt.fy, k) }; } // docentrovať na políčko
     lighting(min, se);
     let tp = statsOn ? performance.now() : 0;
     updateShadowMap(min, se);
@@ -2465,7 +2465,7 @@ void main() {
     lightAt(x, groundY(x, z), z, lastLights, lastLights.length, o);
     return o.seen;
   }
-  return { frame, resize, pick, pickSpot, panZoom, zoomFollow, seenAt, screenToWorld, rotate, sunHoursAt, dir8, debugFades, ripple, setWaterQuality, get waterQuality() { return waterQuality; }, setParticleQuality: particles.setQuality, get particleQuality() { return particles.quality; }, setGrassQuality: grass3d.setQuality, get grassQuality() { return grass3d.quality; }, setStats, stats, get yaw() { return yaw; }, debugView, invalidateShadows, dispose };
+  return { frame, resize, pick, pickSpot, panZoom, endPan, seenAt, screenToWorld, rotate, sunHoursAt, dir8, debugFades, ripple, setWaterQuality, get waterQuality() { return waterQuality; }, setParticleQuality: particles.setQuality, get particleQuality() { return particles.quality; }, setGrassQuality: grass3d.setQuality, get grassQuality() { return grass3d.quality; }, setStats, stats, get yaw() { return yaw; }, debugView, invalidateShadows, dispose };
 }
 
 
