@@ -1992,7 +1992,7 @@ void main() {
   // Priblížený záhon (#179): kamera hry sa nehýbe – zväčší sa len záhon. Svet sa nakreslí do textúry v štvrtinovom
   // rozlíšení, tá sa roztiahne a rozmaže cez celú obrazovku (a trochu stmaví), potom sa vymaže hĺbka a záhon (spojený
   // záhon: všetky jeho časti) a jeho kvety (vrstva ZOOM_LAYER) sa nakreslia vlastnou kamerou zoomCam – zväčšené a v strede.
-  const ZOOM_LAYER = 6;
+  const ZOOM_LAYER = 6, ZOOM_DIM = 7; // políčko v strede pohľadu / ostatné časti spojeného záhonu (stmavené)
   let zoomRT: THREE.WebGLRenderTarget | null = null;
   const blurMat = new THREE.ShaderMaterial({
     uniforms: { map: { value: null }, texel: { value: new THREE.Vector2(1, 1) }, amount: { value: 0 } },
@@ -2013,11 +2013,16 @@ void main() {
   const blurScene = new THREE.Scene(), blurCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   blurScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), blurMat));
   // Záhon a jeho kvety na vrstve ZOOM_LAYER (len priblížený spojený záhon)
-  function markZoomLayer(beds: readonly ZahonView[]): void {
-    const ids = new Set(beds.map(b => b.id));
-    for (const m of fineMeshes) { if (m.fineType === 'zahon' && beds.some(b => m.tile?.x === b.x && m.tile.y === b.y)) m.layers.enable(ZOOM_LAYER); else m.layers.disable(ZOOM_LAYER); }
-    for (const [k, sp] of plantSprites) { if (k >= ZAHON_SPRITE && ids.has(Math.floor((k - ZAHON_SPRITE) / 64))) sp.layers.enable(ZOOM_LAYER); else sp.layers.disable(ZOOM_LAYER); }
+  function markZoomLayer(beds: readonly ZahonView[], focus: number | null): void {
+    const layerOf = (id: number | undefined): number | null => (id === undefined || !beds.some(b => b.id === id) ? null : id === focus ? ZOOM_LAYER : ZOOM_DIM);
+    const put = (o: THREE.Object3D, l: number | null): void => { o.layers.disable(ZOOM_LAYER); o.layers.disable(ZOOM_DIM); if (l !== null) o.layers.enable(l); };
+    for (const m of fineMeshes) put(m, m.fineType === 'zahon' ? layerOf(beds.find(b => m.tile?.x === b.x && m.tile.y === b.y)?.id) : null);
+    for (const [k, sp] of plantSprites) put(sp, k >= ZAHON_SPRITE ? layerOf(Math.floor((k - ZAHON_SPRITE) / 64)) : null);
   }
+  // stmavenie všetkého pod políčkom v strede pohľadu (rozmazaná záhrada aj ostatné časti spojeného záhonu)
+  const dimMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthTest: false, depthWrite: false });
+  const dimScene = new THREE.Scene();
+  dimScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), dimMat));
   // Kamera zväčšeného záhonu: ten istý smer ako kamera hry, stred plynulo zo stredu obrazovky na spojený záhon a výrez
   // plynulo menší, kým záhon nezaplní šírku obrazovky (ze 0 = presne ako kamera hry)
   const zoomCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400), zoomAt = new THREE.Vector3();
@@ -2043,6 +2048,11 @@ void main() {
     renderer.render(blurScene, blurCam);
     const mask = camera.layers.mask;
     renderer.autoClear = false;
+    renderer.clearDepth();
+    zoomCam.layers.set(ZOOM_DIM); // ostatné časti spojeného záhonu ostrá, potom spolu so záhradou stmavené
+    renderer.render(scene, zoomCam);
+    dimMat.opacity = 0.42 * ze;
+    renderer.render(dimScene, blurCam);
     renderer.clearDepth();
     zoomCam.layers.set(ZOOM_LAYER);
     renderer.render(scene, zoomCam);
@@ -2302,7 +2312,7 @@ void main() {
     renderReflection();
     if (statsOn) { const q = performance.now(); passMs.refl = q - tp; tp = q; }
     const zg = zoomTarget() ?? (zoomEase > 0 ? zoomLast : null), ze = zoomEase * zoomEase * (3 - 2 * zoomEase);
-    markZoomLayer(zg && zoomEase > 0.02 ? zg.beds : []);
+    markZoomLayer(zg && zoomEase > 0.02 ? zg.beds : [], S.zoom?.id ?? null);
     if (zg && zoomEase > 0.02) { placeZoomCam(zg, ze); renderZoomed(ze); } // priblížený záhon (#179)
     else {
       renderWithSky();
