@@ -2322,6 +2322,13 @@ void main() {
     drawOverlay(t);
   }
 
+  // Obrys tvaru záhonu v políčku (u, v ∈ 0–1, x doprava, y dole): štvorec, šikmý (trojuholník s pravým uhlom vľavo dole
+  // pri otočení 0) či oblý (štvrťkruh so stredom tam), otočený o rot × 90° v smere hodinových ručičiek (#186)
+  function shapeOutline(sh: D.ZahonShape, rot: number): [number, number][] {
+    const base: [number, number][] = sh === 'sq' ? [[0, 0], [1, 0], [1, 1], [0, 1]] : sh === 'diag' ? [[0, 0], [0, 1], [1, 1]]
+      : [[0, 1], ...Array.from({ length: 13 }, (_, k): [number, number] => [Math.sin(k / 12 * Math.PI / 2), 1 - Math.cos(k / 12 * Math.PI / 2)])];
+    return base.map(([u, v]) => { for (let k = 0; k < rot; k++) [u, v] = [1 - v, u]; return [u, v]; });
+  }
   function drawOverlay(t: number): void {
     const c = ov, cw = api.ov.width, ch = api.ov.height, ppb = pxPerBlock();
     c.clearRect(0, 0, cw, ch);
@@ -2350,7 +2357,8 @@ void main() {
       // políčko v strede pohľadu: tenký obrys po okraji s jemnou žiarou
       if (zoomEase > 0.6) {
         const tx = zt.fx - 0.5, ty = zt.fy - 0.5, h = groundY(zt.fx, zt.fy) + 1 / ZH.SPOTS + 0.02;
-        glow(([[0, 0], [1, 0], [1, 1], [0, 1]] as const).map(([u, v]) => projZ(tx + u, h, ty + v)), 'rgba(255,247,230,0.75)', Math.max(1.5, zppb * 0.012), zppb * 0.035);
+        const fb = zt.beds.find(q => q.id === S.zoom?.id); // rohový záhon: obrys po uhlopriečke či oblúku
+        glow(shapeOutline(fb?.sh ?? 'sq', fb?.rot ?? 0).map(([u, v]) => projZ(tx + u, h, ty + v)), 'rgba(255,247,230,0.75)', Math.max(1.5, zppb * 0.012), zppb * 0.035);
       }
       for (const m of marks) {
         if (m.k === 'no') { path(corners(m, 0.92)); c.fillStyle = 'rgba(70,70,70,0.42)'; c.fill(); continue; }
@@ -2361,9 +2369,7 @@ void main() {
     // náhľad rohového záhonu pred položením (#186): tvar na políčku, otočený ako ho hráč otočil
     if (S.placeZ && !S.zoom) {
       const z = S.placeZ, zi = D.zahonOfItem(z.item), h = groundY(z.x + 0.5, z.y + 0.5) + 0.02;
-      // tvar pri otočení 0 (x doprava, y dole): šikmý = trojuholník s pravým uhlom vľavo dole, oblý = štvrťkruh so stredom tam
-      const base: [number, number][] = zi?.sh === 'diag' ? [[0, 0], [0, 1], [1, 1]] : [[0, 1], ...Array.from({ length: 13 }, (_, k): [number, number] => [Math.sin(k / 12 * Math.PI / 2), 1 - Math.cos(k / 12 * Math.PI / 2)])];
-      const pts = base.map(([u, v]) => { for (let k = 0; k < z.rot; k++) [u, v] = [1 - v, u]; return project(z.x + u, h, z.y + v); });
+      const pts = shapeOutline(zi?.sh ?? 'diag', z.rot).map(([u, v]) => project(z.x + u, h, z.y + v));
       c.beginPath(); pts.forEach((p, i) => { if (i) c.lineTo(p.x, p.y); else c.moveTo(p.x, p.y); }); c.closePath();
       c.fillStyle = 'rgba(255,230,90,0.28)'; c.fill();
       c.strokeStyle = 'rgba(255,230,90,0.95)'; c.lineWidth = Math.max(2, ppb * 0.05); c.stroke();
