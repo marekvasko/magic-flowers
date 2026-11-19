@@ -88,7 +88,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
       : sel.startsWith('cov_') ? 'Ťukni alebo potiahni prstom po bodoch – položíš pokryv. 🪣'
         : sel === 'can' ? 'Ťukni na záhon – jedno poliatie stačí na celú časť záhonu. 💧'
           : sel === 'compost' ? 'Ťukni na záhon – kompost pohnojí celú časť záhonu. 🟤'
-            : sel === 'hoe' ? 'Ťukni na kvet – motykou ho vykopeš.'
+            : sel === 'hoe' ? 'Motykou vykopeš kvet a zoberieš pokryv (štrk, kamene, trávnik) – ťuknutím alebo ťahom prsta.'
               : sel === 'pick' ? 'Ťukni krompáčom na záhon – zrušíš ho. ⛏️'
               : 'Prázdnou rukou zrežeš rozkvitnutý kvet alebo zoberieš pokryv (aj ťahom prsta).';
     hint.textContent += ' Ťahom prsta posunieš pohľad. Ťukni mimo záhonu (Esc) – späť.';
@@ -115,6 +115,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     if (sel.startsWith('cov_')) { const c = sel.slice(4); if (D.isCoverId(c)) { dp.send({ t: 'zahon', op: 'cover', id, c, spots: [[sx, sy]] }); dp.sfx('pop'); } return; }
     if (sel === 'pick') { destroy(z); return; } // krompáč = zrušiť túto časť záhonu
     if (sel === 'hoe') {
+      if (here?.c) { dp.send({ t: 'zahon', op: 'uncover', id, spots: [[sx, sy]] }); dp.sfx('dig'); return; } // pokryv späť do batohu
       if (here?.p) { dp.send({ t: 'zahon', op: 'dig', id, sx, sy }); dp.sfx('dig'); } else dp.toast('Tu nič nerastie. Záhon zrušíš krompáčom. ⛏️');
       return;
     }
@@ -136,7 +137,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     if (!s || frameAt(s)) return;
     const z = byId(s.id);
     if (S.sel.startsWith('cov_')) paint = { add: true, spots: [s] };
-    else if (!S.sel && z && ZR.spotAt(z, s.sx, s.sy)?.c) paint = { add: false, spots: [s] };
+    else if ((!S.sel || S.sel === 'hoe') && z && ZR.spotAt(z, s.sx, s.sy)?.c) paint = { add: false, spots: [s] }; // prázdna ruka aj motyka zbierajú pokryv
   }
   function move(cx: number, cy: number): void {
     if (!cur()) return;
@@ -212,7 +213,7 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     if (sel.startsWith('seed_') || D.isWild(sel)) return !ZR.plantError(bed(z), sx, sy, sel.startsWith('seed_') ? D.speciesOfItem(sel) : null);
     if (sel.startsWith('cov_')) return !ZR.coverError(bed(z), sx, sy);
     if (sel === 'pick') return true;
-    if (sel === 'hoe') return !!here?.p;
+    if (sel === 'hoe') return !!here?.p || !!here?.c;
     return ZR.blooming(here) || !!here?.c;
   }
   // krompáčom na záhon v hre (bez priblíženia)
