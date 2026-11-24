@@ -635,6 +635,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
   // Three.js kreslí do #gl, #cv zostáva navrchu ako prekrytie (mená, efekty) a prijíma dotyky
   let R3: Render3D | null = null;
   let Zh: ClientZahon | null = null; // priblížený záhon (#179) – vznikne pri hracej ploche (gameEl)
+  let zahonPick: D.ZahonFrame = 'drevo'; // rám záhonu vybraný na trhu (ostane aj po prekreslení)
   $('rotL').onclick = () => { R3?.rotate(-1); };
   $('rotR').onclick = () => { R3?.rotate(1); };
   // 3D pohľad aj s Three.js je samostatný kúsok balíka (esbuild ho načíta až teraz)
@@ -1181,11 +1182,22 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
         const DK = D.DOCK; // mólo s loďkou (#160)
         buyRow(DK.icon, DK.name, 'Spoločná stavba pri jazierku s loďkou pre dvoch. Loďkou sa dostaneš aj tam, kam z brehu nikto nedočiahne. V zime leží prevrátená na móle.',
           S.dock?.built ? 'Stojí' : null, DK.price, DK.rep, () => { send({ t: 'build', id: 'dock' }); }, Art.icon('dock'));
-        // Záhony (#179): všetky druhy rovnako, líšia sa len rámom; pokryvy po vedrách
+        // Záhony (#179): všetky druhy rovnako, líšia sa len rámom (prepínač v riadku); pokryvy po vedrách
         body.appendChild(h('div', { class: 'row' }, h('b', null, `${D.ZAHON.icon} Záhony – kvety a kamene na jednom políčku`)));
-        for (const v of D.ZAHON_FRAMES) {
-          buyRow(D.ZAHON.icon, D.ZAHON_NAMES[v], 'Na jedno políčko trávy, zaberie 1 miesto v povolení. Kvety a pokryvy v ňom rozložíš po bodoch, krhla poleje celý záhon naraz.',
-            null, D.ZAHON.price, D.ZAHON.rep, () => { send({ t: 'zahon', op: 'buy', v }); }, Art.icon(`zahon_${v}`));
+        { // jeden riadok: prepínač rámu nad cenou, ikona sa mení podľa výberu
+          const FRAME_LABEL: Readonly<Record<D.ZahonFrame, string>> = { drevo: 'Drevený', prut: 'Prútený', kamen: 'Kamenný', tehla: 'Tehlový' };
+          const pic = h('img', { src: Art.icon(`zahon_${zahonPick}`) }), name = h('b', null, `${D.ZAHON.icon} Záhon`);
+          const pick = h('select', { class: 'zpick', title: 'Rám záhonu' }, ...D.ZAHON_FRAMES.map(v => h('option', { value: v }, FRAME_LABEL[v])));
+          pick.value = zahonPick;
+          pick.addEventListener('change', () => {
+            if (!D.isZahonFrame(pick.value)) return;
+            zahonPick = pick.value; pic.src = Art.icon(`zahon_${zahonPick}`);
+          });
+          const btn = h('button', { class: 'btn', onclick: () => { send({ t: 'zahon', op: 'buy', v: zahonPick }); } }, D.ZAHON.price + '🪙');
+          if (S.coins < D.ZAHON.price || lvl < D.ZAHON.rep) btn.disabled = true;
+          body.appendChild(h('div', { class: 'row' }, pic,
+            h('div', { class: 'info' }, name, h('small', null, `Na jedno políčko trávy, zaberie 1 miesto v povolení. Kvety a pokryvy v ňom rozložíš po bodoch, krhla poleje celý záhon naraz. · treba ⭐${String(D.ZAHON.rep)}`)),
+            h('div', { class: 'btns col' }, pick, btn)));
         }
         for (const c of D.COVER_IDS) {
           const C = D.COVERS[c];

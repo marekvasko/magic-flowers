@@ -97,6 +97,9 @@ button { font: inherit; cursor: pointer; border: none; }
 .row .info b { display: block; font-size: 14.5px; }
 .row .info small { display: block; color: #7a6a4a; font-size: 12px; }
 .row .btns { display: flex; gap: 4px; }
+/* prepínač druhu nad cenou (rám záhonu, #179) */
+.row .btns.col { flex-direction: column; align-items: stretch; }
+.row .btns select.zpick { font: inherit; font-size: 13px; font-weight: 700; color: #5b3a1a; background: #fff8e7; border: 2px solid #c9a46a; border-radius: 10px; padding: 3px 2px; }
 .btn { padding: 8px 10px; border-radius: 10px; background: #6b3fa0; color: #fff; font-weight: 700; font-size: 13px; white-space: nowrap; }
 .btn.alt { background: #3c7d3f; }
 .btn.gray { background: #b9a888; }
