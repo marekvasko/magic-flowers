@@ -5,6 +5,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
 import { spawn } from 'node:child_process';
 import type { ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
@@ -23,7 +24,7 @@ import * as Ice from '../src/server/ice.ts';
 import { sl } from '../src/server/game.ts';
 import type { GameSlices, GameWorld } from '../src/server/game.ts';
 import type { Container, Presence, Tile } from '../src/server/world.ts';
-import { must, parseJson, parseMsg, partial, rethrow, testWorld } from './helpers.ts';
+import { must, parseJson, parseMsg, partial, portOf, rethrow, testWorld } from './helpers.ts';
 import { setStock } from './game-world.ts';
 const TPD = D.TICKS_PER_DAY;
 const SP = must(Econ.PLANTABLE.find(k => !D.SPECIES[k].strict)); // bežný kvet
@@ -622,6 +623,8 @@ test('uložený svet + denník (alebo zaznamenané dávky akcií) dajú ten ist�
 });
 
 type Server = ChildProcessByStdio<null, Readable, Readable>;
+// voľný port od systému (náhodný port sa občas zrazil s iným testom)
+function freePort(): Promise<number> { return new Promise(r => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = portOf(srv); srv.close(() => { r(p); }); }); }); }
 function startServer(dataDir: string, port: number, env?: Partial<Record<string, string>>): Promise<Server> {
   const proc = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'src', 'server', 'server.ts')], {
     env: Object.assign({}, process.env, { PORT: String(port), DATA_DIR: dataDir }, env || {}), stdio: ['ignore', 'pipe', 'pipe']
@@ -636,7 +639,7 @@ function stopServer(proc: Server): Promise<void> { return new Promise(r => { pro
 
 test('server: denník sa píše do data/journal-<svet>.jsonl – značka načítania, záznam po každej dávke, veľký sa otočí', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-journal-'));
-  const port = 43000 + Math.floor(Math.random() * 2000);
+  const port = await freePort();
   // bežiaci svet, ktorý bol 2 dni vypnutý: pri načítaní dobehne ~60 dávok
   const w = makeWorld(23, D.DAWN_TICK + 6);
   // uloženie starého formátu (v9) – migrácia na serveri ho doplní

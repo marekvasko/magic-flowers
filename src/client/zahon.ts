@@ -44,9 +44,9 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string | null, .
 export function createZahon(dp: ZahonDeps): ClientZahon {
   const { S } = dp;
   let paint: { add: boolean; spots: PSpot[] } | null = null, cursor: PSpot = { id: 0, sx: 3, sy: 3 }, tapAt = { id: 0, sx: 0, sy: 0, t: 0, act: false };
-  const bar = el('div', 'zbar hidden'), title = el('div', 'ztitle'), hint = el('div', 'zhint hidden');
+  const bar = el('div', 'zbar hidden'), title = el('div', 'ztitle');
   bar.append(title);
-  dp.root.append(bar, hint);
+  dp.root.append(bar);
   // Zrušenie záhonu krompáčom (v priblíženom pohľade aj priamo na záhon v hre) – hneď, bez okna s potvrdením.
   // Ak bol priblížený a zo spojeného záhonu ostali ďalšie časti, pohľad ostane na nich.
   function destroy(z: ZahonView): void {
@@ -69,29 +69,20 @@ export function createZahon(dp: ZahonDeps): ClientZahon {
     if (!z) return;
     S.zoom = { id: z.id };
     cursor = { id: z.id, sx: 3, sy: 3 }; paint = null; last = null;
-    bar.classList.remove('hidden'); hint.classList.remove('hidden'); dp.root.classList.add('zooming');
+    bar.classList.remove('hidden'); dp.root.classList.add('zooming');
     refresh();
   }
   function close(): void {
     S.zoom = null; paint = null;
-    bar.classList.add('hidden'); hint.classList.add('hidden'); dp.root.classList.remove('zooming');
+    bar.classList.add('hidden'); dp.root.classList.remove('zooming');
   }
-  // Text hore (názov a stav; spojený záhon: počet častí) a nápoveda podľa toho, čo je v ruke
+  // Text hore (názov a stav; spojený záhon: počet častí)
   function refresh(): void {
     const z = cur();
     if (!z) { if (S.zoom) close(); return; }
     const g = group(z), n = g.length, wet = g.filter(b => b.w).length;
     const name = n === 1 ? D.ZAHON_NAMES[z.v] : `Spojený záhon · ${String(n)} ${n < 5 ? 'časti' : 'častí'}`;
     title.textContent = `${name} · ${wet === n ? '💧 poliaty' : wet ? '💧 sčasti poliaty' : '🏜️ suchý'}${g.every(b => b.r) ? ' · 🌱 pohnojený' : ''}`;
-    const sel = S.sel;
-    hint.textContent = sel.startsWith('seed_') || D.isWild(sel) ? 'Ťukni na bod – tam kvet zasadíš. 🌱'
-      : sel.startsWith('cov_') ? 'Ťukni alebo potiahni prstom po bodoch – položíš pokryv. 🪣'
-        : sel === 'can' ? 'Ťukni na záhon – jedno poliatie stačí na celú časť záhonu. 💧'
-          : sel === 'compost' ? 'Ťukni na záhon – kompost pohnojí celú časť záhonu. 🟤'
-            : sel === 'hoe' ? 'Motykou vykopeš kvet a zoberieš pokryv (štrk, kamene, trávnik) – ťuknutím alebo ťahom prsta.'
-              : sel === 'pick' ? 'Ťukni krompáčom na záhon – zrušíš ho. ⛏️'
-              : 'Prázdnou rukou zrežeš rozkvitnutý kvet alebo zoberieš pokryv (aj ťahom prsta).';
-    hint.textContent += ' Susedné políčko: ťukni naň alebo potiahni. Mimo záhonu (Esc): späť.';
   }
   // Záhon so susedmi (spojené strany, kvety susedov kvôli zónam)
   const bed = (z: ZahonView): ZahonView & { open: ZR.Open; near: ZR.SpotLike[] } => ZR.bedOf<ZahonView>(S.objects, z);
