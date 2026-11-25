@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import * as RM from '../src/shared/robotmodel.ts';
 import type { RobotLook } from '../src/shared/robotmodel.ts';
+import type { ToolId } from '../src/shared/data.ts';
 
 const near = (a: number, b: number, eps = 1e-9): boolean => Math.abs(a - b) < eps;
 // predvoľby + veľa vygenerovaných robotov (generátor nesmie postaviť nič rozbité)
@@ -12,7 +13,7 @@ const LOOKS: [string, RobotLook][] = [
 // všetky kombinácie dielov s krajnými rozmermi
 for (const loco of RM.LOCOS) for (const body of RM.BODIES) for (const head of RM.HEADS) for (const ext of [0, 1]) {
   const nums = Object.fromEntries(RM.NUM_KEYS.map(k => [k, ext ? RM.NUM[k].max : RM.NUM[k].min]));
-  LOOKS.push([`${loco}/${body}/${head}/${ext ? 'max' : 'min'}`, RM.robotLook({ ...nums, loco, body, head, eyes: ext ? 1 : 2, chimney: true, panel: true, rivets: true, leds: true, acc: 'hat' })]);
+  LOOKS.push([`${loco}/${body}/${head}/${ext ? 'max' : 'min'}`, RM.robotLook({ ...nums, loco, body, head, eyes: ext ? 1 : 2, edges: ext ? 'sharp' : 'soft', chimney: true, panel: true, rivets: true, leds: true, acc: 'hat' })]);
 }
 
 test('každý robot: kĺby majú rodiča, diely sedia na kĺboch, čísla sú konečné, úchyty existujú', () => {
@@ -89,7 +90,7 @@ test('úchyt vo svete: robot pozerá v smere pohybu a', () => {
 test('genóm z nedôveryhodného JSON: zlé hodnoty → predvolené, čísla orezané do rozsahu, farby malými písmenami', () => {
   assert.deepStrictEqual(RM.robotLook(null), RM.PRESETS.hrdzavec.look);
   assert.deepStrictEqual(RM.robotLook(RM.PRESETS.kotul.look), RM.PRESETS.kotul.look);
-  const l = RM.robotLook({ loco: 'legs3', body: 'rocket', head: '__proto__', eyes: 3, paint: '#ABCDEF', accent: 'red', bw: 9, bh: -1, wear: 'x', leds: 'yes', chimney: true, extra: 1 });
+  const l = RM.robotLook({ loco: 'legs3', body: 'rocket', head: '__proto__', edges: 'pointy', eyes: 3, paint: '#ABCDEF', accent: 'red', bw: 9, bh: -1, wear: 'x', leds: 'yes', chimney: true, extra: 1 });
   assert.deepStrictEqual(l, { ...RM.PRESETS.hrdzavec.look, loco: 'legs3', paint: '#abcdef', bw: RM.NUM.bw.max, bh: RM.NUM.bh.min, chimney: true });
   assert.strictEqual(RM.robotLook({ armT: 0.0201234 }).armT, 0.02);
 });
@@ -99,8 +100,8 @@ test('generátor: rovnaké semienko = rovnaký robot, je platný a dav má všet
   assert.notDeepStrictEqual(RM.randomLook(42), RM.randomLook(43));
   const looks = Array.from({ length: 300 }, (_, i) => RM.randomLook(RM.hashStr('hráč ' + i)));
   for (const l of looks) assert.deepStrictEqual(RM.robotLook(l), l);
-  for (const k of ['loco', 'body', 'head', 'acc', 'eyes'] as const) {
-    const all = { loco: RM.LOCOS.length, body: RM.BODIES.length, head: RM.HEADS.length, acc: RM.ACCS.length, eyes: 2 }[k];
+  for (const k of ['loco', 'body', 'head', 'acc', 'eyes', 'edges'] as const) {
+    const all = { loco: RM.LOCOS.length, body: RM.BODIES.length, head: RM.HEADS.length, acc: RM.ACCS.length, eyes: 2, edges: 2 }[k];
     assert.strictEqual(new Set(looks.map(l => l[k])).size, all, k);
   }
   for (const l of looks) assert.notStrictEqual(l.paint, l.accent);
@@ -112,4 +113,49 @@ test('hrdza: viac ošúchaný robot má viac škvŕn, nový žiadnu; model je pr
   assert.strictEqual(rust(0), 0);
   assert.ok(rust(1) > rust(0.4) && rust(0.4) > 0);
   assert.deepStrictEqual(RM.robotModel(base), RM.robotModel(base));
+});
+
+const TOOLS: readonly ToolId[] = ['hoe', 'can', 'pick', 'lamp'];
+test('nosič: každé náradie má svoje miesto za chrbtom, miesta sú od seba, náradie v puzdre nesiaha na zem', () => {
+  for (const [name, look] of LOOKS) {
+    const m = RM.robotModel(look);
+    const back = Math.min(...m.parts.filter(p => p.j === 'body').map(p => p.p[2]));
+    const at = TOOLS.map(t => RM.slotAt(m, null, t));
+    for (const [i, p] of at.entries()) {
+      assert.ok(p[2] < back * m.scale - 0.01, `${name}: ${TOOLS[i]} nie je za chrbtom (${p[2]})`);
+      assert.ok(p[1] > 0.12, `${name}: ${TOOLS[i]} príliš nízko (${p[1]})`);
+    }
+    for (let i = 0; i < at.length; i++) for (let j = i + 1; j < at.length; j++) {
+      const a = at[i] ?? [0, 0, 0], b = at[j] ?? [0, 0, 0];
+      assert.ok(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) > 0.05, `${name}: ${TOOLS[i]} a ${TOOLS[j]} na jednom mieste`);
+    }
+    // motyka a krompáč v puzdrách po krajoch, krhla a lampáš na háčikoch medzi nimi a vyššie
+    const [hoe, can, pick, lamp] = at.map(p => p[0]);
+    assert.ok((hoe ?? 0) < (can ?? 0) && (can ?? 0) < (lamp ?? 0) && (lamp ?? 0) < (pick ?? 0), name + ': poradie miest na nosiči');
+    assert.ok(m.parts.some(p => p.j === 'rack'), name + ': nosič nemá diely');
+  }
+});
+
+test('pásy: slučka z článkov okolo kolies; pri jazde sa články posúvajú po slučke, dolná vetva stojí na zemi', () => {
+  const m = RM.robotModel(RM.PRESETS.hrdzavec.look);
+  assert.strictEqual(m.tracks.length, 2);
+  for (const tr of m.tracks) {
+    assert.ok(tr.links.length >= 18);
+    const P = RM.trackLength(tr);
+    // slučka je spojitá: body tesne pred a za každým zlomom sú pri sebe
+    for (let s = 0; s < P; s += P / 400) { const a = RM.trackAt(tr, s), b = RM.trackAt(tr, s + 1e-4); assert.ok(Math.hypot(a.y - b.y, a.z - b.z) < 1e-3, 's ' + s); }
+    assert.ok(near(RM.trackAt(tr, 0).y, tr.y + tr.R) && near(RM.trackAt(tr, P / 2).y, tr.y - tr.R, 1e-6));
+    assert.ok(tr.y - tr.R > 0 && tr.y - tr.R < 0.015, 'dolná vetva má byť pri zemi');
+    // horná vetva ide pri jazde dopredu
+    const l = tr.links[0], pose = RM.robotPose(m, { phase: 1, walking: true });
+    assert.ok(l && (pose.joints.get(l.j)?.d?.[2] ?? 0) > 0);
+  }
+});
+
+test('ostré hrany: kocky bez zaoblenia, väčšie valce a gule ako mnohosteny; oblé hrany bez mnohostenov (okrem pásov)', () => {
+  const soft = RM.robotModel({ ...RM.PRESETS.plechacik.look, edges: 'soft' }), sharp = RM.robotModel({ ...RM.PRESETS.plechacik.look, edges: 'sharp' });
+  assert.ok(!soft.parts.some(p => p.flat));
+  assert.ok(sharp.parts.filter(p => p.flat).length > 5);
+  for (const p of sharp.parts) if (p.shape.k === 'box' && ['paint', 'accent', 'metal', 'dark'].includes(p.m)) assert.ok(p.shape.r <= 0.004);
+  assert.ok(RM.robotModel(RM.PRESETS.hrdzavec.look).parts.some(p => p.flat), 'pásy majú ozubené kolesá');
 });

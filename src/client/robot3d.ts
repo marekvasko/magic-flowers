@@ -11,6 +11,8 @@ import { must } from '../shared/util.ts';
 // ---------- tvary ----------
 // Zaoblená kocka: kocka s viac dielikmi, ktorej body sa pritiahnu k vnútornej kocke a vytlačia o polomer
 function roundedBox(sx: number, sy: number, sz: number, r0: number, seg = 3): THREE.BufferGeometry {
+  // ostrá hrana: obyčajná kocka (inak by normály na hrane rozmazali tieň do plochy a hrana by vyzerala oblá)
+  if (r0 <= 0.005) return new THREE.BoxGeometry(sx, sy, sz);
   const r = Math.min(r0, sx / 2, sy / 2, sz / 2) * 0.999;
   const g = new THREE.BoxGeometry(sx, sy, sz, seg * 2, seg * 2, seg * 2);
   const pos = g.getAttribute('position'), nor = g.getAttribute('normal'), v = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
@@ -33,9 +35,10 @@ function geometry(s: Shape): THREE.BufferGeometry {
   if (g) return g;
   switch (s.k) {
     case 'box': g = roundedBox(s.s[0], s.s[1], s.s[2], s.r); break;
-    case 'cyl': g = new THREE.CylinderGeometry(s.r2 ?? s.r, s.r, s.h, Math.max(10, Math.round(s.r * 160))); break;
-    case 'sphere': g = new THREE.SphereGeometry(s.r, 20, 14); if (s.s) g.scale(...s.s); break;
-    case 'capsule': g = new THREE.CapsuleGeometry(s.r, s.h, 4, 12); break;
+    // s počtom stien n je diel mnohosten (ostré hrany, ploché tieňovanie – materiál flatShading)
+    case 'cyl': g = new THREE.CylinderGeometry(s.r2 ?? s.r, s.r, s.h, s.n ?? Math.max(10, Math.round(s.r * 160))); break;
+    case 'sphere': g = new THREE.SphereGeometry(s.r, s.n ?? 20, s.n ? Math.max(4, Math.round(s.n * 0.75)) : 14); if (s.s) g.scale(...s.s); break;
+    case 'capsule': g = new THREE.CapsuleGeometry(s.r, s.h, s.n ? 1 : 4, s.n ?? 12); break;
     case 'torus': g = new THREE.TorusGeometry(s.r, s.t, 8, 28); g.rotateX(Math.PI / 2); break;
     case 'dome': g = new THREE.SphereGeometry(s.r, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2); break;
   }
@@ -106,10 +109,6 @@ function toolMesh(id: ToolId): THREE.Group {
 }
 // Ako sa náradie drží v ruke (natočenie voči úchytu ruky): motyka a krompáč šikmo dopredu a dole, krhla za držadlo
 const HELD_ROT: Readonly<Record<ToolId, [number, number, number]>> = { hoe: [-0.9, 0, 0], pick: [-0.9, 0, 0], can: [-Math.PI / 2, 0, 0], lamp: [-Math.PI / 2, 0, 0] };
-// Miesta na nosiči na chrbte (posun voči úchytu chrbta, natočenie)
-const BACK_SLOTS: readonly { p: [number, number, number]; r: [number, number, number] }[] = [
-  { p: [0.07, -0.12, 0], r: [0, 0, -0.25] }, { p: [-0.07, -0.12, 0], r: [0, 0, 0.25] }, { p: [0.0, 0.05, -0.02], r: [0, Math.PI, 0] }, { p: [0.1, 0.06, -0.01], r: [0, Math.PI, 0] }
-];
 
 // ---------- robot ----------
 export interface Robot3D {
@@ -134,10 +133,13 @@ export function buildRobot(look: RobotLook): Robot3D {
     if (!j.parent) o.scale.setScalar(model.scale); // koreň nesie zmenšenie celého robota
     (j.parent ? must(joints.get(j.parent)) : group).add(o);
   }
+  // materiály s plochým tieňovaním pre ostré diely (mnohosteny), jeden na druh materiálu
+  const flatMats = new Map<Mat, THREE.MeshStandardMaterial>();
+  const flatMat = (m: Mat): THREE.MeshStandardMaterial => { let f = flatMats.get(m); if (!f) { f = mats[m].clone(); f.flatShading = true; flatMats.set(m, f); } return f; };
   const tagged = new Map<string, THREE.Mesh[]>();
   const partMesh = (p: Part): THREE.Mesh => {
     // para má každý obláčik vlastný materiál (mení sa mu priehľadnosť)
-    const mat = p.tag === 'steam' ? mats[p.m].clone() : mats[p.m];
+    const mat = p.tag === 'steam' ? mats[p.m].clone() : p.flat ? flatMat(p.m) : mats[p.m];
     if (p.tag === 'steam') steamMats.push(mat);
     const me = new THREE.Mesh(geometry(p.shape), mat);
     me.position.set(...p.p); if (p.r) me.rotation.set(...p.r);
@@ -154,7 +156,15 @@ export function buildRobot(look: RobotLook): Robot3D {
     must(joints.get(mt.j)).add(g);
     return g;
   };
-  const hand = mountGroup('handR'), back = mountGroup('back');
+  const hand = mountGroup('handR');
+  // miesta náradia na nosiči (puzdrá a háčiky)
+  const slotGroup = (tool: ToolId): THREE.Group => {
+    const sl = model.slots[tool], g = new THREE.Group();
+    g.position.set(...sl.p); if (sl.r) g.rotation.set(...sl.r); g.scale.setScalar(sl.s ?? 1);
+    must(joints.get(sl.j)).add(g);
+    return g;
+  };
+  const slots: Record<ToolId, THREE.Group> = { hoe: slotGroup('hoe'), can: slotGroup('can'), pick: slotGroup('pick'), lamp: slotGroup('lamp') };
   let lamp: THREE.Group | null = null;
   const tools: THREE.Group[] = [];
   function setTools(held: ToolId | null, carried: readonly ToolId[]): void {
@@ -167,14 +177,10 @@ export function buildRobot(look: RobotLook): Robot3D {
       const t = toolMesh(held); t.rotation.set(...HELD_ROT[held]); hand.add(t); tools.push(t);
       if (held === 'lamp') lamp = t;
     }
-    let i = 0;
-    for (const c of carried) {
+    // ostatné vlastnené náradie na svojom mieste na nosiči (rúčkou v puzdre alebo zavesené na háčiku)
+    for (const c of new Set(carried)) {
       if (c === held) continue;
-      const slot = BACK_SLOTS[i++];
-      if (!slot) break;
-      const t = toolMesh(c); t.position.set(...slot.p); t.rotation.set(...slot.r); t.scale.setScalar(0.85);
-      if (c === 'can' || c === 'lamp') t.position.y += 0.04;
-      back.add(t); tools.push(t);
+      const t = toolMesh(c); slots[c].add(t); tools.push(t);
     }
     held0 = held;
   }
@@ -207,9 +213,9 @@ export function buildRobot(look: RobotLook): Robot3D {
   function mountWorld(id: MountId, out = new THREE.Vector3()): THREE.Vector3 {
     group.updateMatrixWorld(true);
     if (id === 'handR' && lamp) { const f = lamp.getObjectByName('flame'); if (f) return f.getWorldPosition(out); }
-    return (id === 'handR' ? hand : id === 'back' ? back : must(joints.get(model.mounts[id].j))).getWorldPosition(out);
+    return (id === 'handR' ? hand : must(joints.get(model.mounts[id].j))).getWorldPosition(out);
   }
-  function dispose(): void { for (const m of [...Object.values(mats), ...steamMats]) m.dispose(); group.removeFromParent(); }
+  function dispose(): void { for (const m of [...Object.values(mats), ...steamMats, ...flatMats.values()]) m.dispose(); for (const t of tools) TOOL_FREE.get(t)?.(); group.removeFromParent(); }
   setTools(null, []);
   pose({});
   return { group, model, setTools, pose, mountWorld, dispose };

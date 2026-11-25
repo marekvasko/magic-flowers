@@ -1,5 +1,5 @@
 // Záložka Robots v /debug (#194): procedurálny generátor hráča ako 3D robota.
-//  - Presets: štyri ručne naladené roboty (predvoľby generátora) vedľa seba alebo jeden zblízka.
+//  - Presets: päť ručne naladených robotov (predvoľby generátora) vedľa seba alebo jeden zblízka.
 //  - Generator: robot zo semienka; každý diel (podvozok, trup, hlava, oči, doplnok), rozmer, drobnosť a farba sa dá zmeniť,
 //    „Copy parameters“ skopíruje genóm ako JSON (ten istý tvar, aký bude v uložení hráča).
 //  - Crowd: 12 robotov z nasledujúcich semienok (ako by vyzerali iní hráči); klik na semienko ho otvorí v generátore.
@@ -91,8 +91,8 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
   const main = h('div', { class: 'rb-main' }, panel, view);
   const info = h('div', { class: 'rb-info muted' },
     'Procedural robot generator for ', h('a', { href: 'https://github.com/marekvasko/magic-flowers/issues/194', target: '_blank' }, '#194'),
-    ': a robot is a genome of parts (chassis, body, head, eyes, details), sizes and colours; a seed gives a random one, the four presets are hand-tuned genomes. ',
-    `Every robot is scaled to ${RM.HEIGHT_MIN}–${RM.HEIGHT_MAX} tiles tall. The selected tool is in the right gripper, the other owned tools ride on the back rack. Drag to rotate; 1 grid square = 1 tile.`);
+    ': a robot is a genome of parts (chassis, body, head, eyes, details), sizes and colours; a seed gives a random one, the five presets are hand-tuned genomes. ',
+    `Every robot is scaled to ${RM.HEIGHT_MIN}–${RM.HEIGHT_MAX} tiles tall. The selected tool is in the right gripper; every other owned tool has its own place on the back rack (motyka and krompáč in the holster tubes, krhla and lampáš on the hooks), and an empty place stays visible. Drag to rotate; 1 grid square = 1 tile.`);
   el.replaceChildren(h('div', { class: 'rb' }, bar, main, info));
 
   // ---------- scéna ----------
@@ -210,6 +210,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
       h('label', null, 'Trup'), part('body', RM.BODIES, x => RM.PART_NAMES.body[x]),
       h('label', null, 'Hlava'), part('head', RM.HEADS, x => RM.PART_NAMES.head[x]),
       h('label', null, 'Oči', seg(['1', '2'], L.eyes - 1, i => { setLook({ ...st.look, eyes: i ? 2 : 1 }, true); })),
+      h('label', null, 'Hrany', seg(RM.EDGES.map(x => RM.PART_NAMES.edges[x]), RM.EDGES.indexOf(L.edges), i => { setLook({ ...st.look, edges: must(RM.EDGES[i]) }, true); })),
       h('label', null, 'Doplnok'), part('acc', RM.ACCS, x => RM.PART_NAMES.acc[x]),
       h('h5', null, 'Sizes'),
       ...RM.NUM_KEYS.filter(k => k !== 'wear').map(slider),
