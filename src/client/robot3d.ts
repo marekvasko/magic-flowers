@@ -154,6 +154,7 @@ export function buildRobot(look: RobotLook): Robot3D {
     if (p.tag === 'steam') steamMats.push(mat);
     const me = new THREE.Mesh(geometry(p.shape), mat);
     me.position.set(...p.p); if (p.r) me.rotation.set(...p.r);
+    if (p.tag) me.name = p.tag; // napr. holder:hoe – držiak náradia na nosiči
     me.castShadow = p.m !== 'glass'; me.receiveShadow = true;
     if (p.tag) { let a = tagged.get(p.tag); if (!a) tagged.set(p.tag, a = []); a.push(me); partBase.set(me, me.position.clone()); }
     return me;

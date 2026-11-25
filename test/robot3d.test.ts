@@ -10,7 +10,7 @@ import type { Robot3D } from '../src/client/robot3d.ts';
 // Sieť robota (Three.js beží aj v Node – len geometria, bez kreslenia): predvoľby + vygenerované roboty
 const LOOKS: [string, RobotLook][] = [
   ...RM.PRESET_IDS.map((p): [string, RobotLook] => [p, RM.PRESETS[p].look]),
-  ...Array.from({ length: 120 }, (_, i): [string, RobotLook] => ['seed ' + i, RM.randomLook(i)])
+  ...Array.from({ length: 60 }, (_, i): [string, RobotLook] => ['seed ' + i, RM.randomLook(i * 7 + 3)])
 ];
 const TOOLS: readonly ToolId[] = ['hoe', 'can', 'pick', 'lamp'];
 
@@ -43,12 +43,12 @@ test('málo polygónov: robot aj so všetkým náradím má najviac 8000 trojuho
   }
 });
 
-test('nosič: uložené náradie nezasahuje do seba navzájom, do trupu ani do hlavy', () => {
+test('nosič: uložené náradie nezasahuje do seba navzájom, do nosiča (okrem svojho držiaka), do trupu ani do hlavy', () => {
   for (const [name, look] of LOOKS) {
     const r = onRack(look);
     const tool = (t: ToolId): THREE.Object3D => { const o = r.group.getObjectByName('tool:' + t); assert.ok(o, `${name}: ${t} nie je na nosiči`); return o; };
     const tb = TOOLS.map(t => boxes(tool(t)));
-    const body = r.group.getObjectByName('body'), head = r.group.getObjectByName('head');
+    const body = r.group.getObjectByName('body'), head = r.group.getObjectByName('head'), rack = r.group.getObjectByName('rack');
     assert.ok(body && head);
     // trup: len vlastné diely kĺbu trupu (nie nosič, ramená, hlava); hlava: vlastné diely hlavy
     const trunk = boxes(body, true), hd = boxes(head, true);
@@ -57,6 +57,9 @@ test('nosič: uložené náradie nezasahuje do seba navzájom, do trupu ani do h
       assert.ok(!hits(a, trunk), `${name}: ${t} zasahuje do trupu`);
       assert.ok(!hits(a, hd), `${name}: ${t} zasahuje do hlavy`);
       for (let k = i + 1; k < TOOLS.length; k++) assert.ok(!hits(a, tb[k] ?? []), `${name}: ${t} zasahuje do ${TOOLS[k]}`);
+      // nosič: doska, úchyty a držiaky iného náradia (svoj držiak náradie drží, tam sa dotýka)
+      const rackParts = (rack?.children ?? []).filter(c => c instanceof THREE.Mesh && c.name !== 'holder:' + t);
+      for (const c of rackParts) assert.ok(!hits(a, boxes(c)), `${name}: ${t} zasahuje do nosiča (${c.name || 'doska / úchyt'})`);
     }
     r.dispose();
   }

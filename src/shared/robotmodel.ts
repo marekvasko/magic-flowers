@@ -563,7 +563,7 @@ export const TOOL_HOLD: Readonly<Record<ToolId, HoldKind>> = { hoe: 'staff', pic
 // nad ostatným náradím) – a medzi nimi pod sebou nič; hore vpravo od stredu priečka na dvoch stĺpikoch, na ktorej visí
 // krhla za oblúk držadla (hubicou dozadu), vľavo od stredu kolík so zahnutým koncom, na ktorom visí lampáš za krúžok.
 // Prázdny držiak je vidieť, takže je jasné, kam čo patrí.
-const RACK_W = 0.26, TOOL_ON_BACK = 0.75;
+const RACK_W = 0.3, TOOL_ON_BACK = 0.75;
 // Kde v modeli krhly (client/robot3d.ts) leží hák: vnútro vrcholu oblúka držadla (stred oblúka y 0,02, polomer 0,035,
 // hrúbka 0,008) mínus polomer háku 0,005
 export const CAN_HOOK = 0.02 + 0.035 - 0.008 - 0.005;
@@ -578,12 +578,14 @@ function rack(b: Builder, body: JointId, H: Hull, headBack: number): Record<Tool
   const slots: Partial<Record<ToolId, Mount>> = {};
   // puzdrá: rúra s obručou hore, mierne vyklonené do strán, objímka k doske
   for (const [tool, sx] of [['hoe', -1], ['pick', 1]] as const) {
-    const tilt = -sx * 0.14, qx = sx * RACK_W * 0.43, qy = -hh * 0.1, qz = -0.04, len = 0.15;
+    const tilt = -sx * 0.1, qx = sx * RACK_W * 0.43, qy = -hh * 0.1, qz = -0.04, len = 0.15;
     const ux = -Math.sin(tilt), uy = Math.cos(tilt); // os puzdra (hore)
-    b.add(j, { k: 'cyl', r: 0.024, h: len }, [qx, qy, qz], 'dark', [0, 0, tilt]);
-    b.add(j, { k: 'torus', r: 0.025, t: 0.006 }, [qx + ux * len / 2, qy + uy * len / 2, qz], 'metal', [0, 0, tilt]);
-    b.add(j, { k: 'torus', r: 0.026, t: 0.005 }, [qx, qy, qz], 'accent', [0, 0, tilt]);
-    b.add(j, { k: 'box', s: [0.03, 0.02, 0.03], r: 0.003 }, [qx * 0.8, qy, qz * 0.5], 'dark');
+    const hold = 'holder:' + tool;
+    b.add(j, { k: 'cyl', r: 0.024, h: len }, [qx, qy, qz], 'dark', [0, 0, tilt], hold);
+    b.add(j, { k: 'torus', r: 0.025, t: 0.006 }, [qx + ux * len / 2, qy + uy * len / 2, qz], 'metal', [0, 0, tilt], hold);
+    b.add(j, { k: 'torus', r: 0.026, t: 0.005 }, [qx, qy, qz], 'accent', [0, 0, tilt], hold);
+    // objímka priamo medzi puzdrom a doskou (nie do strany, kde visí krhla a lampáš)
+    b.add(j, { k: 'box', s: [0.018, 0.034, 0.012], r: 0.003 }, [qx, qy, -0.013], 'dark', undefined, hold);
     // náradie: rúčka zasunutá do puzdra, hlavica trčí nad ním; motyka čepeľou dozadu (nie do trupu)
     slots[tool] = { j, p: [qx + ux * (len / 2 - 0.05), qy + uy * (len / 2 - 0.05), qz], r: tool === 'hoe' ? [0, Math.PI, -tilt] : [0, 0, tilt], s: TOOL_ON_BACK };
   }
@@ -591,15 +593,15 @@ function rack(b: Builder, body: JointId, H: Hull, headBack: number): Record<Tool
   // krhla: hák z jednej strany – stĺpik od dosky, rameno naprieč (pozdĺž x) so zahnutým koncom. Oblúk držadla krhly
   // (v rovine yz, kolmo na rameno) je na ramene navlečený tak, že rameno leží vo vrchole oblúka; hubica smeruje dozadu.
   const cx = -0.035, cz = -0.07, px = cx + 0.03, ex = cx - 0.024;
-  b.add(j, { k: 'cyl', r: 0.005, h: -cz }, [px, top, cz / 2], 'metal', [Math.PI / 2, 0, 0]);   // stĺpik
-  b.add(j, { k: 'sphere', r: 0.0065 }, [px, top, cz], 'metal');                              // ohyb
-  b.add(j, { k: 'cyl', r: 0.005, h: px - ex }, [(px + ex) / 2, top, cz], 'metal', [0, 0, Math.PI / 2]); // rameno
-  b.add(j, { k: 'cyl', r: 0.005, h: 0.024 }, [ex, top + 0.01, cz], 'metal');                 // zahnutý koniec
+  b.add(j, { k: 'cyl', r: 0.005, h: -cz }, [px, top, cz / 2], 'metal', [Math.PI / 2, 0, 0], 'holder:can');   // stĺpik
+  b.add(j, { k: 'sphere', r: 0.0065 }, [px, top, cz], 'metal', undefined, 'holder:can');                       // ohyb
+  b.add(j, { k: 'cyl', r: 0.005, h: px - ex }, [(px + ex) / 2, top, cz], 'metal', [0, 0, Math.PI / 2], 'holder:can'); // rameno
+  b.add(j, { k: 'cyl', r: 0.005, h: 0.024 }, [ex, top + 0.01, cz], 'metal', undefined, 'holder:can');          // zahnutý koniec
   slots.can = { j, p: [cx, top - CAN_HOOK * TOOL_ON_BACK, cz], r: [0, Math.PI, 0], s: TOOL_ON_BACK };
   // lampáš: kolík dozadu so zahnutým koncom; krúžok lampáša je na ňom navlečený
   const lx = 0.05;
-  b.add(j, { k: 'cyl', r: 0.005, h: 0.09 }, [lx, top, -0.045], 'metal', [Math.PI / 2, 0, 0]);
-  b.add(j, { k: 'cyl', r: 0.005, h: 0.022 }, [lx, top + 0.009, -0.09], 'metal');
+  b.add(j, { k: 'cyl', r: 0.005, h: 0.09 }, [lx, top, -0.045], 'metal', [Math.PI / 2, 0, 0], 'holder:lamp');
+  b.add(j, { k: 'cyl', r: 0.005, h: 0.022 }, [lx, top + 0.009, -0.09], 'metal', undefined, 'holder:lamp');
   slots.lamp = { j, p: [lx, top + 0.005, -0.068], s: TOOL_ON_BACK };
   return { hoe: must(slots.hoe), pick: must(slots.pick), can: must(slots.can), lamp: must(slots.lamp) };
 }
