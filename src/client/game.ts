@@ -1322,6 +1322,13 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       body.appendChild(h('div', { class: 'row', style: 'flex-direction:column;align-items:stretch' },
         h('b', null, '✨ Častice (dážď, oheň, lístie, víly)'), h('div', { style: 'display:flex;gap:6px' }, ...pbtns),
         h('small', null, 'Platí len na tomto zariadení. Na slabšom telefóne zvoľ menej.')));
+      const gopts = [['off', 'vypnutá'], ['low', 'menej'], ['high', 'viac']] as const;
+      const gbtns = gopts.map(([q, l]) => h('button', { class: 'btn' + (r3.grassQuality === q ? '' : ' gray'), style: 'flex:1', onclick: () => {
+        r3.setGrassQuality(q); gbtns.forEach((b, i) => b.classList.toggle('gray', gopts[i]?.[0] !== q));
+      } }, l));
+      body.appendChild(h('div', { class: 'row', style: 'flex-direction:column;align-items:stretch' },
+        h('b', null, '🌾 Tráva (steblá, ktoré sa kývu vo vetre)'), h('div', { style: 'display:flex;gap:6px' }, ...gbtns),
+        h('small', null, 'Platí len na tomto zariadení. Na slabšom telefóne zvoľ menej alebo vypnutá.')));
       const fopts = [[false, 'vypnuté'], [true, 'zapnuté']] as const;
       const fbtns = fopts.map(([v, l]) => h('button', { class: 'btn' + (Fps.on === v ? '' : ' gray'), style: 'flex:1', onclick: () => {
         Fps.set(v); fbtns.forEach((b, i) => b.classList.toggle('gray', fopts[i]?.[0] !== v));

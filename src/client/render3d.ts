@@ -17,6 +17,8 @@ import { Art } from './art.ts';
 import { AO_CURVE, FACE_SHADE, bakeFine } from './finebake.ts';
 import type { CharOpts } from './art.ts';
 import { createParticles } from './particles3d.ts';
+import { STENCIL_GRASS, createGrass3d } from './grass3d.ts';
+import type { GrassPusher } from './grass3d.ts';
 import { overcast, skyLight } from './skylight.ts';
 import { createSpiders3d } from './spiders3d.ts';
 import { createVehicles3d } from './vehicles3d.ts';
@@ -148,10 +150,18 @@ ${DARK_GLSL}
 #ifdef VOX
 ${VOX_GLSL}
 #endif
+#ifdef GRASS
+uniform sampler2D grassMap;
+#endif
 void main() {
 #ifdef VOX
   vec4 tc = texture2D(voxColor, vUv);
   vec3 base = tc.rgb; float em = tc.a, ao = texture2D(voxAo, vUv2).r, tx = 0.0; // modely nie sú zem
+#elif defined(GRASS)
+  // 3D tráva (grass3d.ts): steblá z obrázka trsov, svieti ako zem
+  vec4 gc = texture2D(grassMap, vUv);
+  if (gc.a < 0.5) discard;
+  vec3 base = gc.rgb * vColor; float em = 0.0, ao = vAo, tx = 1.0;
 #else
   vec3 base = vTex > 0.5 ? texture2D(map, vUv).rgb * vColor : vColor;
   float em = vEmis, ao = vAo, tx = vTex;
@@ -453,6 +463,7 @@ export interface Render3D {
   screenToWorld: (vx: number, vy: number) => [number, number]; rotate: (k: number) => void; sunHoursAt: (x: number, y: number) => number | null;
   dir8: (a: number) => number; debugFades: () => { type: string; fade: number; want: number | null }[]; ripple: (x: number, z: number, amp?: number) => void;
   setWaterQuality: (q: string) => void; readonly waterQuality: WaterQuality; setParticleQuality: (q: string) => void; readonly particleQuality: string;
+  setGrassQuality: (q: string) => void; readonly grassQuality: string;
   setStats: (on: boolean) => void; stats: () => Stats; readonly yaw: number; debugView: () => DebugView; invalidateShadows: () => void; dispose: () => void;
 }
 
@@ -695,6 +706,7 @@ export function create(api: Render3DApi): Render3D {
     buildShafts();
     buildWater(se);
     buildGlacier();
+    grass3d.build(g, S.tiles, S.W, S.H, se, groundY); // 3D tráva na neprekopanej tráve a lúke (#192)
     shadowDirty = true;
     builtSeason = se;
   }
@@ -1460,7 +1472,9 @@ void main() {
     const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.NoColorSpace;
     const sp = makeSprite(0.96, 1.28); sp.material.map = tex;
     // „röntgen“: polopriehľadná silueta postavičky viditeľná aj cez budovy a stromy
-    const ghost = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.35, depthTest: false, depthWrite: false }));
+    // cez trávu sa röntgen nekreslí (stencil, grass3d.ts) – nohy v tráve ostanú skryté
+    const ghost = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.35, depthTest: false, depthWrite: false,
+      stencilWrite: true, stencilRef: STENCIL_GRASS, stencilFuncMask: STENCIL_GRASS, stencilWriteMask: 0, stencilFunc: THREE.NotEqualStencilFunc }));
     ghost.center.copy(sp.center); ghost.scale.copy(sp.scale); ghost.renderOrder = 1e6; ghost.layers.set(1); // až po všetkých zoslabených objektoch (aj stále zoslabených korunách obrov)
     scene.add(ghost);
     const shadow = blobShadow(); shadow.material = shadowMat.clone(); // vlastný materiál – tieň sa prelína s postavičkou
@@ -1973,6 +1987,10 @@ void main() {
     // kto sedí v loďke, je nakreslený v jej obrázku – vlastná postavička, tieň aj röntgen sa skryjú (meno ostane)
     for (const id of seated) { const o = chars.get(id); if (o) o.sp.visible = o.shadow.visible = o.ghost.visible = false; }
     spiders3d.update(dt, t, lights); // pavučiny, nory a pavúky (#57)
+    // tráva sa kýve vo vetre a rozostupuje sa pred postavičkami (#192)
+    const pushers: GrassPusher[] = [];
+    for (const o of chars.values()) if (o.alive && o.sp.visible) pushers.push({ x: o.sp.position.x, y: o.sp.position.y, z: o.sp.position.z, r: 0.4 });
+    grass3d.update(t, pushers, { x: camTarget.x, z: camTarget.z });
 
     const fading = updateFades(dt, meO ? meO.h ?? 1 : 1);
     const lit = zip3(curAmb, curSun, (a, s) => Math.min(1.2, a + s * 0.7));
@@ -2063,6 +2081,7 @@ void main() {
   // ---------- Častice a blčanie svetiel ----------
   const sceneBefore = new Set(scene.children);
   const particles = createParticles({ scene, camera, renderer, S, ripple });
+  const grass3d = createGrass3d({ THREE, scene, frag: FRAG, world: worldU });
   const particleObjs = scene.children.filter(o => !sceneBefore.has(o)); // objekty častíc (ladiaca stránka ich vie skryť)
   const boat3d = createBoat3d({ THREE, scene, camera, S, dir8, yaw: () => yaw, light: (x, y, z) => lightAt(x, y, z, lastLights, lastLights.length) });
   const spiders3d = createSpiders3d({ THREE, scene, S, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, renderer, world: worldU, maxLights: MAX_LIGHTS, fine: () => grid && grid.fine });
@@ -2120,7 +2139,7 @@ void main() {
     lightAt(x, groundY(x, z), z, lastLights, lastLights.length, o);
     return o.seen;
   }
-  return { frame, resize, pick, seenAt, screenToWorld, rotate, sunHoursAt, dir8, debugFades, ripple, setWaterQuality, get waterQuality() { return waterQuality; }, setParticleQuality: particles.setQuality, get particleQuality() { return particles.quality; }, setStats, stats, get yaw() { return yaw; }, debugView, invalidateShadows, dispose };
+  return { frame, resize, pick, seenAt, screenToWorld, rotate, sunHoursAt, dir8, debugFades, ripple, setWaterQuality, get waterQuality() { return waterQuality; }, setParticleQuality: particles.setQuality, get particleQuality() { return particles.quality; }, setGrassQuality: grass3d.setQuality, get grassQuality() { return grass3d.quality; }, setStats, stats, get yaw() { return yaw; }, debugView, invalidateShadows, dispose };
 }
 
 
