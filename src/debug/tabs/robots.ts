@@ -42,7 +42,7 @@ const CSS = `
 .rb-info { font-size: 12.5px; }
 .rb input[type=color] { width: 32px; height: 22px; padding: 0; border: 1px solid var(--line); border-radius: 4px; background: none; }
 `;
-const ANIMS = ['idle', 'walk', 'crawl', 'dance', 'dig', 'jump'] as const;
+const ANIMS = ['idle', 'walk', 'use tool', 'crawl', 'dance', 'dig', 'jump'] as const;
 const MODES = ['presets', 'generator', 'crowd'] as const;
 type Mode = typeof MODES[number];
 const TOOLS: readonly ToolId[] = ['hoe', 'can', 'pick', 'lamp'];
@@ -257,7 +257,9 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
     for (const [i, o] of robots.entries()) {
       const jump = st.anim === 'jump' ? Math.max(0, Math.sin(t * 3 + i)) * 0.35 : 0;
       o.r.group.position.set(o.x, 0, o.z);
-      o.r.pose({ phase: dist + i, t: t + i * 1.7, walking, crawl: st.anim === 'crawl', dance: st.anim === 'dance', dig: st.anim === 'dig' ? t : 0, jz: jump });
+      // „use tool“: vlastný pohyb náradia v ruke (motyka okopáva, krompáč seká, krhla polieva, lampáš svieti), bez náradia hrabe klepetom
+      const use = st.anim === 'use tool' && st.held ? { tool: st.held, t: t + i * 0.37 } : null;
+      o.r.pose({ phase: dist + i, t: t + i * 1.7, walking, crawl: st.anim === 'crawl', dance: st.anim === 'dance', dig: st.anim === 'dig' || (st.anim === 'use tool' && !st.held) ? t : 0, use, jz: jump });
       const ll = lampLights[i];
       if (ll && st.night && st.held === 'lamp') { o.r.mountWorld('handR', ll.position); ll.intensity = 1.6; }
       // menovka semienka nad hlavou robota v dave

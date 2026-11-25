@@ -204,7 +204,7 @@ export function buildRobot(look: RobotLook): Robot3D {
   let held0: ToolId | null = null;
   const q = new THREE.Quaternion(), up = new THREE.Vector3(), bar = new THREE.Vector3(), side = new THREE.Vector3(), lastBar = new THREE.Vector3(0, 0, 1), basis = new THREE.Matrix4();
   function pose(o: PoseOpts): void {
-    const P = RM.robotPose(model, { ...o, hold: o.hold !== undefined ? o.hold : held0 ? RM.TOOL_HOLD[held0] : null, digWith: o.digWith !== undefined ? o.digWith : held0 });
+    const P = RM.robotPose(model, { ...o, use: o.use !== undefined ? o.use : null, hold: o.hold !== undefined ? o.hold : held0 ? RM.TOOL_HOLD[held0] : null, digWith: o.digWith !== undefined ? o.digWith : held0 });
     for (const [id, g] of joints) {
       const jp = P.joints.get(id), base = must(jointBase.get(g));
       if (jp) g.rotation.set(...jp.r); else g.rotation.set(0, 0, 0);
@@ -221,7 +221,8 @@ export function buildRobot(look: RobotLook): Robot3D {
     // Zavesené náradie (krhla, lampáš) visí vždy zvislo dolu (gravitácia), držadlo je čo najbližšie k osi klepeta (z ruky)
     // a nikdy sa neprevráti: os y kĺbu = hore vo svete, os z = os klepeta premietnutá do vodorovnej roviny (keď je klepeto
     // zvislo, použije sa os x ruky); znamienko osi z ostáva ako v predošlom snímku, aby náradie neprehodilo o 180°.
-    if (hanging) {
+    if (hanging && P.rigid) hanging.quaternion.identity(); // pri polievaní drží krhlu pevne v klepete a nakláňa ju
+    else if (hanging) {
       group.updateMatrixWorld(true);
       hand.getWorldQuaternion(q).invert();
       up.set(0, 1, 0).applyQuaternion(q);
@@ -235,13 +236,32 @@ export function buildRobot(look: RobotLook): Robot3D {
       hanging.quaternion.setFromRotationMatrix(basis);
       hanging.rotateX(Math.sin((o.phase ?? 0) * 2) * (o.walking ? 0.12 : 0));
     }
+    water(P.pour, o.use?.t ?? o.t ?? 0);
+  }
+  // voda z ružice krhly pri polievaní: kvapky padajú po parabole, kým je krhla naklonená
+  const dropMat = new THREE.MeshStandardMaterial({ color: col('#8fd3ff'), roughness: 0.1, transparent: true, opacity: 0.8 });
+  const dropGeo = new THREE.IcosahedronGeometry(0.008, 0);
+  const drops = Array.from({ length: 12 }, () => { const d = new THREE.Mesh(dropGeo, dropMat); d.name = 'water'; d.visible = false; group.add(d); return d; });
+  const rose = new THREE.Vector3(), roseDir = new THREE.Vector3(), dp = new THREE.Vector3();
+  function water(pour: number, t: number): void {
+    const can = pour > 0.55 ? group.getObjectByName('tool:can') : undefined;
+    for (const [i, d] of drops.entries()) {
+      d.visible = false;
+      if (!can) continue;
+      can.localToWorld(rose.set(0, 0.005, 0.16));
+      can.localToWorld(roseDir.set(0, -0.25, 1)).sub(can.localToWorld(dp.set(0, 0, 0))).normalize().multiplyScalar(0.45);
+      const a = ((t * 2.2 + i / drops.length) % 1) * 0.45;
+      dp.copy(rose).addScaledVector(roseDir, a); dp.y -= 4.9 * a * a;
+      if (dp.y < 0) continue;
+      d.visible = true; d.position.copy(group.worldToLocal(dp));
+    }
   }
   function mountWorld(id: MountId, out = new THREE.Vector3()): THREE.Vector3 {
     group.updateMatrixWorld(true);
     if (id === 'handR' && lamp) { const f = lamp.getObjectByName('flame'); if (f) return f.getWorldPosition(out); }
     return (id === 'handR' ? hand : must(joints.get(model.mounts[id].j))).getWorldPosition(out);
   }
-  function dispose(): void { for (const m of [...Object.values(mats), ...steamMats, ...flatMats.values()]) m.dispose(); for (const t of tools) TOOL_FREE.get(t)?.(); group.removeFromParent(); }
+  function dispose(): void { for (const m of [...Object.values(mats), ...steamMats, ...flatMats.values(), dropMat]) m.dispose(); dropGeo.dispose(); for (const t of tools) TOOL_FREE.get(t)?.(); group.removeFromParent(); }
   setTools(null, []);
   pose({});
   return { group, model, setTools, pose, mountWorld, dispose };

@@ -124,7 +124,7 @@ test('ramená sú mimo trupu: v žiadnej póze ruka ani rameno nezasahuje do tru
         const rest: THREE.Box3[] = [];
         const walk = (o2: THREE.Object3D): void => {
           if (o2.name === 'shoulderL' || o2.name === 'shoulderR') return;
-          if (o2 instanceof THREE.Mesh && o2.name !== 'armmount') rest.push(localBox(o2, inv));
+          if (o2 instanceof THREE.Mesh && o2.name !== 'armmount' && o2.name !== 'water') rest.push(localBox(o2, inv));
           for (const c of o2.children) walk(c);
         };
         walk(r.group);
@@ -156,7 +156,7 @@ test('hrabanie: hrot motyky, krompáča aj klepeta zasekne do zeme pred robotom 
         const rest: THREE.Box3[] = [];
         const walk = (o2: THREE.Object3D): void => {
           if (o2.name === 'shoulderL' || o2.name === 'shoulderR') return;
-          if (o2 instanceof THREE.Mesh && o2.name !== 'armmount') rest.push(localBox(o2, inv));
+          if (o2 instanceof THREE.Mesh && o2.name !== 'armmount' && o2.name !== 'water') rest.push(localBox(o2, inv));
           for (const c of o2.children) walk(c);
         };
         walk(r.group);
@@ -195,12 +195,54 @@ test('náradie v ruke: zavesená krhla a lampáš visia vždy zvislo (nikdy sa n
         const rest: THREE.Box3[] = [];
         const walk = (o2: THREE.Object3D): void => {
           if (o2.name === 'shoulderL' || o2.name === 'shoulderR') return;
-          if (o2 instanceof THREE.Mesh && o2.name !== 'armmount') rest.push(localBox(o2, inv));
+          if (o2 instanceof THREE.Mesh && o2.name !== 'armmount' && o2.name !== 'water') rest.push(localBox(o2, inv));
           for (const c of o2.children) walk(c);
         };
         walk(r.group);
         assert.ok(!tb.some(a => rest.some(b => a.intersectsBox(b))), `${name}, ${held}, ${pose}: náradie v ruke zasahuje do robota`);
       }
+    }
+    r.dispose();
+  }
+});
+
+test('použitie náradia: motyka okopáva a krompáč seká do zeme pred robotom, krhla sa nakloní a polieva, lampáš sa zdvihne; nič nezasahuje do robota ani do zeme', () => {
+  for (const [name, look] of LOOKS.slice(0, 30)) {
+    const r = buildRobot(look), body = r.group.getObjectByName('body');
+    assert.ok(body, name);
+    for (const tool of TOOLS) {
+      r.setTools(tool, TOOLS);
+      let lowest = Infinity, poured = false, raised = false;
+      for (let k = 0; k < 20; k++) {
+        const t = (k / 20) * RM.USE_CYCLE[tool];
+        r.pose({ use: { tool, t } });
+        r.group.updateMatrixWorld(true);
+        const inv = body.matrixWorld.clone().invert(), sh = r.group.getObjectByName('shoulderR'), held = r.group.getObjectByName('tool:' + tool);
+        assert.ok(sh && held, name);
+        const arm: THREE.Box3[] = [];
+        let low = Infinity;
+        sh.traverse(c => { if (c instanceof THREE.Mesh) { arm.push(localBox(c, inv)); } });
+        held.traverse(c => { if (c instanceof THREE.Mesh) low = Math.min(low, new THREE.Box3().setFromObject(c, true).min.y); });
+        lowest = Math.min(lowest, low);
+        assert.ok(low > -0.02, `${name}, ${tool}, t ${t.toFixed(2)}: náradie ide do zeme (${low.toFixed(3)})`);
+        const rest: THREE.Box3[] = [];
+        const walk = (o2: THREE.Object3D): void => {
+          if (o2.name === 'shoulderL' || o2.name === 'shoulderR') return;
+          if (o2 instanceof THREE.Mesh && o2.name !== 'armmount' && o2.name !== 'water') rest.push(localBox(o2, inv));
+          for (const c of o2.children) walk(c);
+        };
+        walk(r.group);
+        assert.ok(!arm.some(a => rest.some(b => a.intersectsBox(b))), `${name}, ${tool}, t ${t.toFixed(2)}: ruka alebo náradie zasahuje do robota`);
+        if (tool === 'can') {
+          const spout = new THREE.Vector3(0, 0, 1).applyQuaternion(held.getWorldQuaternion(new THREE.Quaternion()));
+          const rose = held.localToWorld(new THREE.Vector3(0, 0, 0.16));
+          if (spout.y < -0.4 && rose.z > r.model.front * r.model.scale) poured = true;
+        }
+        if (tool === 'lamp' && held.getWorldPosition(new THREE.Vector3()).y > RM.FRAME.shoulder[1]) raised = true;
+      }
+      if (tool === 'hoe' || tool === 'pick') assert.ok(lowest < 0.025, `${name}, ${tool}: hrot nedosiahne zem (${lowest.toFixed(3)})`);
+      if (tool === 'can') assert.ok(poured, `${name}: krhla sa nenakloní hubicou dolu pred robotom`);
+      if (tool === 'lamp') assert.ok(raised, `${name}: lampáš sa nezdvihne nad plece`);
     }
     r.dispose();
   }
