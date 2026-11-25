@@ -126,7 +126,8 @@ export interface Robot3D {
   readonly group: THREE.Group; readonly model: RobotModel;
   // náradie: held = v ruke, carried = ostatné vlastnené (na chrbte; held sa na chrbte nezobrazí)
   setTools(held: ToolId | null, carried: readonly ToolId[]): void;
-  pose(o: PoseOpts): void;
+  // dt (s): kĺby sa k póze ťahajú najviac rýchlosťou RM.jointSpeed (nehýbu sa okamžite); bez dt sa nastavia hneď
+  pose(o: PoseOpts, dt?: number): void;
   // úchyt vo svete (po pose; napr. kde svieti lampáš)
   mountWorld(id: MountId, out?: THREE.Vector3): THREE.Vector3;
   dispose(): void;
@@ -203,13 +204,22 @@ export function buildRobot(look: RobotLook): Robot3D {
   }
   let held0: ToolId | null = null;
   const q = new THREE.Quaternion(), up = new THREE.Vector3(), bar = new THREE.Vector3(), side = new THREE.Vector3(), lastBar = new THREE.Vector3(0, 0, 1), basis = new THREE.Matrix4();
-  function pose(o: PoseOpts): void {
+  const cur = new Map<THREE.Object3D, { r: [number, number, number]; d: [number, number, number] }>();
+  const step = (a: number, b: number, max: number): number => a + Math.max(-max, Math.min(max, b - a));
+  function pose(o: PoseOpts, dt?: number): void {
     const P = RM.robotPose(model, { ...o, use: o.use !== undefined ? o.use : null, hold: o.hold !== undefined ? o.hold : held0 ? RM.TOOL_HOLD[held0] : null, digWith: o.digWith !== undefined ? o.digWith : held0 });
     for (const [id, g] of joints) {
-      const jp = P.joints.get(id), base = must(jointBase.get(g));
-      if (jp) g.rotation.set(...jp.r); else g.rotation.set(0, 0, 0);
-      const d = jp?.d ?? [0, 0, 0];
-      g.position.set(base[0] + d[0], base[1] + d[1], base[2] + d[2]);
+      const jp = P.joints.get(id), base = must(jointBase.get(g)), tr = jp?.r ?? [0, 0, 0], td = jp?.d ?? [0, 0, 0];
+      const sp = RM.jointSpeed(id), c = cur.get(g);
+      if (!c || dt === undefined || !Number.isFinite(sp)) cur.set(g, { r: [tr[0], tr[1], tr[2]], d: [td[0], td[1], td[2]] });
+      else {
+        const a = sp * dt, l = 0.8 * dt; // posun (pohupovanie, prikrčenie) najviac 0,8 políčka/s
+        c.r = [step(c.r[0], tr[0], a), step(c.r[1], tr[1], a), step(c.r[2], tr[2], a)];
+        c.d = [step(c.d[0], td[0], l), step(c.d[1], td[1], l), step(c.d[2], td[2], l)];
+      }
+      const n = must(cur.get(g));
+      g.rotation.set(...n.r);
+      g.position.set(base[0] + n.d[0], base[1] + n.d[1], base[2] + n.d[2]);
     }
     group.position.y = o.jz ?? 0;
     for (const l of lids) l.position.y = must(partBase.get(l)).y - P.blink * 0.03;

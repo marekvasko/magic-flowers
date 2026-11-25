@@ -731,6 +731,8 @@ const sin = Math.sin, cos = Math.cos;
 // k zemi (čepeľ motyky, hrot krompáča); bez náradia hrabe hrot klepeta.
 const DIG_TOOL: Partial<Record<ToolId, { lh: number; lb: number }>> = { hoe: { lh: 0.36, lb: 0.07 }, pick: { lh: 0.32, lb: 0.11 } };
 const CLAW_TIP = 0.03;
+// hrabanie (hľadanie) má pokojnejší ťah ako okopávanie motykou: jeden ťah za 1/DIG_RATE s
+export const DIG_RATE = 0.75;
 // Kde hrot hrabe (z pred robotom, v súradniciach trupu): near → far; a natočenie rúčky α (od vodorovnej nadol).
 // Hrot je vždy pred podvozkom aj trupom (front + 0,05). Hra podľa toho postaví robota pred políčko, ktoré kope.
 export function digZone(m: RobotModel, tool: ToolId | null): { near: number; far: number; alpha: number; ground: number } {
@@ -766,13 +768,16 @@ function digArm(m: RobotModel, s: number, tool: { lh: number; lb: number } | nul
 interface ArmPose { sh: number; el: number; hd: number }
 function ikArm(m: RobotModel, hy: number, hz: number, phiHand: number): ArmPose {
   const [, sy, sz] = m.shoulder, l1 = m.armLen * 0.6, l2 = m.armLen * 0.45;
-  const dy = hy - sy, dz = hz - sz, d = Math.max(Math.abs(l1 - l2) + 1e-4, Math.min(l1 + l2 - 1e-4, Math.hypot(dy, dz)));
-  const phiD = Math.atan2(dz, -dy), beta = Math.acos(Math.max(-1, Math.min(1, (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d))));
+  // ruka sa nevystrie úplne (najviac 95 % dĺžky): pri úplnom vystretí by sa lakeť pri malom pohybe cieľa otáčal veľmi rýchlo
+  const dy = hy - sy, dz = hz - sz, d = Math.max(Math.abs(l1 - l2) + 1e-4, Math.min((l1 + l2) * 0.95, Math.hypot(dy, dz)));
+  // uhly v rozsahu −90° … 270° (dolu = 0, dopredu = 90°, hore = 180°), aby pri prechode nad plecom neskočili o 360°
+  const unwrap = (a: number): number => (a < -Math.PI / 2 ? a + 2 * Math.PI : a);
+  const phiD = unwrap(Math.atan2(dz, -dy)), beta = Math.acos(Math.max(-1, Math.min(1, (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d))));
   const phi1 = phiD - beta, ey = sy - l1 * cos(phi1), ez = sz + l1 * sin(phi1);
-  const phi12 = Math.atan2(hz - ez, -(hy - ey));
+  let phi12 = Math.atan2(hz - ez, -(hy - ey));
+  while (phi12 < phi1 - Math.PI / 2) phi12 += 2 * Math.PI; // predlaktie je od ramena otočené dopredu (lakeť sa ohýba jedným smerom)
   return { sh: -phi1, el: -(phi12 - phi1), hd: -(phiHand - phi12) };
 }
-const mixArm = (a: ArmPose, b: ArmPose, k: number): ArmPose => ({ sh: a.sh + (b.sh - a.sh) * k, el: a.el + (b.el - a.el) * k, hd: a.hd + (b.hd - a.hd) * k });
 const ease = (x: number): number => { const c = Math.max(0, Math.min(1, x)); return c * c * (3 - 2 * c); };
 
 // ---------- použitie náradia ----------
@@ -781,29 +786,72 @@ const ease = (x: number): number => { const c = Math.max(0, Math.min(1, x)); ret
 //  - krompáč: náprah nad plece, rýchly úder hrotom do zeme pred robotom, chvíľu v ľade, späť do náprahu;
 //  - krhla: vystrie ju pred seba (trochu bokom, mimo trupu a podvozku), nakloní hubicou dolu, leje (pour 0–1), narovná;
 //  - lampáš: zdvihne ho vysoko pred seba, chvíľu ním kýve a hlava sa naň pozerá, spustí ho.
-export const USE_CYCLE: Readonly<Record<ToolId, number>> = { hoe: 0.85, pick: 1.1, can: 3, lamp: 3 };
+export const USE_CYCLE: Readonly<Record<ToolId, number>> = { hoe: 0.85, pick: 1.6, can: 3, lamp: 3 };
 export interface UseState { arm: ArmPose; spread: number; wrist: number; pour: number; head: number }
+// Cieľ ruky pre IK: kĺb ruky (y, z v súradniciach trupu) a natočenie ruky phi; ciele sa interpolujú a ruka sa počíta
+// v každom snímku (nie miešanie uhlov kĺbov)
+interface Target { y: number; z: number; phi: number }
+const lerpT = (a: Target, b: Target, k: number): Target => ({ y: a.y + (b.y - a.y) * k, z: a.z + (b.z - a.z) * k, phi: a.phi + (b.phi - a.phi) * k });
+const ik = (m: RobotModel, t: Target): ArmPose => ikArm(m, t.y, t.z, t.phi);
+// kĺb ruky, keď je hrot náradia v (ty, tz) a rúčka sklonená o alpha (rovnako ako pri hrabaní)
+function tipTarget(m: RobotModel, tool: ToolId, ty: number, tz: number, alpha: number): Target {
+  const t = DIG_TOOL[tool], lh = t?.lh ?? 0, lb = t?.lb ?? CLAW_TIP, g = -m.mounts.handR.p[1];
+  return { y: ty + lh * sin(alpha) + (lb + g) * cos(alpha), z: tz - lh * cos(alpha) + (lb + g) * sin(alpha), phi: -alpha };
+}
 function useTool(m: RobotModel, tool: ToolId, s: number): UseState {
   const g = -m.mounts.handR.p[1], [, sy, sz] = m.shoulder;
   if (tool === 'hoe') return { arm: digArm(m, s, DIG_TOOL.hoe ?? null), spread: 0, wrist: 0, pour: 0, head: 0.35 };
   if (tool === 'pick') {
-    // úder: poloha s hrotom na zemi (koniec ťahu motyky = najďalej) a náprah s rukou nad plecom, rúčka dozadu
-    const strike = digArm(m, 0.4, DIG_TOOL.pick ?? null), wind = ikArm(m, sy + 0.13, sz + 0.04, 2.3);
-    const arm = s < 0.4 ? mixArm(strike, wind, ease(s / 0.4)) : s < 0.55 ? mixArm(wind, strike, ((s - 0.4) / 0.15) ** 2) : s < 0.75 ? strike : mixArm(strike, wind, ease((s - 0.75) / 0.25) * 0.3);
-    return { arm, spread: 0, wrist: 0, pour: 0, head: 0.3 };
+    // náprah (ruka nad plecom, rúčka dozadu) → úder: hrot do zeme na konci zóny pred robotom → chvíľu v ľade → späť
+    const z = digZone(m, 'pick'), strike = tipTarget(m, 'pick', z.ground - 0.008, z.far, z.alpha), wind: Target = { y: sy + 0.13, z: sz + 0.04, phi: 2.3 };
+    const tg = s < 0.4 ? lerpT(strike, wind, ease(s / 0.4)) : s < 0.72 ? lerpT(wind, strike, ease((s - 0.4) / 0.32)) : strike;
+    return { arm: ik(m, tg), spread: 0, wrist: 0, pour: 0, head: 0.3 };
   }
   if (tool === 'can') {
-    // klepeto mieri dolu, krhla visí pod ním hubicou dopredu; náklon = ruka sa otočí späť (dno krhly ide dozadu)
-    const tilt = s < 0.15 ? 0 : s < 0.3 ? ease((s - 0.15) / 0.15) : s < 0.8 ? 1 : 1 - ease((s - 0.8) / 0.15);
-    const ph = -(0.95 * tilt + (s > 0.3 && s < 0.8 ? Math.sin(s * 40) * 0.05 : 0)), up = ease(Math.min(1, s / 0.12)) * (1 - ease((s - 0.92) / 0.08));
-    const hy = sy - 0.1 + g * cos(ph), hz = m.front + 0.02 - g * sin(ph);
-    const rest = ikArm(m, sy - 0.16, sz + 0.14, 0);
-    return { arm: mixArm(rest, ikArm(m, hy, hz, ph), up), spread: 0.26, wrist: 0, pour: tilt, head: 0.3 };
+    // klepeto mieri dolu, krhla visí pod ním hubicou dopredu; vystrie ju pred seba (bokom), nakloní ju (ruka sa otočí
+    // späť, dno krhly ide dozadu, hubica dolu), leje s malým kývaním, narovná a vráti
+    const tilt = s < 0.2 ? 0 : s < 0.35 ? ease((s - 0.2) / 0.15) : s < 0.78 ? 1 : 1 - ease((s - 0.78) / 0.12);
+    const ph = -(0.95 * tilt + (s > 0.35 && s < 0.78 ? Math.sin(s * 25) * 0.04 : 0)), up = ease(s / 0.18) * (1 - ease((s - 0.88) / 0.12));
+    const rest: Target = { y: sy - 0.16, z: sz + 0.14, phi: 0 }, pour: Target = { y: sy - 0.16 + g * cos(ph), z: m.front + 0.07 - g * sin(ph), phi: ph }; // nižšie a ďalej: predlaktie mieri dolu-dopredu, zápästie sa ohne menej
+    return { arm: ik(m, lerpT(rest, pour, up)), spread: 0.26, wrist: 0, pour: tilt, head: 0.3 };
   }
-  // lampáš: ruka hore pred seba, predlaktie zdvihnuté, zápästie otočené (lampáš visí na krúžku)
+  // lampáš: ruka sa zdvihne pred seba nad hlavu (lampáš visí na krúžku dolu), kýve sa, potom ho spustí
   const up = s < 0.25 ? ease(s / 0.25) : s < 0.75 ? 1 : 1 - ease((s - 0.75) / 0.25);
-  const low: ArmPose = { sh: -(0.7), el: -0.85, hd: 0 }, high: ArmPose = { sh: -(1.75 + Math.sin(s * 12) * 0.08 * up), el: -0.55, hd: 0 };
-  return { arm: mixArm(low, high, up), spread: 0.24, wrist: Math.PI / 2, pour: 0, head: -0.35 * up };
+  const low: Target = { y: sy - 0.17, z: sz + 0.15, phi: 0 }, high: Target = { y: sy + 0.1, z: sz + 0.15 + Math.sin(s * 12) * 0.015 * up, phi: 1.2 };
+  return { arm: ik(m, lerpT(low, high, up)), spread: 0.24, wrist: Math.PI / 2, pour: 0, head: -0.35 * up };
+}
+
+// ---------- obmedzenia kĺbov ----------
+// Rozsah otočenia kĺbov ramena (Euler x, y, z v radiánoch, pravá strana; ľavá má y a z zrkadlovo): plece sa zdvihne
+// dopredu až nad hlavu, dozadu len trochu, do strán málo; lakeť sa ohýba len jedným smerom; zápästie má obmedzený
+// sklon aj otočenie. Póza (aj IK) sa do nich vždy oreže.
+type Range = readonly [number, number];
+export const JOINT_LIMITS: Readonly<Record<'shoulder' | 'elbow' | 'hand', readonly [Range, Range, Range]>> = {
+  shoulder: [[-3.0, 0.9], [-0.3, 0.3], [-0.6, 0.1]],
+  elbow: [[-2.5, 0], [0, 0], [0, 0]],
+  hand: [[-2.2, 2.2], [-1.7, 1.7], [-0.2, 0.2]]
+};
+// Najväčšia rýchlosť kĺbu (rad/s): kĺby sa nehýbu okamžite – robot3d ich ťahá k póze najviac touto rýchlosťou.
+// Kolesá a články pásu idú presne s dráhou (Infinity).
+export function jointSpeed(id: JointId): number {
+  if (/^shoulder/.test(id)) return 10;
+  if (/^elbow/.test(id)) return 12;
+  if (/^hand/.test(id)) return 14;
+  if (/^(hip|knee)/.test(id)) return 12;
+  if (id === 'body') return 5;
+  if (id === 'head' || id === 'neck' || id === 'eye') return 6;
+  return Infinity;
+}
+// Orezanie otočenia kĺbu ramena do rozsahu (ostatné kĺby bez zmeny)
+export function clampJoint(id: JointId, r: V3): V3 {
+  const kind = /^shoulder/.test(id) ? 'shoulder' : /^elbow/.test(id) ? 'elbow' : /^hand/.test(id) ? 'hand' : null;
+  if (!kind) return r;
+  const L = JOINT_LIMITS[kind], left = id.endsWith('L');
+  const c = (i: 0 | 1 | 2): number => {
+    const [a, b] = L[i], lo = left && i > 0 ? -b : a, hi = left && i > 0 ? -a : b;
+    return Math.max(lo, Math.min(hi, r[i]));
+  };
+  return [c(0), c(1), c(2)];
 }
 const IDS = new WeakMap<RobotModel, Set<JointId>>();
 function jointIds(m: RobotModel): Set<JointId> { let s = IDS.get(m); if (!s) IDS.set(m, s = new Set(m.joints.map(j => j.id))); return s; }
@@ -812,7 +860,7 @@ function jointIds(m: RobotModel): Set<JointId> { let s = IDS.get(m); if (!s) IDS
 export function robotPose(m: RobotModel, o: PoseOpts): RobotPose {
   const J = new Map<JointId, JointPose>();
   const ids = jointIds(m);
-  const set = (j: JointId, r: V3, d?: V3): void => { if (ids.has(j)) J.set(j, d ? { r, d } : { r }); };
+  const set = (j: JointId, r0: V3, d?: V3): void => { if (!ids.has(j)) return; const r = clampJoint(j, r0); J.set(j, d ? { r, d } : { r }); };
   const ph = o.phase ?? 0, t = o.t ?? 0, walk = !!o.walking && !o.dance && !o.dig;
   const sw = walk ? sin(ph) : 0;
   const roll = m.gait === 'roll';
@@ -857,7 +905,7 @@ export function robotPose(m: RobotModel, o: PoseOpts): RobotPose {
   // ťah pred robotom – zdvihne sa, natiahne dopredu, zasekne do zeme a ťahá k robotovi (digArm)
   if (o.dig) {
     const tool = o.digWith ? DIG_TOOL[o.digWith] ?? null : null, left = !!o.digWith && !tool;
-    const a = digArm(m, ((o.dig * 1.2) % 1 + 1) % 1, tool);
+    const a = digArm(m, ((o.dig * DIG_RATE) % 1 + 1) % 1, tool);
     if (left) { armL = [a.sh, 0, 0]; elbL = [a.el, 0, 0]; handL = [a.hd, 0, 0]; }
     else { armR = [a.sh, 0, 0]; elbR = [a.el, 0, 0]; handR = [a.hd, 0, 0]; armL = fwd(0.3); elbL = [-0.5, 0, 0]; }
   }

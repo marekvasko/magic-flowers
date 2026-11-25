@@ -259,7 +259,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
       o.r.group.position.set(o.x, 0, o.z);
       // „use tool“: vlastný pohyb náradia v ruke (motyka okopáva, krompáč seká, krhla polieva, lampáš svieti), bez náradia hrabe klepetom
       const use = st.anim === 'use tool' && st.held ? { tool: st.held, t: t + i * 0.37 } : null;
-      o.r.pose({ phase: dist + i, t: t + i * 1.7, walking, crawl: st.anim === 'crawl', dance: st.anim === 'dance', dig: st.anim === 'dig' || (st.anim === 'use tool' && !st.held) ? t : 0, use, jz: jump });
+      o.r.pose({ phase: dist + i, t: t + i * 1.7, walking, crawl: st.anim === 'crawl', dance: st.anim === 'dance', dig: st.anim === 'dig' || (st.anim === 'use tool' && !st.held) ? t : 0, use, jz: jump }, dt);
       const ll = lampLights[i];
       if (ll && st.night && st.held === 'lamp') { o.r.mountWorld('handR', ll.position); ll.intensity = 1.6; }
       // menovka semienka nad hlavou robota v dave

@@ -96,7 +96,7 @@ const ARM_POSES: readonly [string, RM.PoseOpts][] = [
   ['stoj', {}], ['krok +', { phase: Math.PI / 2, walking: true }], ['krok −', { phase: -Math.PI / 2, walking: true }],
   ['palica', { hold: 'staff' }], ['zavesené', { hold: 'hang' }], ['plazenie', { crawl: true }],
   ['tanec +', { dance: true, t: Math.PI / 12 }], ['tanec −', { dance: true, t: -Math.PI / 12 }],
-  ...[0.1, 0.3, 0.5, 0.7, 0.9].map((f): [string, RM.PoseOpts] => ['hrabanie ' + f, { dig: f / 1.2 }])
+  ...[0.1, 0.3, 0.5, 0.7, 0.9].map((f): [string, RM.PoseOpts] => ['hrabanie ' + f, { dig: f / RM.DIG_RATE }])
 ];
 // presná obálka siete v súradniciach daného kĺbu (napr. trupu – pri tanci sa trup otáča a obálky vo svete by narástli)
 function localBox(m: THREE.Object3D, frameInv: THREE.Matrix4): THREE.Box3 {
@@ -144,7 +144,7 @@ test('hrabanie: hrot motyky, krompáča aj klepeta zasekne do zeme pred robotom 
       const side = held === 'can' ? 'L' : 'R';
       const lows: number[] = [];
       for (const f of [0.1, 0.3, 0.5, 0.6, 0.7, 0.9]) {
-        r.pose({ dig: f / 1.2 });
+        r.pose({ dig: f / RM.DIG_RATE });
         r.group.updateMatrixWorld(true);
         const inv = body.matrixWorld.clone().invert(), sh = r.group.getObjectByName('shoulder' + side);
         assert.ok(sh, name);
@@ -246,4 +246,17 @@ test('použitie náradia: motyka okopáva a krompáč seká do zeme pred robotom
     }
     r.dispose();
   }
+});
+
+test('kĺby sa k novej póze ťahajú postupne (najviac jointSpeed), potom ju dosiahnu', () => {
+  const r = buildRobot(RM.PRESETS.hrdzavec.look), sh = r.group.getObjectByName('shoulderR');
+  assert.ok(sh);
+  r.pose({});
+  const x0 = sh.rotation.x;
+  r.pose({ dance: true, t: 0 }, 0.016);
+  assert.ok(Math.abs(sh.rotation.x - x0) <= RM.jointSpeed('shoulderR') * 0.016 + 1e-9, 'plece skočilo naraz');
+  for (let k = 0; k < 100; k++) r.pose({ dance: true, t: 0 }, 0.016);
+  const target = RM.robotPose(r.model, { dance: true, t: 0 }).joints.get('shoulderR')?.r[0] ?? 0;
+  assert.ok(Math.abs(sh.rotation.x - target) < 1e-9, 'plece nedosiahlo pózu');
+  r.dispose();
 });

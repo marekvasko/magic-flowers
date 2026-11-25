@@ -191,3 +191,49 @@ test('rovnaké rozmery: každý robot má rovnakú výšku, plecia aj ruky na to
     for (const [a, b] of [[RM.mountAt(m, null, 'handR'), refHand], [RM.mountAt(m, null, 'handL'), refL]] as const) assert.ok(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 0.006, `${name}: ruka ${a.join(', ')}`);
   }
 });
+
+// pózy so všetkými animáciami ramien (na kontrolu rozsahu a rýchlosti kĺbov)
+const ARM_IDS = ['shoulderR', 'shoulderL', 'elbowR', 'elbowL', 'handR', 'handL'];
+const TOOL_IDS = ['hoe', 'can', 'pick', 'lamp'] as const;
+test('obmedzenia kĺbov: plece, lakeť ani zápästie nikdy nevyjdú z rozsahu (aj pri IK)', () => {
+  for (const [name, look] of LOOKS.slice(0, 40)) {
+    const m = RM.robotModel(look);
+    const poses: RM.PoseOpts[] = [{}, { walking: true, phase: 1 }, { hold: 'staff' }, { hold: 'hang' }, { crawl: true }, { dance: true, t: 0.3 },
+      ...Array.from({ length: 12 }, (_, k) => ({ dig: k / 12 })),
+      ...TOOL_IDS.flatMap(tool => Array.from({ length: 24 }, (_, k) => ({ use: { tool, t: (k / 24) * RM.USE_CYCLE[tool] } })))];
+    for (const o of poses) {
+      const P = RM.robotPose(m, o);
+      for (const id of ARM_IDS) {
+        const r = P.joints.get(id)?.r;
+        assert.ok(r, name + ' ' + id);
+        assert.deepStrictEqual(RM.clampJoint(id, r), r, `${name}: ${id} mimo rozsahu ${JSON.stringify(o)}`);
+      }
+    }
+  }
+  // lakeť sa ohýba len jedným smerom, plece dozadu len trochu
+  assert.deepStrictEqual(RM.clampJoint('elbowR', [0.5, 0, 0]), [0, 0, 0]);
+  assert.deepStrictEqual(RM.clampJoint('shoulderL', [1.5, 0, 0.9]), [0.9, 0, 0.6]);
+});
+
+test('kĺby sa nehýbu okamžite: animácie náradia, hrabanie ani tanec nepotrebujú kĺb rýchlejší, ako dovolí jointSpeed', () => {
+  for (const [name, look] of LOOKS.slice(0, 25)) {
+    const m = RM.robotModel(look);
+    const anims: [string, number, (t: number) => RM.PoseOpts][] = [
+      ...TOOL_IDS.map((tool): [string, number, (t: number) => RM.PoseOpts] => [tool, RM.USE_CYCLE[tool], t => ({ use: { tool, t } })]),
+      ['hrabanie', 1 / RM.DIG_RATE, t => ({ dig: t + 1e-6 })], // dig: 0 znamená „nehrabe“ ['tanec', 2 * Math.PI / 3, t => ({ dance: true, t })]
+    ];
+    for (const [anim, cycle, at] of anims) {
+      const n = 600, dt = cycle / n;
+      let prev = RM.robotPose(m, at(0));
+      for (let k = 1; k <= n; k++) {
+        const P = RM.robotPose(m, at(k * dt));
+        for (const id of ARM_IDS) {
+          const a = prev.joints.get(id)?.r ?? [0, 0, 0], b = P.joints.get(id)?.r ?? [0, 0, 0];
+          const v = Math.max(...a.map((x, i) => Math.abs((b[i] ?? 0) - x))) / dt;
+          assert.ok(v <= RM.jointSpeed(id) * 1.02, `${name}, ${anim}: ${id} ${v.toFixed(1)} rad/s (najviac ${RM.jointSpeed(id)}) v čase ${(k * dt).toFixed(3)}`);
+        }
+        prev = P;
+      }
+    }
+  }
+});
