@@ -10,7 +10,7 @@ import { must } from '../shared/util.ts';
 
 // ---------- tvary ----------
 // Zaoblená kocka: kocka s viac dielikmi, ktorej body sa pritiahnu k vnútornej kocke a vytlačia o polomer
-function roundedBox(sx: number, sy: number, sz: number, r0: number, seg = 3): THREE.BufferGeometry {
+function roundedBox(sx: number, sy: number, sz: number, r0: number, seg = r0 >= 0.03 ? 2 : 1): THREE.BufferGeometry {
   // ostrá hrana: obyčajná kocka (inak by normály na hrane rozmazali tieň do plochy a hrana by vyzerala oblá)
   if (r0 <= 0.005) return new THREE.BoxGeometry(sx, sy, sz);
   const r = Math.min(r0, sx / 2, sy / 2, sz / 2) * 0.999;
@@ -29,18 +29,22 @@ function roundedBox(sx: number, sy: number, sz: number, r0: number, seg = 3): TH
   return g;
 }
 const GEO = new Map<string, THREE.BufferGeometry>();
+// počet stien okolo osi podľa polomeru (r × k), v rozsahu min…max
+const segs = (r: number, k: number, min: number, max: number): number => Math.max(min, Math.min(max, Math.round(r * k)));
 function geometry(s: Shape): THREE.BufferGeometry {
   const key = JSON.stringify(s);
   let g = GEO.get(key);
   if (g) return g;
   switch (s.k) {
     case 'box': g = roundedBox(s.s[0], s.s[1], s.s[2], s.r); break;
-    // s počtom stien n je diel mnohosten (ostré hrany, ploché tieňovanie – materiál flatShading)
-    case 'cyl': g = new THREE.CylinderGeometry(s.r2 ?? s.r, s.r, s.h, s.n ?? Math.max(10, Math.round(s.r * 160))); break;
-    case 'sphere': g = new THREE.SphereGeometry(s.r, s.n ?? 20, s.n ? Math.max(4, Math.round(s.n * 0.75)) : 14); if (s.s) g.scale(...s.s); break;
-    case 'capsule': g = new THREE.CapsuleGeometry(s.r, s.h, s.n ? 1 : 4, s.n ?? 12); break;
-    case 'torus': g = new THREE.TorusGeometry(s.r, s.t, 8, 28); g.rotateX(Math.PI / 2); break;
-    case 'dome': g = new THREE.SphereGeometry(s.r, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2); break;
+    // Málo polygónov (robotov je na ploche veľa): počet stien podľa veľkosti, gule ako dvadsaťsteny (malé nity a oči
+    // 20 trojuholníkov, stredné 80, veľké 320) namiesto presných gúľ. S počtom stien n je diel mnohosten
+    // (ostré hrany, ploché tieňovanie – materiál flatShading).
+    case 'cyl': g = new THREE.CylinderGeometry(s.r2 ?? s.r, s.r, s.h, s.n ?? segs(s.r, 90, 6, 16)); break;
+    case 'sphere': g = s.n ? new THREE.SphereGeometry(s.r, s.n, Math.max(4, Math.round(s.n * 0.6))) : new THREE.IcosahedronGeometry(s.r, s.r < 0.02 ? 0 : s.r < 0.07 ? 1 : 2); if (s.s) g.scale(...s.s); break;
+    case 'capsule': g = new THREE.CapsuleGeometry(s.r, s.h, 1, s.n ?? 6); break;
+    case 'torus': g = new THREE.TorusGeometry(s.r, s.t, 4, segs(s.r, 100, 8, 16)); g.rotateX(Math.PI / 2); break;
+    case 'dome': g = new THREE.SphereGeometry(s.r, 12, 4, 0, Math.PI * 2, 0, Math.PI / 2); break;
   }
   GEO.set(key, g);
   return g;
@@ -82,24 +86,24 @@ function toolMesh(id: ToolId): THREE.Group {
     const me = new THREE.Mesh(geo, mat); me.position.set(...p); if (r) me.rotation.set(...r); me.castShadow = true; g.add(me); own.push(geo, mat); return me;
   };
   if (id === 'hoe') {
-    add(new THREE.CylinderGeometry(0.011, 0.011, 0.42, 8), wood, [0, 0.12, 0]);
+    add(new THREE.CylinderGeometry(0.011, 0.011, 0.42, 6), wood, [0, 0.12, 0]);
     add(roundedBox(0.1, 0.012, 0.07, 0.005), steel, [0, 0.33, 0.035]);
-    add(new THREE.CylinderGeometry(0.016, 0.016, 0.03, 8), steel, [0, 0.33, 0.005], [Math.PI / 2, 0, 0]);
+    add(new THREE.CylinderGeometry(0.016, 0.016, 0.03, 6), steel, [0, 0.33, 0.005], [Math.PI / 2, 0, 0]);
   } else if (id === 'pick') {
-    add(new THREE.CylinderGeometry(0.012, 0.012, 0.38, 8), wood, [0, 0.1, 0]);
-    for (const s of [-1, 1]) add(new THREE.ConeGeometry(0.016, 0.11, 8), steel, [s * 0.055, 0.29, 0], [0, 0, -s * 1.4]);
+    add(new THREE.CylinderGeometry(0.012, 0.012, 0.38, 6), wood, [0, 0.1, 0]);
+    for (const s of [-1, 1]) add(new THREE.ConeGeometry(0.016, 0.11, 6), steel, [s * 0.055, 0.29, 0], [0, 0, -s * 1.4]);
     add(roundedBox(0.04, 0.035, 0.035, 0.008), steel, [0, 0.29, 0]);
   } else if (id === 'can') {
     // krhla: držiak hore, telo pod ním, hubica s ružicou dopredu
     const tin = m('#6aa0b8', { metalness: 0.35, roughness: 0.4 });
-    add(new THREE.TorusGeometry(0.035, 0.008, 6, 16, Math.PI), tin, [0, 0.02, 0], [0, Math.PI / 2, 0]);
-    add(new THREE.CylinderGeometry(0.06, 0.065, 0.09, 16), tin, [0, -0.05, 0]);
-    add(new THREE.CylinderGeometry(0.008, 0.013, 0.13, 8), tin, [0, -0.04, 0.09], [1.0, 0, 0]);
-    add(new THREE.ConeGeometry(0.022, 0.025, 10, 1, true), tin, [0, 0.0, 0.145], [-0.55, 0, 0]);
+    add(new THREE.TorusGeometry(0.035, 0.008, 4, 8, Math.PI), tin, [0, 0.02, 0], [0, Math.PI / 2, 0]);
+    add(new THREE.CylinderGeometry(0.06, 0.065, 0.09, 10), tin, [0, -0.05, 0]);
+    add(new THREE.CylinderGeometry(0.008, 0.013, 0.13, 6), tin, [0, -0.04, 0.09], [1.0, 0, 0]);
+    add(new THREE.ConeGeometry(0.022, 0.025, 6, 1, true), tin, [0, 0.0, 0.145], [-0.55, 0, 0]);
   } else {
     // lampáš: krúžok, strieška, sklo so svetlom, spodok; visí dole z úchopu
     const iron = m('#3b3532', { metalness: 0.4 });
-    add(new THREE.TorusGeometry(0.018, 0.004, 6, 14), iron, [0, -0.015, 0]);
+    add(new THREE.TorusGeometry(0.018, 0.004, 4, 8), iron, [0, -0.015, 0]);
     add(new THREE.ConeGeometry(0.045, 0.035, 8), iron, [0, -0.045, 0]);
     add(new THREE.CylinderGeometry(0.03, 0.03, 0.07, 8), m('#fff1c4', { emissive: col('#ffb347'), emissiveIntensity: 2.2, transparent: true, opacity: 0.9 }), [0, -0.1, 0]).name = 'flame';
     for (let i = 0; i < 4; i++) { const a = (i / 4) * Math.PI * 2 + Math.PI / 4; add(new THREE.BoxGeometry(0.006, 0.075, 0.006), iron, [Math.cos(a) * 0.033, -0.1, Math.sin(a) * 0.033]); }

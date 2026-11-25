@@ -399,17 +399,16 @@ function chassis(b: Builder, L: RobotLook, H: Hull): number {
         const j = b.joint(`track${side}${k}`, 'root', [tr.x, q.y, q.z]);
         b.add(j, { k: 'box', s: [tw, 0.011, pitch * 0.84], r: 0.0015 }, [0, 0, 0], 'rubber');
         b.add(j, { k: 'box', s: [tw * 0.94, 0.008, pitch * 0.24], r: 0.001 }, [0, 0.009, 0], 'rubber'); // ostroha
-        b.add(j, { k: 'box', s: [0.014, 0.012, pitch * 0.45], r: 0.001 }, [0, -0.011, 0], 'dark');    // vodiaci zub
         links.push({ j, s0 });
       }
       b.tracks.push(tr);
       const wheels: [number, number, number, boolean][] = [[zf, y0, R * 0.78, true], [zb, y0, R * 0.78, true], [zb + Ls / 3, y0 - R * 0.42, R * 0.5, false], [zb + (2 * Ls) / 3, y0 - R * 0.42, R * 0.5, false]];
       for (const [i, [z, y, rr, teeth]] of wheels.entries()) {
         const w = b.joint(`wheel${side}${i}`, 'root', [tr.x, y, z]);
-        b.add(w, { k: 'cyl', r: rr, h: tw * 0.62, n: teeth ? 12 : 10 }, [0, 0, 0], 'metal', [0, 0, Math.PI / 2]);
+        b.add(w, { k: 'cyl', r: rr, h: tw * 0.62, n: 8 }, [0, 0, 0], 'metal', [0, 0, Math.PI / 2]);
         b.add(w, { k: 'cyl', r: rr * 0.38, h: tw * 0.75, n: 6 }, [0, 0, 0], 'accent', [0, 0, Math.PI / 2]);
-        if (teeth) for (let t = 0; t < 10; t++) { const a = (t / 10) * Math.PI * 2; b.add(w, { k: 'box', s: [tw * 0.3, 0.02, 0.013], r: 0.001 }, [0, Math.cos(a) * rr, Math.sin(a) * rr], 'metal', [a, 0, 0]); }
-        else for (let t = 0; t < 5; t++) { const a = (t / 5) * Math.PI * 2; b.add(w, { k: 'box', s: [tw * 0.64, 0.008, rr * 0.9], r: 0.001 }, [0, Math.cos(a) * rr * 0.55, Math.sin(a) * rr * 0.55], 'dark', [a, 0, 0]); }
+        if (teeth) for (let t = 0; t < 8; t++) { const a = (t / 8) * Math.PI * 2; b.add(w, { k: 'box', s: [tw * 0.3, 0.02, 0.013], r: 0.001 }, [0, Math.cos(a) * rr, Math.sin(a) * rr], 'metal', [a, 0, 0]); }
+        else for (let t = 0; t < 3; t++) { const a = (t / 3) * Math.PI * 2; b.add(w, { k: 'box', s: [tw * 0.64, 0.008, rr * 0.9], r: 0.001 }, [0, Math.cos(a) * rr * 0.55, Math.sin(a) * rr * 0.55], 'dark', [a, 0, 0]); }
         b.wheels.push({ j: w, r: rr });
       }
       // bočný kryt medzi kolesami (koncové kolesá ostanú vidieť) s nitmi
@@ -487,7 +486,8 @@ function legs(b: Builder, L: RobotLook, body: JointId, H: Hull, bottom: number):
 
 // ---------- hlava ----------
 // Postaví hlavu na krku a vráti temeno (kĺb a bod) – kam patrí doplnok a úchyt top
-function head(b: Builder, L: RobotLook, body: JointId, H: Hull): { j: JointId; p: V3 } {
+// back = ako ďaleko dozadu siaha hlava od osi krku (aby nosič s náradím nezasahoval do veľkej hlavy)
+function head(b: Builder, L: RobotLook, body: JointId, H: Hull): { j: JointId; p: V3; back: number } {
   const s = L.headS, e = L.eyeS;
   if (L.head === 'none') {
     // oči na trupe ako okienka; „hlava“ je vrchnák trupu (pri kotli klenutý), na ňom doplnok
@@ -497,7 +497,7 @@ function head(b: Builder, L: RobotLook, body: JointId, H: Hull): { j: JointId; p
     const eye = b.joint('eye', body, [0, y, 0]);
     if (L.eyes === 1) b.roundEye(eye, [0, 0, H.front(y) + 0.005], r * 1.25, 0, 'accent', L.rivets);
     else for (const sx of [-1, 1]) { const yaw = L.body === 'box' ? 0 : Math.asin(Math.min(0.8, (sx * r * 1.15) / H.hx)); b.roundEye(eye, [sx * r * 1.15, 0, H.front(y) * Math.cos(yaw) + 0.005], r, yaw, 'accent'); }
-    return { j: top, p: [0, (H.top - H.hy) + 0.005, 0] };
+    return { j: top, p: [0, (H.top - H.hy) + 0.005, 0], back: 0 };
   }
   const nl = L.head === 'bino' ? 0.04 + L.neck * 0.12 : L.neck * 0.08;
   const neck = b.joint('neck', body, [0, H.top, L.head === 'bino' ? -0.02 : 0]);
@@ -510,7 +510,7 @@ function head(b: Builder, L: RobotLook, body: JointId, H: Hull): { j: JointId; p
     b.add(hd, { k: 'box', s: [0.1 * s, 0.05 * s, 0.08 * s], r: 0.02 * s }, [0, 0.01, -0.01], 'accent');
     if (L.eyes === 2) for (const sx of [-1, 1]) b.binoEye(hd, [sx * (r + 0.02 * s), 0.03, 0], r, 0.11 * s);
     else b.binoEye(hd, [0, 0.03, 0.01], r * 1.3, 0.12 * s);
-    return { j: hd, p: [0, 0.03 + r * (L.eyes === 2 ? 1.25 : 1.6), -0.01] };
+    return { j: hd, p: [0, 0.03 + r * (L.eyes === 2 ? 1.25 : 1.6), -0.01], back: 0.07 * s };
   }
   if (L.head === 'dome') {
     const R = 0.125 * s, hd = b.joint('head', neck, [0, nl, 0]);
@@ -521,7 +521,7 @@ function head(b: Builder, L: RobotLook, body: JointId, H: Hull): { j: JointId; p
     if (L.eyes === 1) b.roundEye(hd, [0, c + 0.005, 0.01 + R * 0.62], er, 0, 'dark');
     else for (const sx of [-1, 1]) b.roundEye(hd, [sx * er * 1.05, c + 0.005, 0.01 + R * 0.6 - er * 0.2], er * 0.8, sx * 0.45, 'dark');
     b.add(hd, { k: 'dome', r: R }, [0, 0.012, 0], 'glass');
-    return { j: hd, p: [0, R + 0.012, 0] };
+    return { j: hd, p: [0, R + 0.012, 0], back: R * 1.06 };
   }
   if (L.head === 'ball') {
     const R = 0.11 * s, hd = b.joint('head', neck, [0, nl + R * 0.85, 0]);
@@ -532,7 +532,7 @@ function head(b: Builder, L: RobotLook, body: JointId, H: Hull): { j: JointId; p
     else for (const sx of [-1, 1]) { const yaw = sx * 0.4; b.roundEye(hd, [Math.sin(yaw) * R * 0.93, R * 0.08, Math.cos(yaw) * R * 0.93], er, yaw); }
     for (const sx of [-1, 1]) b.add(hd, { k: 'cyl', r: 0.025 * s, h: 0.03 }, [sx * R, 0, 0], 'accent', [0, 0, Math.PI / 2]); // „uši“
     b.add(hd, { k: 'box', s: [0.05 * s, 0.012, 0.02], r: 0.006 }, [0, -R * 0.45, R * 0.9], 'dark', [-0.4, 0, 0]);
-    return { j: hd, p: [0, R * 0.98, 0] };
+    return { j: hd, p: [0, R * 0.98, 0], back: R };
   }
   // televízor: zaoblená skrinka, tmavá obrazovka, oči na nej svietia
   const w = 0.2 * s, h = 0.14 * s, d = 0.12 * s, hd = b.joint('head', neck, [0, nl + h / 2, 0]);
@@ -546,7 +546,7 @@ function head(b: Builder, L: RobotLook, body: JointId, H: Hull): { j: JointId; p
   }
   for (const sx of [-1, 1]) b.add(hd, { k: 'sphere', r: 0.018 * s }, [sx * (w / 2 + 0.006), 0, 0], 'dark'); // gombíky
   b.add(hd, { k: 'cyl', r: 0.008, h: 0.05 }, [w * 0.3, h / 2 + 0.02, -d * 0.2], 'dark');
-  return { j: hd, p: [0, h / 2, 0] };
+  return { j: hd, p: [0, h / 2, 0], back: d / 2 + 0.01 };
 }
 
 // ---------- celý robot ----------
@@ -558,19 +558,22 @@ export const GRIP_R = 0.012;
 // vodorovne dopredu, klepeto otočené tak, že držadlo je vodorovne a náradie visí dole)
 export type HoldKind = 'staff' | 'hang';
 export const TOOL_HOLD: Readonly<Record<ToolId, HoldKind>> = { hoe: 'staff', pick: 'staff', can: 'hang', lamp: 'hang' };
-// Nosič na chrbte: doska pripevnená k trupu, po krajoch dve puzdrá (rúry) na náradie s dlhou rúčkou – motyka vpravo,
-// krompáč vľavo – a medzi nimi na hornej priečke dva háčiky: krhla (hubicou dozadu) a lampáš. Náradie sa vkladá
-// rúčkou do puzdra / zavesí za držadlo; prázdne puzdro a háčik je vidieť, takže je jasné, kam čo patrí.
+// Nosič na chrbte: doska pripevnená k trupu a na nej pre každé náradie jeho držiak, aby nič nezasahovalo do trupu ani
+// do iného náradia: po krajoch dve puzdrá (rúry) – motyka vpravo (čepeľou dozadu), krompáč vľavo (hlavicou do strán,
+// nad ostatným náradím) – a medzi nimi pod sebou nič; hore vpravo od stredu priečka na dvoch stĺpikoch, na ktorej visí
+// krhla za oblúk držadla (hubicou dozadu), vľavo od stredu kolík so zahnutým koncom, na ktorom visí lampáš za krúžok.
+// Prázdny držiak je vidieť, takže je jasné, kam čo patrí.
 const RACK_W = 0.26, TOOL_ON_BACK = 0.75;
-function rack(b: Builder, body: JointId, H: Hull): Record<ToolId, Mount> {
-  const hh = Math.max(0.14, Math.min(0.2, H.hy * 1.5)), bz = -H.front(0) - 0.016;
+function rack(b: Builder, body: JointId, H: Hull, headBack: number): Record<ToolId, Mount> {
+  // doska tesne za chrbtom; keď hlava prečnieva dozadu viac ako trup, posunie sa ďalej, aby rúčky v puzdrách išli za hlavou
+  const hh = Math.max(0.14, Math.min(0.2, H.hy * 1.5)), back = -H.front(0), bz = Math.min(back - 0.016, -headBack + 0.015);
   const j = b.joint('rack', body, [0, 0, bz]);
   b.add(j, { k: 'box', s: [RACK_W * 0.8, hh, 0.02], r: 0.006 }, [0, 0, 0], 'accent');
-  for (const x of [-1, 1]) for (const y of [-1, 1]) b.add(j, { k: 'box', s: [0.022, 0.022, 0.03], r: 0.004 }, [x * RACK_W * 0.25, y * hh * 0.32, 0.018], 'dark'); // úchyty k trupu
-  b.add(j, { k: 'box', s: [RACK_W * 0.86, 0.018, 0.018], r: 0.004 }, [0, hh / 2, -0.03], 'metal');                    // horná priečka
-  for (const x of [-1, 1]) b.add(j, { k: 'box', s: [0.016, 0.016, 0.034], r: 0.003 }, [x * RACK_W * 0.43, hh / 2, -0.015], 'metal');
+  // úchyty k trupu (dlhšie, keď je doska odsunutá)
+  const bl = back - bz + 0.012;
+  for (const x of [-1, 1]) for (const y of [-1, 1]) b.add(j, { k: 'box', s: [0.022, 0.022, bl], r: 0.004 }, [x * RACK_W * 0.25, y * hh * 0.32, bl / 2], 'dark');
   const slots: Partial<Record<ToolId, Mount>> = {};
-  // puzdrá: rúra s obručou hore, mierne vykloné do strán
+  // puzdrá: rúra s obručou hore, mierne vyklonené do strán, objímka k doske
   for (const [tool, sx] of [['hoe', -1], ['pick', 1]] as const) {
     const tilt = -sx * 0.14, qx = sx * RACK_W * 0.43, qy = -hh * 0.1, qz = -0.04, len = 0.15;
     const ux = -Math.sin(tilt), uy = Math.cos(tilt); // os puzdra (hore)
@@ -578,15 +581,20 @@ function rack(b: Builder, body: JointId, H: Hull): Record<ToolId, Mount> {
     b.add(j, { k: 'torus', r: 0.025, t: 0.006 }, [qx + ux * len / 2, qy + uy * len / 2, qz], 'metal', [0, 0, tilt]);
     b.add(j, { k: 'torus', r: 0.026, t: 0.005 }, [qx, qy, qz], 'accent', [0, 0, tilt]);
     b.add(j, { k: 'box', s: [0.03, 0.02, 0.03], r: 0.003 }, [qx * 0.8, qy, qz * 0.5], 'dark');
-    // náradie: rúčka zasunutá do puzdra, hlavica trčí nad ním
-    slots[tool] = { j, p: [qx + ux * (len / 2 - 0.05), qy + uy * (len / 2 - 0.05), qz], r: [0, 0, tilt], s: TOOL_ON_BACK };
+    // náradie: rúčka zasunutá do puzdra, hlavica trčí nad ním; motyka čepeľou dozadu (nie do trupu)
+    slots[tool] = { j, p: [qx + ux * (len / 2 - 0.05), qy + uy * (len / 2 - 0.05), qz], r: tool === 'hoe' ? [0, Math.PI, -tilt] : [0, 0, tilt], s: TOOL_ON_BACK };
   }
-  // háčiky na hornej priečke (zahnutý drôt)
-  for (const [tool, x] of [['can', -0.035], ['lamp', 0.05]] as const) {
-    b.add(j, { k: 'cyl', r: 0.005, h: 0.04 }, [x, hh / 2, -0.05], 'metal', [Math.PI / 2, 0, 0]);
-    b.add(j, { k: 'cyl', r: 0.005, h: 0.02 }, [x, hh / 2 + 0.008, -0.07], 'metal');
-    slots[tool] = { j, p: [x, hh / 2 + 0.014, -0.07], r: [0, tool === 'can' ? Math.PI / 2 : 0, 0], s: TOOL_ON_BACK };
-  }
+  const top = hh / 2 - 0.012;
+  // krhla: priečka naprieč (pozdĺž x) na dvoch stĺpikoch od dosky; oblúk držadla je cez ňu prevesený
+  const cx = -0.035, cz = -0.07;
+  for (const dx of [-0.032, 0.032]) b.add(j, { k: 'cyl', r: 0.005, h: -cz }, [cx + dx, top, cz / 2], 'metal', [Math.PI / 2, 0, 0]);
+  b.add(j, { k: 'cyl', r: 0.005, h: 0.072 }, [cx, top, cz], 'metal', [0, 0, Math.PI / 2]);
+  slots.can = { j, p: [cx, top + 0.005, cz], r: [0, Math.PI, 0], s: TOOL_ON_BACK };
+  // lampáš: kolík dozadu so zahnutým koncom; krúžok lampáša je na ňom navlečený
+  const lx = 0.05;
+  b.add(j, { k: 'cyl', r: 0.005, h: 0.09 }, [lx, top, -0.045], 'metal', [Math.PI / 2, 0, 0]);
+  b.add(j, { k: 'cyl', r: 0.005, h: 0.022 }, [lx, top + 0.009, -0.09], 'metal');
+  slots.lamp = { j, p: [lx, top + 0.005, -0.068], s: TOOL_ON_BACK };
   return { hoe: must(slots.hoe), pick: must(slots.pick), can: must(slots.can), lamp: must(slots.lamp) };
 }
 export function robotModel(look0: RobotLook): RobotModel {
@@ -603,7 +611,7 @@ export function robotModel(look0: RobotLook): RobotModel {
   const arm = Math.max(0.07, Math.min(L.arm, (bottom + H.bottom + sy - 0.1) / 1.05));
   b.arm(1, body, [sx, sy, L.body === 'box' ? 0.03 : 0], arm, L.armT);
   b.arm(-1, body, [-sx, sy, L.body === 'box' ? 0.03 : 0], arm, L.armT);
-  const slots = rack(b, body, H);
+  const slots = rack(b, body, H, top.back);
   b.accessory(L.acc, top.j, top.p);
   rust(b, L, body, H);
   const mounts: Record<MountId, Mount> = { handR: MOUNT_HAND('handR', b.gripY), handL: MOUNT_HAND('handL', b.gripY), back: { j: 'rack', p: [0, 0, -0.03] }, top: { j: top.j, p: top.p } };
