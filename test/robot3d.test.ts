@@ -89,3 +89,48 @@ test('krhla visí na háku: rameno háku leží vo vrchole oblúka držadla a id
     r.dispose();
   }
 });
+
+// Pózy, v ktorých sa ramená hýbu najviac: stoj, chôdza (krok dopredu aj dozadu), nesenie palice / zaveseného náradia,
+// plazenie, tanec (ruky hore, oboje strany vlnenia) a hrabanie (oba krajné body)
+const ARM_POSES: readonly [string, RM.PoseOpts][] = [
+  ['stoj', {}], ['krok +', { phase: Math.PI / 2, walking: true }], ['krok −', { phase: -Math.PI / 2, walking: true }],
+  ['palica', { hold: 'staff' }], ['zavesené', { hold: 'hang' }], ['plazenie', { crawl: true }],
+  ['tanec +', { dance: true, t: Math.PI / 12 }], ['tanec −', { dance: true, t: -Math.PI / 12 }],
+  ['hrabanie +', { dig: Math.PI / 16 }], ['hrabanie −', { dig: (3 * Math.PI) / 16 }]
+];
+// presná obálka siete v súradniciach daného kĺbu (napr. trupu – pri tanci sa trup otáča a obálky vo svete by narástli)
+function localBox(m: THREE.Object3D, frameInv: THREE.Matrix4): THREE.Box3 {
+  const g: unknown = m instanceof THREE.Mesh ? m.geometry : null;
+  const pos: unknown = g instanceof THREE.BufferGeometry ? g.getAttribute('position') : null, mat = new THREE.Matrix4().multiplyMatrices(frameInv, m.matrixWorld), v = new THREE.Vector3(), b = new THREE.Box3();
+  if (pos instanceof THREE.BufferAttribute) for (let i = 0; i < pos.count; i++) b.expandByPoint(v.fromBufferAttribute(pos, i).applyMatrix4(mat));
+  return b.expandByScalar(-0.002);
+}
+test('ramená sú mimo trupu: v žiadnej póze ruka ani rameno nezasahuje do trupu, hlavy, podvozku, nosiča ani náradia na ňom', () => {
+  for (const [name, look] of LOOKS) {
+    const r = buildRobot(look);
+    r.setTools(null, TOOLS);
+    const body = r.group.getObjectByName('body');
+    assert.ok(body, name);
+    for (const [pose, o] of ARM_POSES) {
+      r.pose(o);
+      r.group.updateMatrixWorld(true);
+      const inv = body.matrixWorld.clone().invert();
+      for (const side of ['L', 'R']) {
+        const sh = r.group.getObjectByName('shoulder' + side);
+        assert.ok(sh, name);
+        const arm: THREE.Box3[] = [];
+        sh.traverse(c => { if (c instanceof THREE.Mesh) arm.push(localBox(c, inv)); });
+        // všetko ostatné okrem ramien (a držiaka plecia na trupe, ktorý sa ramena dotýka)
+        const rest: THREE.Box3[] = [];
+        const walk = (o2: THREE.Object3D): void => {
+          if (o2.name === 'shoulderL' || o2.name === 'shoulderR') return;
+          if (o2 instanceof THREE.Mesh && o2.name !== 'armmount') rest.push(localBox(o2, inv));
+          for (const c of o2.children) walk(c);
+        };
+        walk(r.group);
+        assert.ok(!arm.some(a => rest.some(b => a.intersectsBox(b))), `${name} (${look.loco}/${look.body}/${look.head}), ${pose}: rameno ${side} zasahuje do robota`);
+      }
+    }
+    r.dispose();
+  }
+});
