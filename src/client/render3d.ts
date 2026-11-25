@@ -17,6 +17,7 @@ import { Art } from './art.ts';
 import { AO_CURVE, FACE_SHADE, bakeFine } from './finebake.ts';
 import type { CharOpts } from './art.ts';
 import { createParticles } from './particles3d.ts';
+import { overcast, skyLight } from './skylight.ts';
 import { createSpiders3d } from './spiders3d.ts';
 import { createVehicles3d } from './vehicles3d.ts';
 import { createBoat3d } from './boat3d.ts';
@@ -134,7 +135,7 @@ precision highp float;
 #define SHADOW_TAPS 16
 #endif
 uniform sampler2D map; uniform sampler2D shadowMap;
-uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec3 emisColor;
+uniform vec3 ambient; uniform vec3 ambUp; uniform vec3 ambDown; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec3 emisColor;
 uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount; uniform float opacity;
 uniform float shadowOn; uniform vec2 shadowTexel; uniform float shadowRadius;
 uniform vec3 gloom; uniform vec3 gloomFog;
@@ -164,7 +165,9 @@ void main() {
   float darkSun = sunMode > 0.5 ? groundSun * LES_SUN_K : forestSun();
   float sunV = darkOn >= 1.0 ? darkSun : darkOn > 0.0 ? mix(sunVisibility(vFacing), darkSun, darkOn) : sunVisibility(vFacing);
   // osvetlená zem v tme (pokus): okrem slnka aj denné svetlo záhrady (sunFill) – v slnku je zem jasná ako v záhrade
-  vec3 light = (ambient + sunColor * sunV + sunFill * groundSun * LES_SUN_K) * (1.0 - gm * (1.0 - darkOn));
+  // okolité svetlo z pologule (#190): vrchy dostanú farbu oblohy, spodky svetlo odrazené od zeme, steny niečo medzi
+  vec3 ambH = ambient * mix(ambDown, ambUp, vUp * 0.5 + 0.5);
+  vec3 light = (ambH + sunColor * sunV + sunFill * groundSun * LES_SUN_K) * (1.0 - gm * (1.0 - darkOn));
   // Svetlo lampášov (aj slabé svetlo okolo hráča) je guľa okolo zdroja – na vrchy obrovských stromov nedosiahne.
   // Dohľad v tme (kde začína tma) sa však meria po zemi: vrchy kmeňov pri hráčovi sú tmavé drevo, nie čierne diery.
   float lamp = 0.0;
@@ -206,7 +209,7 @@ const WATER_FRAG = `
 precision highp float;
 #define SHADOW_TAPS 8
 uniform sampler2D shadowMap; uniform float shadowOn; uniform vec2 shadowTexel; uniform float shadowRadius;
-uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec3 sunDir;
+uniform vec3 ambient; uniform vec3 ambUp; uniform vec3 ambDown; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec3 sunDir;
 uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount;
 uniform sampler2D reflMap; uniform mat4 reflMatrix; uniform float reflOn;
 uniform vec3 skyColor; uniform vec3 viewDir; uniform float time; uniform float ice; uniform float reflStrength;
@@ -264,7 +267,7 @@ void main() {
   float vis = sunVisibility(sunDir.y);
 
   // svetlo na hladine (rovnaké ako na svete) + odlesky lámp
-  vec3 light = ambient + sunColor * vis, lampSpec = vec3(0.0);
+  vec3 light = ambient * ambUp + sunColor * vis, lampSpec = vec3(0.0); // hladina hľadí na oblohu
   for (int i = 0; i < ${MAX_LIGHTS}; i++) {
     if (i >= lightCount) break;
     float f = 1.0 - smoothstep(0.0, lights[i].w, distance(vPos, lights[i].xyz));
@@ -336,7 +339,7 @@ const GLACIER_FRAG = `
 precision highp float;
 #define SHADOW_TAPS 8
 uniform sampler2D shadowMap; uniform float shadowOn; uniform vec2 shadowTexel; uniform float shadowRadius;
-uniform vec3 ambient; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec3 sunDir;
+uniform vec3 ambient; uniform vec3 ambUp; uniform vec3 ambDown; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec3 sunDir;
 uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount;
 uniform vec3 skyColor; uniform vec3 viewDir;
 varying vec3 vPos; varying vec3 vN; varying float vShade; varying vec4 vShadow;
@@ -357,7 +360,7 @@ void main() {
   float stripe = floor(vnoise(vec2(p.x * 1.2, p.y * 13.0)) * 4.0) / 3.0;
   vec3 N = normalize(N0 + B * (stripe - 0.5) * 0.1);
   vec3 V = normalize(viewDir);
-  vec3 light = ambient + sunColor * sunVisibility(dot(N0, sunDir));
+  vec3 light = ambient * mix(ambDown, ambUp, N0.y * 0.5 + 0.5) + sunColor * sunVisibility(dot(N0, sunDir));
   vec3 lampSpec = vec3(0.0);
   for (int i = 0; i < ${MAX_LIGHTS}; i++) {
     if (i >= lightCount) break;
@@ -533,7 +536,7 @@ export function create(api: Render3DApi): Render3D {
 
   // ---------- Sieť sveta z podkociek ----------
   const worldU = {
-    map: uni(groundTex), ambient: uni(new THREE.Vector3()), sunColor: uni(new THREE.Vector3()),
+    map: uni(groundTex), ambient: uni(new THREE.Vector3()), ambUp: uni(new THREE.Vector3(1, 1, 1)), ambDown: uni(new THREE.Vector3(1, 1, 1)), sunColor: uni(new THREE.Vector3()),
     lampColor: uni(new THREE.Vector3(...LAMP_COL)), emisColor: uni(new THREE.Vector3(1, 1, 1)),
     lights: uni(Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4())), lightCount: uni(0), opacity: uni(1),
     shadowMap: uni<THREE.Texture | null>(null), shadowMatrix: uni(new THREE.Matrix4()), sunDir: uni(new THREE.Vector3(0, 1, 0)),
@@ -1535,32 +1538,39 @@ void main() {
   }
 
   // ---------- Svetlo ----------
-  const NIGHT_AMB = toLin([0.22, 0.25, 0.42]), DAY_AMB = toLin([0.62, 0.64, 0.72]);
-  const SUN_DAY = toLin([0.55, 0.52, 0.44]), SUN_LOW = toLin([0.62, 0.38, 0.2]);
-  const SKY_DAY: V3 = [0.62, 0.82, 0.96], SKY_NIGHT: V3 = [0.05, 0.07, 0.16], SKY_DUSK: V3 = [0.98, 0.62, 0.42];
+  // Farby dňa (okolie z oblohy a od zeme, slnko, obloha) sú v skylight.ts (#190); tu len počasie, Les na pomedzí a Les divov.
+  // Okolité svetlo ide do shaderu ako priemer (ambient – z neho počítajú aj sprity, pavučiny a čiastočky) a dva odtiene
+  // (ambUp pre vrchy, ambDown pre spodky); steny dostanú priemer.
+  const NIGHT_AMB = toLin([0.22, 0.25, 0.42]), DAY_AMB = toLin([0.62, 0.64, 0.72]); // základ okolia v Lese divov
   const GLOOM_FOG: V3 = [0.16, 0.24, 0.2]; // tmavozelený opar hustého lesa
   // Les divov: tma za dohľadom (aj pozadie) – cez deň temne zelená, v noci takmer čierna; okolie a slnko len zlomok
   const DARK_DAY: V3 = [0.03, 0.05, 0.04], DARK_NIGHT: V3 = [0.008, 0.011, 0.02];
   const DARK_AMB = 0.12, DARK_AMB_NIGHT = 0.08, DARK_SUN = 0.65, EYE_LIT = { day: 0.24, night: 0.16 }; // slabé svetlo okolo hráča
-  let curAmb = DAY_AMB, curSun = SUN_DAY, curSunDir: SunDir | null = null, curDark: { k: number; eyeLit: THREE.Vector2; eye: THREE.Vector4 } | null = null;
+  let curAmb = DAY_AMB, curSun: V3 = [0, 0, 0], curSunDir: SunDir | null = null, curDark: { k: number; eyeLit: THREE.Vector2; eye: THREE.Vector4 } | null = null;
   function lighting(min: number, se: number): number {
     const dl = W.daylight(min), dir = W.sunDir(min, se);
     curSunDir = dir;
-    const elev = dir ? Math.min(1, dir.y * 3) : 0;
     const rain = S.weather === 'rain' ? 0.75 : S.weather === 'snow' ? 0.9 : 1;
-    curAmb = mul3(mix3(NIGHT_AMB, DAY_AMB, dl), rain < 1 ? 0.92 : 1);
-    curSun = mul3(mix3(SUN_LOW, SUN_DAY, Math.min(1, elev * 1.4)), elev * dl * rain);
+    const L = skyLight(min), grey = rain < 1 ? (S.weather === 'rain' ? 0.65 : 0.5) : 0; // zamračené: farby k šedej
+    const up = overcast(L.ambSky, grey), down = overcast(L.ambGround, grey);
+    curAmb = mul3(mix3(up, down, 0.5), rain < 1 ? 0.92 : 1);
+    // slnko pri obzore postupne vyjde / zapadne (bez skoku, keď sunDir začne alebo prestane byť null)
+    const rise = dir ? smooth(0, 0.035, dir.y) : 0;
+    curSun = mul3(overcast(L.sun, grey), rise * rain);
+    const tint = (c: V3): V3 => zip3(c, curAmb, (v, a) => (a > 0 ? v / a : 1));
+    let ambUp = tint(up), ambDown = tint(down);
     worldU.ambient.value.set(...curAmb);
     worldU.sunColor.value.set(...curSun);
     const emis: V3 = dl < 0.6 ? toLin([1, 0.85, 0.55]) : [0, 0, 0];
     worldU.emisColor.value.set(...emis);
-    const dusk = dir ? Math.max(0, 1 - dir.y * 4) * dl : 0;
     // Les na pomedzí: smerom na sever ubúda svetla (shader podľa miesta, obloha podľa toho, kde stojí hráč)
     const Gl = D.GLOOM[S.area], gm = D.gloomAt(S.area, S.me.y);
     worldU.gloom.value.set(Gl ? Gl.from : 1, Gl ? Gl.max : 0, Gl ? Gl.pow : 1);
     const fog = mul3(GLOOM_FOG, 0.35 + 0.65 * dl);
     worldU.gloomFog.value.set(...fog);
-    let sky = mix3(mix3(mix3(SKY_NIGHT, SKY_DAY, dl), SKY_DUSK, dusk * 0.6), fog, gm);
+    const skyGrey = grey * 0.8, skyDim = rain < 1 ? 0.82 : 1;
+    let zenith = mix3(mul3(overcast(L.zenith, skyGrey), skyDim), fog, gm), horizon = mix3(mul3(overcast(L.horizon, skyGrey), skyDim), fog, gm);
+    let glow = L.glow * (1 - grey) * (1 - gm);
     // Les divov (k = 1) a cesta k nemu na severe Lesa na pomedzí (k 0 → 1): málo svetla, slnko len cez koruny, za dohľadom tma (aj obloha)
     const k = D.darkAt(S.area, S.me.y), dark = D.DARK.les;
     worldU.darkOn.value = k;
@@ -1579,16 +1589,60 @@ void main() {
       worldU.ambient.value.set(...curAmb);
       worldU.sunColor.value.set(...curSun);
       const night = mix3(DARK_NIGHT, DARK_DAY, dl);
-      sky = mix3(sky, night, k);
+      zenith = mix3(zenith, night, k); horizon = mix3(horizon, night, k); glow *= 1 - k;
+      ambUp = mix3(ambUp, [1, 1, 1], k); ambDown = mix3(ambDown, [1, 1, 1], k); // v tme Lesa divov bez odtieňov oblohy
       worldU.darkFog.value.set(...night);
       worldU.eyeLit.value.set(dark.sight * 1.2, lerp(EYE_LIT.night, EYE_LIT.day, dl));
       curDark = { k, eyeLit: worldU.eyeLit.value, eye: worldU.eye.value };
     }
+    worldU.ambUp.value.set(...ambUp);
+    worldU.ambDown.value.set(...ambDown);
+    const sky = mix3(horizon, zenith, 0.35); // čo vidí hladina (a pozadie, keby obloha nebola nakreslená)
     renderer.setClearColor(new THREE.Color(sky[0], sky[1], sky[2]));
+    setSky(zenith, horizon, glow, dir, min);
     waterU.skyColor.value.set(sky[0], sky[1], sky[2]);
     waterU.ice.value = se === 3 ? 1 : 0;
     waterU.reflStrength.value = se === 3 ? 0.28 : 0.42;
     return dl;
+  }
+  // Obloha (#190): prechod zo zenitu (hore) k obzoru (dole) cez celú obrazovku, kreslí sa pred svetom. Pri východe a západe
+  // svieti pri obzore teplá žiara na strane slnka (podľa toho, kam je natočená kamera). Do zrkadla vody ani do mapy tieňov nejde.
+  const skyU = { zenith: uni(new THREE.Vector3()), horizon: uni(new THREE.Vector3()), glowCol: uni(new THREE.Vector3()), glow: uni(new THREE.Vector2()) };
+  const skyMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+    uniforms: skyU, depthTest: false, depthWrite: false,
+    vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: `
+precision highp float;
+uniform vec3 zenith; uniform vec3 horizon; uniform vec3 glowCol; uniform vec2 glow; varying vec2 vUv;
+void main() {
+  vec3 col = mix(horizon, zenith, smoothstep(0.0, 1.0, vUv.y));
+  float dx = vUv.x - glow.x, g = glow.y * exp(-dx * dx * 2.5 - vUv.y * vUv.y * 5.0);
+  col = mix(col, glowCol, clamp(g, 0.0, 1.0));
+  // jemný šum proti pásom v prechode
+  col += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
+  gl_FragColor = vec4(col, 1.0);
+}`
+  }));
+  skyMesh.frustumCulled = false;
+  const skyScene = new THREE.Scene();
+  skyScene.add(skyMesh);
+  const skyRight = new THREE.Vector3();
+  function setSky(zenith: V3, horizon: V3, glow: number, dir: SunDir | null, min: number): void {
+    skyU.zenith.value.set(...zenith);
+    skyU.horizon.value.set(...horizon);
+    // žiara: teplejšia a svetlejšia než obzor; slnko pred východom a po západe je na východe (+x) / západe (-x)
+    skyU.glowCol.value.set(Math.min(1, horizon[0] * 1.08 + 0.06), Math.min(1, horizon[1] * 0.95 + 0.04), horizon[2] * 0.8);
+    const hx = dir ? dir.x : min < 780 ? 1 : -1, hz = dir ? dir.z : 0, hl = Math.hypot(hx, hz) || 1;
+    skyRight.setFromMatrixColumn(camera.matrixWorld, 0);
+    const rl = Math.hypot(skyRight.x, skyRight.z) || 1;
+    skyU.glow.value.set(0.5 + 0.5 * (hx * skyRight.x + hz * skyRight.z) / hl / rl, glow * 0.85);
+  }
+  function renderWithSky(): void {
+    renderer.autoClear = false;
+    renderer.clear();
+    renderer.render(skyScene, camera);
+    renderer.render(scene, camera);
+    renderer.autoClear = true;
   }
   // svetlo v bode pre sprity (CPU verzia shaderu)
   // V temnej ploche navyše: slnko len na čistinách, slabé svetlo okolo hráča a za dohľadom tma; vis = nakoľko ho vidno (0–1).
@@ -1928,7 +1982,7 @@ void main() {
     if (statsOn) tp = performance.now();
     renderReflection();
     if (statsOn) { const q = performance.now(); passMs.refl = q - tp; tp = q; }
-    renderer.render(scene, camera);
+    renderWithSky();
     if (fading) drawOutlines();
     if (statsOn) passMs.scene = performance.now() - tp;
     drawOverlay(t);
