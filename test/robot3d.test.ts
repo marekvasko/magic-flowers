@@ -235,7 +235,7 @@ test('použitie náradia: motyka okopáva a krompáč seká do zeme pred robotom
         assert.ok(!arm.some(a => rest.some(b => a.intersectsBox(b))), `${name}, ${tool}, t ${t.toFixed(2)}: ruka alebo náradie zasahuje do robota`);
         if (tool === 'can') {
           const spout = new THREE.Vector3(0, 0, 1).applyQuaternion(held.getWorldQuaternion(new THREE.Quaternion()));
-          const rose = held.localToWorld(new THREE.Vector3(0, 0, 0.16));
+          const rose = held.localToWorld(new THREE.Vector3(0, 0.03, 0.16));
           if (spout.y < -0.4 && rose.z > r.model.front * r.model.scale) poured = true;
         }
         if (tool === 'lamp' && held.getWorldPosition(new THREE.Vector3()).y > RM.FRAME.shoulder[1]) raised = true;
@@ -259,4 +259,58 @@ test('kĺby sa k novej póze ťahajú postupne (najviac jointSpeed), potom ju do
   const target = RM.robotPose(r.model, { dance: true, t: 0 }).joints.get('shoulderR')?.r[0] ?? 0;
   assert.ok(Math.abs(sh.rotation.x - target) < 1e-9, 'plece nedosiahlo pózu');
   r.dispose();
+});
+
+test('modely náradia sú celé: žiadny diel nevisí vo vzduchu (každý sa dotýka iného dielu toho istého náradia)', () => {
+  const r = buildRobot(RM.PRESETS.hrdzavec.look);
+  r.setTools(null, TOOLS);
+  r.group.updateMatrixWorld(true);
+  for (const t of TOOLS) {
+    const tool = r.group.getObjectByName('tool:' + t);
+    assert.ok(tool, t);
+    const inv = tool.matrixWorld.clone().invert(), parts: THREE.Box3[] = [];
+    tool.traverse(c => { if (c instanceof THREE.Mesh) parts.push(localBox(c, inv).expandByScalar(0.006)); });
+    assert.ok(parts.length > 1, t);
+    // zo všetkých dielov sa dá prejsť cez dotyky na všetky ostatné
+    const seen = new Set([0]), queue = [0];
+    while (queue.length) { const i = queue.pop() ?? 0; for (const [k, b] of parts.entries()) if (!seen.has(k) && parts[i]?.intersectsBox(b)) { seen.add(k); queue.push(k); } }
+    assert.strictEqual(seen.size, parts.length, `${t}: ${parts.length - seen.size} dielov nie je spojených s ostatnými`);
+  }
+  r.dispose();
+});
+
+test('výmena náradia: držané letí do svojho držiaka, nové z nosiča ponad hlavu do klepeta; nikdy nie je dvakrát ani nezmizne a cestou nič nezasiahne', () => {
+  for (const [name, look] of LOOKS.slice(0, 20)) {
+    const r = buildRobot(look), body = r.group.getObjectByName('body'), head = r.group.getObjectByName('head');
+    assert.ok(body && head, name);
+    r.setTools('hoe', TOOLS);
+    r.pose({});
+    for (const [from, to] of [['hoe', 'can'], ['can', 'pick'], ['pick', null], [null, 'lamp']] as const) {
+      r.switchTool(to);
+      const dt = 1 / 60, total = RM.swapTime(from, to);
+      let flew = false;
+      for (let k = 0; k * dt < total + 0.5; k++) {
+        r.pose({}, dt);
+        r.group.updateMatrixWorld(true);
+        // každé náradie je v robotovi práve raz
+        for (const t of TOOLS) { let n = 0; r.group.traverse(o => { if (o.name === 'tool:' + t) n++; }); assert.strictEqual(n, 1, `${name} ${from}→${to}: ${t} je ${n}×`); }
+        // letiace náradie (dieťa robota) nezasahuje do trupu ani hlavy
+        for (const c of r.group.children) {
+          if (!c.name.startsWith('tool:')) continue;
+          flew = true;
+          const inv = body.matrixWorld.clone().invert(), tb: THREE.Box3[] = [], rest: THREE.Box3[] = [];
+          c.traverse(o => { if (o instanceof THREE.Mesh) tb.push(localBox(o, inv)); });
+          for (const part of [...body.children, ...head.children]) if (part instanceof THREE.Mesh) rest.push(localBox(part, inv));
+          assert.ok(!tb.some(a => rest.some(b => a.intersectsBox(b))), `${name} ${from}→${to}: letiace ${c.name} zasahuje do robota`);
+        }
+      }
+      assert.ok(flew, `${name} ${from}→${to}: nič neletelo`);
+      assert.ok(!r.switching(), `${name} ${from}→${to}: výmena neskončila`);
+      // na konci: nové náradie v klepete, staré v držiaku
+      const held = to ? r.group.getObjectByName('tool:' + to) : null;
+      if (to) { assert.ok(held, name); let p: THREE.Object3D | null = held; let inHand = false; while (p) { if (p.name === 'handR') inHand = true; p = p.parent; } assert.ok(inHand, `${name}: ${to} nie je v ruke`); }
+      if (from) { const st = r.group.getObjectByName('tool:' + from); let p: THREE.Object3D | null = st ?? null, onRack = false; while (p) { if (p.name === 'rack') onRack = true; p = p.parent; } assert.ok(onRack, `${name}: ${from} nie je na nosiči`); }
+    }
+    r.dispose();
+  }
 });

@@ -722,7 +722,7 @@ export function robotModel(look0: RobotLook): RobotModel {
 // ---------- póza ----------
 // Čo robot práve robí (ako CharOpts postavičky): fáza kroku (rastie s prejdenou dráhou), plazenie, tanec, hrabanie (čas),
 // výška skoku, čas (žmurkanie, rozhliadanie), náradie v ruke
-export interface PoseOpts { phase?: number; t?: number; crawl?: boolean; dance?: boolean; dig?: number; digWith?: ToolId | null; use?: { tool: ToolId; t: number } | null; jz?: number; hold?: HoldKind | null; walking?: boolean }
+export interface PoseOpts { phase?: number; t?: number; crawl?: boolean; dance?: boolean; dig?: number; digWith?: ToolId | null; use?: { tool: ToolId; t: number } | null; swap?: 'toss' | 'catch' | null; jz?: number; hold?: HoldKind | null; walking?: boolean }
 export interface JointPose { r: V3; d?: V3 }
 // pour = ako veľmi je krhla naklonená (0–1, voda tečie od ~0,6); rigid = zavesené náradie drží pevne (nevisí podľa gravitácie)
 export interface RobotPose { readonly joints: ReadonlyMap<JointId, JointPose>; readonly blink: number; readonly steam: number; readonly pour: number; readonly rigid: boolean }
@@ -821,6 +821,19 @@ function useTool(m: RobotModel, tool: ToolId, s: number): UseState {
   return { arm: ik(m, lerpT(low, high, up)), spread: 0.24, wrist: Math.PI / 2, pour: 0, head: -0.35 * up };
 }
 
+// ---------- výmena náradia ----------
+// Ruka na nosič na chrbte nedočiahne. Pri výmene preto robot držané náradie zdvihne a prehodí cez plece dozadu
+// (toss) – letí po pevnej dráhe do svojho držiaka – a nosič vystrelí nové náradie dopredu ponad hlavu priamo do klepeta
+// (catch: ruka čaká hore pred robotom). Časy v sekundách; v hre bude výmena chvíľu trvať (herná mechanika neskôr).
+export const SWAP = { toss: 0.4, flight: 0.75, prep: 0.45, settle: 0.3, apex: 0.45 } as const; // apex: vrchol letu nad temenom
+// celkový čas výmeny (z náradia from na to; null = prázdna ruka)
+export function swapTime(from: ToolId | null, to: ToolId | null): number {
+  const launch = from ? SWAP.toss + SWAP.flight : 0;
+  return to ? Math.max(launch, SWAP.prep) + SWAP.flight + SWAP.settle : launch;
+}
+// ruka pri prehodení (nad plecom) a pri chytaní (pred robotom, odklonená do strany, aby chytené náradie viselo mimo trupu)
+const SWAP_POSE: Readonly<Record<'toss' | 'catch', Target>> = { toss: { y: 0.15, z: 0.03, phi: 2.6 }, catch: { y: 0.1, z: 0.19, phi: 1.3 } };
+
 // ---------- obmedzenia kĺbov ----------
 // Rozsah otočenia kĺbov ramena (Euler x, y, z v radiánoch, pravá strana; ľavá má y a z zrkadlovo): plece sa zdvihne
 // dopredu až nad hlavu, dozadu len trochu, do strán málo; lakeť sa ohýba len jedným smerom; zápästie má obmedzený
@@ -908,6 +921,11 @@ export function robotPose(m: RobotModel, o: PoseOpts): RobotPose {
     const a = digArm(m, ((o.dig * DIG_RATE) % 1 + 1) % 1, tool);
     if (left) { armL = [a.sh, 0, 0]; elbL = [a.el, 0, 0]; handL = [a.hd, 0, 0]; }
     else { armR = [a.sh, 0, 0]; elbR = [a.el, 0, 0]; handR = [a.hd, 0, 0]; armL = fwd(0.3); elbL = [-0.5, 0, 0]; }
+  }
+  // výmena náradia: ruka hore (prehodenie dozadu) alebo hore pred robotom (chytanie)
+  if (o.swap) {
+    const tg = SWAP_POSE[o.swap], [, sy, sz] = m.shoulder, a = ik(m, { y: sy + tg.y, z: sz + tg.z, phi: tg.phi });
+    armR = [a.sh, 0, -0.24]; elbR = [a.el, 0, 0]; handR = [a.hd, 0, 0]; // ruka odklonená do strany, náradie mimo trupu
   }
   // použitie náradia v pravej ruke (vlastný pohyb každého náradia)
   let pour = 0, rigid = false;

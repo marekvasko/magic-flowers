@@ -93,7 +93,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
   const info = h('div', { class: 'rb-info muted' },
     'Procedural robot generator for ', h('a', { href: 'https://github.com/marekvasko/magic-flowers/issues/194', target: '_blank' }, '#194'),
     ': a robot is a genome of parts (chassis, body, head, eyes, details), sizes and colours; a seed gives a random one, the five presets are hand-tuned genomes. ',
-    `Every robot has the same dimensions (${RM.FRAME.height} tiles tall, same shoulders, arm length and hand positions) – only shapes and looks change. The selected tool is in the right gripper; every other owned tool has its own place on the back rack (motyka and krompáč in the holster tubes, krhla and lampáš on the hooks), and an empty place stays visible. Drag to rotate; 1 grid square = 1 tile.`);
+    `Every robot has the same dimensions (${RM.FRAME.height} tiles tall, same shoulders, arm length and hand positions) – only shapes and looks change. The selected tool is in the right gripper; every other owned tool has its own place on the back rack (motyka and krompáč in the holster tubes, krhla and lampáš on the hooks). Switching tools (In hand) is animated: the robot tosses the held tool over its shoulder into its holder and the rack catapults the new one over its head into the gripper. Drag to rotate; 1 grid square = 1 tile.`);
   el.replaceChildren(h('div', { class: 'rb' }, bar, main, info));
 
   // ---------- scéna ----------
@@ -159,7 +159,15 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
       seg(ANIMS, ANIMS.indexOf(st.anim), i => { st.anim = must(ANIMS[i]); save(); renderBar(); }),
       seg(['Day', 'Night'], st.night ? 1 : 0, i => { st.night = !!i; save(); light(); renderBar(); }),
       seg(['1×', '2×', '3×'], st.zoom - 1, i => { st.zoom = i + 1; save(); renderBar(); }),
-      h('label', null, 'In hand', seg(['—', ...TOOLS.map(t => TOOL_NAME[t])], st.held ? TOOLS.indexOf(st.held) + 1 : 0, i => { st.held = TOOLS[i - 1] ?? null; save(); rebuild(); })),
+      // výmena náradia s animáciou: staré letí na nosič, nové z nosiča do ruky (obe sú vlastnené – sú v „On back“)
+      h('label', null, 'In hand', seg(['—', ...TOOLS.map(t => TOOL_NAME[t])], st.held ? TOOLS.indexOf(st.held) + 1 : 0, i => {
+        const to = TOOLS[i - 1] ?? null;
+        if (st.held) st.carried.add(st.held);
+        if (to) st.carried.add(to);
+        st.held = to; save();
+        for (const o of robots) o.r.switchTool(to);
+        renderBar();
+      })),
       h('label', null, 'On back', ...TOOLS.map(t => {
         const c = document.createElement('input'); c.type = 'checkbox'; c.checked = st.carried.has(t);
         c.onchange = () => { if (c.checked) st.carried.add(t); else st.carried.delete(t); save(); rebuild(); };
@@ -258,7 +266,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
       const jump = st.anim === 'jump' ? Math.max(0, Math.sin(t * 3 + i)) * 0.35 : 0;
       o.r.group.position.set(o.x, 0, o.z);
       // „use tool“: vlastný pohyb náradia v ruke (motyka okopáva, krompáč seká, krhla polieva, lampáš svieti), bez náradia hrabe klepetom
-      const use = st.anim === 'use tool' && st.held ? { tool: st.held, t: t + i * 0.37 } : null;
+      const use = st.anim === 'use tool' && st.held && !o.r.switching() ? { tool: st.held, t: t + i * 0.37 } : null;
       o.r.pose({ phase: dist + i, t: t + i * 1.7, walking, crawl: st.anim === 'crawl', dance: st.anim === 'dance', dig: st.anim === 'dig' || (st.anim === 'use tool' && !st.held) ? t : 0, use, jz: jump }, dt);
       const ll = lampLights[i];
       if (ll && st.night && st.held === 'lamp') { o.r.mountWorld('handR', ll.position); ll.intensity = 1.6; }
