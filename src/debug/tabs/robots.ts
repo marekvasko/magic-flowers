@@ -93,7 +93,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
   const info = h('div', { class: 'rb-info muted' },
     'Procedural robot generator for ', h('a', { href: 'https://github.com/marekvasko/magic-flowers/issues/194', target: '_blank' }, '#194'),
     ': a robot is a genome of parts (chassis, body, head, eyes, details), sizes and colours; a seed gives a random one, the five presets are hand-tuned genomes. ',
-    `Every robot is scaled to ${RM.HEIGHT_MIN}–${RM.HEIGHT_MAX} tiles tall. The selected tool is in the right gripper; every other owned tool has its own place on the back rack (motyka and krompáč in the holster tubes, krhla and lampáš on the hooks), and an empty place stays visible. Drag to rotate; 1 grid square = 1 tile.`);
+    `Every robot has the same dimensions (${RM.FRAME.height} tiles tall, same shoulders, arm length and hand positions) – only shapes and looks change. The selected tool is in the right gripper; every other owned tool has its own place on the back rack (motyka and krompáč in the holster tubes, krhla and lampáš on the hooks), and an empty place stays visible. Drag to rotate; 1 grid square = 1 tile.`);
   el.replaceChildren(h('div', { class: 'rb' }, bar, main, info));
 
   // ---------- scéna ----------
@@ -214,7 +214,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
       h('label', null, 'Oči', seg(['1', '2'], L.eyes - 1, i => { setLook({ ...st.look, eyes: i ? 2 : 1 }, true); })),
       h('label', null, 'Hrany', seg(RM.EDGES.map(x => RM.PART_NAMES.edges[x]), RM.EDGES.indexOf(L.edges), i => { setLook({ ...st.look, edges: must(RM.EDGES[i]) }, true); })),
       h('label', null, 'Doplnok'), part('acc', RM.ACCS, x => RM.PART_NAMES.acc[x]),
-      h('h5', null, 'Sizes'),
+      h('h5', null, 'Shape'),
       ...RM.NUM_KEYS.filter(k => k !== 'wear').map(slider),
       h('h5', null, 'Details & colours'),
       h('div', { class: 'rb-bar' }, ...RM.FLAG_KEYS.map(flag)),

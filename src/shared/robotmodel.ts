@@ -26,28 +26,28 @@ export type Accessory = typeof ACCS[number];
 // Hrany: oblé (hladké, zaoblené) alebo ostré (kocky s ostrými hranami, valce a gule ako mnohosteny)
 export type Edges = typeof EDGES[number];
 // Číselné vlastnosti: rozsah a predvolená hodnota (všetko v políčkach, okrem pomerov)
+// Rozmery robota sú pre všetkých rovnaké (FRAME): výška, šírka a hĺbka trupu, výška spodku trupu nad zemou, poloha
+// pliec, dĺžka a hrúbka rúk. Generátor mení len tvary a vzhľad. Číselné vlastnosti genómu sú preto len tvarové:
+// výška trupu (krk ju vyrovná, celková výška ostáva), zaoblenie, veľkosť hlavy (zmenšená, ak by sa nezmestila),
+// veľkosť očí a hrdza.
 export const NUM = {
-  bw: { min: 0.24, max: 0.44, def: 0.32, name: 'Šírka trupu' },
-  bh: { min: 0.18, max: 0.36, def: 0.28, name: 'Výška trupu' },
-  bd: { min: 0.7, max: 1.1, def: 0.95, name: 'Hĺbka trupu (pomer)' },
+  bh: { min: 0.24, max: 0.34, def: 0.28, name: 'Výška trupu' },
   round: { min: 0, max: 1, def: 0.35, name: 'Zaoblenie' },
-  legs: { min: 0, max: 1, def: 0.5, name: 'Veľkosť podvozku' },
-  neck: { min: 0, max: 1, def: 0.5, name: 'Krk' },
-  headS: { min: 0.75, max: 1.3, def: 1, name: 'Veľkosť hlavy' },
+  headS: { min: 0.8, max: 1.3, def: 1, name: 'Veľkosť hlavy' },
   eyeS: { min: 0.7, max: 1.4, def: 1, name: 'Veľkosť očí' },
-  arm: { min: 0.16, max: 0.3, def: 0.24, name: 'Dĺžka rúk' },
-  armT: { min: 0.014, max: 0.026, def: 0.02, name: 'Hrúbka rúk' },
   wear: { min: 0, max: 1, def: 0.3, name: 'Hrdza' }
 } as const;
 export type NumKey = keyof typeof NUM;
-export const NUM_KEYS: readonly NumKey[] = ['bw', 'bh', 'bd', 'round', 'legs', 'neck', 'headS', 'eyeS', 'arm', 'armT', 'wear'];
+export const NUM_KEYS: readonly NumKey[] = ['bh', 'round', 'headS', 'eyeS', 'wear'];
+// Spoločné rozmery (políčka): výška po temeno, spodok trupu nad zemou, šírka a hĺbka trupu, plece (x, výška nad zemou, z),
+// dĺžka a hrúbka ramena
+export const FRAME = { height: 0.75, bottom: 0.2, bw: 0.32, depth: 0.3, shoulder: [0.215, 0.42, 0.02] as V3, arm: 0.24, armT: 0.02 } as const;
 export const FLAGS = { chimney: 'Komínik', panel: 'Štítok', rivets: 'Nity', leds: 'Svetielka' } as const;
 export type FlagKey = keyof typeof FLAGS;
 export const FLAG_KEYS: readonly FlagKey[] = ['chimney', 'panel', 'rivets', 'leds'];
 export interface RobotLook {
   readonly loco: Loco; readonly body: BodyShape; readonly head: HeadKind; readonly eyes: 1 | 2; readonly edges: Edges;
-  readonly bw: number; readonly bh: number; readonly bd: number; readonly round: number; readonly legs: number; readonly neck: number;
-  readonly headS: number; readonly eyeS: number; readonly arm: number; readonly armT: number; readonly wear: number;
+  readonly bh: number; readonly round: number; readonly headS: number; readonly eyeS: number; readonly wear: number;
   readonly chimney: boolean; readonly panel: boolean; readonly rivets: boolean; readonly leds: boolean;
   readonly paint: string; readonly accent: string; readonly eye: string; readonly acc: Accessory;
 }
@@ -62,7 +62,7 @@ export const PART_NAMES: { readonly loco: Readonly<Record<Loco, string>>; readon
 export const ACCESSORIES = PART_NAMES.acc;
 
 const BASE: RobotLook = {
-  loco: 'treads', body: 'box', head: 'bino', eyes: 2, edges: 'soft', bw: 0.32, bh: 0.3, bd: 0.94, round: 0.33, legs: 0.5, neck: 0.6, headS: 1, eyeS: 1, arm: 0.26, armT: 0.022, wear: 0.45,
+  loco: 'treads', body: 'box', head: 'bino', eyes: 2, edges: 'soft', bh: 0.3, round: 0.33, headS: 1, eyeS: 1, wear: 0.45,
   chimney: false, panel: true, rivets: true, leds: false, paint: '#d9a441', accent: '#5b6b73', eye: '#9fe7ff', acc: 'none'
 };
 // Predvoľby: ručne naladené roboty
@@ -70,10 +70,10 @@ export type PresetId = 'hrdzavec' | 'kotul' | 'kotlik' | 'plechacik' | 'hranac';
 export interface Preset { readonly name: string; readonly desc: string; readonly look: RobotLook }
 export const PRESETS: Readonly<Record<PresetId, Preset>> = {
   hrdzavec: { name: 'Hrdzavec', desc: 'Hranatý záhradník na pásoch, oči ako ďalekohľad na krku.', look: BASE },
-  kotul: { name: 'Kotúľ', desc: 'Guľatý robotík, ktorý sa vozí na jednej guli. Jedno veľké oko pod sklom.', look: { ...BASE, loco: 'ball', body: 'ball', head: 'dome', eyes: 1, bw: 0.44, bh: 0.35, bd: 1, neck: 0, arm: 0.2, armT: 0.018, wear: 0.15, panel: true, paint: '#f1efe6', accent: '#e0734f', eye: '#7cf0b0', acc: 'antenna' } },
-  kotlik: { name: 'Kotlík', desc: 'Malý kotol na troch tenkých nohách, okrúhle okienko a komínik.', look: { ...BASE, loco: 'legs3', body: 'barrel', head: 'none', eyes: 1, bw: 0.34, bh: 0.2, bd: 1, legs: 0.6, eyeS: 1.3, arm: 0.24, armT: 0.018, wear: 0.6, chimney: true, panel: false, paint: '#6f9a7a', accent: '#c7923e', eye: '#ffd36b' } },
-  plechacik: { name: 'Plecháčik', desc: 'Plechovka na krátkych nožičkách, okrúhla hlava a dve okrúhle oči.', look: { ...BASE, loco: 'legs2', body: 'can', head: 'ball', eyes: 2, bw: 0.28, bh: 0.24, bd: 1, legs: 0.4, neck: 0.4, headS: 1.1, eyeS: 0.9, arm: 0.2, armT: 0.018, wear: 0.3, rivets: false, leds: true, paint: '#7fa7d9', accent: '#e9d8a6', eye: '#ffb3c7', acc: 'sprout' } },
-  hranac: { name: 'Hranáč', desc: 'Hranatý stavebný robot s ostrými hranami, na pásoch, s televízorom namiesto hlavy.', look: { ...BASE, edges: 'sharp', head: 'tv', eyes: 2, bw: 0.34, bh: 0.26, bd: 0.9, legs: 0.7, neck: 0.3, headS: 1.05, arm: 0.26, armT: 0.024, wear: 0.5, leds: true, paint: '#e7c86a', accent: '#3d4448', eye: '#ffd36b', acc: 'none' } }
+  kotul: { name: 'Kotúľ', desc: 'Guľatý robotík, ktorý sa vozí na jednej guli. Jedno veľké oko pod sklom.', look: { ...BASE, loco: 'ball', body: 'ball', head: 'dome', eyes: 1, bh: 0.34, headS: 1.15, wear: 0.15, panel: true, paint: '#f1efe6', accent: '#e0734f', eye: '#7cf0b0', acc: 'antenna' } },
+  kotlik: { name: 'Kotlík', desc: 'Malý kotol na troch tenkých nohách, okrúhle okienko a komínik.', look: { ...BASE, loco: 'legs3', body: 'barrel', head: 'none', eyes: 1, eyeS: 1.3, wear: 0.6, chimney: true, panel: false, paint: '#6f9a7a', accent: '#c7923e', eye: '#ffd36b' } },
+  plechacik: { name: 'Plecháčik', desc: 'Plechovka na krátkych nožičkách, okrúhla hlava a dve okrúhle oči.', look: { ...BASE, loco: 'legs2', body: 'can', head: 'ball', eyes: 2, bh: 0.26, headS: 1.15, eyeS: 0.9, wear: 0.3, rivets: false, leds: true, paint: '#7fa7d9', accent: '#e9d8a6', eye: '#ffb3c7', acc: 'sprout' } },
+  hranac: { name: 'Hranáč', desc: 'Hranatý stavebný robot s ostrými hranami, na pásoch, s televízorom namiesto hlavy.', look: { ...BASE, edges: 'sharp', head: 'tv', eyes: 2, bh: 0.28, headS: 1.1, wear: 0.5, leds: true, paint: '#e7c86a', accent: '#3d4448', eye: '#ffd36b', acc: 'none' } }
 };
 export const PRESET_IDS: readonly PresetId[] = ['hrdzavec', 'kotul', 'kotlik', 'plechacik', 'hranac'];
 // Farby na výber (náter, doplnková farba, oči) – milé, trochu vyblednuté
@@ -93,7 +93,7 @@ export function robotLook(v: unknown): RobotLook {
   const flag = (k: FlagKey): boolean => { const x = j[k]; return typeof x === 'boolean' ? x : d[k]; };
   return {
     loco: oneOf(LOCOS, j['loco']) ?? d.loco, body: oneOf(BODIES, j['body']) ?? d.body, head: oneOf(HEADS, j['head']) ?? d.head, edges: oneOf(EDGES, j['edges']) ?? d.edges, eyes: j['eyes'] === 1 ? 1 : j['eyes'] === 2 ? 2 : d.eyes,
-    bw: num('bw'), bh: num('bh'), bd: num('bd'), round: num('round'), legs: num('legs'), neck: num('neck'), headS: num('headS'), eyeS: num('eyeS'), arm: num('arm'), armT: num('armT'), wear: num('wear'),
+    bh: num('bh'), round: num('round'), headS: num('headS'), eyeS: num('eyeS'), wear: num('wear'),
     chimney: flag('chimney'), panel: flag('panel'), rivets: flag('rivets'), leds: flag('leds'),
     paint: color(j['paint'], d.paint), accent: color(j['accent'], d.accent), eye: color(j['eye'], d.eye), acc: oneOf(ACCS, j['acc']) ?? d.acc
   };
@@ -183,6 +183,7 @@ export interface RobotModel {
   readonly swingBack: number; // koľko z kroku dozadu smie ruka urobiť (menej, keď by narazila do nosiča), 0–1
   readonly shoulder: V3;      // pravé plece je zrkadlo (−x); v súradniciach trupu
   readonly armLen: number;
+  readonly front: number;     // najďalej dopredu trup aj podvozok (z) – pred tým robot hrabe
   readonly gait: 'roll' | 'walk';
 }
 // Každý robot je zhruba taký vysoký ako hráč: menšie sa zväčšia, väčšie zmenšia (zachová sa tvar)
@@ -292,11 +293,14 @@ class Builder {
   }
 }
 
+// Genóm so spoločnými rozmermi (pre stavbu): šírka, pomer hĺbky, ramená; bh je pri robotovi bez hlavy vyššie
+type Built = RobotLook & { readonly bw: number; readonly bd: number; readonly arm: number; readonly armT: number };
+
 // ---------- trup ----------
 // Povrch trupu (v súradniciach trupu, stred = 0): polovičné rozmery, kde je predok a bok vo výške y, bod a normála
 // na povrchu pre smer (uhol okolo y, výška −1…1) – na hrdzu, nity a oči
 interface Hull { hx: number; hy: number; hz: number; top: number; bottom: number; front(y: number): number; side(y: number): number; at(a: number, v: number): { p: V3; n: V3 } }
-function hull(L: RobotLook): Hull {
+function hull(L: Built): Hull {
   const hx = L.bw / 2, hy = L.bh / 2;
   if (L.body === 'box') {
     const hz = (L.bw * L.bd) / 2;
@@ -327,7 +331,7 @@ function hull(L: RobotLook): Hull {
     at: (a, v) => ({ p: [Math.sin(a) * (hx + 0.001), v * hy * 0.8, Math.cos(a) * (hx + 0.001)], n: [Math.sin(a), 0, Math.cos(a)] })
   };
 }
-function trunk(b: Builder, L: RobotLook, body: JointId, H: Hull): void {
+function trunk(b: Builder, L: Built, body: JointId, H: Hull): void {
   const { hx, hy, hz } = H;
   if (L.body === 'box') {
     b.add(body, { k: 'box', s: [L.bw, L.bh, hz * 2], r: Math.min(hx, hy, hz) * (0.12 + L.round * 0.7) }, [0, 0, 0], 'paint');
@@ -355,7 +359,7 @@ function trunk(b: Builder, L: RobotLook, body: JointId, H: Hull): void {
   }
 }
 // štítok / dvierka vpredu, svetielka, komínik
-function details(b: Builder, L: RobotLook, body: JointId, H: Hull, eyesOnBody: boolean): void {
+function details(b: Builder, L: Built, body: JointId, H: Hull, eyesOnBody: boolean): void {
   const { hx, hy } = H;
   const py = eyesOnBody ? -hy * 0.55 : L.body === 'box' ? 0 : -hy * 0.35;
   if (L.panel) {
@@ -376,7 +380,7 @@ function details(b: Builder, L: RobotLook, body: JointId, H: Hull, eyesOnBody: b
   }
 }
 // škvrny hrdze: náhodné body na povrchu trupu, koľko podľa wear (najviac 9)
-function rust(b: Builder, L: RobotLook, body: JointId, H: Hull): void {
+function rust(b: Builder, L: Built, body: JointId, H: Hull): void {
   const r = rng(hashStr(JSON.stringify(L)) ^ 0x9e3779b9), n = Math.round(L.wear * 9);
   for (let i = 0; i < n; i++) {
     const a = r() * Math.PI * 2, v = r() * 1.6 - 0.8, q = H.at(a, v), k = 0.022 + r() * 0.022;
@@ -388,14 +392,14 @@ function rust(b: Builder, L: RobotLook, body: JointId, H: Hull): void {
 // Postaví podvozok a vráti, v akej výške je spodok trupu
 // Podvozok: výška spodku trupu a čo z neho trčí do strán pod ramenami – out = najďalej od stredu (x), top = do akej
 // výšky (aby ruka visiaca vedľa trupu nezasahovala do pásov a kolies)
-interface Chassis { bottom: number; out: number; top: number }
-function chassis(b: Builder, L: RobotLook, H: Hull): Chassis {
+interface Chassis { bottom: number; out: number; top: number; front: number } // front = najďalej dopredu (z)
+function chassis(b: Builder, L: Built, H: Hull): Chassis {
   const { hx, hz } = H;
   if (L.loco === 'treads') {
     // skutočné pásy: slučka z ostrých článkov s ostrohami okolo ozubeného hnacieho kolesa vpredu, napínacieho vzadu
     // a dvoch pojazdových koliesok dole; bočný kryt s nitmi. Články sa pri jazde posúvajú po slučke (póza).
     // Užšie pásy (0,07) väčšinou pod okrajom trupu, aby ramená visiace vedľa trupu išli mimo nich.
-    const R = 0.062 + L.legs * 0.022, y0 = R + 0.009, tl = Math.max(0.32, hz * 2 + 0.1), zf = tl / 2 - R, zb = -zf, tw = 0.07, x = hx - tw / 2 - 0.004;
+    const R = (FRAME.bottom - 0.034) / 2, y0 = R + 0.009, tl = Math.max(0.32, hz * 2 + 0.1), zf = tl / 2 - R, zb = -zf, tw = 0.07, x = hx - tw / 2 - 0.004;
     const Ls = zf - zb, n = Math.max(18, Math.round((2 * Ls + 2 * Math.PI * R) / 0.03));
     for (const sx of [-1, 1]) {
       const side = sx > 0 ? 'L' : 'R', links: { j: JointId; s0: number }[] = [];
@@ -425,11 +429,11 @@ function chassis(b: Builder, L: RobotLook, H: Hull): Chassis {
     }
     b.add('root', { k: 'box', s: [x * 2 - tw - 0.01, 0.03, Ls], r: 0.002 }, [0, y0 + R * 0.4, 0], 'dark');
     for (const sx of [-1, 1]) b.add('root', { k: 'box', s: [0.02, 0.03, 0.03], r: 0.002 }, [sx * (x - tw / 2 - 0.01), y0, zf], 'dark'); // náprava hnacieho kolesa
-    return { bottom: y0 + R + 0.025, out: x + tw / 2 + 0.013, top: y0 + R + 0.012 };
+    return { bottom: y0 + R + 0.025, out: x + tw / 2 + 0.013, top: y0 + R + 0.012, front: tl / 2 + 0.012 };
   }
   if (L.loco === 'wheels') {
-    // dve veľké kolesá po bokoch, vzadu malé kolieska na podperu
-    const rr = 0.09 + L.legs * 0.05, x = hx + 0.035;
+    // dve veľké kolesá pod okrajmi trupu (ramená idú mimo nich), vzadu malé kolieska na podperu
+    const rr = (FRAME.bottom - 0.01) / 2, ww = 0.05, x = hx - ww / 2 - 0.005;
     for (const sx of [-1, 1]) {
       const w = b.joint(`wheel${sx > 0 ? 'L' : 'R'}`, 'root', [sx * x, rr, 0]);
       b.add(w, { k: 'torus', r: rr * 0.82, t: rr * 0.2 }, [0, 0, 0], 'rubber', [0, 0, Math.PI / 2]);
@@ -437,17 +441,18 @@ function chassis(b: Builder, L: RobotLook, H: Hull): Chassis {
       for (const a of [0, Math.PI / 3, (2 * Math.PI) / 3]) b.add(w, { k: 'box', s: [0.036, rr * 1.25, 0.018], r: 0.006 }, [0, 0, 0], 'accent', [a, 0, 0]);
       b.add(w, { k: 'cyl', r: rr * 0.2, h: 0.045 }, [0, 0, 0], 'dark', [0, 0, Math.PI / 2]);
       b.wheels.push({ j: w, r: rr });
-      b.add('root', { k: 'cyl', r: 0.015, h: x - hx + 0.02 }, [sx * (hx + (x - hx) / 2 - 0.01), rr, 0], 'dark', [0, 0, Math.PI / 2]);
+      b.add('root', { k: 'box', s: [0.03, FRAME.bottom - rr, 0.03], r: 0.004 }, [sx * (x - ww / 2 - 0.02), (FRAME.bottom + rr) / 2, 0], 'dark'); // vidlica
+      b.add('root', { k: 'cyl', r: 0.012, h: 0.045 }, [sx * (x - ww / 2 - 0.012), rr, 0], 'dark', [0, 0, Math.PI / 2]);
     }
-    const bottom = rr * 0.55, wheelsOut = x + Math.max(rr * 0.2, 0.0225) + 0.004;
+    const bottom = FRAME.bottom;
     b.rod('root', [0, bottom + 0.01, -hz * 0.6], [0, 0.03, -hz * 0.9], 0.01, 'dark');
     const c = b.joint('caster', 'root', [0, 0.03, -hz * 0.9]);
     b.add(c, { k: 'sphere', r: 0.03 }, [0, 0, 0], 'rubber');
     b.wheels.push({ j: c, r: 0.03 });
-    return { bottom, out: wheelsOut, top: rr * 2 + 0.005 };
+    return { bottom, out: x + 0.025, top: rr * 2 + 0.005, front: rr + 0.01 };
   }
   if (L.loco === 'ball') {
-    const rr = 0.08 + L.legs * 0.06, ball = b.joint('ball', 'root', [0, rr, 0]);
+    const rr = (FRAME.bottom + 0.03) / 2, ball = b.joint('ball', 'root', [0, rr, 0]);
     b.add(ball, { k: 'sphere', r: rr }, [0, 0, 0], 'rubber');
     b.add(ball, { k: 'torus', r: rr, t: 0.012 }, [0, 0, 0], 'accent', [0, 0, Math.PI / 2]);
     b.add(ball, { k: 'torus', r: rr, t: 0.012 }, [0, 0, 0], 'accent', [Math.PI / 2, 0, 0]);
@@ -455,20 +460,20 @@ function chassis(b: Builder, L: RobotLook, H: Hull): Chassis {
     const bottom = rr * 2 - 0.03;
     // sukienka nad guľou
     b.add('root', { k: 'cyl', r: rr * 1.05, r2: Math.min(hx, hz) * 0.85, h: 0.06 }, [0, bottom + 0.01, 0], 'accent');
-    return { bottom, out: rr * 1.05, top: bottom + 0.04 };
+    return { bottom, out: rr * 1.05, top: bottom + 0.04, front: rr * 1.05 };
   }
   if (L.loco === 'legs2') {
     // dve krátke nohy s veľkými topánkami (bedrá sú na trupe – kĺby hipL/hipR pridá body())
-    const bottom = 0.1 + L.legs * 0.12 + 0.05;
-    return { bottom, out: Math.max(0.06, hx * 0.45) + 0.042, top: bottom };
+    const bottom = FRAME.bottom;
+    return { bottom, out: Math.max(0.06, hx * 0.45) + 0.042, top: bottom, front: 0.08 + 0.01 };
   }
   if (L.loco === 'rover') {
     // Šesť kolies na podvozku rocker-bogie (ako marsovské vozidlo): na každej strane kolíska (rocker) otočná pod bokom
     // trupu; vpredu nesie predné koleso, vzadu na otočnom kĺbe vahadlo (bogie) so stredným a zadným kolesom.
     // Kolesá sú pod okrajom trupu (ramená idú mimo nich), kovové s ostrohami.
-    const rr = 0.045 + L.legs * 0.02, ww = 0.042, zl = Math.max(0.17, hz + 0.06);
+    const rr = 0.055, ww = 0.042, zl = Math.max(0.17, hz + 0.06);
     const xw = hx - ww / 2 - 0.006, xr = xw - ww / 2 - 0.014;          // stred kolesa, rovina kolísky
-    const yP = rr + 0.1 + L.legs * 0.05, zP = zl * 0.18;                // kĺb kolísky
+    const yP = FRAME.bottom - 0.035, zP = zl * 0.18;                // kĺb kolísky
     const zf = zl, zm = -zl * 0.12, zr = -zl, zB = (zm + zr) / 2, yB = rr + 0.065; // kolesá a kĺb vahadla
     for (const sx of [-1, 1]) {
       const side = sx > 0 ? 'L' : 'R', X = sx * xr, P: V3 = [X, yP, zP], B: V3 = [X, yB, zB];
@@ -492,14 +497,14 @@ function chassis(b: Builder, L: RobotLook, H: Hull): Chassis {
     }
     // vyrovnávacia tyč (diferenciál) naprieč pod trupom medzi kĺbmi kolísok
     b.add('root', { k: 'box', s: [xr * 2, 0.014, 0.014], r: 0.002 }, [0, yP + 0.012, zP], 'metal');
-    return { bottom: yP + 0.035, out: xw + ww / 2 + 0.006, top: yP + 0.04 };
+    return { bottom: yP + 0.035, out: xw + ww / 2 + 0.006, top: yP + 0.04, front: zl + rr + 0.008 };
   }
   // trojnožka: nohy sú pod trupom (kolená najďalej 0,88 šírky trupu)
-  const bottom = 0.2 + L.legs * 0.12;
-  return { bottom, out: H.hx * 0.88 + 0.025, top: bottom };
+  const bottom = FRAME.bottom;
+  return { bottom, out: H.hx * 0.88 + 0.025, top: bottom, front: H.hz * 0.7 + 0.05 };
 }
 // nohy na trupe (bedrá sa kývu s trupom)
-function legs(b: Builder, L: RobotLook, body: JointId, H: Hull, bottom: number): void {
+function legs(b: Builder, L: Built, body: JointId, H: Hull, bottom: number): void {
   const yb = -H.bottom;
   if (L.loco === 'legs2') {
     const len = bottom - 0.05;
@@ -528,10 +533,26 @@ function legs(b: Builder, L: RobotLook, body: JointId, H: Hull, bottom: number):
 
 // ---------- hlava ----------
 // Postaví hlavu na krku a vráti temeno (kĺb a bod) – kam patrí doplnok a úchyt top
+// Hlava sa zmestí do spoločnej výšky: výška hlavy nad krkom (bez krku) a polovica šírky pri veľkosti s
+function headSize(L: Built, s: number): { up: number; half: number } {
+  const e = L.eyeS;
+  if (L.head === 'bino') { const r = 0.055 * e * Math.sqrt(s); return { up: 0.04 + r * (L.eyes === 2 ? 1.25 : 1.6), half: L.eyes === 2 ? 2 * r + 0.02 * s : r * 1.3 }; }
+  if (L.head === 'dome') return { up: 0.125 * s + 0.012, half: 0.125 * s * 1.06 };
+  if (L.head === 'ball') return { up: 0.11 * s * 1.83, half: 0.11 * s + 0.016 };
+  if (L.head === 'tv') return { up: 0.14 * s, half: 0.1 * s + 0.024 * s };
+  return { up: 0, half: 0 };
+}
+// Veľkosť hlavy (najviac podľa genómu, nie širšia ako trup) a dĺžka krku tak, aby temeno bolo v spoločnej výške
+function fitHead(L: Built, bodyTop: number, hx: number): { s: number; nl: number } {
+  const room = FRAME.height - bodyTop, minNeck = L.head === 'bino' ? 0.04 : 0;
+  let s = L.headS;
+  while (s > 0.5 && (headSize(L, s).half > hx || room - headSize(L, s).up < minNeck)) s -= 0.01;
+  return { s, nl: Math.max(minNeck, room - headSize(L, s).up) };
+}
 // back = ako ďaleko dozadu siaha hlava od osi krku (aby nosič s náradím nezasahoval do veľkej hlavy),
 // half = polovica šírky hlavy (aby ramená išli aj mimo hlavy, keď je širšia ako trup)
-function head(b: Builder, L: RobotLook, body: JointId, H: Hull): { j: JointId; p: V3; back: number; half: number } {
-  const s = L.headS, e = L.eyeS;
+function head(b: Builder, L: Built, body: JointId, H: Hull, s: number, nl: number): { j: JointId; p: V3; back: number; half: number } {
+  const e = L.eyeS;
   if (L.head === 'none') {
     // oči na trupe ako okienka; „hlava“ je vrchnák trupu (pri kotli klenutý), na ňom doplnok
     const top = b.joint('head', body, [0, H.hy, 0]);
@@ -542,7 +563,6 @@ function head(b: Builder, L: RobotLook, body: JointId, H: Hull): { j: JointId; p
     else for (const sx of [-1, 1]) { const yaw = L.body === 'box' ? 0 : Math.asin(Math.min(0.8, (sx * r * 1.15) / H.hx)); b.roundEye(eye, [sx * r * 1.15, 0, H.front(y) * Math.cos(yaw) + 0.005], r, yaw, 'accent'); }
     return { j: top, p: [0, (H.top - H.hy) + 0.005, 0], back: 0, half: 0 };
   }
-  const nl = L.head === 'bino' ? 0.04 + L.neck * 0.12 : L.neck * 0.08;
   const neck = b.joint('neck', body, [0, H.top, L.head === 'bino' ? -0.02 : 0]);
   if (nl > 0.005) {
     b.add(neck, { k: 'cyl', r: L.head === 'bino' ? 0.03 : 0.025, h: nl }, [0, nl / 2, 0], 'dark');
@@ -598,28 +618,16 @@ function head(b: Builder, L: RobotLook, body: JointId, H: Hull): { j: JointId; p
 // ruka sa skráti, aby visela nad ním; keby bola príliš krátka, plece sa posunie von za podvozok na držiaku.
 // Dozadu ruka pri chôdzi kýve menej, ak by narazila do puzdier nosiča.
 const RACK_OUT = 0.3 * 0.43 + 0.024 + 0.012; // najďalej od stredu na nosiči (puzdro + rezerva)
-function arms(b: Builder, L: RobotLook, body: JointId, H: Hull, ch: Chassis, hd: { back: number; half: number }): { sx: number; sy: number; sz: number; arm: number; swingBack: number } {
-  const t = L.armT, rh = GRIP_R + 0.003, fw = Math.max(0.012, t * 0.6);
-  const half = Math.max(t * 1.35, rh + fw + 0.004);              // polovica šírky ramena (plece, klepeto)
-  const clawDrop = t * 0.45 + 0.018 + rh * 2 + fw;              // klepeto pod kĺbom ruky
-  const sy = H.hy * 0.25, sz = L.body === 'box' ? 0.03 : 0, shY = ch.bottom + H.bottom + sy;
-  // trup s nitmi a obručami; aj hlava, keď je širšia (pri plazení a tanci sú ruky pri nej)
-  const bodyOut = Math.max(H.hx, hd.half) + 0.018;
-  let sx = bodyOut + half + 0.004;
-  // dĺžka ruky (od plecia po kĺb ruky ~1,05 × arm): nad zemou, a nad podvozkom, ak trčí pod rameno
-  let reach = (shY - clawDrop - 0.035) / 1.05;
-  if (ch.out > sx - half - 0.004) {
-    const over = (shY - ch.top - clawDrop - 0.02) / 1.05;
-    if (over >= Math.min(0.13, L.arm)) reach = Math.min(reach, over);
-    else sx = ch.out + half + 0.04; // rezerva aj na otáčanie trupu pri tanci (podvozok stojí)
-  }
-  const arm = Math.max(0.07, Math.min(L.arm, reach));
-  // držiak plecia, keď je plece ďalej od trupu
-  const gap = sx - t * 1.2 - H.side(sy);
-  if (gap > 0.004) for (const s of [-1, 1]) b.add(body, { k: 'box', s: [gap + 0.012, t * 1.6, t * 1.8], r: 0.003 }, [s * (H.side(sy) + gap / 2 - 0.006), sy, sz], 'dark', undefined, 'armmount');
+function arms(b: Builder, L: Built, body: JointId, H: Hull, ch: Chassis, hd: { back: number; half: number }): { sx: number; sy: number; sz: number; arm: number; swingBack: number } {
+  // plece je pre všetkých na tom istom mieste (FRAME.shoulder) – trup aj hlava sú užšie, podvozok pod ramenom nič nemá
+  const t = FRAME.armT, [sx, shY, sz] = FRAME.shoulder, sy = shY - (ch.bottom + H.bottom), arm = FRAME.arm;
+  // držiak plecia od boku trupu
+  const side = H.side(sy), gap = sx - t * 1.2 - side;
+  if (gap > 0.004) for (const s of [-1, 1]) b.add(body, { k: 'box', s: [gap + 0.012, t * 1.6, t * 1.8], r: 0.003 }, [s * (side + gap / 2 - 0.006), sy, sz], 'dark', undefined, 'armmount');
   b.arm(1, body, [sx, sy, sz], arm, t);
   b.arm(-1, body, [-sx, sy, sz], arm, t);
   // krok dozadu: ruka (s klepetom) ostane pred puzdrami nosiča, ak je rameno v ich šírke
+  const half = Math.max(t * 1.35, GRIP_R + 0.003 + Math.max(0.012, t * 0.6) + 0.004), clawDrop = t * 0.45 + 0.018 + (GRIP_R + 0.003) * 2 + 0.012;
   let swingBack = 1;
   if (sx - half < RACK_OUT) {
     const rackFront = Math.min(-H.front(0) - 0.016, -hd.back + 0.015) - 0.016; // z čela puzdier
@@ -628,7 +636,6 @@ function arms(b: Builder, L: RobotLook, body: JointId, H: Hull, ch: Chassis, hd:
   }
   return { sx, sy, sz, arm, swingBack };
 }
-
 // ---------- celý robot ----------
 // Úchop ruky: stred klepeta; rúčka náradia ide cez neho pozdĺž osi z ruky
 const MOUNT_HAND = (j: JointId, y: number): Mount => ({ j, p: [0, y, 0] });
@@ -686,19 +693,28 @@ function rack(b: Builder, body: JointId, H: Hull, headBack: number): Record<Tool
   return { hoe: must(slots.hoe), pick: must(slots.pick), can: must(slots.can), lamp: must(slots.lamp) };
 }
 export function robotModel(look0: RobotLook): RobotModel {
-  const L = robotLook(look0), b = new Builder(L.edges === 'sharp'), H = hull(L);
+  const L0 = robotLook(look0);
+  // spoločné rozmery; robot bez hlavy má vyšší trup (po spoločnú výšku), hlavu nahrádza vrchnák
+  const base: Built = { ...L0, bw: FRAME.bw, bd: FRAME.depth / FRAME.bw, arm: FRAME.arm, armT: FRAME.armT };
+  const lid = (h: Hull): number => h.top - h.hy + (h.bottom - h.hy); // čo pridá klenutý vrchnák a spodok
+  // s hlavou: trup najviac taký vysoký, aby sa nad neho zmestila aspoň malá hlava (0,8) s najkratším krkom
+  const minHead = headSize(base, 0.8).up + (L0.head === 'bino' ? 0.04 : 0);
+  const L: Built = L0.head === 'none' ? { ...base, bh: FRAME.height - FRAME.bottom - lid(hull(base)) - 0.005 }
+    : { ...base, bh: Math.min(L0.bh, FRAME.height - FRAME.bottom - lid(hull(base)) - minHead) };
+  const b = new Builder(L.edges === 'sharp'), H = hull(L);
   const ch = chassis(b, L, H), bottom = ch.bottom;
   const body = b.joint('body', 'root', [0, bottom + H.bottom, 0]);
   trunk(b, L, body, H);
   legs(b, L, body, H, bottom);
-  const top = head(b, L, body, H);
+  const fit = fitHead(L, bottom + H.bottom + H.top, H.hx);
+  const top = head(b, L, body, H, fit.s, fit.nl);
   details(b, L, body, H, L.head === 'none');
   const { sx, sy, sz, arm, swingBack } = arms(b, L, body, H, ch, top);
   const slots = rack(b, body, H, top.back);
   b.accessory(L.acc, top.j, top.p);
   rust(b, L, body, H);
   const mounts: Record<MountId, Mount> = { handR: MOUNT_HAND('handR', b.gripY), handL: MOUNT_HAND('handL', b.gripY), back: { j: 'rack', p: [0, 0, -0.03] }, top: { j: top.j, p: top.p } };
-  const m0: RobotModel = { look: L, joints: b.joints, parts: b.parts, wheels: b.wheels, tracks: b.tracks, slots, mounts, swingBack, shoulder: [sx, sy, sz], armLen: arm, height: 0, scale: 1, gait: L.loco === 'legs2' || L.loco === 'legs3' ? 'walk' : 'roll' };
+  const m0: RobotModel = { look: L, joints: b.joints, parts: b.parts, wheels: b.wheels, tracks: b.tracks, slots, mounts, swingBack, shoulder: [sx, sy, sz], armLen: arm, front: Math.max(ch.front, H.front(0)), height: 0, scale: 1, gait: L.loco === 'legs2' || L.loco === 'legs3' ? 'walk' : 'roll' };
   const h0 = mountAt(m0, null, 'top')[1], scale = Math.max(HEIGHT_MIN, Math.min(HEIGHT_MAX, h0)) / h0;
   return { ...m0, scale, height: Math.round(h0 * scale * 1000) / 1000 };
 }
@@ -706,10 +722,51 @@ export function robotModel(look0: RobotLook): RobotModel {
 // ---------- póza ----------
 // Čo robot práve robí (ako CharOpts postavičky): fáza kroku (rastie s prejdenou dráhou), plazenie, tanec, hrabanie (čas),
 // výška skoku, čas (žmurkanie, rozhliadanie), náradie v ruke
-export interface PoseOpts { phase?: number; t?: number; crawl?: boolean; dance?: boolean; dig?: number; jz?: number; hold?: HoldKind | null; walking?: boolean }
+export interface PoseOpts { phase?: number; t?: number; crawl?: boolean; dance?: boolean; dig?: number; digWith?: ToolId | null; jz?: number; hold?: HoldKind | null; walking?: boolean }
 export interface JointPose { r: V3; d?: V3 }
 export interface RobotPose { readonly joints: ReadonlyMap<JointId, JointPose>; readonly blink: number; readonly steam: number }
 const sin = Math.sin, cos = Math.cos;
+// Hrabanie. Hrot náradia od úchopu (podľa modelov náradia v client/robot3d.ts): lh pozdĺž rúčky, lb kolmo na ňu
+// k zemi (čepeľ motyky, hrot krompáča); bez náradia hrabe hrot klepeta.
+const DIG_TOOL: Partial<Record<ToolId, { lh: number; lb: number }>> = { hoe: { lh: 0.36, lb: 0.07 }, pick: { lh: 0.32, lb: 0.11 } };
+const CLAW_TIP = 0.03;
+// Kde hrot hrabe (z pred robotom, v súradniciach trupu): near → far; a natočenie rúčky α (od vodorovnej nadol).
+// Hrot je vždy pred podvozkom aj trupom (front + 0,05). Hra podľa toho postaví robota pred políčko, ktoré kope.
+export function digZone(m: RobotModel, tool: ToolId | null): { near: number; far: number; alpha: number; ground: number } {
+  const t = tool ? DIG_TOOL[tool] ?? null : null, lh = t?.lh ?? 0, lb = t ? t.lb : CLAW_TIP;
+  const [, sy, sz] = m.shoulder, R = m.armLen * 1.05 * 0.97, g = -m.mounts.handR.p[1];
+  // klepeto samo na zem nedosiahne (ruka je schválne kratšia, aby nevisela do podvozku) – hrabe tak nízko, ako dočiahne
+  const ground = Math.max(-(m.joints.find(j => j.id === 'body')?.p[1] ?? 0), t ? -Infinity : sy - 0.85 * R - (lb + g));
+  // α: kĺb ruky je pri dotyku zeme asi 0,55 R pod plecom (pohodlne natiahnutá ruka)
+  let alpha = t ? 0.75 : 0.25, best = Infinity;
+  for (let a = t ? 0.35 : 0; a <= 1.35; a += 0.02) { const e = Math.abs(sy - (ground + lh * sin(a) + (lb + g) * cos(a)) - 0.55 * R); if (e < best) { best = e; alpha = a; } }
+  const hy = ground + lh * sin(alpha) + (lb + g) * cos(alpha), dzOff = -lh * cos(alpha) + (lb + g) * sin(alpha);
+  const maxDz = Math.sqrt(Math.max(0, R * R - (hy - sy) ** 2));
+  const far = Math.max(sz + 0.92 * maxDz - dzOff, m.front + 0.09);
+  const near = Math.min(far - 0.04, Math.max(m.front + 0.05, sz + 0.25 * maxDz - dzOff));
+  return { near, far, alpha, ground };
+}
+// Póza ramena pri hrabaní vo fáze ťahu s (0–1): zdvih a natiahnutie dopredu, zaseknutie, ťahanie k sebe, zdvih.
+// Ruka sa počíta spätne (dve články ramena, lakeť dozadu) tak, aby hrot išiel presne po tejto dráhe.
+function digArm(m: RobotModel, s: number, tool: { lh: number; lb: number } | null): { sh: number; el: number; hd: number } {
+  const z = digZone(m, tool === DIG_TOOL.hoe ? 'hoe' : tool === DIG_TOOL.pick ? 'pick' : null), { alpha } = z;
+  const lh = tool?.lh ?? 0, lb = tool ? tool.lb : CLAW_TIP, g = -m.mounts.handR.p[1];
+  const [, sy, sz] = m.shoulder, l1 = m.armLen * 0.6, l2 = m.armLen * 0.45;
+  const ease = (x: number): number => x * x * (3 - 2 * x), lift = 0.1, gy = z.ground - 0.008;
+  let ty: number, tz: number;
+  if (s < 0.2) { tz = z.near + (z.far - z.near) * ease(s / 0.2); ty = gy + lift; }
+  else if (s < 0.35) { tz = z.far; ty = gy + lift * (1 - ease((s - 0.2) / 0.15)); }
+  else if (s < 0.85) { tz = z.far + (z.near - z.far) * ease((s - 0.35) / 0.5); ty = gy; }
+  else { tz = z.near; ty = gy + lift * ease((s - 0.85) / 0.15); }
+  // kĺb ruky z hrotu: hrot = úchop + rúčka (lh) + čepeľ (lb); úchop = kĺb ruky + g pozdĺž −y ruky
+  const hy = ty + lh * sin(alpha) + (lb + g) * cos(alpha), hz = tz - lh * cos(alpha) + (lb + g) * sin(alpha);
+  // uhly merané od smeru dolu k smeru dopredu; otočenie kĺbu okolo x je záporný uhol
+  const dy = hy - sy, dz = hz - sz, d = Math.max(Math.abs(l1 - l2) + 1e-4, Math.min(l1 + l2 - 1e-4, Math.hypot(dy, dz)));
+  const phiD = Math.atan2(dz, -dy), beta = Math.acos(Math.max(-1, Math.min(1, (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d))));
+  const phi1 = phiD - beta, ey = sy - l1 * cos(phi1), ez = sz + l1 * sin(phi1);
+  const phi12 = Math.atan2(hz - ez, -(hy - ey));
+  return { sh: -phi1, el: -(phi12 - phi1), hd: alpha + phi12 };
+}
 const IDS = new WeakMap<RobotModel, Set<JointId>>();
 function jointIds(m: RobotModel): Set<JointId> { let s = IDS.get(m); if (!s) IDS.set(m, s = new Set(m.joints.map(j => j.id))); return s; }
 // Póza kĺbov: rameno sa kýve pri chôdzi, pri hrabaní ruka kope, pri tanci sa trup vlní a ruky sú hore,
@@ -750,13 +807,25 @@ export function robotPose(m: RobotModel, o: PoseOpts): RobotPose {
   // a zápästie otočené o 90°, takže držadlo je vodorovne naprieč a náradie visí pred robotom
   let wristR = 0;
   if (o.hold === 'staff') { armR = fwd(0.4 + sw * 0.12); elbR = [-1.05, 0, 0]; }
-  if (o.hold === 'hang') { armR = fwd(0.7 + sw * 0.1); elbR = [-0.85, 0, 0]; wristR = Math.PI / 2; }
-  if (o.dig) { const k = sin(o.dig * 8); armR = fwd(0.9 + k * 0.6); elbR = [-0.5 - k * 0.4, 0, 0]; armL = fwd(0.7 + k * 0.4); }
-  if (o.dance) { armR = [-2.6 + sin(t * 6) * 0.3, 0, -0.3]; armL = [-2.6 - sin(t * 6) * 0.3, 0, 0.3]; elbR = [-0.4, 0, 0]; elbL = [-0.4, 0, 0]; }
-  if (crawl && !o.dig) { armR = fwd(0.9); armL = fwd(0.9); }
+  // zavesené náradie nesie trochu bokom (rameno odklonené von), aby viselo mimo trupu aj podvozku
+  if (o.hold === 'hang') { armR = [-(0.75 + sw * 0.1), 0, -0.24]; elbR = [-0.85, 0, 0]; wristR = Math.PI / 2; }
+  // pri tanci a plazení ruka so zaveseným náradím (krhla, lampáš) ostane v polohe nesenia
+  const carry = o.hold === 'hang';
+  if (o.dance) { if (!carry) { armR = [-2.6 + sin(t * 6) * 0.3, 0, -0.3]; elbR = [-0.4, 0, 0]; } armL = [-2.6 - sin(t * 6) * 0.3, 0, 0.3]; elbL = [-0.4, 0, 0]; }
+  // plazenie: trup sa predkloní a zníži – ruka so zaveseným náradím sa zdvihne viac (predlaktie trochu hore), aby nedrhlo o zem
+  if (crawl && !o.dig) { if (carry) { armR = [-1.35, 0, -0.24]; elbR = [-0.75, 0, 0]; } else armR = fwd(0.9); armL = fwd(0.9); }
+  let handR: V3 = [0, o.dance && !carry ? 0 : wristR, 0], handL: V3 = [0, 0, 0];
+  // hrabanie: motyka / krompáč (pravá ruka) alebo samotné klepeto (ľavá ruka, keď pravá nesie krhlu či lampáš) robí
+  // ťah pred robotom – zdvihne sa, natiahne dopredu, zasekne do zeme a ťahá k robotovi (digArm)
+  if (o.dig) {
+    const tool = o.digWith ? DIG_TOOL[o.digWith] ?? null : null, left = !!o.digWith && !tool;
+    const a = digArm(m, ((o.dig * 1.2) % 1 + 1) % 1, tool);
+    if (left) { armL = [a.sh, 0, 0]; elbL = [a.el, 0, 0]; handL = [a.hd, 0, 0]; }
+    else { armR = [a.sh, 0, 0]; elbR = [a.el, 0, 0]; handR = [a.hd, 0, 0]; armL = fwd(0.3); elbL = [-0.5, 0, 0]; }
+  }
   set('shoulderR', armR); set('shoulderL', armL);
   set('elbowR', elbR); set('elbowL', elbL);
-  set('handR', [0, o.dig || o.dance ? 0 : wristR, 0]);
+  set('handR', handR); set('handL', handL);
   // nohy (chôdza): bedrá sa kývu striedavo; trojnožka Kotlíka cupitá po jednej nohe
   if (!roll) {
     set('hipL', [walk ? -sw * 0.5 : 0, 0, 0]); set('hipR', [walk ? sw * 0.5 : 0, 0, 0]);

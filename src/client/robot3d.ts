@@ -202,9 +202,9 @@ export function buildRobot(look: RobotLook): Robot3D {
     held0 = held;
   }
   let held0: ToolId | null = null;
-  const q = new THREE.Quaternion(), down = new THREE.Vector3();
+  const q = new THREE.Quaternion(), up = new THREE.Vector3(), bar = new THREE.Vector3(), side = new THREE.Vector3(), lastBar = new THREE.Vector3(0, 0, 1), basis = new THREE.Matrix4();
   function pose(o: PoseOpts): void {
-    const P = RM.robotPose(model, { ...o, hold: o.hold !== undefined ? o.hold : held0 ? RM.TOOL_HOLD[held0] : null });
+    const P = RM.robotPose(model, { ...o, hold: o.hold !== undefined ? o.hold : held0 ? RM.TOOL_HOLD[held0] : null, digWith: o.digWith !== undefined ? o.digWith : held0 });
     for (const [id, g] of joints) {
       const jp = P.joints.get(id), base = must(jointBase.get(g));
       if (jp) g.rotation.set(...jp.r); else g.rotation.set(0, 0, 0);
@@ -218,12 +218,22 @@ export function buildRobot(look: RobotLook): Robot3D {
       s.position.set(b.x + f * 0.03, b.y - 0.05 + f * 0.15, b.z); s.scale.setScalar(0.4 + f);
       const sm = steamMats[k]; if (sm) sm.opacity = 0.35 * (1 - f);
     }
-    // zavesené náradie sa otáča len okolo držadla (os z klepeta), aby viselo čo najviac dole; pri chôdzi sa trochu kýve
+    // Zavesené náradie (krhla, lampáš) visí vždy zvislo dolu (gravitácia), držadlo je čo najbližšie k osi klepeta (z ruky)
+    // a nikdy sa neprevráti: os y kĺbu = hore vo svete, os z = os klepeta premietnutá do vodorovnej roviny (keď je klepeto
+    // zvislo, použije sa os x ruky); znamienko osi z ostáva ako v predošlom snímku, aby náradie neprehodilo o 180°.
     if (hanging) {
       group.updateMatrixWorld(true);
       hand.getWorldQuaternion(q).invert();
-      down.set(0, -1, 0).applyQuaternion(q);
-      hanging.rotation.set(0, 0, Math.atan2(down.x, -down.y) + Math.sin((o.phase ?? 0) * 2) * (o.walking ? 0.15 : 0));
+      up.set(0, 1, 0).applyQuaternion(q);
+      bar.set(0, 0, 1).addScaledVector(up, -up.z);
+      if (bar.lengthSq() < 0.04) bar.set(1, 0, 0).addScaledVector(up, -up.x);
+      bar.normalize();
+      if (bar.dot(lastBar) < 0) bar.negate();
+      lastBar.copy(bar);
+      side.crossVectors(up, bar);
+      basis.makeBasis(side, up, bar);
+      hanging.quaternion.setFromRotationMatrix(basis);
+      hanging.rotateX(Math.sin((o.phase ?? 0) * 2) * (o.walking ? 0.12 : 0));
     }
   }
   function mountWorld(id: MountId, out = new THREE.Vector3()): THREE.Vector3 {

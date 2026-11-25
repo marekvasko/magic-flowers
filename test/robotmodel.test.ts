@@ -91,8 +91,8 @@ test('genóm z nedôveryhodného JSON: zlé hodnoty → predvolené, čísla ore
   assert.deepStrictEqual(RM.robotLook(null), RM.PRESETS.hrdzavec.look);
   assert.deepStrictEqual(RM.robotLook(RM.PRESETS.kotul.look), RM.PRESETS.kotul.look);
   const l = RM.robotLook({ loco: 'legs3', body: 'rocket', head: '__proto__', edges: 'pointy', eyes: 3, paint: '#ABCDEF', accent: 'red', bw: 9, bh: -1, wear: 'x', leds: 'yes', chimney: true, extra: 1 });
-  assert.deepStrictEqual(l, { ...RM.PRESETS.hrdzavec.look, loco: 'legs3', paint: '#abcdef', bw: RM.NUM.bw.max, bh: RM.NUM.bh.min, chimney: true });
-  assert.strictEqual(RM.robotLook({ armT: 0.0201234 }).armT, 0.02);
+  assert.deepStrictEqual(l, { ...RM.PRESETS.hrdzavec.look, loco: 'legs3', paint: '#abcdef', bh: RM.NUM.bh.min, chimney: true }); // bw už nie je v genóme
+  assert.strictEqual(RM.robotLook({ eyeS: 0.9001234 }).eyeS, 0.9);
 });
 
 test('generátor: rovnaké semienko = rovnaký robot, je platný a dav má všetky druhy dielov', () => {
@@ -176,5 +176,18 @@ test('úchop: rúčka ide cez stred klepeta; palicu drží zvislo pred sebou, za
     }
     // klepeto: dva prsty okolo stredu úchopu, ktorý je pod dlaňou
     assert.ok(m.mounts.handR.p[1] < -0.02);
+  }
+});
+
+test('rovnaké rozmery: každý robot má rovnakú výšku, plecia aj ruky na tom istom mieste, rovnako dlhé ramená', () => {
+  const ref = RM.robotModel(RM.PRESETS.hrdzavec.look), refHand = RM.mountAt(ref, null, 'handR'), refL = RM.mountAt(ref, null, 'handL');
+  for (const [name, look] of LOOKS) {
+    const m = RM.robotModel(look);
+    assert.ok(Math.abs(m.height - RM.FRAME.height) < 0.003, `${name}: výška ${m.height}`);
+    assert.ok(Math.abs(m.scale - 1) < 0.005, `${name}: zmenšenie ${m.scale}`);
+    assert.strictEqual(m.armLen, RM.FRAME.arm, name);
+    const sh = RM.jointMatrix(m, null, 'shoulderL')[3];
+    assert.ok(Math.hypot(sh[0] - RM.FRAME.shoulder[0], sh[1] - RM.FRAME.shoulder[1], sh[2] - RM.FRAME.shoulder[2]) < 0.004, `${name}: plece ${sh.join(', ')}`);
+    for (const [a, b] of [[RM.mountAt(m, null, 'handR'), refHand], [RM.mountAt(m, null, 'handL'), refL]] as const) assert.ok(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 0.006, `${name}: ruka ${a.join(', ')}`);
   }
 });

@@ -10,7 +10,7 @@ import type { Robot3D } from '../src/client/robot3d.ts';
 // Sieť robota (Three.js beží aj v Node – len geometria, bez kreslenia): predvoľby + vygenerované roboty
 const LOOKS: [string, RobotLook][] = [
   ...RM.PRESET_IDS.map((p): [string, RobotLook] => [p, RM.PRESETS[p].look]),
-  ...Array.from({ length: 60 }, (_, i): [string, RobotLook] => ['seed ' + i, RM.randomLook(i * 7 + 3)])
+  ...Array.from({ length: 300 }, (_, i): [string, RobotLook] => ['seed ' + i, RM.randomLook(i)])
 ];
 const TOOLS: readonly ToolId[] = ['hoe', 'can', 'pick', 'lamp'];
 
@@ -96,7 +96,7 @@ const ARM_POSES: readonly [string, RM.PoseOpts][] = [
   ['stoj', {}], ['krok +', { phase: Math.PI / 2, walking: true }], ['krok −', { phase: -Math.PI / 2, walking: true }],
   ['palica', { hold: 'staff' }], ['zavesené', { hold: 'hang' }], ['plazenie', { crawl: true }],
   ['tanec +', { dance: true, t: Math.PI / 12 }], ['tanec −', { dance: true, t: -Math.PI / 12 }],
-  ['hrabanie +', { dig: Math.PI / 16 }], ['hrabanie −', { dig: (3 * Math.PI) / 16 }]
+  ...[0.1, 0.3, 0.5, 0.7, 0.9].map((f): [string, RM.PoseOpts] => ['hrabanie ' + f, { dig: f / 1.2 }])
 ];
 // presná obálka siete v súradniciach daného kĺbu (napr. trupu – pri tanci sa trup otáča a obálky vo svete by narástli)
 function localBox(m: THREE.Object3D, frameInv: THREE.Matrix4): THREE.Box3 {
@@ -129,6 +129,77 @@ test('ramená sú mimo trupu: v žiadnej póze ruka ani rameno nezasahuje do tru
         };
         walk(r.group);
         assert.ok(!arm.some(a => rest.some(b => a.intersectsBox(b))), `${name} (${look.loco}/${look.body}/${look.head}), ${pose}: rameno ${side} zasahuje do robota`);
+      }
+    }
+    r.dispose();
+  }
+});
+
+test('hrabanie: hrot motyky, krompáča aj klepeta zasekne do zeme pred robotom a ťahá k nemu; nič nejde do zeme ani do robota', () => {
+  for (const [name, look] of LOOKS.slice(0, 999)) {
+    const r = buildRobot(look), body = r.group.getObjectByName('body');
+    assert.ok(body, name);
+    for (const [label, held, carried] of [['motyka', 'hoe', ['can', 'pick', 'lamp']], ['krompáč', 'pick', ['hoe', 'can', 'lamp']], ['klepeto', null, TOOLS], ['klepeto (krhla v ruke)', 'can', ['hoe', 'pick', 'lamp']]] as const) {
+      r.setTools(held, carried);
+      const side = held === 'can' ? 'L' : 'R';
+      const lows: number[] = [];
+      for (const f of [0.1, 0.3, 0.5, 0.6, 0.7, 0.9]) {
+        r.pose({ dig: f / 1.2 });
+        r.group.updateMatrixWorld(true);
+        const inv = body.matrixWorld.clone().invert(), sh = r.group.getObjectByName('shoulder' + side);
+        assert.ok(sh, name);
+        const arm: THREE.Box3[] = [];
+        let low = Infinity;
+        sh.traverse(c => { if (c instanceof THREE.Mesh) { arm.push(localBox(c, inv)); low = Math.min(low, new THREE.Box3().setFromObject(c, true).min.y); } });
+        lows.push(low);
+        assert.ok(low > -0.02, `${name}, ${label}, ${f}: ide do zeme (${low.toFixed(3)})`);
+        const rest: THREE.Box3[] = [];
+        const walk = (o2: THREE.Object3D): void => {
+          if (o2.name === 'shoulderL' || o2.name === 'shoulderR') return;
+          if (o2 instanceof THREE.Mesh && o2.name !== 'armmount') rest.push(localBox(o2, inv));
+          for (const c of o2.children) walk(c);
+        };
+        walk(r.group);
+        assert.ok(!arm.some(a => rest.some(b => a.intersectsBox(b))), `${name}, ${label}, ${f}: ruka alebo náradie zasahuje do robota`);
+      }
+      // počas ťahania (0,5 a 0,6) je hrot motyky a krompáča pri zemi; klepeto hrabe tak nízko, ako dočiahne; pri zdvihu (0,1) vyššie
+      const msg = `${name}, ${label}: ${lows.map(v => v.toFixed(3)).join(', ')}`;
+      if (held === 'hoe' || held === 'pick') assert.ok((lows[2] ?? 1) < 0.025 && (lows[3] ?? 1) < 0.025, msg + ' – hrot pri ťahaní nie je pri zemi');
+      assert.ok((lows[0] ?? 0) > (lows[2] ?? 0) + 0.02, msg + ' – pri zdvihu nie je hrot vyššie ako pri ťahaní');
+    }
+    r.dispose();
+  }
+});
+
+test('náradie v ruke: zavesená krhla a lampáš visia vždy zvislo (nikdy sa neprevrátia), nič v ruke nejde do robota ani do zeme', () => {
+  for (const [name, look] of LOOKS.slice(0, 40)) {
+    const r = buildRobot(look), body = r.group.getObjectByName('body');
+    assert.ok(body, name);
+    for (const held of ['can', 'lamp', 'hoe', 'pick'] as const) {
+      r.setTools(held, TOOLS);
+      for (const [pose, o] of ARM_POSES) {
+        if (o.dig !== undefined) continue; // hrabanie má vlastný test
+        if (o.hold && o.hold !== RM.TOOL_HOLD[held]) continue; // póza nesenia patrí k náradiu (palica / zavesené)
+        r.pose(o);
+        r.group.updateMatrixWorld(true);
+        const tool = r.group.getObjectByName('tool:' + held);
+        assert.ok(tool, name);
+        if (held === 'can' || held === 'lamp') {
+          const upw = new THREE.Vector3(0, 1, 0).applyQuaternion(tool.getWorldQuaternion(new THREE.Quaternion()));
+          assert.ok(upw.y > 0.97, `${name}, ${held}, ${pose}: nevisí zvislo (${upw.y.toFixed(2)})`);
+        }
+        const inv = body.matrixWorld.clone().invert(), tb: THREE.Box3[] = [];
+        let low = Infinity;
+        tool.traverse(c => { if (c instanceof THREE.Mesh) { tb.push(localBox(c, inv)); low = Math.min(low, new THREE.Box3().setFromObject(c, true).min.y); } });
+        assert.ok(low > -0.005, `${name}, ${held}, ${pose}: náradie ide do zeme (${low.toFixed(3)})`);
+        const rest: THREE.Box3[] = [];
+        const walk = (o2: THREE.Object3D): void => {
+          if (o2.name === 'shoulderL' || o2.name === 'shoulderR') return;
+          if (o2 instanceof THREE.Mesh && o2.name !== 'armmount') rest.push(localBox(o2, inv));
+          for (const c of o2.children) walk(c);
+        };
+        walk(r.group);
+        assert.ok(!tb.some(a => rest.some(b => a.intersectsBox(b))), `${name}, ${held}, ${pose}: náradie v ruke zasahuje do robota`);
       }
     }
     r.dispose();
