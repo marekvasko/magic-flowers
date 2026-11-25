@@ -1,46 +1,96 @@
-// Hráč ako 3D robot (#194): opis robota bez Three.js – kĺby (stromček), diely z hladkých tvarov (zaoblená kocka, valec,
-// guľa, kapsula, prstenec, kupola), úchyty pre náradie (ruky, nosič na chrbte, temeno) a póza podľa toho, čo robí
-// (chôdza, plazenie, tanec, hrabanie, skok). Z opisu stavia sieť client/robot3d.ts (hra aj /debug → Robots); polohu ruky
-// (lampáš, lano saní) vie spočítať aj server alebo test bez prehliadača (mountAt).
-// Roboty sú vlastné – inšpirované žánrom malých hrdzavých robotov po konci sveta (pásy, veľké oči ako ďalekohľad,
-// ošúchaný náter), ale hladké a milé.
+// Hráč ako 3D robot (#194): procedurálny generátor robota bez Three.js. Robot je „genóm“ (RobotLook) zložený z dielov –
+// podvozok (pásy, dve kolesá, guľa, dve nohy, trojnožka), trup (kocka, guľa, kotol, plechovka), hlava (ďalekohľad,
+// sklenená kupola, guľa, televízor, žiadna – oči na trupe), počet očí, rozmery, ramená, drobnosti (komín, štítok, nity,
+// svetielka), farby, hrdza a doplnok. randomLook(semienko) ho vygeneruje, robotModel z neho postaví kĺby (stromček),
+// diely z hladkých tvarov a úchyty pre náradie (ruky, nosič na chrbte, temeno); robotPose dá pózu podľa toho, čo robí.
+// Sieť stavia client/robot3d.ts (hra aj /debug → Robots); polohu ruky (lampáš, lano saní) vie spočítať aj test (mountAt).
+// Štyri ručne naladené roboty (Hrdzavec, Kotúľ, Kotlík, Plecháčik) sú predvoľby generátora (PRESETS).
+// Roboty sú vlastné – inšpirované žánrom malých hrdzavých robotov po konci sveta, ale hladké a milé.
 // Súradnice: 1 = políčko, y hore, robot pozerá na +z (dopredu), jeho pravá ruka je na −x. Stojí na y = 0.
 import { isRecord, lookup, must } from './util.ts';
 import type { JsonRecord } from './util.ts';
 
 export type V3 = [number, number, number];
 
-// ---------- vzhľad ----------
-export type RobotStyle = 'hrdzavec' | 'kotul' | 'kotlik' | 'plechacik';
-export type Accessory = 'none' | 'antenna' | 'hat' | 'sprout';
-// Vzhľad robota: štýl, náter, doplnková farba, svetlo očí, ošúchanosť / hrdza (0–1), doplnok na hlave
-export interface RobotLook { readonly style: RobotStyle; readonly paint: string; readonly accent: string; readonly eye: string; readonly wear: number; readonly acc: Accessory }
-export interface StyleInfo { readonly name: string; readonly desc: string; readonly look: RobotLook }
-export const STYLES: Readonly<Record<RobotStyle, StyleInfo>> = {
-  hrdzavec: { name: 'Hrdzavec', desc: 'Hranatý záhradník na pásoch, oči ako ďalekohľad na krku.', look: { style: 'hrdzavec', paint: '#d9a441', accent: '#5b6b73', eye: '#9fe7ff', wear: 0.45, acc: 'none' } },
-  kotul: { name: 'Kotúľ', desc: 'Guľatý robotík, ktorý sa vozí na jednej guli. Jedno veľké oko pod sklom.', look: { style: 'kotul', paint: '#f1efe6', accent: '#e0734f', eye: '#7cf0b0', wear: 0.15, acc: 'antenna' } },
-  kotlik: { name: 'Kotlík', desc: 'Malý kotol na troch tenkých nohách, okrúhle okienko a komínik.', look: { style: 'kotlik', paint: '#6f9a7a', accent: '#c7923e', eye: '#ffd36b', wear: 0.6, acc: 'none' } },
-  plechacik: { name: 'Plecháčik', desc: 'Plechovka na krátkych nožičkách, okrúhla hlava a dve okrúhle oči.', look: { style: 'plechacik', paint: '#7fa7d9', accent: '#e9d8a6', eye: '#ffb3c7', wear: 0.3, acc: 'sprout' } }
+// ---------- genóm ----------
+export const LOCOS = ['treads', 'wheels', 'ball', 'legs2', 'legs3'] as const;
+export const BODIES = ['box', 'ball', 'barrel', 'can'] as const;
+export const HEADS = ['bino', 'dome', 'ball', 'tv', 'none'] as const;
+export const ACCS = ['none', 'antenna', 'hat', 'sprout'] as const;
+export type Loco = typeof LOCOS[number];
+export type BodyShape = typeof BODIES[number];
+export type HeadKind = typeof HEADS[number];
+export type Accessory = typeof ACCS[number];
+// Číselné vlastnosti: rozsah a predvolená hodnota (všetko v políčkach, okrem pomerov)
+export const NUM = {
+  bw: { min: 0.24, max: 0.44, def: 0.32, name: 'Šírka trupu' },
+  bh: { min: 0.18, max: 0.36, def: 0.28, name: 'Výška trupu' },
+  bd: { min: 0.7, max: 1.1, def: 0.95, name: 'Hĺbka trupu (pomer)' },
+  round: { min: 0, max: 1, def: 0.35, name: 'Zaoblenie' },
+  legs: { min: 0, max: 1, def: 0.5, name: 'Veľkosť podvozku' },
+  neck: { min: 0, max: 1, def: 0.5, name: 'Krk' },
+  headS: { min: 0.75, max: 1.3, def: 1, name: 'Veľkosť hlavy' },
+  eyeS: { min: 0.7, max: 1.4, def: 1, name: 'Veľkosť očí' },
+  arm: { min: 0.16, max: 0.3, def: 0.24, name: 'Dĺžka rúk' },
+  armT: { min: 0.014, max: 0.026, def: 0.02, name: 'Hrúbka rúk' },
+  wear: { min: 0, max: 1, def: 0.3, name: 'Hrdza' }
+} as const;
+export type NumKey = keyof typeof NUM;
+export const NUM_KEYS: readonly NumKey[] = ['bw', 'bh', 'bd', 'round', 'legs', 'neck', 'headS', 'eyeS', 'arm', 'armT', 'wear'];
+export const FLAGS = { chimney: 'Komínik', panel: 'Štítok', rivets: 'Nity', leds: 'Svetielka' } as const;
+export type FlagKey = keyof typeof FLAGS;
+export const FLAG_KEYS: readonly FlagKey[] = ['chimney', 'panel', 'rivets', 'leds'];
+export interface RobotLook {
+  readonly loco: Loco; readonly body: BodyShape; readonly head: HeadKind; readonly eyes: 1 | 2;
+  readonly bw: number; readonly bh: number; readonly bd: number; readonly round: number; readonly legs: number; readonly neck: number;
+  readonly headS: number; readonly eyeS: number; readonly arm: number; readonly armT: number; readonly wear: number;
+  readonly chimney: boolean; readonly panel: boolean; readonly rivets: boolean; readonly leds: boolean;
+  readonly paint: string; readonly accent: string; readonly eye: string; readonly acc: Accessory;
+}
+// Slovenské mená dielov (pre výber v hre)
+export const PART_NAMES: { readonly loco: Readonly<Record<Loco, string>>; readonly body: Readonly<Record<BodyShape, string>>; readonly head: Readonly<Record<HeadKind, string>>; readonly acc: Readonly<Record<Accessory, string>> } = {
+  loco: { treads: 'Pásy', wheels: 'Dve kolesá', ball: 'Guľa', legs2: 'Dve nohy', legs3: 'Trojnožka' },
+  body: { box: 'Skrinka', ball: 'Guľa', barrel: 'Kotol', can: 'Plechovka' },
+  head: { bino: 'Ďalekohľad', dome: 'Kupola', ball: 'Guľka', tv: 'Televízor', none: 'Bez hlavy' },
+  acc: { none: 'Nič', antenna: 'Anténa', hat: 'Klobúčik', sprout: 'Kvetináčik' }
 };
-export const STYLE_IDS: readonly RobotStyle[] = ['hrdzavec', 'kotul', 'kotlik', 'plechacik'];
-export const ACCESSORIES: Readonly<Record<Accessory, string>> = { none: 'Nič', antenna: 'Anténa', hat: 'Klobúčik', sprout: 'Kvetináčik' };
-const ACC_IDS: readonly Accessory[] = ['none', 'antenna', 'hat', 'sprout'];
+export const ACCESSORIES = PART_NAMES.acc;
+
+const BASE: RobotLook = {
+  loco: 'treads', body: 'box', head: 'bino', eyes: 2, bw: 0.32, bh: 0.3, bd: 0.94, round: 0.33, legs: 0.5, neck: 0.6, headS: 1, eyeS: 1, arm: 0.26, armT: 0.022, wear: 0.45,
+  chimney: false, panel: true, rivets: true, leds: false, paint: '#d9a441', accent: '#5b6b73', eye: '#9fe7ff', acc: 'none'
+};
+// Predvoľby: ručne naladené roboty
+export type PresetId = 'hrdzavec' | 'kotul' | 'kotlik' | 'plechacik';
+export interface Preset { readonly name: string; readonly desc: string; readonly look: RobotLook }
+export const PRESETS: Readonly<Record<PresetId, Preset>> = {
+  hrdzavec: { name: 'Hrdzavec', desc: 'Hranatý záhradník na pásoch, oči ako ďalekohľad na krku.', look: BASE },
+  kotul: { name: 'Kotúľ', desc: 'Guľatý robotík, ktorý sa vozí na jednej guli. Jedno veľké oko pod sklom.', look: { ...BASE, loco: 'ball', body: 'ball', head: 'dome', eyes: 1, bw: 0.44, bh: 0.35, bd: 1, neck: 0, arm: 0.2, armT: 0.018, wear: 0.15, panel: true, paint: '#f1efe6', accent: '#e0734f', eye: '#7cf0b0', acc: 'antenna' } },
+  kotlik: { name: 'Kotlík', desc: 'Malý kotol na troch tenkých nohách, okrúhle okienko a komínik.', look: { ...BASE, loco: 'legs3', body: 'barrel', head: 'none', eyes: 1, bw: 0.34, bh: 0.2, bd: 1, legs: 0.6, eyeS: 1.3, arm: 0.24, armT: 0.018, wear: 0.6, chimney: true, panel: false, paint: '#6f9a7a', accent: '#c7923e', eye: '#ffd36b' } },
+  plechacik: { name: 'Plecháčik', desc: 'Plechovka na krátkych nožičkách, okrúhla hlava a dve okrúhle oči.', look: { ...BASE, loco: 'legs2', body: 'can', head: 'ball', eyes: 2, bw: 0.28, bh: 0.24, bd: 1, legs: 0.4, neck: 0.4, headS: 1.1, eyeS: 0.9, arm: 0.2, armT: 0.018, wear: 0.3, rivets: false, leds: true, paint: '#7fa7d9', accent: '#e9d8a6', eye: '#ffb3c7', acc: 'sprout' } }
+};
+export const PRESET_IDS: readonly PresetId[] = ['hrdzavec', 'kotul', 'kotlik', 'plechacik'];
 // Farby na výber (náter, doplnková farba, oči) – milé, trochu vyblednuté
 export const PAINTS: readonly string[] = ['#d9a441', '#e0734f', '#c95b5b', '#f1efe6', '#7fa7d9', '#6f9a7a', '#9a7fc4', '#e7c86a', '#8a8f94', '#e89bb4'];
 export const ACCENTS: readonly string[] = ['#5b6b73', '#3d4448', '#c7923e', '#e9d8a6', '#e0734f', '#4f7a5a', '#2f5f8a'];
 export const EYES: readonly string[] = ['#9fe7ff', '#7cf0b0', '#ffd36b', '#ffb3c7', '#c9a6ff', '#ffffff'];
 
 const HEX = /^#[0-9a-f]{6}$/;
-const isStyle = (v: unknown): v is RobotStyle => typeof v === 'string' && STYLE_IDS.some(s => s === v);
-const isAcc = (v: unknown): v is Accessory => typeof v === 'string' && ACC_IDS.some(s => s === v);
+const oneOf = <T extends string>(all: readonly T[], v: unknown): T | undefined => all.find(x => x === v);
 const color = (v: unknown, def: string): string => typeof v === 'string' && HEX.test(v.toLowerCase()) ? v.toLowerCase() : def;
-// Vzhľad z nedôveryhodného JSON (správa klienta, uloženie): neznáme alebo zlé hodnoty → predvolené hodnoty štýlu
+const r3 = (x: number): number => Math.round(x * 1000) / 1000;
+// Genóm z nedôveryhodného JSON (správa klienta, uloženie): neznáme alebo zlé hodnoty → predvolené (Hrdzavec),
+// čísla orezané do rozsahu a zaokrúhlené na tisíciny
 export function robotLook(v: unknown): RobotLook {
-  const j: JsonRecord = isRecord(v) ? v : {}, w = j['wear'];
-  const style = isStyle(j['style']) ? j['style'] : 'hrdzavec', d = STYLES[style].look;
-  const wear = typeof w === 'number' && Number.isFinite(w) ? Math.max(0, Math.min(1, w)) : d.wear;
-  const acc = j['acc'];
-  return { style, paint: color(j['paint'], d.paint), accent: color(j['accent'], d.accent), eye: color(j['eye'], d.eye), wear: Math.round(wear * 100) / 100, acc: isAcc(acc) ? acc : d.acc };
+  const j: JsonRecord = isRecord(v) ? v : {}, d = BASE;
+  const num = (k: NumKey): number => { const x = j[k], r = NUM[k]; return typeof x === 'number' && Number.isFinite(x) ? r3(Math.max(r.min, Math.min(r.max, x))) : d[k]; };
+  const flag = (k: FlagKey): boolean => { const x = j[k]; return typeof x === 'boolean' ? x : d[k]; };
+  return {
+    loco: oneOf(LOCOS, j['loco']) ?? d.loco, body: oneOf(BODIES, j['body']) ?? d.body, head: oneOf(HEADS, j['head']) ?? d.head, eyes: j['eyes'] === 1 ? 1 : j['eyes'] === 2 ? 2 : d.eyes,
+    bw: num('bw'), bh: num('bh'), bd: num('bd'), round: num('round'), legs: num('legs'), neck: num('neck'), headS: num('headS'), eyeS: num('eyeS'), arm: num('arm'), armT: num('armT'), wear: num('wear'),
+    chimney: flag('chimney'), panel: flag('panel'), rivets: flag('rivets'), leds: flag('leds'),
+    paint: color(j['paint'], d.paint), accent: color(j['accent'], d.accent), eye: color(j['eye'], d.eye), acc: oneOf(ACCS, j['acc']) ?? d.acc
+  };
 }
 
 // ---------- náhoda ----------
@@ -54,11 +104,29 @@ export function rng(seed: number): () => number {
   return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 const pick = <T>(r: () => number, a: readonly T[]): T => must(a[Math.floor(r() * a.length)]);
-// Náhodný vzhľad (napr. pre iného hráča bez vlastného vzhľadu – podľa mena), vždy ten istý pre to isté semienko
+// váhy: [hodnota, váha]
+function weighted<T>(r: () => number, a: readonly (readonly [T, number])[]): T {
+  let x = r() * a.reduce((s, [, w]) => s + w, 0);
+  for (const [v, w] of a) { x -= w; if (x < 0) return v; }
+  return must(a[a.length - 1])[0];
+}
+// Generátor: náhodný robot zo semienka (vždy ten istý pre to isté semienko). Diely sa vyberajú s váhami, aby vznikali
+// skôr milé kombinácie (hlava „žiadna“ len pri okrúhlych trupoch, kde je oko ako okienko), čísla rovnomerne v rozsahu.
 export function randomLook(seed: number): RobotLook {
   const r = rng(seed);
-  const style = pick(r, STYLE_IDS);
-  return { style, paint: pick(r, PAINTS), accent: pick(r, ACCENTS), eye: pick(r, EYES), wear: Math.round(r() * 80) / 100, acc: pick(r, ACC_IDS) };
+  const loco = weighted<Loco>(r, [['treads', 3], ['wheels', 2], ['ball', 2], ['legs2', 3], ['legs3', 2]]);
+  const body = weighted<BodyShape>(r, [['box', 3], ['ball', 2], ['barrel', 2], ['can', 2]]);
+  const head = weighted<HeadKind>(r, [['bino', 3], ['dome', 2], ['ball', 3], ['tv', 2], ['none', body === 'barrel' || body === 'ball' ? 3 : 0.5]]);
+  const n = (k: NumKey): number => { const q = NUM[k]; return r3(q.min + r() * (q.max - q.min)); };
+  const nums = Object.fromEntries(NUM_KEYS.map(k => [k, n(k)]));
+  const paint = pick(r, PAINTS);
+  let accent = pick(r, ACCENTS); if (accent === paint) accent = must(ACCENTS[0]);
+  return robotLook({
+    ...nums, loco, body, head, eyes: head === 'bino' ? (r() < 0.85 ? 2 : 1) : head === 'none' || head === 'dome' ? (r() < 0.7 ? 1 : 2) : (r() < 0.75 ? 2 : 1),
+    wear: r3(r() * 0.8),
+    chimney: r() < 0.25, panel: r() < 0.6, rivets: r() < 0.6, leds: r() < 0.35,
+    paint, accent, eye: pick(r, EYES), acc: weighted<Accessory>(r, [['none', 4], ['antenna', 2], ['hat', 1.5], ['sprout', 1.5]])
+  });
 }
 
 // ---------- model ----------
@@ -77,18 +145,26 @@ export interface Part { readonly j: JointId; readonly shape: Shape; readonly p: 
 // Kĺb: rodič a poloha voči nemu; natočenie dáva póza
 export interface Joint { readonly id: JointId; readonly parent: JointId | null; readonly p: V3 }
 export type MountId = 'handR' | 'handL' | 'back' | 'top';
-// Úchyt: kĺb, poloha a natočenie – v ruke sa náradie drží za rúčku (os y náradia ide pozdĺž rúčky)
+// Úchyt: kĺb, poloha a natočenie – v ruke sa náradie drží za rúčku
 export interface Mount { readonly j: JointId; readonly p: V3; readonly r?: V3 }
 // Koleso / guľa, ktorá sa pri chôdzi otáča (kĺb otočený okolo x o vzdialenosť / polomer)
 export interface Wheel { readonly j: JointId; readonly r: number }
 export interface RobotModel {
   readonly look: RobotLook; readonly joints: readonly Joint[]; readonly parts: readonly Part[];
   readonly mounts: Readonly<Record<MountId, Mount>>; readonly wheels: readonly Wheel[];
-  readonly height: number; // po temeno hlavy (bez doplnku)
+  readonly height: number; // po temeno hlavy (bez doplnku), už so zmenšením
+  readonly scale: number;  // celý robot je zväčšený / zmenšený, aby bol vysoký HEIGHT_MIN…HEIGHT_MAX
   readonly gait: 'roll' | 'walk';
 }
+// Každý robot je zhruba taký vysoký ako hráč: menšie sa zväčšia, väčšie zmenšia (zachová sa tvar)
+export const HEIGHT_MIN = 0.55, HEIGHT_MAX = 0.9;
+// natočenie, ktoré otočí os y do smeru n (Euler XYZ s y = 0)
+function alignY(n: V3): V3 {
+  const l = Math.hypot(...n) || 1;
+  return [Math.atan2(n[2] / l, n[1] / l), 0, Math.asin(Math.max(-1, Math.min(1, -n[0] / l)))];
+}
 
-// Stavba modelu: kĺby, diely a úchyty pridáva štýl
+// Stavba modelu: kĺby a diely
 class Builder {
   joints: Joint[] = [{ id: 'root', parent: null, p: [0, 0, 0] }];
   parts: Part[] = [];
@@ -97,9 +173,8 @@ class Builder {
   add(j: JointId, shape: Shape, p: V3, m: Mat, r?: V3, tag?: string): void { this.parts.push({ j, shape, p, m, ...(r ? { r } : {}), ...(tag ? { tag } : {}) }); }
   // tyč (valec) z bodu a do bodu b
   rod(j: JointId, a: V3, b: V3, r: number, m: Mat): void {
-    const d: V3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], len = Math.hypot(...d);
-    const c = Math.asin(Math.max(-1, Math.min(1, -d[0] / len))), x = Math.atan2(d[2], d[1]);
-    this.add(j, { k: 'cyl', r, h: len }, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2], m, [x, 0, c]);
+    const d: V3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    this.add(j, { k: 'cyl', r, h: Math.hypot(...d) }, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2], m, alignY(d));
   }
   // rameno: plece → lakeť → ruka s dvoma prstami (klieštiky); vracia kĺb ruky
   arm(side: 1 | -1, parent: JointId, p: V3, len: number, thick: number): JointId {
@@ -115,18 +190,29 @@ class Builder {
     for (const f of [-1, 1]) this.add(hd, { k: 'box', s: [thick * 0.7, thick * 2.6, thick * 1.1], r: thick * 0.3 }, [f * thick * 0.95, -thick * 1.5, 0], 'metal', [0, 0, f * 0.18], 'finger');
     return hd;
   }
-  // oko ako ďalekohľad: rúrka dopredu, šošovka, svietiaca dúhovka a viečko (tag 'lid' – žmurkanie)
+  // oko ako ďalekohľad: rúrka dopredu, šošovka, svietiaca dúhovka, odlesk a viečko (tag 'lid' – žmurkanie)
   binoEye(j: JointId, p: V3, r: number, depth: number): void {
+    const f = p[2] + depth / 2;
     this.add(j, { k: 'cyl', r, r2: r * 0.92, h: depth }, p, 'paint', [Math.PI / 2, 0, 0]);
-    this.add(j, { k: 'torus', r: r * 0.95, t: r * 0.14 }, [p[0], p[1], p[2] + depth / 2], 'dark', [Math.PI / 2, 0, 0]);
-    this.add(j, { k: 'sphere', r: r * 0.8, s: [1, 1, 0.35] }, [p[0], p[1], p[2] + depth / 2], 'lens');
-    this.add(j, { k: 'sphere', r: r * 0.45, s: [1, 1, 0.3] }, [p[0], p[1], p[2] + depth / 2 + r * 0.22], 'eye');
-    this.add(j, { k: 'sphere', r: r * 0.2, s: [1, 1, 0.3] }, [p[0], p[1], p[2] + depth / 2 + r * 0.3], 'lens');
-    this.add(j, { k: 'sphere', r: r * 0.12 }, [p[0] - r * 0.22, p[1] + r * 0.22, p[2] + depth / 2 + r * 0.36], 'glass');
+    this.add(j, { k: 'torus', r: r * 0.95, t: r * 0.14 }, [p[0], p[1], f], 'dark', [Math.PI / 2, 0, 0]);
+    this.add(j, { k: 'sphere', r: r * 0.8, s: [1, 1, 0.35] }, [p[0], p[1], f], 'lens');
+    this.add(j, { k: 'sphere', r: r * 0.45, s: [1, 1, 0.3] }, [p[0], p[1], f + r * 0.22], 'eye');
+    this.add(j, { k: 'sphere', r: r * 0.2, s: [1, 1, 0.3] }, [p[0], p[1], f + r * 0.3], 'lens');
+    this.add(j, { k: 'sphere', r: r * 0.12 }, [p[0] - r * 0.22, p[1] + r * 0.22, f + r * 0.36], 'glass');
     this.add(j, { k: 'box', s: [r * 2.1, r * 1.0, depth * 0.9], r: r * 0.4 }, [p[0], p[1] + r * 0.62, p[2] + depth * 0.06], 'paint', undefined, 'lid');
   }
-  // doplnok na temene (bod top)
-  accessory(acc: Accessory, j: JointId, p: V3, look: RobotLook): void {
+  // okrúhle oko na povrchu (okienko): obruč, šošovka, svetlo, odlesk, viečko; povrch pozerá na +z, natočený o yaw
+  roundEye(j: JointId, p: V3, r: number, yaw = 0, rim: Mat = 'metal', rivets = false): void {
+    const [x, y, z] = p, fx = Math.sin(yaw), fz = Math.cos(yaw), at = (d: number, dx = 0, dy = 0): V3 => [x + fx * d + dx * fz, y + dy, z + fz * d - dx * fx];
+    this.add(j, { k: 'torus', r: r * 1.05, t: r * 0.22 }, at(0), rim, [Math.PI / 2, yaw, 0]);
+    this.add(j, { k: 'sphere', r, s: [1, 1, 0.3] }, at(0), 'lens', [0, yaw, 0]);
+    this.add(j, { k: 'sphere', r: r * 0.5, s: [1, 1, 0.35] }, at(r * 0.15), 'eye', [0, yaw, 0]);
+    this.add(j, { k: 'sphere', r: r * 0.17 }, at(r * 0.3, -r * 0.3, r * 0.35), 'glass');
+    this.add(j, { k: 'box', s: [r * 2.3, r * 0.9, r * 0.6], r: r * 0.4 }, at(r * 0.05, 0, r * 0.85), 'paint', [0, yaw, 0], 'lid');
+    if (rivets) for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; this.add(j, { k: 'sphere', r: r * 0.11 }, at(r * 0.22, Math.cos(a) * r * 1.07, Math.sin(a) * r * 1.07), 'metal'); }
+  }
+  // doplnok na temene (bod p)
+  accessory(acc: Accessory, j: JointId, p: V3): void {
     const [x, y, z] = p;
     if (acc === 'antenna') {
       this.add(j, { k: 'cyl', r: 0.008, h: 0.16 }, [x, y + 0.08, z], 'dark', undefined, 'antenna');
@@ -134,195 +220,281 @@ class Builder {
     } else if (acc === 'hat') {
       this.add(j, { k: 'cyl', r: 0.13, h: 0.015 }, [x, y + 0.008, z], 'accent');
       this.add(j, { k: 'cyl', r: 0.075, r2: 0.07, h: 0.09 }, [x, y + 0.055, z], 'accent');
-      this.add(j, { k: 'cyl', r: 0.077, h: 0.02 }, [x, y + 0.03, z], look.style === 'kotlik' ? 'paint' : 'rust');
+      this.add(j, { k: 'cyl', r: 0.077, h: 0.02 }, [x, y + 0.03, z], 'rust');
     } else if (acc === 'sprout') {
       this.add(j, { k: 'cyl', r: 0.05, r2: 0.065, h: 0.07 }, [x, y + 0.035, z], 'pot');
       this.add(j, { k: 'cyl', r: 0.006, h: 0.08 }, [x, y + 0.1, z], 'leaf', undefined, 'sprout');
       for (const s of [-1, 1]) this.add(j, { k: 'sphere', r: 0.035, s: [1.4, 0.35, 0.8] }, [x + s * 0.035, y + 0.135, z], 'leaf', [0, 0, s * 0.5], 'sprout');
     }
   }
-  // škvrny hrdze na rovných stenách: kandidáti (bod, normála), koľko podľa wear
-  rust(look: RobotLook, spots: readonly { j: JointId; p: V3; n: 'x' | '-x' | 'y' | 'z' | '-z' }[], size: number): void {
-    const r = rng(hashStr(JSON.stringify(look)));
-    const n = Math.round(look.wear * spots.length);
-    const order = spots.map(s => ({ s, k: r() })).sort((a, b) => a.k - b.k).slice(0, n);
-    for (const { s } of order) {
-      const rot: V3 = s.n === 'x' || s.n === '-x' ? [0, 0, Math.PI / 2] : s.n === 'y' ? [0, 0, 0] : [Math.PI / 2, 0, 0];
-      const k = size * (0.6 + r() * 0.8);
-      this.add(s.j, { k: 'sphere', r: k, s: [1 + r() * 0.6, 0.12, 0.8 + r() * 0.5] }, s.p, 'rust', [rot[0], rot[1] + r() * 3, rot[2]]);
+}
+
+// ---------- trup ----------
+// Povrch trupu (v súradniciach trupu, stred = 0): polovičné rozmery, kde je predok a bok vo výške y, bod a normála
+// na povrchu pre smer (uhol okolo y, výška −1…1) – na hrdzu, nity a oči
+interface Hull { hx: number; hy: number; hz: number; top: number; bottom: number; front(y: number): number; side(y: number): number; at(a: number, v: number): { p: V3; n: V3 } }
+function hull(L: RobotLook): Hull {
+  const hx = L.bw / 2, hy = L.bh / 2;
+  if (L.body === 'box') {
+    const hz = (L.bw * L.bd) / 2;
+    return {
+      hx, hy, hz, top: hy, bottom: hy,
+      front: () => hz, side: () => hx,
+      at: (a, v) => {
+        // stena podľa uhla: predok / zadok alebo bok
+        const sn = Math.sin(a), c = Math.cos(a), y = v * hy * 0.75;
+        if (Math.abs(c) * hx >= Math.abs(sn) * hz) return { p: [sn * hx * 0.8, y, Math.sign(c) * (hz + 0.001)], n: [0, 0, Math.sign(c)] };
+        return { p: [Math.sign(sn) * (hx + 0.001), y, c * hz * 0.8], n: [Math.sign(sn), 0, 0] };
+      }
+    };
+  }
+  if (L.body === 'ball') {
+    const hz = (L.bw * L.bd) / 2, k = (y: number): number => Math.sqrt(Math.max(0, 1 - (y / hy) ** 2));
+    return {
+      hx, hy, hz, top: hy, bottom: hy,
+      front: y => hz * k(y), side: y => hx * k(y),
+      at: (a, v) => { const y = v * hy * 0.8, q = k(y); return { p: [Math.sin(a) * hx * q, y, Math.cos(a) * hz * q], n: [Math.sin(a) / hx * q, y / hy / hy, Math.cos(a) / hz * q] }; }
+    };
+  }
+  // kotol a plechovka: valec (kotol má klenutý spodok a vrchnák)
+  const dome = L.body === 'barrel';
+  return {
+    hx, hy, hz: hx, top: hy + (dome ? hx * 0.5 : 0.01), bottom: hy + (dome ? hx * 0.35 : 0),
+    front: () => hx, side: () => hx,
+    at: (a, v) => ({ p: [Math.sin(a) * (hx + 0.001), v * hy * 0.8, Math.cos(a) * (hx + 0.001)], n: [Math.sin(a), 0, Math.cos(a)] })
+  };
+}
+function trunk(b: Builder, L: RobotLook, body: JointId, H: Hull): void {
+  const { hx, hy, hz } = H;
+  if (L.body === 'box') {
+    b.add(body, { k: 'box', s: [L.bw, L.bh, hz * 2], r: Math.min(hx, hy, hz) * (0.12 + L.round * 0.7) }, [0, 0, 0], 'paint');
+    b.add(body, { k: 'box', s: [L.bw + 0.02, 0.035, hz * 2 + 0.02], r: 0.015 }, [0, -hy + 0.02, 0], 'accent');
+  } else if (L.body === 'ball') {
+    b.add(body, { k: 'sphere', r: hx, s: [1, hy / hx, hz / hx] }, [0, 0, 0], 'paint');
+    // pás okolo rovníka (sploštená guľa trochu väčšia než trup)
+    b.add(body, { k: 'sphere', r: hx * 1.015, s: [1, 0.08, hz / hx * 1.0] }, [0, 0, 0], 'accent');
+  } else {
+    b.add(body, { k: 'cyl', r: hx, h: L.bh }, [0, 0, 0], 'paint');
+    if (L.body === 'barrel') {
+      b.add(body, { k: 'sphere', r: hx, s: [1, 0.35, 1] }, [0, -hy, 0], 'paint');
+      for (const y of [-hy * 0.85, hy * 0.85]) b.add(body, { k: 'torus', r: hx * 1.01, t: 0.013 }, [0, y, 0], 'accent');
+    } else {
+      for (const y of [-0.33, 0, 0.33]) b.add(body, { k: 'torus', r: hx * 1.01, t: 0.008 }, [0, y * hy * 1.3, 0], 'metal');
+      b.add(body, { k: 'cyl', r: hx * 1.04, h: 0.02 }, [0, hy, 0], 'accent');
+      b.add(body, { k: 'cyl', r: hx * 1.02, h: 0.015 }, [0, -hy, 0], 'accent');
     }
+  }
+  // nity okolo pása
+  if (L.rivets) {
+    const y = L.body === 'barrel' ? hy * 0.85 : L.body === 'box' ? hy - 0.035 : 0;
+    if (L.body === 'box') { for (const x of [-1, 1]) for (const yy of [-1, 1]) b.add(body, { k: 'sphere', r: 0.011 }, [x * (hx - 0.03), yy * (hy - 0.04), hz + 0.002], 'metal'); }
+    else for (let i = 0; i < 12; i++) { const a = (i / 12) * Math.PI * 2; const q = H.at(a, y / hy / 0.8); b.add(body, { k: 'sphere', r: 0.009 }, [q.p[0] * 1.03, q.p[1], q.p[2] * 1.03], 'metal'); }
+  }
+}
+// štítok / dvierka vpredu, svetielka, komínik
+function details(b: Builder, L: RobotLook, body: JointId, H: Hull, eyesOnBody: boolean): void {
+  const { hx, hy } = H;
+  const py = eyesOnBody ? -hy * 0.55 : L.body === 'box' ? 0 : -hy * 0.35;
+  if (L.panel) {
+    const w = Math.min(hx * 1.25, 0.2), h = Math.min(hy * (eyesOnBody ? 0.45 : 1), 0.15), z = H.front(py);
+    const tilt = L.body === 'ball' ? -Math.atan2(py * (H.hz / hy) ** 2 / hy, 1) * 0.9 : 0;
+    b.add(body, { k: 'box', s: [w, h, 0.02], r: 0.02 }, [0, py, z], 'accent', [tilt, 0, 0]);
+    b.add(body, { k: 'box', s: [w * 0.3, 0.018, 0.02], r: 0.008 }, [0, py + h * 0.2, z + 0.012], 'dark', [tilt, 0, 0]);
+  }
+  if (L.leds) {
+    const y = L.panel ? py - Math.min(hy * 0.5, 0.075) * 0.4 : eyesOnBody ? -hy * 0.6 : 0, z = H.front(y) + 0.012 + (L.panel ? 0.01 : 0);
+    for (const x of [-0.03, 0, 0.03]) b.add(body, { k: 'sphere', r: 0.012 }, [x, y, z], x ? 'warm' : 'eye', undefined, 'led');
+  }
+  if (L.chimney) {
+    const x = hx * 0.45, z = -H.hz * 0.35, y = H.top - (L.body === 'ball' ? hy * 0.15 : 0.01);
+    b.add(body, { k: 'cyl', r: 0.025, r2: 0.03, h: 0.12 }, [x, y + 0.04, z], 'dark');
+    b.add(body, { k: 'cyl', r: 0.04, r2: 0.032, h: 0.025 }, [x, y + 0.11, z], 'accent');
+    for (const k of [0, 1, 2]) b.add(body, { k: 'sphere', r: 0.025 + k * 0.012 }, [x + k * 0.01, y + 0.15 + k * 0.05, z], 'glass', undefined, 'steam');
+  }
+}
+// škvrny hrdze: náhodné body na povrchu trupu, koľko podľa wear (najviac 9)
+function rust(b: Builder, L: RobotLook, body: JointId, H: Hull): void {
+  const r = rng(hashStr(JSON.stringify(L)) ^ 0x9e3779b9), n = Math.round(L.wear * 9);
+  for (let i = 0; i < n; i++) {
+    const a = r() * Math.PI * 2, v = r() * 1.6 - 0.8, q = H.at(a, v), k = 0.022 + r() * 0.022;
+    b.add(body, { k: 'sphere', r: k, s: [1 + r() * 0.6, 0.12, 0.8 + r() * 0.5] }, q.p, 'rust', alignY(q.n));
   }
 }
 
-const MOUNT_BACK = (j: JointId, p: V3): Mount => ({ j, p });
-// ruka drží rúčku: klieštiky smerujú dole (−y kĺbu ruky), náradie je natočené dopredu
-const MOUNT_HAND = (j: JointId, y: number): Mount => ({ j, p: [0, y, 0.0], r: [Math.PI / 2, 0, 0] });
-
-function hrdzavec(look: RobotLook, b: Builder): Omit<RobotModel, 'look' | 'joints' | 'parts' | 'wheels'> {
-  // pásy: dve dlhé zaoblené kocky po bokoch, v nich tri kolesá, ktorých náboje vidno zboku
-  for (const sx of [-1, 1]) {
-    b.add('root', { k: 'box', s: [0.11, 0.17, 0.4], r: 0.075 }, [sx * 0.2, 0.09, 0], 'rubber');
-    for (const [i, z] of [-0.13, 0, 0.13].entries()) {
-      const w = b.joint(`wheel${sx > 0 ? 'L' : 'R'}${i}`, 'root', [sx * 0.2, 0.09, z]);
-      const rr = i === 1 ? 0.05 : 0.062;
-      b.add(w, { k: 'cyl', r: rr, h: 0.118 }, [0, 0, 0], 'metal', [0, 0, Math.PI / 2]);
-      b.add(w, { k: 'box', s: [0.122, rr * 1.7, 0.016], r: 0.006 }, [0, 0, 0], 'accent');
-      b.add(w, { k: 'box', s: [0.122, 0.016, rr * 1.7], r: 0.006 }, [0, 0, 0], 'accent');
+// ---------- podvozok ----------
+// Postaví podvozok a vráti, v akej výške je spodok trupu
+function chassis(b: Builder, L: RobotLook, H: Hull): number {
+  const { hx, hz } = H;
+  if (L.loco === 'treads') {
+    // pásy: dlhé zaoblené kocky po bokoch, v nich tri kolesá, ktorých náboje vidno zboku
+    const th = 0.15 + L.legs * 0.05, tl = Math.max(0.3, hz * 2 + 0.08), x = hx + 0.04;
+    for (const sx of [-1, 1]) {
+      b.add('root', { k: 'box', s: [0.11, th, tl], r: th * 0.44 }, [sx * x, th / 2, 0], 'rubber');
+      const zs = [-tl / 2 + th / 2 - 0.01, 0, tl / 2 - th / 2 + 0.01];
+      for (const [i, z] of zs.entries()) {
+        const rr = i === 1 ? th * 0.29 : th * 0.36;
+        const w = b.joint(`wheel${sx > 0 ? 'L' : 'R'}${i}`, 'root', [sx * x, th / 2, z]);
+        b.add(w, { k: 'cyl', r: rr, h: 0.118 }, [0, 0, 0], 'metal', [0, 0, Math.PI / 2]);
+        b.add(w, { k: 'box', s: [0.122, rr * 1.7, 0.016], r: 0.006 }, [0, 0, 0], 'accent');
+        b.add(w, { k: 'box', s: [0.122, 0.016, rr * 1.7], r: 0.006 }, [0, 0, 0], 'accent');
+        b.wheels.push({ j: w, r: rr });
+      }
+    }
+    b.add('root', { k: 'box', s: [x * 2 - 0.08, 0.03, tl * 0.6], r: 0.01 }, [0, th * 0.75, 0], 'dark');
+    return th + 0.035;
+  }
+  if (L.loco === 'wheels') {
+    // dve veľké kolesá po bokoch, vzadu malé kolieska na podperu
+    const rr = 0.09 + L.legs * 0.05, x = hx + 0.035;
+    for (const sx of [-1, 1]) {
+      const w = b.joint(`wheel${sx > 0 ? 'L' : 'R'}`, 'root', [sx * x, rr, 0]);
+      b.add(w, { k: 'torus', r: rr * 0.82, t: rr * 0.2 }, [0, 0, 0], 'rubber', [0, 0, Math.PI / 2]);
+      b.add(w, { k: 'cyl', r: rr * 0.66, h: 0.03 }, [0, 0, 0], 'metal', [0, 0, Math.PI / 2]);
+      for (const a of [0, Math.PI / 3, (2 * Math.PI) / 3]) b.add(w, { k: 'box', s: [0.036, rr * 1.25, 0.018], r: 0.006 }, [0, 0, 0], 'accent', [a, 0, 0]);
+      b.add(w, { k: 'cyl', r: rr * 0.2, h: 0.045 }, [0, 0, 0], 'dark', [0, 0, Math.PI / 2]);
       b.wheels.push({ j: w, r: rr });
+      b.add('root', { k: 'cyl', r: 0.015, h: x - hx + 0.02 }, [sx * (hx + (x - hx) / 2 - 0.01), rr, 0], 'dark', [0, 0, Math.PI / 2]);
+    }
+    const bottom = rr * 0.55;
+    b.rod('root', [0, bottom + 0.01, -hz * 0.6], [0, 0.03, -hz * 0.9], 0.01, 'dark');
+    const c = b.joint('caster', 'root', [0, 0.03, -hz * 0.9]);
+    b.add(c, { k: 'sphere', r: 0.03 }, [0, 0, 0], 'rubber');
+    b.wheels.push({ j: c, r: 0.03 });
+    return bottom;
+  }
+  if (L.loco === 'ball') {
+    const rr = 0.08 + L.legs * 0.06, ball = b.joint('ball', 'root', [0, rr, 0]);
+    b.add(ball, { k: 'sphere', r: rr }, [0, 0, 0], 'rubber');
+    b.add(ball, { k: 'torus', r: rr, t: 0.012 }, [0, 0, 0], 'accent', [0, 0, Math.PI / 2]);
+    b.add(ball, { k: 'torus', r: rr, t: 0.012 }, [0, 0, 0], 'accent', [Math.PI / 2, 0, 0]);
+    b.wheels.push({ j: ball, r: rr });
+    const bottom = rr * 2 - 0.03;
+    // sukienka nad guľou
+    b.add('root', { k: 'cyl', r: rr * 1.05, r2: Math.min(hx, hz) * 0.85, h: 0.06 }, [0, bottom + 0.01, 0], 'accent');
+    return bottom;
+  }
+  if (L.loco === 'legs2') {
+    // dve krátke nohy s veľkými topánkami (bedrá sú na trupe – kĺby hipL/hipR pridá body())
+    return 0.1 + L.legs * 0.12 + 0.05;
+  }
+  return 0.2 + L.legs * 0.12;
+}
+// nohy na trupe (bedrá sa kývu s trupom)
+function legs(b: Builder, L: RobotLook, body: JointId, H: Hull, bottom: number): void {
+  const yb = -H.bottom;
+  if (L.loco === 'legs2') {
+    const len = bottom - 0.05;
+    for (const sx of [-1, 1]) {
+      const hip = b.joint('hip' + (sx > 0 ? 'L' : 'R'), body, [sx * Math.max(0.06, H.hx * 0.45), yb, 0]);
+      b.add(hip, { k: 'sphere', r: 0.032 }, [0, 0, 0], 'dark');
+      b.add(hip, { k: 'capsule', r: 0.028, h: Math.max(0.01, len - 0.05) }, [0, -len / 2, 0], 'metal');
+      b.add(hip, { k: 'box', s: [0.08, 0.05, 0.12], r: 0.022 }, [0, -len - 0.025, 0.02], 'accent');
+    }
+  } else if (L.loco === 'legs3') {
+    // trojnožka: koleno vonku, chodidlo trochu bližšie pod trupom
+    for (let i = 0; i < 3; i++) {
+      const a = (i * 2 * Math.PI) / 3 + Math.PI, ax = Math.sin(a) * H.hx * 0.7, az = Math.cos(a) * H.hz * 0.7;
+      const hip = b.joint('hip' + i, body, [ax, yb + 0.02, az]);
+      b.add(hip, { k: 'sphere', r: 0.028 }, [0, 0, 0], 'dark');
+      const kp: V3 = [ax * 0.6, -bottom * 0.42, az * 0.6];
+      b.rod(hip, [0, 0, 0], kp, 0.014, 'metal');
+      const knee = b.joint('knee' + i, hip, kp);
+      b.add(knee, { k: 'sphere', r: 0.022 }, [0, 0, 0], 'accent');
+      const foot: V3 = [-ax * 0.25, -(bottom + 0.02) * 0.58 + 0.01, -az * 0.25];
+      b.rod(knee, [0, 0, 0], foot, 0.013, 'metal');
+      b.add(knee, { k: 'cyl', r: 0.04, r2: 0.03, h: 0.018 }, [foot[0], foot[1] - 0.005, foot[2]], 'dark');
     }
   }
-  // trup: zaoblená kocka s dvierkami vpredu, v ktorých je kvetinový „rad“ nitov
-  const body = b.joint('body', 'root', [0, 0.36, 0]);
-  b.add(body, { k: 'box', s: [0.32, 0.3, 0.3], r: 0.05 }, [0, 0, 0], 'paint');
-  b.add(body, { k: 'box', s: [0.34, 0.035, 0.32], r: 0.015 }, [0, -0.13, 0], 'accent');
-  b.add(body, { k: 'box', s: [0.2, 0.15, 0.02], r: 0.02 }, [0, 0.01, 0.152], 'accent');
-  b.add(body, { k: 'box', s: [0.06, 0.018, 0.02], r: 0.008 }, [0, 0.04, 0.165], 'dark');
-  for (const x of [-0.08, 0.08]) for (const y of [-0.05, 0.07]) b.add(body, { k: 'sphere', r: 0.011 }, [x, y, 0.163], 'metal');
-  b.add(body, { k: 'cyl', r: 0.018, h: 0.03 }, [0.11, 0.165, -0.07], 'dark');      // výfuk na pleci
-  // krk a hlava (dve oči ako ďalekohľad spojené mostíkom)
-  const neck = b.joint('neck', body, [0, 0.15, -0.02]);
-  b.add(neck, { k: 'cyl', r: 0.03, h: 0.12 }, [0, 0.06, 0], 'dark');
-  b.add(neck, { k: 'torus', r: 0.03, t: 0.008 }, [0, 0.04, 0], 'metal');
-  const head = b.joint('head', neck, [0, 0.13, 0]);
-  b.add(head, { k: 'box', s: [0.1, 0.05, 0.08], r: 0.02 }, [0, 0.01, -0.01], 'accent');
-  for (const sx of [-1, 1]) b.binoEye(head, [sx * 0.075, 0.03, 0.0], 0.055, 0.11);
-  b.accessory(look.acc, head, [0, 0.1, -0.01], look);
-  // ramená z bokov trupu
-  b.arm(1, body, [0.19, 0.07, 0.03], 0.26, 0.022);
-  b.arm(-1, body, [-0.19, 0.07, 0.03], 0.26, 0.022);
-  // nosič na chrbte (rám z rúrok)
-  b.add(body, { k: 'box', s: [0.26, 0.02, 0.02], r: 0.008 }, [0, 0.08, -0.17], 'metal');
-  b.add(body, { k: 'box', s: [0.26, 0.02, 0.02], r: 0.008 }, [0, -0.08, -0.17], 'metal');
-  b.rust(look, [
-    { j: body, p: [0.161, -0.06, 0.07], n: 'x' }, { j: body, p: [-0.161, 0.05, -0.05], n: '-x' }, { j: body, p: [0.09, 0.151, 0.06], n: 'y' },
-    { j: body, p: [-0.11, -0.07, 0.151], n: 'z' }, { j: body, p: [0.12, 0.09, 0.151], n: 'z' }, { j: body, p: [-0.06, 0.05, -0.151], n: '-z' },
-    { j: body, p: [0.161, 0.08, -0.08], n: 'x' }, { j: body, p: [-0.161, -0.08, 0.08], n: '-x' }
-  ], 0.035);
-  return { mounts: { handR: MOUNT_HAND('handR', -0.03), handL: MOUNT_HAND('handL', -0.03), back: MOUNT_BACK(body, [0, 0, -0.19]), top: { j: head, p: [0, 0.1, -0.01] } }, height: 0.83, gait: 'roll' };
 }
 
-function kotul(look: RobotLook, b: Builder): Omit<RobotModel, 'look' | 'joints' | 'parts' | 'wheels'> {
-  const ball = b.joint('ball', 'root', [0, 0.11, 0]);
-  b.add(ball, { k: 'sphere', r: 0.11 }, [0, 0, 0], 'rubber');
-  b.add(ball, { k: 'torus', r: 0.11, t: 0.012 }, [0, 0, 0], 'accent', [0, 0, Math.PI / 2]);
-  b.add(ball, { k: 'torus', r: 0.11, t: 0.012 }, [0, 0, 0], 'accent', [Math.PI / 2, 0, 0]);
-  b.wheels.push({ j: ball, r: 0.11 });
-  // telo: guľa sploštená zdola, sukienka nad guľou
-  const body = b.joint('body', 'root', [0, 0.36, 0]);
-  b.add(body, { k: 'cyl', r: 0.12, r2: 0.2, h: 0.06 }, [0, -0.14, 0], 'accent');
-  b.add(body, { k: 'sphere', r: 0.22, s: [1, 0.8, 1] }, [0, 0, 0], 'paint');
-  b.add(body, { k: 'torus', r: 0.215, t: 0.018 }, [0, 0.0, 0], 'accent');
-  for (const a of [-0.7, -0.35, 0, 0.35, 0.7]) b.add(body, { k: 'sphere', r: 0.012 }, [Math.sin(a) * 0.222, 0, Math.cos(a) * 0.222], 'metal');
-  b.add(body, { k: 'box', s: [0.09, 0.06, 0.03], r: 0.015 }, [0, -0.07, 0.19], 'dark', [-0.4, 0, 0]);
-  // hlava: sklenená kupola s jedným veľkým okom vnútri
-  const head = b.joint('head', body, [0, 0.16, 0]);
-  b.add(head, { k: 'cyl', r: 0.13, h: 0.03 }, [0, 0.0, 0], 'accent');
-  b.add(head, { k: 'sphere', r: 0.085 }, [0, 0.09, 0.01], 'paint');
-  b.add(head, { k: 'sphere', r: 0.06, s: [1, 1, 0.5] }, [0, 0.1, 0.07], 'lens');
-  b.add(head, { k: 'sphere', r: 0.032, s: [1, 1, 0.4] }, [0, 0.1, 0.095], 'eye');
-  b.add(head, { k: 'sphere', r: 0.01 }, [-0.014, 0.117, 0.105], 'glass');
-  b.add(head, { k: 'box', s: [0.12, 0.045, 0.06], r: 0.02 }, [0, 0.148, 0.055], 'paint', undefined, 'lid');
-  b.add(head, { k: 'dome', r: 0.125 }, [0, 0.012, 0], 'glass');
-  b.accessory(look.acc, head, [0, 0.135, 0], look);
-  b.arm(1, body, [0.2, 0.02, 0.02], 0.2, 0.018);
-  b.arm(-1, body, [-0.2, 0.02, 0.02], 0.2, 0.018);
-  b.rust(look, [
-    { j: body, p: [0.2, -0.06, 0.06], n: 'x' }, { j: body, p: [-0.2, -0.05, -0.05], n: '-x' }, { j: body, p: [0.0, 0.08, -0.19], n: '-z' },
-    { j: body, p: [0.12, 0.08, 0.15], n: 'z' }, { j: body, p: [-0.12, -0.07, 0.16], n: 'z' }, { j: body, p: [0.08, 0.15, 0.0], n: 'y' }
-  ], 0.03);
-  return { mounts: { handR: MOUNT_HAND('handR', -0.03), handL: MOUNT_HAND('handL', -0.03), back: MOUNT_BACK(body, [0, 0, -0.23]), top: { j: head, p: [0, 0.135, 0] } }, height: 0.66, gait: 'roll' };
-}
-
-function kotlik(look: RobotLook, b: Builder): Omit<RobotModel, 'look' | 'joints' | 'parts' | 'wheels'> {
-  const body = b.joint('body', 'root', [0, 0.42, 0]);
-  // tri nohy: bedro pod kotlom, koleno, chodidlo (tanierik)
-  for (const [i, a] of [0, (2 * Math.PI) / 3, (4 * Math.PI) / 3].entries()) {
-    const ax = Math.sin(a + Math.PI) * 0.12, az = Math.cos(a + Math.PI) * 0.12;
-    const hip = b.joint('hip' + i, body, [ax, -0.12, az]);
-    b.add(hip, { k: 'sphere', r: 0.028 }, [0, 0, 0], 'dark');
-    // koleno vonku, chodidlo trochu bližšie pod kotlom – nohy ako trojnožka
-    const kp: V3 = [ax * 0.6, -0.12, az * 0.6];
-    b.rod(hip, [0, 0, 0], kp, 0.014, 'metal');
-    const knee = b.joint('knee' + i, hip, kp);
-    b.add(knee, { k: 'sphere', r: 0.022 }, [0, 0, 0], 'accent');
-    b.rod(knee, [0, 0, 0], [-ax * 0.25, -0.155, -az * 0.25], 0.013, 'metal');
-    b.add(knee, { k: 'cyl', r: 0.04, r2: 0.03, h: 0.018 }, [-ax * 0.25, -0.16, -az * 0.25], 'dark');
+// ---------- hlava ----------
+// Postaví hlavu na krku a vráti temeno (kĺb a bod) – kam patrí doplnok a úchyt top
+function head(b: Builder, L: RobotLook, body: JointId, H: Hull): { j: JointId; p: V3 } {
+  const s = L.headS, e = L.eyeS;
+  if (L.head === 'none') {
+    // oči na trupe ako okienka; „hlava“ je vrchnák trupu (pri kotli klenutý), na ňom doplnok
+    const top = b.joint('head', body, [0, H.hy, 0]);
+    if (L.body === 'barrel') { b.add(top, { k: 'sphere', r: H.hx * 0.99, s: [1, 0.5, 1] }, [0, 0, 0], 'paint'); b.add(top, { k: 'cyl', r: 0.03, h: 0.02 }, [0, H.hx * 0.5, 0], 'accent'); }
+    const y = L.body === 'box' ? H.hy * 0.25 : L.body === 'ball' ? H.hy * 0.25 : 0, r = 0.055 * e;
+    const eye = b.joint('eye', body, [0, y, 0]);
+    if (L.eyes === 1) b.roundEye(eye, [0, 0, H.front(y) + 0.005], r * 1.25, 0, 'accent', L.rivets);
+    else for (const sx of [-1, 1]) { const yaw = L.body === 'box' ? 0 : Math.asin(Math.min(0.8, (sx * r * 1.15) / H.hx)); b.roundEye(eye, [sx * r * 1.15, 0, H.front(y) * Math.cos(yaw) + 0.005], r, yaw, 'accent'); }
+    return { j: top, p: [0, (H.top - H.hy) + 0.005, 0] };
   }
-  // kotol: valec s klenutým vrchnákom a spodkom, obruče, okienko s okom
-  b.add(body, { k: 'cyl', r: 0.17, h: 0.2 }, [0, 0, 0], 'paint');
-  b.add(body, { k: 'sphere', r: 0.17, s: [1, 0.35, 1] }, [0, -0.1, 0], 'paint');
-  for (const y of [-0.085, 0.085]) b.add(body, { k: 'torus', r: 0.172, t: 0.013 }, [0, y, 0], 'accent');
-  for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; b.add(body, { k: 'sphere', r: 0.008 }, [Math.sin(a) * 0.182, 0.085, Math.cos(a) * 0.182], 'metal'); }
-  const head = b.joint('head', body, [0, 0.1, 0]);
-  b.add(head, { k: 'sphere', r: 0.168, s: [1, 0.5, 1] }, [0, 0, 0], 'paint');
-  b.add(head, { k: 'cyl', r: 0.03, h: 0.02 }, [0, 0.085, 0], 'accent');
-  // komínik so stieškou; z neho stúpa para (tag 'steam')
-  b.add(head, { k: 'cyl', r: 0.025, r2: 0.03, h: 0.12 }, [0.08, 0.1, -0.06], 'dark');
-  b.add(head, { k: 'cyl', r: 0.04, r2: 0.032, h: 0.025 }, [0.08, 0.17, -0.06], 'accent');
-  for (const k of [0, 1, 2]) b.add(head, { k: 'sphere', r: 0.025 + k * 0.012 }, [0.08 + k * 0.01, 0.21 + k * 0.05, -0.06], 'glass', undefined, 'steam');
-  // okienko vpredu (oko) – mosadzný rám, sklo, svetlo vnútri a viečko
-  const eye = b.joint('eye', body, [0, 0.0, 0.17]);
-  b.add(eye, { k: 'torus', r: 0.075, t: 0.018 }, [0, 0, 0], 'accent', [Math.PI / 2, 0, 0]);
-  b.add(eye, { k: 'sphere', r: 0.07, s: [1, 1, 0.25] }, [0, 0, 0], 'lens');
-  b.add(eye, { k: 'sphere', r: 0.035, s: [1, 1, 0.3] }, [0, 0, 0.012], 'eye');
-  b.add(eye, { k: 'sphere', r: 0.012 }, [-0.02, 0.025, 0.02], 'glass');
-  b.add(eye, { k: 'box', s: [0.16, 0.08, 0.04], r: 0.03 }, [0, 0.055, 0.005], 'paint', undefined, 'lid');
-  for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; b.add(eye, { k: 'sphere', r: 0.008 }, [Math.cos(a) * 0.075, Math.sin(a) * 0.075, 0.016], 'metal'); }
-  b.accessory(look.acc, head, [-0.03, 0.09, 0.02], look);
-  b.arm(1, body, [0.19, 0.04, 0.0], 0.24, 0.018);
-  b.arm(-1, body, [-0.19, 0.04, 0.0], 0.24, 0.018);
-  b.rust(look, [
-    { j: body, p: [0.165, -0.04, 0.05], n: 'x' }, { j: body, p: [-0.165, 0.03, -0.04], n: '-x' }, { j: body, p: [0.1, -0.03, -0.14], n: '-z' },
-    { j: body, p: [-0.12, 0.04, 0.12], n: 'z' }, { j: body, p: [0.12, -0.05, 0.12], n: 'z' }, { j: body, p: [-0.08, 0.04, -0.15], n: '-z' },
-    { j: body, p: [0.165, 0.04, -0.06], n: 'x' }
-  ], 0.032);
-  return { mounts: { handR: MOUNT_HAND('handR', -0.03), handL: MOUNT_HAND('handL', -0.03), back: MOUNT_BACK(body, [0, 0, -0.2]), top: { j: head, p: [-0.03, 0.09, 0.02] } }, height: 0.62, gait: 'walk' };
+  const nl = L.head === 'bino' ? 0.04 + L.neck * 0.12 : L.neck * 0.08;
+  const neck = b.joint('neck', body, [0, H.top, L.head === 'bino' ? -0.02 : 0]);
+  if (nl > 0.005) {
+    b.add(neck, { k: 'cyl', r: L.head === 'bino' ? 0.03 : 0.025, h: nl }, [0, nl / 2, 0], 'dark');
+    b.add(neck, { k: 'torus', r: 0.03, t: 0.008 }, [0, nl * 0.35, 0], 'metal');
+  }
+  if (L.head === 'bino') {
+    const hd = b.joint('head', neck, [0, nl + 0.01, 0]), r = 0.055 * e * Math.sqrt(s);
+    b.add(hd, { k: 'box', s: [0.1 * s, 0.05 * s, 0.08 * s], r: 0.02 * s }, [0, 0.01, -0.01], 'accent');
+    if (L.eyes === 2) for (const sx of [-1, 1]) b.binoEye(hd, [sx * (r + 0.02 * s), 0.03, 0], r, 0.11 * s);
+    else b.binoEye(hd, [0, 0.03, 0.01], r * 1.3, 0.12 * s);
+    return { j: hd, p: [0, 0.03 + r * (L.eyes === 2 ? 1.25 : 1.6), -0.01] };
+  }
+  if (L.head === 'dome') {
+    const R = 0.125 * s, hd = b.joint('head', neck, [0, nl, 0]);
+    b.add(hd, { k: 'cyl', r: R * 1.04, h: 0.03 }, [0, 0, 0], 'accent');
+    const c = R * 0.72;
+    b.add(hd, { k: 'sphere', r: R * 0.68 }, [0, c, 0.01], 'paint');
+    const er = 0.045 * e * s;
+    if (L.eyes === 1) b.roundEye(hd, [0, c + 0.005, 0.01 + R * 0.62], er, 0, 'dark');
+    else for (const sx of [-1, 1]) b.roundEye(hd, [sx * er * 1.05, c + 0.005, 0.01 + R * 0.6 - er * 0.2], er * 0.8, sx * 0.45, 'dark');
+    b.add(hd, { k: 'dome', r: R }, [0, 0.012, 0], 'glass');
+    return { j: hd, p: [0, R + 0.012, 0] };
+  }
+  if (L.head === 'ball') {
+    const R = 0.11 * s, hd = b.joint('head', neck, [0, nl + R * 0.85, 0]);
+    b.add(hd, { k: 'sphere', r: R }, [0, 0, 0], 'paint');
+    b.add(hd, { k: 'torus', r: R * 1.005, t: 0.008 }, [0, -R * 0.18, 0], 'accent');
+    const er = 0.034 * e * s;
+    if (L.eyes === 1) b.roundEye(hd, [0, R * 0.08, R * 0.93], er * 1.3, 0);
+    else for (const sx of [-1, 1]) { const yaw = sx * 0.4; b.roundEye(hd, [Math.sin(yaw) * R * 0.93, R * 0.08, Math.cos(yaw) * R * 0.93], er, yaw); }
+    for (const sx of [-1, 1]) b.add(hd, { k: 'cyl', r: 0.025 * s, h: 0.03 }, [sx * R, 0, 0], 'accent', [0, 0, Math.PI / 2]); // „uši“
+    b.add(hd, { k: 'box', s: [0.05 * s, 0.012, 0.02], r: 0.006 }, [0, -R * 0.45, R * 0.9], 'dark', [-0.4, 0, 0]);
+    return { j: hd, p: [0, R * 0.98, 0] };
+  }
+  // televízor: zaoblená skrinka, tmavá obrazovka, oči na nej svietia
+  const w = 0.2 * s, h = 0.14 * s, d = 0.12 * s, hd = b.joint('head', neck, [0, nl + h / 2, 0]);
+  b.add(hd, { k: 'box', s: [w, h, d], r: 0.025 * s }, [0, 0, 0], 'paint');
+  b.add(hd, { k: 'box', s: [w * 0.8, h * 0.72, 0.02], r: 0.02 * s }, [0, 0, d / 2 - 0.004], 'lens');
+  const er = 0.026 * e * s;
+  for (const x of L.eyes === 1 ? [0] : [-1, 1]) {
+    const k = L.eyes === 1 ? 1.4 : 1;
+    b.add(hd, { k: 'sphere', r: er * k, s: [1, 1.15, 0.3] }, [x * w * 0.2, 0.005, d / 2 + 0.006], 'eye');
+    b.add(hd, { k: 'box', s: [er * k * 2.6, er * k * 1.3, 0.012], r: 0.006 }, [x * w * 0.2, er * k * 1.4, d / 2 + 0.01], 'lens', undefined, 'lid');
+  }
+  for (const sx of [-1, 1]) b.add(hd, { k: 'sphere', r: 0.018 * s }, [sx * (w / 2 + 0.006), 0, 0], 'dark'); // gombíky
+  b.add(hd, { k: 'cyl', r: 0.008, h: 0.05 }, [w * 0.3, h / 2 + 0.02, -d * 0.2], 'dark');
+  return { j: hd, p: [0, h / 2, 0] };
 }
 
-function plechacik(look: RobotLook, b: Builder): Omit<RobotModel, 'look' | 'joints' | 'parts' | 'wheels'> {
-  const body = b.joint('body', 'root', [0, 0.3, 0]);
-  // nohy: krátke kapsuly s veľkými topánkami
-  for (const sx of [-1, 1]) {
-    const hip = b.joint('hip' + (sx > 0 ? 'L' : 'R'), body, [sx * 0.07, -0.1, 0]);
-    b.add(hip, { k: 'capsule', r: 0.03, h: 0.08 }, [0, -0.07, 0], 'metal');
-    b.add(hip, { k: 'box', s: [0.08, 0.05, 0.12], r: 0.022 }, [0, -0.165, 0.02], 'accent');
-  }
-  // trup: plechovka s rebrami
-  b.add(body, { k: 'cyl', r: 0.14, h: 0.24 }, [0, 0.02, 0], 'paint');
-  for (const y of [-0.08, 0.0, 0.08]) b.add(body, { k: 'torus', r: 0.142, t: 0.008 }, [0, y + 0.02, 0], 'metal');
-  b.add(body, { k: 'cyl', r: 0.145, h: 0.02 }, [0, 0.14, 0], 'accent');
-  b.add(body, { k: 'box', s: [0.12, 0.08, 0.02], r: 0.015 }, [0, 0.0, 0.14], 'accent');
-  for (const x of [-0.03, 0, 0.03]) b.add(body, { k: 'sphere', r: 0.012 }, [x, 0.0, 0.152], x ? 'warm' : 'eye', undefined, 'led');
-  // hlava: guľa s dvomi okrúhlymi očami
-  const neck = b.joint('neck', body, [0, 0.15, 0]);
-  b.add(neck, { k: 'cyl', r: 0.025, h: 0.04 }, [0, 0.02, 0], 'dark');
-  const head = b.joint('head', neck, [0, 0.13, 0]);
-  b.add(head, { k: 'sphere', r: 0.12 }, [0, 0, 0], 'paint');
-  b.add(head, { k: 'torus', r: 0.121, t: 0.008 }, [0, -0.02, 0], 'accent');
-  for (const sx of [-1, 1]) {
-    b.add(head, { k: 'torus', r: 0.035, t: 0.008 }, [sx * 0.045, 0.01, 0.105], 'metal', [Math.PI / 2 - 0.15, sx * 0.4, 0]);
-    b.add(head, { k: 'sphere', r: 0.033, s: [1, 1, 0.45] }, [sx * 0.045, 0.01, 0.108], 'lens', [0, sx * 0.4, 0]);
-    b.add(head, { k: 'sphere', r: 0.018, s: [1, 1, 0.4] }, [sx * 0.047, 0.012, 0.118], 'eye', [0, sx * 0.4, 0]);
-    b.add(head, { k: 'sphere', r: 0.007 }, [sx * 0.045 - 0.01, 0.024, 0.124], 'glass');
-    b.add(head, { k: 'box', s: [0.075, 0.03, 0.04], r: 0.014 }, [sx * 0.047, 0.058, 0.098], 'paint', [0, sx * 0.4, 0], 'lid');
-    b.add(head, { k: 'cyl', r: 0.025, h: 0.03 }, [sx * 0.12, 0, 0], 'accent', [0, 0, Math.PI / 2]); // „uši“
-  }
-  b.add(head, { k: 'box', s: [0.05, 0.012, 0.02], r: 0.006 }, [0, -0.05, 0.11], 'dark', [-0.3, 0, 0]);
-  b.accessory(look.acc, head, [0, 0.118, 0], look);
-  b.arm(1, body, [0.16, 0.08, 0], 0.2, 0.018);
-  b.arm(-1, body, [-0.16, 0.08, 0], 0.2, 0.018);
-  b.rust(look, [
-    { j: body, p: [0.14, -0.05, 0.03], n: 'x' }, { j: body, p: [-0.14, 0.05, -0.02], n: '-x' }, { j: body, p: [0.06, -0.06, 0.13], n: 'z' },
-    { j: body, p: [-0.07, 0.07, -0.13], n: '-z' }, { j: body, p: [0.08, 0.06, -0.12], n: '-z' }
-  ], 0.03);
-  return { mounts: { handR: MOUNT_HAND('handR', -0.03), handL: MOUNT_HAND('handL', -0.03), back: MOUNT_BACK(body, [0, 0.02, -0.16]), top: { j: head, p: [0, 0.118, 0] } }, height: 0.68, gait: 'walk' };
-}
-
-const BUILD: Readonly<Record<RobotStyle, (look: RobotLook, b: Builder) => Omit<RobotModel, 'look' | 'joints' | 'parts' | 'wheels'>>> = { hrdzavec, kotul, kotlik, plechacik };
+// ---------- celý robot ----------
+const MOUNT_HAND = (j: JointId): Mount => ({ j, p: [0, -0.03, 0], r: [Math.PI / 2, 0, 0] });
 export function robotModel(look0: RobotLook): RobotModel {
-  const look = robotLook(look0), b = new Builder();
-  const rest = BUILD[look.style](look, b);
-  return { look, joints: b.joints, parts: b.parts, wheels: b.wheels, ...rest };
+  const L = robotLook(look0), b = new Builder(), H = hull(L);
+  const bottom = chassis(b, L, H);
+  const body = b.joint('body', 'root', [0, bottom + H.bottom, 0]);
+  trunk(b, L, body, H);
+  legs(b, L, body, H, bottom);
+  const top = head(b, L, body, H);
+  details(b, L, body, H, L.head === 'none');
+  // ramená z bokov trupu, trochu nad stredom
+  const sy = H.hy * 0.25, sx = H.side(sy) + L.armT * 0.6;
+  // krátky robot má kratšie ruky, aby klieštiky neťahal po zemi (ruka je ~1,05 dĺžky pod plecom)
+  const arm = Math.max(0.07, Math.min(L.arm, (bottom + H.bottom + sy - 0.08) / 1.05));
+  b.arm(1, body, [sx, sy, L.body === 'box' ? 0.03 : 0], arm, L.armT);
+  b.arm(-1, body, [-sx, sy, L.body === 'box' ? 0.03 : 0], arm, L.armT);
+  // nosič na chrbte (dve priečky)
+  for (const y of [H.hy * 0.5, -H.hy * 0.5]) b.add(body, { k: 'box', s: [Math.min(0.26, H.hx * 1.6), 0.02, 0.02], r: 0.008 }, [0, y, -H.front(y) - 0.012], 'metal');
+  b.accessory(L.acc, top.j, top.p);
+  rust(b, L, body, H);
+  const mounts: Record<MountId, Mount> = { handR: MOUNT_HAND('handR'), handL: MOUNT_HAND('handL'), back: { j: body, p: [0, 0, -H.hz - 0.035] }, top: { j: top.j, p: top.p } };
+  const m0: RobotModel = { look: L, joints: b.joints, parts: b.parts, wheels: b.wheels, mounts, height: 0, scale: 1, gait: L.loco === 'legs2' || L.loco === 'legs3' ? 'walk' : 'roll' };
+  const h0 = mountAt(m0, null, 'top')[1], scale = Math.max(HEIGHT_MIN, Math.min(HEIGHT_MAX, h0)) / h0;
+  return { ...m0, scale, height: Math.round(h0 * scale * 1000) / 1000 };
 }
 
 // ---------- póza ----------
@@ -345,7 +517,7 @@ export function robotPose(m: RobotModel, o: PoseOpts): RobotPose {
   // trup: pohupovanie, predklon pri plazení, tanec
   const bob = roll ? (walk ? Math.abs(sin(ph * 2)) * 0.008 : 0) : Math.abs(sw) * 0.025;
   const crawl = o.crawl ? 1 : 0;
-  let bodyR: V3 = [walk && m.look.style === 'kotul' ? 0.18 : 0, 0, walk && !roll ? sw * 0.06 : 0];
+  let bodyR: V3 = [walk && m.look.loco === 'ball' ? 0.18 : 0, 0, walk && !roll ? sw * 0.06 : 0];
   let bodyD: V3 = [0, bob - crawl * (roll ? 0.04 : 0.09), 0];
   if (o.dance) { bodyR = [0, sin(t * 3) * 0.5, sin(t * 6) * 0.12]; bodyD = [0, Math.abs(sin(t * 6)) * 0.04, 0]; }
   if (crawl) bodyR = [bodyR[0] + 0.35, bodyR[1], bodyR[2]];
@@ -401,7 +573,10 @@ export function jointMatrix(m: RobotModel, pose: RobotPose | null, id: JointId):
   if (!j) throw new Error('robot nemá kĺb ' + id);
   const jp = pose?.joints.get(id), d = jp?.d ?? [0, 0, 0];
   const local = eulerM(jp?.r ?? [0, 0, 0], [j.p[0] + d[0], j.p[1] + d[1], j.p[2] + d[2]]);
-  return j.parent ? mul(jointMatrix(m, pose, j.parent), local) : local;
+  if (j.parent) return mul(jointMatrix(m, pose, j.parent), local);
+  // koreň nesie zmenšenie celého robota
+  const k = m.scale;
+  return [[local[0][0] * k, local[0][1] * k, local[0][2] * k], [local[1][0] * k, local[1][1] * k, local[1][2] * k], [local[2][0] * k, local[2][1] * k, local[2][2] * k], local[3]];
 }
 // Kde je úchyt (ruka, chrbát, temeno) v súradniciach robota – napr. odkiaľ svieti lampáš a kde je lano saní
 export function mountAt(m: RobotModel, pose: RobotPose | null, id: MountId): V3 {
@@ -417,4 +592,4 @@ export function mountInWorld(m: RobotModel, pose: RobotPose | null, id: MountId,
 }
 // Natočenie robota okolo y pre uhol pohybu a (Three.js rotation.y)
 export const yawOf = (a: number): number => Math.PI / 2 - a;
-export const styleName = (s: string): string => lookup(STYLES, s)?.name ?? s;
+export const presetName = (s: string): string => lookup(PRESETS, s)?.name ?? s;

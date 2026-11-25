@@ -123,7 +123,7 @@ export interface Robot3D {
 }
 export function buildRobot(look: RobotLook): Robot3D {
   const model = RM.robotModel(look), mats = materials(model.look);
-  const group = new THREE.Group(); group.name = 'robot:' + model.look.style;
+  const group = new THREE.Group(); group.name = `robot:${model.look.loco}/${model.look.body}/${model.look.head}`;
   const joints = new Map<JointId, THREE.Group>();
   const jointBase = new Map<THREE.Object3D, readonly [number, number, number]>(), partBase = new Map<THREE.Object3D, THREE.Vector3>();
   const steamMats: THREE.MeshStandardMaterial[] = [];
@@ -131,6 +131,7 @@ export function buildRobot(look: RobotLook): Robot3D {
     const o = new THREE.Group(); o.name = j.id; o.position.set(...j.p);
     jointBase.set(o, j.p);
     joints.set(j.id, o);
+    if (!j.parent) o.scale.setScalar(model.scale); // koreň nesie zmenšenie celého robota
     (j.parent ? must(joints.get(j.parent)) : group).add(o);
   }
   const tagged = new Map<string, THREE.Mesh[]>();
