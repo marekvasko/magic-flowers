@@ -24,8 +24,8 @@ const CELL = 64, COLS = 8, ROWS = 2; // obrázok trsov: 8 podôb, riadok 0 = tr�
 // a výška trsu v blokoch (postavička má ~1,28, kolená ~0,35)
 interface Kind { n: Readonly<Record<'low' | 'high', number>>; h: number; row: number }
 const KINDS: Readonly<Partial<Record<Ground, Kind>>> = {
-  grass: { n: { low: 22, high: 44 }, h: 0.42, row: 0 }, // hustá ako lúka
-  meadow: { n: { low: 22, high: 44 }, h: 0.5, row: 1 },
+  grass: { n: { low: 36, high: 72 }, h: 0.42, row: 0 }, // hustá ako lúka
+  meadow: { n: { low: 36, high: 72 }, h: 0.5, row: 1 },
 };
 const TRAMPLED = 0.65;              // pri ceste je tráva udupaná (nižšia)
 
@@ -68,7 +68,7 @@ const GRASS_VERT = `
 attribute vec4 aRoot;   // koreň trsu (xyz); w = odtieň × 100 (celá časť) + náhodné číslo trsu (desatinná časť)
 attribute vec4 aShape;  // šírka, výška, ľavý dolný roh podoby v obrázku (u, v)
 uniform mat4 shadowMatrix; uniform vec3 sunDir; uniform float shadowNormalBias;
-uniform float time; uniform vec2 wind; uniform vec2 cell; uniform float depthBias;
+uniform float time; uniform vec2 wind; uniform vec2 cell; uniform float depthBias; uniform vec2 areaSize;
 uniform vec4 pushers[${MAX_PUSH}]; uniform int pusherCount;
 varying vec3 vColor; varying float vAo; varying float vEmis; varying float vTex; varying float vFacing; varying float vUp;
 varying vec2 vUv; varying vec3 vPos; varying vec4 vShadow; varying vec2 vUv2;
@@ -101,6 +101,7 @@ void main() {
   vec3 wp = root + right * position.x * aShape.x;
   wp.xz += bend * h * k;
   wp.y += h * t * (1.0 - 0.45 * min(1.0, dot(bend, bend)) * k); // ohnuté steblo je nižšie
+  wp.xz = clamp(wp.xz, vec2(0.01), areaSize - 0.01); // nič nepresahuje cez okraj mapy (trs pri okraji sa zúži)
   vUv = aShape.zw + vec2(position.x + 0.5, t) * cell;
   vColor = grassTint(root.xz) * tint * (1.0 + 0.22 * sheen * t);
   vAo = mix(0.86, 1.0, t); vEmis = 0.0; vTex = 1.0;
@@ -157,7 +158,7 @@ export function createGrass3d(o: {
     const gc = new T3.Color(must(GROUND[se])), base = gc.clone().multiplyScalar(BASE_K), tip = gc.clone().lerp(new T3.Color(TIP_MIX), TIP_K);
     u.grassBase.value.set(base.r, base.g, base.b); u.grassTip.value.set(tip.r, tip.g, tip.b);
     for (let row = 0; row < ROWS; row++) for (let v = 0; v < COLS; v++) {
-      const x0 = v * CELL, y0 = row * CELL, n = row ? 12 : 11;
+      const x0 = v * CELL, y0 = row * CELL, n = row ? 15 : 14;
       const tips: [number, number][] = [];
       // široké mäkké steblá, väčšinou sklonené na jednu stranu (ako učesané vetrom); zadné tmavšie, predné svetlejšie
       for (let i = 0; i < n; i++) {
@@ -239,14 +240,15 @@ export function createGrass3d(o: {
         for (let k = 0; k < n; k++) {
           const r = (j: number): number => hash(x * 97 + y, k, j);
           // náhodne po políčku, kúsok aj cez okraj; či trs vyrastie, rozhodne šum hustoty (chumáče a riedke miesta)
-          const px = x - 0.05 + r(1) * 1.1, pz = y - 0.05 + r(2) * 1.1;
+          // korene ostanú na mape (cez okraj mapy nič nevisí)
+          const px = Math.max(0.04, Math.min(w - 0.04, x - 0.05 + r(1) * 1.1)), pz = Math.max(0.04, Math.min(h - 0.04, y - 0.05 + r(2) * 1.1));
           const dn = fbm(px, pz, 11), dk = Math.max(0, Math.min(1, (dn - 0.25) / 0.45));
-          if (r(0) > 0.3 + 0.7 * dk * dk * (3 - 2 * dk)) continue;
+          if (r(0) > 0.5 + 0.5 * dk * dk * (3 - 2 * dk)) continue;
           // výška aj odtieň sa menia plynulo po ploche (iný šum) – vyššie a tmavšie fľaky, nižšie a svetlejšie
           const hn = fbm(px, pz, 23);
           const th = kind.h * (0.55 + 0.55 * hn + 0.3 * r(3)) * trampled;
           R.push(px, gy, pz, Math.round((0.94 + 0.12 * r(7)) * 100) + Math.min(0.999, r(4))); // farebné fľaky robí shader (grassTint)
-          S.push(th * (1.05 + 0.4 * r(5)), th, ((r(6) * COLS) | 0) / COLS, kind.row / ROWS);
+          S.push(th * (1.2 + 0.5 * r(5)), th, ((r(6) * COLS) | 0) / COLS, kind.row / ROWS);
         }
       }
     }
