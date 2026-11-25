@@ -17,7 +17,7 @@ import { Art } from './art.ts';
 import { AO_CURVE, FACE_SHADE, bakeFine } from './finebake.ts';
 import type { CharOpts } from './art.ts';
 import { createParticles } from './particles3d.ts';
-import { STENCIL_GRASS, createGrass3d } from './grass3d.ts';
+import { GRASS_TINT_GLSL, STENCIL_GRASS, createGrass3d } from './grass3d.ts';
 import type { GrassPusher } from './grass3d.ts';
 import { overcast, skyLight } from './skylight.ts';
 import { createSpiders3d } from './spiders3d.ts';
@@ -151,20 +151,26 @@ ${DARK_GLSL}
 ${VOX_GLSL}
 #endif
 #ifdef GRASS
-uniform sampler2D grassMap;
+uniform sampler2D grassMap; uniform vec3 grassBase; uniform vec3 grassTip;
 #endif
+uniform sampler2D grassMask; uniform float grassOn;
+${GRASS_TINT_GLSL}
 void main() {
 #ifdef VOX
   vec4 tc = texture2D(voxColor, vUv);
   vec3 base = tc.rgb; float em = tc.a, ao = texture2D(voxAo, vUv2).r, tx = 0.0; // modely nie sú zem
 #elif defined(GRASS)
   // 3D tráva (grass3d.ts): steblá z obrázka trsov, svieti ako zem
+  // steblá sú sivé (jas = od farby zeme po farbu špičky), farebné sú len kvietky
   vec4 gc = texture2D(grassMap, vUv);
   if (gc.a < 0.5) discard;
-  vec3 base = gc.rgb * vColor; float em = 0.0, ao = vAo, tx = 1.0;
+  float sat = max(gc.r, max(gc.g, gc.b)) - min(gc.r, min(gc.g, gc.b));
+  vec3 base = (sat > 0.12 ? gc.rgb : mix(grassBase, grassTip, gc.r)) * vColor; float em = 0.0, ao = vAo, tx = 1.0;
 #else
   vec3 base = vTex > 0.5 ? texture2D(map, vUv).rgb * vColor : vColor;
   float em = vEmis, ao = vAo, tx = vTex;
+  // zem pod 3D trávou (grass3d.ts): rovnaké farebné fľaky ako trsy – zem a steblá sú jeden koberec
+  if (grassOn > 0.5 && tx > 0.5 && vUp > 0.5) base *= mix(vec3(1.0), grassTint(vPos.xz) * GRASS_GROUND_K, texture2D(grassMask, vPos.xz / areaSize).r);
 #endif
   float gm = gloomAt(vPos.z);
   // darkOn 0–1: koľko tmy Lesa divov (pri severnom okraji Lesa na pomedzí postupne pribúda, opar Lesa na pomedzí ubúda)
@@ -554,7 +560,8 @@ export function create(api: Render3DApi): Render3D {
     shadowOn: uni(0), shadowTexel: uni(new THREE.Vector2(1 / SHADOW_SIZE, 1 / SHADOW_SIZE)), shadowRadius: uni(3.5),
     shadowNormalBias: uni(0.03), gloom: uni(new THREE.Vector3()), gloomFog: uni(new THREE.Vector3()),
     darkOn: uni(0), sunMode: uni(1), sunFill: uni(new THREE.Vector3()), eye: uni(new THREE.Vector4(0, 0, 0, 3)), eyeLit: uni(new THREE.Vector2(3, 0)),
-    darkFog: uni(new THREE.Vector3()), canopy: uni<THREE.Texture | null>(null), areaSize: uni(new THREE.Vector2(S.W, S.H)), sunZone: uni(new THREE.Vector4())
+    darkFog: uni(new THREE.Vector3()), canopy: uni<THREE.Texture | null>(null), areaSize: uni(new THREE.Vector2(S.W, S.H)), sunZone: uni(new THREE.Vector4()),
+    grassMask: uni<THREE.Texture | null>(null), grassOn: uni(0)
   };
   const material = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms: worldU });
   // svet v zrkadle pod hladinou: rovnaký shader, stačia 4 vzorky tieňa
@@ -2081,7 +2088,7 @@ void main() {
   // ---------- Častice a blčanie svetiel ----------
   const sceneBefore = new Set(scene.children);
   const particles = createParticles({ scene, camera, renderer, S, ripple });
-  const grass3d = createGrass3d({ THREE, scene, frag: FRAG, world: worldU });
+  const grass3d = createGrass3d({ THREE, scene, frag: FRAG, world: worldU, mask: worldU.grassMask, maskOn: worldU.grassOn });
   const particleObjs = scene.children.filter(o => !sceneBefore.has(o)); // objekty častíc (ladiaca stránka ich vie skryť)
   const boat3d = createBoat3d({ THREE, scene, camera, S, dir8, yaw: () => yaw, light: (x, y, z) => lightAt(x, y, z, lastLights, lastLights.length) });
   const spiders3d = createSpiders3d({ THREE, scene, S, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, renderer, world: worldU, maxLights: MAX_LIGHTS, fine: () => grid && grid.fine });
