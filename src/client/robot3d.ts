@@ -107,8 +107,15 @@ function toolMesh(id: ToolId): THREE.Group {
   }
   return g;
 }
-// Ako sa náradie drží v ruke (natočenie voči úchytu ruky): motyka a krompáč šikmo dopredu a dole, krhla za držadlo
-const HELD_ROT: Readonly<Record<ToolId, [number, number, number]>> = { hoe: [-0.9, 0, 0], pick: [-0.9, 0, 0], can: [-Math.PI / 2, 0, 0], lamp: [-Math.PI / 2, 0, 0] };
+// Úchop náradia: bod na rúčke / držadle (v súradniciach modelu náradia), ktorý je v strede klepeta, a natočenie, ktoré
+// otočí rúčku do osi z klepeta. Motyka a krompáč za spodok rúčky (os y náradia → z; čepeľ motyky dopredu, hlavica
+// krompáča dopredu a dozadu), krhla za vrch oblúka držadla (ten ide pozdĺž z), lampáš za vrch krúžku (ten ide pozdĺž x).
+const GRIP: Readonly<Record<ToolId, { p: [number, number, number]; r: [number, number, number] }>> = {
+  hoe: { p: [0, -0.03, 0], r: [Math.PI / 2, 0, 0] },
+  pick: { p: [0, -0.03, 0], r: [Math.PI / 2, Math.PI / 2, 0] },
+  can: { p: [0, 0.055, 0], r: [0, 0, 0] },
+  lamp: { p: [0, 0.003, 0], r: [0, -Math.PI / 2, 0] }
+};
 
 // ---------- robot ----------
 export interface Robot3D {
@@ -165,16 +172,21 @@ export function buildRobot(look: RobotLook): Robot3D {
     return g;
   };
   const slots: Record<ToolId, THREE.Group> = { hoe: slotGroup('hoe'), can: slotGroup('can'), pick: slotGroup('pick'), lamp: slotGroup('lamp') };
-  let lamp: THREE.Group | null = null;
+  let lamp: THREE.Group | null = null, hanging: THREE.Group | null = null;
   const tools: THREE.Group[] = [];
   function setTools(held: ToolId | null, carried: readonly ToolId[]): void {
     for (const t of tools) {
       t.removeFromParent();
       TOOL_FREE.get(t)?.();
     }
-    tools.length = 0; lamp = null;
+    tools.length = 0; lamp = null; hanging?.removeFromParent(); hanging = null;
     if (held) {
-      const t = toolMesh(held); t.rotation.set(...HELD_ROT[held]); hand.add(t); tools.push(t);
+      // úchop → (zavesené: kĺb, ktorý sa otáča okolo držadla, aby náradie viselo dole) → natočenie rúčky → náradie
+      const t = toolMesh(held), g = GRIP[held], frame = new THREE.Group(), pivot = new THREE.Group();
+      t.position.set(-g.p[0], -g.p[1], -g.p[2]);
+      frame.rotation.set(...g.r); frame.add(t);
+      pivot.add(frame); hand.add(pivot); tools.push(t);
+      if (RM.TOOL_HOLD[held] === 'hang') hanging = pivot;
       if (held === 'lamp') lamp = t;
     }
     // ostatné vlastnené náradie na svojom mieste na nosiči (rúčkou v puzdre alebo zavesené na háčiku)
@@ -185,9 +197,9 @@ export function buildRobot(look: RobotLook): Robot3D {
     held0 = held;
   }
   let held0: ToolId | null = null;
-  const q = new THREE.Quaternion(), qr = new THREE.Quaternion();
+  const q = new THREE.Quaternion(), down = new THREE.Vector3();
   function pose(o: PoseOpts): void {
-    const P = RM.robotPose(model, { ...o, holding: o.holding ?? !!held0 });
+    const P = RM.robotPose(model, { ...o, hold: o.hold !== undefined ? o.hold : held0 ? RM.TOOL_HOLD[held0] : null });
     for (const [id, g] of joints) {
       const jp = P.joints.get(id), base = must(jointBase.get(g));
       if (jp) g.rotation.set(...jp.r); else g.rotation.set(0, 0, 0);
@@ -201,13 +213,12 @@ export function buildRobot(look: RobotLook): Robot3D {
       s.position.set(b.x + f * 0.03, b.y - 0.05 + f * 0.15, b.z); s.scale.setScalar(0.4 + f);
       const sm = steamMats[k]; if (sm) sm.opacity = 0.35 * (1 - f);
     }
-    // lampáš visí kolmo dole bez ohľadu na natočenie ruky (kýve sa len trochu)
-    if (lamp) {
+    // zavesené náradie sa otáča len okolo držadla (os z klepeta), aby viselo čo najviac dole; pri chôdzi sa trochu kýve
+    if (hanging) {
       group.updateMatrixWorld(true);
       hand.getWorldQuaternion(q).invert();
-      group.getWorldQuaternion(qr);
-      lamp.quaternion.copy(q.multiply(qr));
-      lamp.rotateX(Math.sin((o.phase ?? 0) * 2) * (o.walking ? 0.12 : 0));
+      down.set(0, -1, 0).applyQuaternion(q);
+      hanging.rotation.set(0, 0, Math.atan2(down.x, -down.y) + Math.sin((o.phase ?? 0) * 2) * (o.walking ? 0.15 : 0));
     }
   }
   function mountWorld(id: MountId, out = new THREE.Vector3()): THREE.Vector3 {

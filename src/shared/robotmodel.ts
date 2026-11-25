@@ -217,7 +217,13 @@ class Builder {
     const d: V3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
     this.add(j, { k: 'cyl', r, h: Math.hypot(...d) }, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2], m, alignY(d));
   }
-  // rameno: plece → lakeť → ruka s dvoma prstami (klieštiky); vracia kĺb ruky
+  // hranol z bodu a do bodu b v rovine xy (šírka w, hĺbka v z dz) – článok prsta
+  bar(j: JointId, a: V3, b: V3, w: number, dz: number, m: Mat): void {
+    const d: V3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    this.add(j, { k: 'box', s: [w, Math.hypot(...d), dz], r: Math.min(w, dz) * 0.3 }, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2], m, alignY(d));
+  }
+  gripY = -0.03; // stred úchopu (kde ide rúčka) pod kĺbom ruky
+  // rameno: plece → lakeť → ruka (zápästie, dlaň a klepeto z dvoch prstov v tvare C); vracia kĺb ruky
   arm(side: 1 | -1, parent: JointId, p: V3, len: number, thick: number): JointId {
     const s = side > 0 ? 'L' : 'R';
     const sh = this.joint('shoulder' + s, parent, p);
@@ -227,8 +233,21 @@ class Builder {
     this.add(el, { k: 'sphere', r: thick * 1.15 }, [0, 0, 0], 'dark');
     this.add(el, { k: 'capsule', r: thick * 0.9, h: len * 0.35 }, [0, -len * 0.22, 0], 'accent');
     const hd = this.joint('hand' + s, el, [0, -len * 0.45, 0]);
-    this.add(hd, { k: 'cyl', r: thick * 1.3, h: thick * 1.2 }, [0, 0, 0], 'dark');
-    for (const f of [-1, 1]) this.add(hd, { k: 'box', s: [thick * 0.7, thick * 2.6, thick * 1.1], r: thick * 0.3 }, [f * thick * 0.95, -thick * 1.5, 0], 'metal', [0, 0, f * 0.18], 'finger');
+    // Klepeto: prsty sa zatvárajú pozdĺž x a obopínajú rúčku, ktorá ide pozdĺž z cez stred úchopu (gripY);
+    // otvor je dole. Veľkosť podľa rúčky náradia (GRIP_R), nie podľa hrúbky ruky, aby každá rúčka sedela.
+    const rh = GRIP_R + 0.003, fw = Math.max(0.012, thick * 0.6), dz = 0.026;
+    this.add(hd, { k: 'cyl', r: thick * 1.15, h: thick * 0.9 }, [0, 0, 0], 'dark');                          // zápästie
+    const palmY = -thick * 0.45 - 0.008, palmW = (rh + fw) * 2 + 0.008;
+    this.add(hd, { k: 'box', s: [palmW, 0.016, dz + 0.008], r: 0.004 }, [0, palmY, 0], 'accent');             // dlaň
+    const cy = palmY - 0.008 - rh - 0.002;
+    this.gripY = cy;
+    for (const f of [-1, 1]) {
+      const a: V3 = [f * (rh + fw / 2), palmY - 0.004, 0], b: V3 = [f * (rh + fw / 2 + 0.002), cy - rh * 0.2, 0], c: V3 = [f * rh * 0.35, cy - rh - fw * 0.35, 0];
+      this.bar(hd, a, b, fw, dz, 'metal');
+      this.bar(hd, b, c, fw * 0.85, dz * 0.9, 'metal');
+      this.add(hd, { k: 'cyl', r: fw * 0.62, h: dz + 0.004 }, b, 'dark', [Math.PI / 2, 0, 0]);               // kĺbik prsta
+      this.add(hd, { k: 'sphere', r: fw * 0.5, s: [1, 1, 1.6] }, c, 'rubber');                               // gumené bruško
+    }
     return hd;
   }
   // oko ako ďalekohľad: rúrka dopredu, šošovka, svietiaca dúhovka, odlesk a viečko (tag 'lid' – žmurkanie)
@@ -531,7 +550,14 @@ function head(b: Builder, L: RobotLook, body: JointId, H: Hull): { j: JointId; p
 }
 
 // ---------- celý robot ----------
-const MOUNT_HAND = (j: JointId): Mount => ({ j, p: [0, -0.03, 0], r: [Math.PI / 2, 0, 0] });
+// Úchop ruky: stred klepeta; rúčka náradia ide cez neho pozdĺž osi z ruky
+const MOUNT_HAND = (j: JointId, y: number): Mount => ({ j, p: [0, y, 0] });
+// Polomer rúčky náradia, na ktorý je klepeto (motyka 0,011, krompáč 0,012)
+export const GRIP_R = 0.012;
+// Ako sa náradie nesie: palica (motyka, krompáč – rúčka zvislo pred sebou) alebo zavesené (krhla, lampáš – predlaktie
+// vodorovne dopredu, klepeto otočené tak, že držadlo je vodorovne a náradie visí dole)
+export type HoldKind = 'staff' | 'hang';
+export const TOOL_HOLD: Readonly<Record<ToolId, HoldKind>> = { hoe: 'staff', pick: 'staff', can: 'hang', lamp: 'hang' };
 // Nosič na chrbte: doska pripevnená k trupu, po krajoch dve puzdrá (rúry) na náradie s dlhou rúčkou – motyka vpravo,
 // krompáč vľavo – a medzi nimi na hornej priečke dva háčiky: krhla (hubicou dozadu) a lampáš. Náradie sa vkladá
 // rúčkou do puzdra / zavesí za držadlo; prázdne puzdro a háčik je vidieť, takže je jasné, kam čo patrí.
@@ -574,13 +600,13 @@ export function robotModel(look0: RobotLook): RobotModel {
   // ramená z bokov trupu, trochu nad stredom
   const sy = H.hy * 0.25, sx = H.side(sy) + L.armT * 0.6;
   // krátky robot má kratšie ruky, aby klieštiky neťahal po zemi (ruka je ~1,05 dĺžky pod plecom)
-  const arm = Math.max(0.07, Math.min(L.arm, (bottom + H.bottom + sy - 0.08) / 1.05));
+  const arm = Math.max(0.07, Math.min(L.arm, (bottom + H.bottom + sy - 0.1) / 1.05));
   b.arm(1, body, [sx, sy, L.body === 'box' ? 0.03 : 0], arm, L.armT);
   b.arm(-1, body, [-sx, sy, L.body === 'box' ? 0.03 : 0], arm, L.armT);
   const slots = rack(b, body, H);
   b.accessory(L.acc, top.j, top.p);
   rust(b, L, body, H);
-  const mounts: Record<MountId, Mount> = { handR: MOUNT_HAND('handR'), handL: MOUNT_HAND('handL'), back: { j: 'rack', p: [0, 0, -0.03] }, top: { j: top.j, p: top.p } };
+  const mounts: Record<MountId, Mount> = { handR: MOUNT_HAND('handR', b.gripY), handL: MOUNT_HAND('handL', b.gripY), back: { j: 'rack', p: [0, 0, -0.03] }, top: { j: top.j, p: top.p } };
   const m0: RobotModel = { look: L, joints: b.joints, parts: b.parts, wheels: b.wheels, tracks: b.tracks, slots, mounts, height: 0, scale: 1, gait: L.loco === 'legs2' || L.loco === 'legs3' ? 'walk' : 'roll' };
   const h0 = mountAt(m0, null, 'top')[1], scale = Math.max(HEIGHT_MIN, Math.min(HEIGHT_MAX, h0)) / h0;
   return { ...m0, scale, height: Math.round(h0 * scale * 1000) / 1000 };
@@ -589,7 +615,7 @@ export function robotModel(look0: RobotLook): RobotModel {
 // ---------- póza ----------
 // Čo robot práve robí (ako CharOpts postavičky): fáza kroku (rastie s prejdenou dráhou), plazenie, tanec, hrabanie (čas),
 // výška skoku, čas (žmurkanie, rozhliadanie), náradie v ruke
-export interface PoseOpts { phase?: number; t?: number; crawl?: boolean; dance?: boolean; dig?: number; jz?: number; holding?: boolean; walking?: boolean }
+export interface PoseOpts { phase?: number; t?: number; crawl?: boolean; dance?: boolean; dig?: number; jz?: number; hold?: HoldKind | null; walking?: boolean }
 export interface JointPose { r: V3; d?: V3 }
 export interface RobotPose { readonly joints: ReadonlyMap<JointId, JointPose>; readonly blink: number; readonly steam: number }
 const sin = Math.sin, cos = Math.cos;
@@ -627,12 +653,17 @@ export function robotPose(m: RobotModel, o: PoseOpts): RobotPose {
   // ramená: [predpaženie (−x = dopredu), 0, odpaženie]
   const fwd = (a: number): V3 => [-a, 0, 0];
   let armR = fwd(sw * 0.5), armL = fwd(-sw * 0.5), elbR: V3 = [-0.3, 0, 0], elbL: V3 = [-0.3, 0, 0];
-  if (o.holding) { armR = fwd(0.5 + sw * 0.15); elbR = [-0.7, 0, 0]; }
+  // palica: rúčka zvislo pred sebou (rameno trochu dopredu, predlaktie dopredu); zavesené: predlaktie vodorovne dopredu
+  // a zápästie otočené o 90°, takže držadlo je vodorovne naprieč a náradie visí pred robotom
+  let wristR = 0;
+  if (o.hold === 'staff') { armR = fwd(0.4 + sw * 0.12); elbR = [-1.05, 0, 0]; }
+  if (o.hold === 'hang') { armR = fwd(0.7 + sw * 0.1); elbR = [-0.85, 0, 0]; wristR = Math.PI / 2; }
   if (o.dig) { const k = sin(o.dig * 8); armR = fwd(0.9 + k * 0.6); elbR = [-0.5 - k * 0.4, 0, 0]; armL = fwd(0.7 + k * 0.4); }
   if (o.dance) { armR = [-2.6 + sin(t * 6) * 0.3, 0, -0.3]; armL = [-2.6 - sin(t * 6) * 0.3, 0, 0.3]; elbR = [-0.4, 0, 0]; elbL = [-0.4, 0, 0]; }
   if (crawl && !o.dig) { armR = fwd(0.9); armL = fwd(0.9); }
   set('shoulderR', armR); set('shoulderL', armL);
   set('elbowR', elbR); set('elbowL', elbL);
+  set('handR', [0, o.dig || o.dance ? 0 : wristR, 0]);
   // nohy (chôdza): bedrá sa kývu striedavo; trojnožka Kotlíka cupitá po jednej nohe
   if (!roll) {
     set('hipL', [walk ? -sw * 0.5 : 0, 0, 0]); set('hipR', [walk ? sw * 0.5 : 0, 0, 0]);

@@ -67,7 +67,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
   const seed0 = Number.parseInt(p('rs') ?? '', 10);
   const st: {
     mode: Mode; anim: typeof ANIMS[number]; held: ToolId | null; carried: Set<ToolId>; night: boolean;
-    one: RM.PresetId | null; seed: number; look: RobotLook; yaw: number;
+    one: RM.PresetId | null; seed: number; look: RobotLook; yaw: number; zoom: number;
   } = {
     mode: MODES.find(m => m === p('rv')) ?? 'generator',
     anim: ANIMS.find(a => a === p('ra')) ?? 'idle',
@@ -77,13 +77,14 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
     one: RM.PRESET_IDS.find(x => x === p('rf')) ?? null, // predvoľba zblízka
     seed: Number.isFinite(seed0) ? seed0 >>> 0 : 1,
     look: RM.PRESETS.hrdzavec.look,
-    yaw: Number(p('ry') ?? '0.35') || 0
+    yaw: Number(p('ry') ?? '0.35') || 0,
+    zoom: Math.max(1, Math.min(3, Number.parseInt(p('rz') ?? '1', 10) || 1))
   };
   st.look = parseLook(p('rg')) ?? RM.randomLook(st.seed);
   const save = (): void => {
     ctx.setParam('rv', st.mode); ctx.setParam('ra', st.anim); ctx.setParam('rh', st.held ?? 'none');
     ctx.setParam('rc', [...st.carried].join(',')); ctx.setParam('rn', st.night ? 1 : null); ctx.setParam('rf', st.one);
-    ctx.setParam('rs', st.seed); ctx.setParam('rg', JSON.stringify(st.look)); ctx.setParam('ry', st.yaw.toFixed(2));
+    ctx.setParam('rs', st.seed); ctx.setParam('rg', JSON.stringify(st.look)); ctx.setParam('ry', st.yaw.toFixed(2)); ctx.setParam('rz', st.zoom > 1 ? st.zoom : null);
   };
 
   const bar = h('div', { class: 'rb-bar' }), panel = h('div', { class: 'rb-panel' });
@@ -157,6 +158,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
       st.mode === 'crowd' ? h('span', { class: 'rb-seed' }, h('button', { onclick: () => { st.seed = Math.max(0, st.seed - CROWD); save(); rebuild(); } }, '◀'), `seeds ${st.seed}–${st.seed + CROWD - 1}`, h('button', { onclick: () => { st.seed += CROWD; save(); rebuild(); } }, '▶')) : null,
       seg(ANIMS, ANIMS.indexOf(st.anim), i => { st.anim = must(ANIMS[i]); save(); renderBar(); }),
       seg(['Day', 'Night'], st.night ? 1 : 0, i => { st.night = !!i; save(); light(); renderBar(); }),
+      seg(['1×', '2×', '3×'], st.zoom - 1, i => { st.zoom = i + 1; save(); renderBar(); }),
       h('label', null, 'In hand', seg(['—', ...TOOLS.map(t => TOOL_NAME[t])], st.held ? TOOLS.indexOf(st.held) + 1 : 0, i => { st.held = TOOLS[i - 1] ?? null; save(); rebuild(); })),
       h('label', null, 'On back', ...TOOLS.map(t => {
         const c = document.createElement('input'); c.type = 'checkbox'; c.checked = st.carried.has(t);
@@ -245,9 +247,9 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
     // kamera: izometrická ako v hre, otočená o yaw
     const single = st.mode === 'generator' || (st.mode === 'presets' && !!st.one);
     const span = st.mode === 'crowd' ? 5.4 : single ? 1.5 : 4.4, asp = w / hh;
-    const vw = Math.max(span, (st.mode === 'crowd' ? 3.6 : single ? 1.15 : 1.6) * asp) / 2, vh = vw / asp;
+    const vw = Math.max(span, (st.mode === 'crowd' ? 3.6 : single ? 1.15 : 1.6) * asp) / 2 / st.zoom, vh = vw / asp;
     Object.assign(cam, { left: -vw, right: vw, top: vh, bottom: -vh }); cam.updateProjectionMatrix();
-    const cy = st.mode === 'crowd' ? 0.1 : 0.38;
+    const cy = st.mode === 'crowd' ? 0.1 : st.zoom > 1 ? 0.25 : 0.38;
     cam.position.set(Math.sin(st.yaw) * Math.cos(PITCH) * 20, Math.sin(PITCH) * 20 + cy, Math.cos(st.yaw) * Math.cos(PITCH) * 20); cam.lookAt(0, cy, 0);
     const walking = st.anim === 'walk' || st.anim === 'crawl';
     dist += dt * (walking ? (st.anim === 'crawl' ? 15 : 30) : 0); // fáza kroku: ~10 za políčko, 3 políčka/s

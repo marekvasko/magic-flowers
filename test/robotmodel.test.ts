@@ -159,3 +159,22 @@ test('ostré hrany: kocky bez zaoblenia, väčšie valce a gule ako mnohosteny; 
   for (const p of sharp.parts) if (p.shape.k === 'box' && ['paint', 'accent', 'metal', 'dark'].includes(p.m)) assert.ok(p.shape.r <= 0.004);
   assert.ok(RM.robotModel(RM.PRESETS.hrdzavec.look).parts.some(p => p.flat), 'pásy majú ozubené kolesá');
 });
+
+test('úchop: rúčka ide cez stred klepeta; palicu drží zvislo pred sebou, zavesené náradie za vodorovné držadlo', () => {
+  for (const [name, look] of LOOKS.slice(0, 80)) {
+    const m = RM.robotModel(look);
+    const axis = (hold: RM.HoldKind): number[] => {
+      const z = RM.jointMatrix(m, RM.robotPose(m, { hold }), 'handR')[2], l = Math.hypot(...z);
+      return z.map(v => v / l);
+    };
+    assert.ok((axis('staff')[1] ?? 0) > 0.9, `${name}: palica nie je zvislo (${axis('staff').join(', ')})`);
+    assert.ok(Math.abs(axis('hang')[1] ?? 1) < 0.25, `${name}: držadlo zaveseného náradia nie je vodorovne (${axis('hang').join(', ')})`);
+    for (const hold of ['staff', 'hang'] as const) {
+      const p = RM.mountAt(m, RM.robotPose(m, { hold }), 'handR');
+      assert.ok(p[2] > 0.02, `${name}: ${hold} – ruka nie je pred robotom (${p[2]})`);
+      assert.ok(p[1] > 0.12, `${name}: ${hold} – ruka príliš nízko (${p[1]})`);
+    }
+    // klepeto: dva prsty okolo stredu úchopu, ktorý je pod dlaňou
+    assert.ok(m.mounts.handR.p[1] < -0.02);
+  }
+});
