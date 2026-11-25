@@ -230,6 +230,17 @@ export function createGrass3d(o: {
     const md = maskTex.image.data;
     if (md) md.fill(0);
     if (quality !== 'off' && se !== 3) { // v zime je tráva pod snehom
+      const grows = (x: number, y: number): boolean => { const t = x >= 0 && y >= 0 && x < w && y < h ? tiles[y * w + x] : undefined; return !!t && !t.s && !!KINDS[t.g]; };
+      // ako ďaleko je bod od najbližšieho susedného políčka bez trávy (prekopaná pôda, cesta, voda…; okraj mapy sa nepočíta)
+      const bareDist = (px: number, pz: number, x: number, y: number): number => {
+        let d = 9;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if ((!dx && !dy) || nx < 0 || ny < 0 || nx >= w || ny >= h || grows(nx, ny)) continue;
+          d = Math.min(d, Math.hypot(Math.max(nx - px, 0, px - nx - 1), Math.max(ny - pz, 0, pz - ny - 1)));
+        }
+        return d;
+      };
       const isPath = (x: number, y: number): boolean => { const g = x >= 0 && y >= 0 && x < w && y < h ? tiles[y * w + x]?.g : undefined; return g === 'path' || g === 'majster' || g === 'gate'; };
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
         const tl = tiles[y * w + x];
@@ -243,13 +254,18 @@ export function createGrass3d(o: {
           // náhodne po políčku, kúsok aj cez okraj; či trs vyrastie, rozhodne šum hustoty (chumáče a riedke miesta)
           // korene ostanú na mape (cez okraj mapy nič nevisí)
           const px = Math.max(0.04, Math.min(w - 0.04, x - 0.05 + r(1) * 1.1)), pz = Math.max(0.04, Math.min(h - 0.04, y - 0.05 + r(2) * 1.1));
+          // pri holom susedovi (napr. práve prekopanom políčku) tráva nepresahuje cez okraj a ku kraju sa zníži – políčko
+          // bez trávy je pekne vykrojené a vidno ho celé
+          const bd = bareDist(px, pz, x, y);
+          if (bd < 0.06) continue;
+          const edge = Math.min(1, bd / 0.45);
           const dn = fbm(px, pz, 11), dk = Math.max(0, Math.min(1, (dn - 0.25) / 0.45));
           if (r(0) > 0.5 + 0.5 * dk * dk * (3 - 2 * dk)) continue;
           // výška aj odtieň sa menia plynulo po ploche (iný šum) – vyššie a tmavšie fľaky, nižšie a svetlejšie
           const hn = fbm(px, pz, 23);
-          const th = kind.h * (0.55 + 0.55 * hn + 0.3 * r(3)) * trampled;
+          const th = kind.h * (0.55 + 0.55 * hn + 0.3 * r(3)) * trampled * (0.3 + 0.7 * edge * edge * (3 - 2 * edge));
           R.push(px, gy, pz, Math.round((0.94 + 0.12 * r(7)) * 100) + Math.min(0.999, r(4))); // farebné fľaky robí shader (grassTint)
-          S.push(th * (1.2 + 0.5 * r(5)), th, ((r(6) * COLS) | 0) / COLS, kind.row / ROWS);
+          S.push(Math.min(th * (1.2 + 0.5 * r(5)), 2 * bd + 0.1), th, ((r(6) * COLS) | 0) / COLS, kind.row / ROWS);
         }
       }
     }
