@@ -1897,7 +1897,7 @@ void main() {
   const buildingState = (): { ins: number; loom: boolean } => ({ ins: D.insulLevel(S.icehouse?.bl), loom: S.dielna?.loom ?? false });
   const stateSig = (): string => { const b = buildingState(); return b.ins + '|' + (b.loom ? 1 : 0); };
   let builtState: string | null = null;
-  let babka: CharObj | null = null, master: CharObj | null = null, last = performance.now(), lastGround = 0;
+  let babka: CharObj | null = null, master: CharObj | null = null, last = performance.now(), lastGround = 0, lastGrassSync = 0;
   function frame(t: number): void {
     const now = performance.now(), dt = Math.min(0.1, (now - last) / 1000); last = now;
     if (statsOn) renderer.info.reset();
@@ -1907,6 +1907,7 @@ void main() {
     if (builtSeason !== se || builtGen !== S.tilesGen || builtState !== stateSig()) { builtGen = S.tilesGen; builtState = stateSig(); buildMesh(se); holesSig = null; refreshGround(se, t, true); }
     S.worldGen = builtGen; // svet tejto verzie políčok je postavený (prechod medzi plochami čaká, kým je, a až potom ukáže meno)
     if (now - lastGround > 600) { refreshGround(se, t, false); lastGround = now; }
+    if (now - lastGrassSync > 150) { grass3d.sync(S.tiles); lastGrassSync = now; } // prekopané políčko (správa tile) – tráva zmizne hneď
     // v Lese divov (a cestou k nemu) je pohľad bližšie na hráča
     const vd = D.viewDiagAt(S.area, S.me.y);
     if (Math.abs(vd - viewDiag) > 0.01) { viewDiag = vd; resize(); }

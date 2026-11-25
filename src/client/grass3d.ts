@@ -119,6 +119,7 @@ export interface GrassPusher { x: number; y: number; z: number; r: number }
 export interface Grass3d {
   build: (grid: Grid, tiles: readonly TileView[], w: number, h: number, se: number, groundY: (x: number, y: number) => number) => void;
   update: (t: number, pushers: readonly GrassPusher[], center: { x: number; z: number }) => void;
+  sync: (tiles: readonly TileView[]) => void;
   setQuality: (q: string) => void;
   readonly quality: GrassQuality;
   readonly mesh: THREE.Mesh;
@@ -217,8 +218,17 @@ export function createGrass3d(o: {
 
   let maskTex: THREE.DataTexture | null = null;
   let last: { grid: Grid; tiles: readonly TileView[]; w: number; h: number; se: number; groundY: (x: number, y: number) => number } | null = null;
+  // Ktoré políčka majú trávu – zmena jedného políčka (správa tile, napr. prekopanie motykou) svet neprestavia,
+  // tráva sa preto prestaví sama, keď sa podpis zmení (sync).
+  const growSig = (tiles: readonly TileView[]): string => tiles.map(t => (!t.s && KINDS[t.g] ? '1' : '0')).join('');
+  let builtSig = '';
+  function sync(tiles: readonly TileView[]): void {
+    if (!last || tiles.length !== last.w * last.h) return;
+    if (growSig(tiles) !== builtSig) build(last.grid, tiles, last.w, last.h, last.se, last.groundY);
+  }
   function build(grid: Grid, tiles: readonly TileView[], w: number, h: number, se: number, groundY: (x: number, y: number) => number): void {
     last = { grid, tiles, w, h, se, groundY };
+    builtSig = growSig(tiles);
     if (texSeason !== se && se !== 3) drawAtlas(se); // v zime trsy nie sú
     const R: number[] = [], S: number[] = [];
     if (!maskTex || maskTex.image.width !== w || maskTex.image.height !== h) {
@@ -303,5 +313,5 @@ export function createGrass3d(o: {
 
   function dispose(): void { o.scene.remove(mesh); geo.dispose(); material.dispose(); tex.dispose(); if (maskTex) maskTex.dispose(); }
 
-  return { build, update, setQuality, get quality() { return quality; }, mesh, dispose };
+  return { build, update, sync, setQuality, get quality() { return quality; }, mesh, dispose };
 }
