@@ -564,6 +564,9 @@ export const TOOL_HOLD: Readonly<Record<ToolId, HoldKind>> = { hoe: 'staff', pic
 // krhla za oblúk držadla (hubicou dozadu), vľavo od stredu kolík so zahnutým koncom, na ktorom visí lampáš za krúžok.
 // Prázdny držiak je vidieť, takže je jasné, kam čo patrí.
 const RACK_W = 0.26, TOOL_ON_BACK = 0.75;
+// Kde v modeli krhly (client/robot3d.ts) leží hák: vnútro vrcholu oblúka držadla (stred oblúka y 0,02, polomer 0,035,
+// hrúbka 0,008) mínus polomer háku 0,005
+export const CAN_HOOK = 0.02 + 0.035 - 0.008 - 0.005;
 function rack(b: Builder, body: JointId, H: Hull, headBack: number): Record<ToolId, Mount> {
   // doska tesne za chrbtom; keď hlava prečnieva dozadu viac ako trup, posunie sa ďalej, aby rúčky v puzdrách išli za hlavou
   const hh = Math.max(0.14, Math.min(0.2, H.hy * 1.5)), back = -H.front(0), bz = Math.min(back - 0.016, -headBack + 0.015);
@@ -585,11 +588,14 @@ function rack(b: Builder, body: JointId, H: Hull, headBack: number): Record<Tool
     slots[tool] = { j, p: [qx + ux * (len / 2 - 0.05), qy + uy * (len / 2 - 0.05), qz], r: tool === 'hoe' ? [0, Math.PI, -tilt] : [0, 0, tilt], s: TOOL_ON_BACK };
   }
   const top = hh / 2 - 0.012;
-  // krhla: priečka naprieč (pozdĺž x) na dvoch stĺpikoch od dosky; oblúk držadla je cez ňu prevesený
-  const cx = -0.035, cz = -0.07;
-  for (const dx of [-0.032, 0.032]) b.add(j, { k: 'cyl', r: 0.005, h: -cz }, [cx + dx, top, cz / 2], 'metal', [Math.PI / 2, 0, 0]);
-  b.add(j, { k: 'cyl', r: 0.005, h: 0.072 }, [cx, top, cz], 'metal', [0, 0, Math.PI / 2]);
-  slots.can = { j, p: [cx, top + 0.005, cz], r: [0, Math.PI, 0], s: TOOL_ON_BACK };
+  // krhla: hák z jednej strany – stĺpik od dosky, rameno naprieč (pozdĺž x) so zahnutým koncom. Oblúk držadla krhly
+  // (v rovine yz, kolmo na rameno) je na ramene navlečený tak, že rameno leží vo vrchole oblúka; hubica smeruje dozadu.
+  const cx = -0.035, cz = -0.07, px = cx + 0.03, ex = cx - 0.024;
+  b.add(j, { k: 'cyl', r: 0.005, h: -cz }, [px, top, cz / 2], 'metal', [Math.PI / 2, 0, 0]);   // stĺpik
+  b.add(j, { k: 'sphere', r: 0.0065 }, [px, top, cz], 'metal');                              // ohyb
+  b.add(j, { k: 'cyl', r: 0.005, h: px - ex }, [(px + ex) / 2, top, cz], 'metal', [0, 0, Math.PI / 2]); // rameno
+  b.add(j, { k: 'cyl', r: 0.005, h: 0.024 }, [ex, top + 0.01, cz], 'metal');                 // zahnutý koniec
+  slots.can = { j, p: [cx, top - CAN_HOOK * TOOL_ON_BACK, cz], r: [0, Math.PI, 0], s: TOOL_ON_BACK };
   // lampáš: kolík dozadu so zahnutým koncom; krúžok lampáša je na ňom navlečený
   const lx = 0.05;
   b.add(j, { k: 'cyl', r: 0.005, h: 0.09 }, [lx, top, -0.045], 'metal', [Math.PI / 2, 0, 0]);

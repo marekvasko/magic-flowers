@@ -72,3 +72,17 @@ test('v ruke: náradie je v klepete, na nosiči jeho miesto ostane prázdne', ()
   }
   r.dispose();
 });
+
+test('krhla visí na háku: rameno háku leží vo vrchole oblúka držadla a ide kolmo cez oblúk', () => {
+  for (const [name, look] of LOOKS.slice(0, 30)) {
+    const r = onRack(look), sl = r.model.slots.can, k = sl.s ?? 1;
+    const rack = r.group.getObjectByName('rack'), can = r.group.getObjectByName('tool:can');
+    assert.ok(rack && can, name);
+    // stred ramena háku (v súradniciach nosiča) a jeho smer (pozdĺž x) v súradniciach modelu krhly
+    const hook = can.worldToLocal(rack.localToWorld(new THREE.Vector3(sl.p[0], sl.p[1] + RM.CAN_HOOK * k, sl.p[2])));
+    const along = can.worldToLocal(rack.localToWorld(new THREE.Vector3(sl.p[0] + 0.01, sl.p[1] + RM.CAN_HOOK * k, sl.p[2]))).sub(hook).normalize();
+    assert.ok(hook.distanceTo(new THREE.Vector3(0, RM.CAN_HOOK, 0)) < 1e-6, `${name}: hák nie je vo vrchole oblúka (${hook.toArray().join(', ')})`);
+    assert.ok(Math.abs(along.x) > 0.999, `${name}: hák nejde kolmo cez oblúk držadla`);
+    r.dispose();
+  }
+});
