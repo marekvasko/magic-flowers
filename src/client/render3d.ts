@@ -1552,8 +1552,8 @@ void main() {
     curSunDir = dir;
     const rain = S.weather === 'rain' ? 0.75 : S.weather === 'snow' ? 0.9 : 1;
     const L = skyLight(min), grey = rain < 1 ? (S.weather === 'rain' ? 0.65 : 0.5) : 0; // zamračené: farby k šedej
-    const up = overcast(L.ambSky, grey), down = overcast(L.ambGround, grey);
-    curAmb = mul3(mix3(up, down, 0.5), rain < 1 ? 0.92 : 1);
+    const dim = rain < 1 ? 0.92 : 1, up = mul3(overcast(L.ambSky, grey), dim), down = mul3(overcast(L.ambGround, grey), dim);
+    curAmb = mix3(up, down, 0.5);
     // slnko pri obzore postupne vyjde / zapadne (bez skoku, keď sunDir začne alebo prestane byť null)
     const rise = dir ? smooth(0, 0.035, dir.y) : 0;
     curSun = mul3(overcast(L.sun, grey), rise * rain);
