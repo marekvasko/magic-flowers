@@ -18,13 +18,14 @@ const isQuality = (q: string | null): q is GrassQuality => q != null && (QUALITY
 export const STENCIL_GRASS = 0x80; // bit v stencile: tu je tráva (röntgen postavičky sa cez trávu nekreslí)
 const MAX_PUSH = 8;                // koľko postavičiek naraz rozhŕňa trávu
 const SEG = 3;                     // úseky trsu na výšku (ohyb stebiel)
-const CELL = 64, COLS = 4, ROWS = 2; // obrázok trsov: 4 podoby, riadok 0 = tráva, 1 = lúka
+const CELL = 64, COLS = 8, ROWS = 2; // obrázok trsov: 8 podôb, riadok 0 = tráva, 1 = lúka
 
-// Druhy zeme s trávou: trsov na políčko (menej / viac) a výška trsu v blokoch (postavička má ~1,28, kolená ~0,35)
+// Druhy zeme s trávou: najviac trsov na políčko (menej / viac; koľko z nich vyrastie, určuje šum hustoty)
+// a výška trsu v blokoch (postavička má ~1,28, kolená ~0,35)
 interface Kind { n: Readonly<Record<'low' | 'high', number>>; h: number; row: number }
 const KINDS: Readonly<Partial<Record<Ground, Kind>>> = {
-  grass: { n: { low: 9, high: 18 }, h: 0.42, row: 0 }, // hustá ako lúka
-  meadow: { n: { low: 9, high: 18 }, h: 0.5, row: 1 },
+  grass: { n: { low: 22, high: 44 }, h: 0.42, row: 0 }, // hustá ako lúka
+  meadow: { n: { low: 22, high: 44 }, h: 0.5, row: 1 },
 };
 const TRAMPLED = 0.65;              // pri ceste je tráva udupaná (nižšia)
 
@@ -42,9 +43,17 @@ function hash(a: number, b: number, c: number): number {
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
+// plynulý šum (hodnotový, s vyhladením) 0–1 – tráva rastie v chumáčoch a plochách, nie v rovnakom vzore na každom políčku
+function vnoise(x: number, z: number, k: number): number {
+  const ix = Math.floor(x), iz = Math.floor(z), fx = x - ix, fz = z - iz;
+  const sx = fx * fx * (3 - 2 * fx), sz = fz * fz * (3 - 2 * fz);
+  const a = hash(ix, iz, k), b = hash(ix + 1, iz, k), c = hash(ix, iz + 1, k), d = hash(ix + 1, iz + 1, k);
+  return (a + (b - a) * sx) + ((c + (d - c) * sx) - (a + (b - a) * sx)) * sz;
+}
+const fbm = (x: number, z: number, k: number): number => vnoise(x * 0.22, z * 0.22, k) * 0.65 + vnoise(x * 0.7, z * 0.7, k + 7) * 0.35;
 
 const GRASS_VERT = `
-attribute vec4 aRoot;   // koreň trsu (xyz) a náhodné číslo trsu
+attribute vec4 aRoot;   // koreň trsu (xyz); w = odtieň × 100 (celá časť) + náhodné číslo trsu (desatinná časť)
 attribute vec4 aShape;  // šírka, výška, ľavý dolný roh podoby v obrázku (u, v)
 uniform mat4 shadowMatrix; uniform vec3 sunDir; uniform float shadowNormalBias;
 uniform float time; uniform vec2 wind; uniform vec2 cell; uniform float depthBias;
@@ -53,7 +62,7 @@ varying vec3 vColor; varying float vAo; varying float vEmis; varying float vTex;
 varying vec2 vUv; varying vec3 vPos; varying vec4 vShadow; varying vec2 vUv2;
 void main() {
   vec3 root = aRoot.xyz;
-  float t = position.y, seed = aRoot.w;
+  float t = position.y, seed = fract(aRoot.w), tint = floor(aRoot.w) / 100.0;
   // trs je zvislý a natočený ku kamere len okolo zvislej osi (v zrkadle pod hladinou je tak správne prevrátený)
   vec3 right = normalize(vec3(viewMatrix[0][0], 0.0, viewMatrix[2][0]));
   // vietor: vlna, ktorá ide cez záhradu, a pomalé nárazy; každý trs má vlastnú fázu
@@ -77,7 +86,7 @@ void main() {
   wp.xz += bend * h * k;
   wp.y += h * t * (1.0 - 0.45 * min(1.0, dot(bend, bend)) * k); // ohnuté steblo je nižšie
   vUv = aShape.zw + vec2(position.x + 0.5, t) * cell;
-  vColor = vec3(0.86 + 0.26 * fract(seed * 7.13));
+  vColor = vec3(tint * (0.92 + 0.16 * fract(seed * 7.13)));
   vAo = mix(0.62, 1.0, t); vEmis = 0.0; vTex = 1.0;
   vPos = wp; vFacing = sunDir.y; vUp = mix(0.2, 0.75, t); vUv2 = vec2(0.0);
   vShadow = shadowMatrix * vec4(wp + vec3(0.0, shadowNormalBias, 0.0), 1.0);
@@ -197,15 +206,18 @@ export function createGrass3d(o: {
         const kind = tl && !tl.s ? KINDS[tl.g] : undefined;
         if (!kind) continue;
         const trampled = isPath(x - 1, y) || isPath(x + 1, y) || isPath(x, y - 1) || isPath(x, y + 1) ? TRAMPLED : 1;
-        const n = kind.n[quality];
-        const side = Math.ceil(Math.sqrt(n)), gy = groundY(x, y);
+        const n = kind.n[quality], gy = groundY(x, y);
         for (let k = 0; k < n; k++) {
           const r = (j: number): number => hash(x * 97 + y, k, j);
-          // rovnomerne po políčku (mriežka s náhodným posunom), kúsok aj cez okraj – hranice políčok nevidno
-          const px = x + ((k % side) + r(1)) / side * 1.1 - 0.05, pz = y + (((k / side) | 0) + r(2)) / side * 1.1 - 0.05;
-          const th = kind.h * (0.7 + 0.6 * r(3)) * trampled;
-          R.push(px, gy, pz, r(4));
-          S.push(th * (0.95 + 0.4 * r(5)), th, ((r(6) * COLS) | 0) / COLS, kind.row / ROWS);
+          // náhodne po políčku, kúsok aj cez okraj; či trs vyrastie, rozhodne šum hustoty (chumáče a riedke miesta)
+          const px = x - 0.05 + r(1) * 1.1, pz = y - 0.05 + r(2) * 1.1;
+          const dn = fbm(px, pz, 11), dk = Math.max(0, Math.min(1, (dn - 0.25) / 0.45));
+          if (r(0) > 0.3 + 0.7 * dk * dk * (3 - 2 * dk)) continue;
+          // výška aj odtieň sa menia plynulo po ploche (iný šum) – vyššie a tmavšie fľaky, nižšie a svetlejšie
+          const hn = fbm(px, pz, 23), tn = fbm(px, pz, 37);
+          const th = kind.h * (0.55 + 0.55 * hn + 0.3 * r(3)) * trampled;
+          R.push(px, gy, pz, Math.round((0.8 + 0.35 * tn) * 100) + Math.min(0.999, r(4)));
+          S.push(th * (0.95 + 0.4 * r(5)) * (r(7) < 0.5 ? -1 : 1), th, ((r(6) * COLS) | 0) / COLS, kind.row / ROWS); // polovica trsov zrkadlovo
         }
       }
     }
