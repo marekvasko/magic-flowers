@@ -2117,6 +2117,7 @@ void main() {
   function invalidateShadows(): void { shadowDirty = true; }
   function dispose(): void {
     spiders3d.dispose();
+    grass3d.dispose();
     vehicles3d.dispose();
     boat3d.dispose();
     scene.traverse(o => {
