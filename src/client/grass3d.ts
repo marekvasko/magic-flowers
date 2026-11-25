@@ -23,18 +23,16 @@ const CELL = 64, COLS = 4, ROWS = 2; // obrázok trsov: 4 podoby, riadok 0 = tr�
 // Druhy zeme s trávou: trsov na políčko (menej / viac) a výška trsu v blokoch (postavička má ~1,28, kolená ~0,35)
 interface Kind { n: Readonly<Record<'low' | 'high', number>>; h: number; row: number }
 const KINDS: Readonly<Partial<Record<Ground, Kind>>> = {
-  grass: { n: { low: 6, high: 12 }, h: 0.42, row: 0 },
+  grass: { n: { low: 9, high: 18 }, h: 0.42, row: 0 }, // hustá ako lúka
   meadow: { n: { low: 9, high: 18 }, h: 0.5, row: 1 },
 };
-const WINTER = { n: 0.6, h: 0.65 }; // v zime: zasnežené trsy, redšie a nižšie
 const TRAMPLED = 0.65;              // pri ceste je tráva udupaná (nižšia)
 
-// farby stebiel podľa obdobia (jar, leto, jeseň, zima): pri zemi, uprostred, na špičke
+// farby stebiel podľa obdobia (jar, leto, jeseň; v zime je tráva pod snehom – žiadne trsy): pri zemi, uprostred, na špičke
 const BLADES: readonly (readonly [string, string, string])[] = [
   ['#3f7f2c', '#6fb34a', '#a6dc78'],
   ['#356f26', '#5fa23d', '#93cd5f'],
   ['#6f6a2a', '#a39a42', '#d6c56a'],
-  ['#6b7f63', '#a9b8a4', '#ffffff'],
 ];
 // kvietky na lúke (jar, leto, jeseň) – ako na kresbe lúky (art.ts)
 const FLOWERS: readonly (readonly string[])[] = [['#fff', '#ffe14d', '#fff', '#b39ddb'], ['#e8261f', '#3f6fd8', '#fff', '#ffe14d'], ['#8a63d2', '#d58cd6', '#ffcc33', '#fff']];
@@ -129,7 +127,7 @@ export function createGrass3d(o: {
   function drawAtlas(se: number): void {
     texSeason = se;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const cols = must(BLADES[se & 3]);
+    const cols = must(BLADES[se]);
     for (let row = 0; row < ROWS; row++) for (let v = 0; v < COLS; v++) {
       const x0 = v * CELL, y0 = row * CELL, n = row ? 9 : 7;
       const tips: [number, number][] = [];
@@ -144,7 +142,7 @@ export function createGrass3d(o: {
         tips.push([x + lean, y0 + h - 3]);
       }
       // lúka: kvietky na niektorých steblách (v zime nie)
-      if (row === 1 && se !== 3) {
+      if (row === 1) {
         const fc = must(FLOWERS[se]);
         for (let i = 0; i < 2; i++) {
           const tp = tips[(hash(v, i, 9) * tips.length) | 0];
@@ -190,23 +188,22 @@ export function createGrass3d(o: {
   let last: { grid: Grid; tiles: readonly TileView[]; w: number; h: number; se: number; groundY: (x: number, y: number) => number } | null = null;
   function build(grid: Grid, tiles: readonly TileView[], w: number, h: number, se: number, groundY: (x: number, y: number) => number): void {
     last = { grid, tiles, w, h, se, groundY };
-    if (texSeason !== se) drawAtlas(se);
+    if (texSeason !== se && se !== 3) drawAtlas(se); // v zime trsy nie sú
     const R: number[] = [], S: number[] = [];
-    if (quality !== 'off') {
-      const winter = se === 3;
+    if (quality !== 'off' && se !== 3) { // v zime je tráva pod snehom
       const isPath = (x: number, y: number): boolean => { const g = x >= 0 && y >= 0 && x < w && y < h ? tiles[y * w + x]?.g : undefined; return g === 'path' || g === 'majster' || g === 'gate'; };
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
         const tl = tiles[y * w + x];
         const kind = tl && !tl.s ? KINDS[tl.g] : undefined;
         if (!kind) continue;
         const trampled = isPath(x - 1, y) || isPath(x + 1, y) || isPath(x, y - 1) || isPath(x, y + 1) ? TRAMPLED : 1;
-        const n = Math.round(kind.n[quality] * (winter ? WINTER.n : 1));
+        const n = kind.n[quality];
         const side = Math.ceil(Math.sqrt(n)), gy = groundY(x, y);
         for (let k = 0; k < n; k++) {
           const r = (j: number): number => hash(x * 97 + y, k, j);
           // rovnomerne po políčku (mriežka s náhodným posunom), kúsok aj cez okraj – hranice políčok nevidno
           const px = x + ((k % side) + r(1)) / side * 1.1 - 0.05, pz = y + (((k / side) | 0) + r(2)) / side * 1.1 - 0.05;
-          const th = kind.h * (0.7 + 0.6 * r(3)) * trampled * (winter ? WINTER.h : 1);
+          const th = kind.h * (0.7 + 0.6 * r(3)) * trampled;
           R.push(px, gy, pz, r(4));
           S.push(th * (0.95 + 0.4 * r(5)), th, ((r(6) * COLS) | 0) / COLS, kind.row / ROWS);
         }
