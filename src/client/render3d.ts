@@ -1478,6 +1478,9 @@ void main() {
     const c = document.createElement('canvas'); c.width = 96; c.height = 128;
     const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.NoColorSpace;
     const sp = makeSprite(0.96, 1.28); sp.material.map = tex;
+    // kde postavička prekreslí trávu za sebou, zmaže jej značku v stencile – inak by röntgen nižšie vynechal tvary
+    // stebiel za ňou a na postavičke by boli tmavšie fľaky (tráva pred ňou sa kreslí do hĺbky až po nej a značku si nechá)
+    Object.assign(sp.material, { stencilWrite: true, stencilRef: 0, stencilWriteMask: STENCIL_GRASS, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp });
     // „röntgen“: polopriehľadná silueta postavičky viditeľná aj cez budovy a stromy
     // cez trávu sa röntgen nekreslí (stencil, grass3d.ts) – nohy v tráve ostanú skryté
     const ghost = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.35, depthTest: false, depthWrite: false,

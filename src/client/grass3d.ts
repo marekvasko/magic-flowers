@@ -107,10 +107,11 @@ void main() {
   vAo = mix(0.86, 1.0, t); vEmis = 0.0; vTex = 1.0;
   vPos = wp; vFacing = sunDir.y; vUp = mix(0.75, 1.0, t); vUv2 = vec2(0.0); // svieti takmer ako zem – spodok s ňou splynie
   vShadow = shadowMatrix * vec4(wp + vec3(0.0, shadowNormalBias, 0.0), 1.0);
-  // celý trs má hĺbku koreňa (ako sprity) – trochu bližšie ku kamere, aby sa spodok nebil so zemou
+  // celý trs má hĺbku koreňa (ako sprity). Len spodok je o kúsok bližšie ku kamere, aby sa nebil so zemou – posun
+  // musí byť malý a len pri zemi, inak by trsy tesne za postavičkou presvitali cez jej telo.
   vec4 cp = projectionMatrix * viewMatrix * vec4(wp, 1.0);
   vec4 rp = projectionMatrix * viewMatrix * vec4(root, 1.0);
-  cp.z = (rp.z / rp.w - depthBias) * cp.w;
+  cp.z = (rp.z / rp.w - depthBias * step(t, 0.01)) * cp.w;
   gl_Position = cp;
 }`;
 
@@ -200,7 +201,7 @@ export function createGrass3d(o: {
     ...o.world,
     grassBase: { value: new T3.Vector3() }, grassTip: { value: new T3.Vector3() },
     grassMap: { value: tex }, time: { value: 0 }, wind: { value: new T3.Vector2(0.8, 0.35) },
-    cell: { value: new T3.Vector2(1 / COLS, 1 / ROWS) }, depthBias: { value: 0.0004 },
+    cell: { value: new T3.Vector2(1 / COLS, 1 / ROWS) }, depthBias: { value: 0.00004 },
     pushers: { value: Array.from({ length: MAX_PUSH }, () => new T3.Vector4()) }, pusherCount: { value: 0 },
   };
   const material = new T3.ShaderMaterial({
