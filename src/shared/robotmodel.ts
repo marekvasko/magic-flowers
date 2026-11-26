@@ -40,7 +40,7 @@ export type NumKey = keyof typeof NUM;
 export const NUM_KEYS: readonly NumKey[] = ['bh', 'round', 'headS', 'eyeS'];
 // Spoločné rozmery (políčka): výška po temeno, spodok trupu nad zemou, šírka a hĺbka trupu, plece (x, výška nad zemou, z),
 // dĺžka a hrúbka ramena
-export const FRAME = { height: 0.75, bottom: 0.2, bw: 0.32, depth: 0.3, shoulder: [0.215, 0.42, 0.02] as V3, arm: 0.24, armT: 0.02 } as const;
+export const FRAME = { height: 0.75, bottom: 0.2, bw: 0.32, depth: 0.3, shoulder: [0.215, 0.42, 0.02] as V3, arm: 0.24, armT: 0.026 } as const;
 export const FLAGS = { chimney: 'Komínik', panel: 'Štítok', rivets: 'Nity', leds: 'Svetielka' } as const;
 export type FlagKey = keyof typeof FLAGS;
 export const FLAG_KEYS: readonly FlagKey[] = ['chimney', 'panel', 'rivets', 'leds'];
@@ -289,11 +289,14 @@ class Builder {
   arm(side: 1 | -1, parent: JointId, p: V3, len: number, thick: number): JointId {
     const s = side > 0 ? 'L' : 'R';
     const sh = this.joint('shoulder' + s, parent, p);
-    this.add(sh, { k: 'sphere', r: thick * 1.35 }, [0, 0, 0], 'dark');
-    this.add(sh, { k: 'capsule', r: thick, h: len * 0.5 }, [0, -len * 0.3, 0], 'metal');
+    // v jednoduchom štýle je rameno hrubé celú minikocku (ako stĺp domu), nie polovičný stĺpik
+    // (a je o štvrť minikocky ďalej od trupu, aby doň hrubšie rameno nezasahovalo; ruka ostáva na svojom mieste)
+    const T = this.simple ? CUBE / 1.72 : thick, ox = this.simple ? side * (CUBE / 4) : 0;
+    this.add(sh, { k: 'sphere', r: T * 1.35 }, [ox, 0, 0], 'dark');
+    this.add(sh, { k: 'capsule', r: T, h: len * 0.5 }, [ox, -len * 0.3, 0], 'metal');
     const el = this.joint('elbow' + s, sh, [0, -len * 0.6, 0]);
-    this.add(el, { k: 'sphere', r: thick * 1.15 }, [0, 0, 0], 'dark');
-    this.add(el, { k: 'capsule', r: thick * 0.9, h: len * 0.35 }, [0, -len * 0.22, 0], 'accent');
+    this.add(el, { k: 'sphere', r: T * 1.15 }, [ox, 0, 0], 'dark');
+    this.add(el, { k: 'capsule', r: T * 0.9, h: len * 0.35 }, [ox, -len * 0.22, 0], 'accent');
     const hd = this.joint('hand' + s, el, [0, -len * 0.45, 0]);
     // Klepeto: prsty sa zatvárajú pozdĺž x a obopínajú rúčku, ktorá ide pozdĺž z cez stred úchopu (gripY);
     // otvor je dole. Veľkosť podľa rúčky náradia (GRIP_R), nie podľa hrúbky ruky, aby každá rúčka sedela.
