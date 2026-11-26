@@ -61,9 +61,9 @@ function flatGeometry(g: THREE.BufferGeometry): THREE.BufferGeometry {
 
 // ---------- backend (hra) ----------
 // Diel pre zlúčenú sieť: geometria, kĺb (skupina), ku ktorému patrí, poloha voči nemu, farba (sRGB 0–1 bez prevodu –
-// shader sveta ráta priamo v sRGB), či svieti, priehľadnosť a miera hrdze
+// shader sveta ráta priamo v sRGB), či svieti a priehľadnosť
 export type RGB = [number, number, number];
-export interface BatchItem { geo: THREE.BufferGeometry; node: THREE.Object3D | null; local: THREE.Matrix4; color: RGB; emis: number; alpha: number; rust: number }
+export interface BatchItem { geo: THREE.BufferGeometry; node: THREE.Object3D | null; local: THREE.Matrix4; color: RGB; emis: number; alpha: number }
 export interface RobotBackend {
   // telo robota: všetky diely v jednej (dvoch – nepriehľadné a sklo) sieti; update() po každej póze prenesie polohy kĺbov
   body(items: BatchItem[]): { objects: THREE.Object3D[]; update(): void; dispose(): void };
@@ -73,57 +73,24 @@ export interface RobotBackend {
 }
 const rgb = (h: string): RGB => { const n = parseInt(h.slice(1), 16); return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; };
 // farby dielov podľa vzhľadu (ako materials(), ale len farba – svetlo ráta shader sveta)
-function batchLook(look: RobotLook): Record<Mat, { color: RGB; emis: number; alpha: number; rust: number }> {
-  const w = look.wear * 0.25, p = rgb(look.paint), o = rgb('#8a6a4a'), paint: RGB = [p[0] + (o[0] - p[0]) * w, p[1] + (o[1] - p[1]) * w, p[2] + (o[2] - p[2]) * w];
-  const m = (color: RGB, emis = 0, alpha = 1, rust = 0): { color: RGB; emis: number; alpha: number; rust: number } => ({ color, emis, alpha, rust });
+function batchLook(look: RobotLook): Record<Mat, { color: RGB; emis: number; alpha: number }> {
+  const m = (color: RGB, emis = 0, alpha = 1): { color: RGB; emis: number; alpha: number } => ({ color, emis, alpha });
   return {
-    paint: m(paint, 0, 1, look.wear), accent: m(rgb(look.accent), 0, 1, look.wear * 0.7), metal: m(rgb('#a9b0b4')), dark: m(rgb('#3a3f43')), rubber: m(rgb('#2c2a28')),
+    paint: m(rgb(look.paint)), accent: m(rgb(look.accent)), metal: m(rgb('#a9b0b4')), dark: m(rgb('#3a3f43')), rubber: m(rgb('#2c2a28')),
     eye: m(rgb(look.eye), 1), lens: m(rgb('#101518')), glass: m(rgb('#e8f6ff'), 0, 0.35), rust: m(rgb('#a4532a')), warm: m(rgb('#ffb54a'), 1), leaf: m(rgb('#5aa646')), pot: m(rgb('#b8643c'))
   };
 }
 
 // ---------- materiály ----------
 const col = (h: string): THREE.Color => new THREE.Color(h);
-// Hrdza ako textúra v nátere (bez dielov navyše a bez UV): v shaderi sa z polohy na povrchu dielu ráta šum v troch
-// mierkach; kde prekročí prah (podľa wear – čím ošúchanejší robot, tým viac), náter prejde cez tmavší lem do hrdzavej
-// farby so zrnením a povrch je tam drsnejší a nekovový. wear = 0 → žiadna hrdza. Miera je v userData.rust.
-export const RUST_GLSL = `
-float rHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
-float rNoise(vec3 x) {
-  vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(mix(rHash(i), rHash(i + vec3(1, 0, 0)), f.x), mix(rHash(i + vec3(0, 1, 0)), rHash(i + vec3(1, 1, 0)), f.x), f.y),
-             mix(mix(rHash(i + vec3(0, 0, 1)), rHash(i + vec3(1, 0, 1)), f.x), mix(rHash(i + vec3(0, 1, 1)), rHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
-}
-float rustMask(vec3 p, float wear) {
-  float n = 0.55 * rNoise(p * 9.0) + 0.3 * rNoise(p * 23.0 + 7.0) + 0.15 * rNoise(p * 61.0 + 3.0);
-  float th = 0.86 - 0.5 * wear;
-  return wear <= 0.0 ? 0.0 : smoothstep(th, th + 0.07, n);
-}`;
-function rusty(m: THREE.MeshStandardMaterial, wear: number): THREE.MeshStandardMaterial {
-  m.userData['rust'] = wear;
-  m.onBeforeCompile = shader => {
-    shader.uniforms['uRust'] = { value: wear };
-    shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vRustP;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvRustP = position;');
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vRustP; uniform float uRust;' + RUST_GLSL)
-      .replace('#include <color_fragment>', `#include <color_fragment>
-        float rustK = rustMask(vRustP, uRust), rustG = rNoise(vRustP * 140.0);
-        vec3 rustC = mix(vec3(0.42, 0.17, 0.06), vec3(0.72, 0.36, 0.13), rustG);
-        diffuseColor.rgb = mix(diffuseColor.rgb * (1.0 - 0.35 * smoothstep(0.0, 0.5, rustK) * (1.0 - rustK)), rustC, rustK);`)
-      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.95, rustK);')
-      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor *= 1.0 - rustK;');
-  };
-  m.customProgramCacheKey = () => 'rust';
-  return m;
-}
-// Materiály robota podľa vzhľadu; ošúchaný náter je o kúsok tmavší a do hneda, s hrdzavými škvrnami (rusty)
+// Materiály robota podľa vzhľadu (materiál „rust“ je už len hnedá stužka klobúčika)
 function materials(look: RobotLook): Record<Mat, THREE.MeshStandardMaterial> {
-  const rustCol = col('#a4532a'), paint = col(look.paint).lerp(col('#8a6a4a'), look.wear * 0.25);
+  const rustCol = col('#a4532a'), paint = col(look.paint);
   const std = (c: THREE.Color | string, rough: number, metal: number, extra: THREE.MeshStandardMaterialParameters = {}): THREE.MeshStandardMaterial =>
     new THREE.MeshStandardMaterial({ color: typeof c === 'string' ? col(c) : c, roughness: rough, metalness: metal, ...extra });
   return {
-    paint: rusty(std(paint, 0.55, 0.1), look.wear),
-    accent: rusty(std(col(look.accent), 0.5, 0.25), look.wear * 0.7),
+    paint: std(paint, 0.55, 0.1),
+    accent: std(col(look.accent), 0.5, 0.25),
     metal: std('#a9b0b4', 0.35, 0.55),
     dark: std('#3a3f43', 0.6, 0.3),
     rubber: std('#2c2a28', 0.9, 0),
@@ -160,7 +127,7 @@ function toolMesh(id: ToolId, backend?: RobotBackend): THREE.Group {
     own.push(geo);
     if (!backend) { const me = new THREE.Mesh(geo, std(k)); me.position.set(...p); if (r) me.rotation.set(...r); me.castShadow = true; if (name) me.name = name; g.add(me); return; }
     const local = new THREE.Matrix4().compose(new THREE.Vector3(...p), new THREE.Quaternion().setFromEuler(new THREE.Euler(...(r ?? [0, 0, 0]))), new THREE.Vector3(1, 1, 1));
-    items.push({ geo, node: null, local, color: rgb(TOOL_MAT[k].color), emis: TOOL_MAT[k].emis ? 1 : 0, alpha: 1, rust: 0 });
+    items.push({ geo, node: null, local, color: rgb(TOOL_MAT[k].color), emis: TOOL_MAT[k].emis ? 1 : 0, alpha: 1 });
     if (name) { const mark = new THREE.Object3D(); mark.name = name; mark.position.set(...p); g.add(mark); }
   };
   if (id === 'hoe') {
@@ -231,8 +198,7 @@ export function buildRobot(look: RobotLook, backend?: RobotBackend, opts: { simp
   }
   // materiály s plochým tieňovaním pre ostré diely (mnohosteny), jeden na druh materiálu
   const flatMats = new Map<Mat, THREE.MeshStandardMaterial>();
-  // (clone neprenáša úpravu shadera – hrdza sa na kópiu náteru pridá znova)
-  const flatMat = (m: Mat): THREE.MeshStandardMaterial => { let f = flatMats.get(m); if (!f) { f = mats[m].clone(); f.flatShading = true; const w: unknown = mats[m].userData['rust']; if (typeof w === 'number') rusty(f, w); flatMats.set(m, f); } return f; };
+  const flatMat = (m: Mat): THREE.MeshStandardMaterial => { let f = flatMats.get(m); if (!f) { f = mats[m].clone(); f.flatShading = true; flatMats.set(m, f); } return f; };
   const tagged = new Map<string, THREE.Object3D[]>(), items: BatchItem[] = [];
   const tag = (t: string, o: THREE.Object3D): void => { let a = tagged.get(t); if (!a) tagged.set(t, a = []); a.push(o); partBase.set(o, o.position.clone()); };
   const partMesh = (p: Part): THREE.Object3D => {
@@ -513,21 +479,28 @@ export function buildRobot(look: RobotLook, backend?: RobotBackend, opts: { simp
   }
   let held0: ToolId | null = null;
   const q = new THREE.Quaternion(), up = new THREE.Vector3(), bar = new THREE.Vector3(), side = new THREE.Vector3(), lastBar = new THREE.Vector3(0, 0, 1), basis = new THREE.Matrix4();
+  let jumpPrev = 0, jumpUp = 9, jumpLand = 9;
   const cur = new Map<THREE.Object3D, { r: [number, number, number]; d: [number, number, number] }>();
   const step = (a: number, b: number, max: number): number => a + Math.max(-max, Math.min(max, b - a));
   function pose(o: PoseOpts, dt?: number): void {
     const arm = o.arm !== undefined ? o.arm : swapArm(dt ?? 0);
+    // skok: čas od odrazu a od dopadu (podľa výšky jz, ktorú dostáva póza) – pre pruženie a pokrčenie nôh
+    const jz = o.jz ?? 0;
+    if (jz > 0 && jumpPrev <= 0) jumpUp = 0;
+    if (jz <= 0 && jumpPrev > 0) jumpLand = 0;
+    jumpUp += dt ?? 0; jumpLand += dt ?? 0; jumpPrev = jz;
+    const jump = o.jump !== undefined ? o.jump : { h: jz, up: jumpUp, land: jumpLand };
     // zrýchlenie ruky pri hode: kĺby pravej ruky smú rýchlejšie (RM.THROW_SPEED)
     const throwing = !!swap?.toss?.swing && swap.t >= RM.SWAP.wind && swap.t < swap.tRel + swap.toss.swing.tauF + 0.05;
-    const P = RM.robotPose(model, { ...o, arm, use: o.use !== undefined ? o.use : null, hold: o.hold !== undefined ? o.hold : held0 ? RM.TOOL_HOLD[held0] : null, digWith: o.digWith !== undefined ? o.digWith : held0 });
+    const P = RM.robotPose(model, { ...o, arm, jump, use: o.use !== undefined ? o.use : null, hold: o.hold !== undefined ? o.hold : held0 ? RM.TOOL_HOLD[held0] : null, digWith: o.digWith !== undefined ? o.digWith : held0 });
     for (const [id, g] of joints) {
       const jp = P.joints.get(id), base = must(jointBase.get(g)), tr = jp?.r ?? [0, 0, 0], td = jp?.d ?? [0, 0, 0];
-      const sp = throwing && (g === armJ[0] || g === armJ[1] || g === armJ[2]) ? RM.THROW_SPEED : RM.jointSpeed(id), c = cur.get(g);
-      if (!c || dt === undefined || !Number.isFinite(sp)) cur.set(g, { r: [tr[0], tr[1], tr[2]], d: [td[0], td[1], td[2]] });
+      const sp = throwing && (g === armJ[0] || g === armJ[1] || g === armJ[2]) ? RM.THROW_SPEED : RM.jointSpeed(id), c = cur.get(g), sl = RM.jointSlide(id);
+      if (!c || dt === undefined || (!Number.isFinite(sp) && !Number.isFinite(sl))) cur.set(g, { r: [tr[0], tr[1], tr[2]], d: [td[0], td[1], td[2]] });
       else {
-        const a = sp * dt, l = 0.8 * dt; // posun (pohupovanie, prikrčenie) najviac 0,8 políčka/s
-        c.r = [step(c.r[0], tr[0], a), step(c.r[1], tr[1], a), step(c.r[2], tr[2], a)];
-        c.d = [step(c.d[0], td[0], l), step(c.d[1], td[1], l), step(c.d[2], td[2], l)];
+        const a = sp * dt, l = sl * dt; // posun (pohupovanie, prikrčenie, pruženie pri skoku) najviac jointSlide
+        c.r = Number.isFinite(sp) ? [step(c.r[0], tr[0], a), step(c.r[1], tr[1], a), step(c.r[2], tr[2], a)] : [tr[0], tr[1], tr[2]];
+        c.d = Number.isFinite(sl) ? [step(c.d[0], td[0], l), step(c.d[1], td[1], l), step(c.d[2], td[2], l)] : [td[0], td[1], td[2]];
       }
       const n = must(cur.get(g));
       g.rotation.set(...n.r);

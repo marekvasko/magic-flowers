@@ -1,7 +1,7 @@
 // Hráč ako 3D robot (#194): procedurálny generátor robota bez Three.js. Robot je „genóm“ (RobotLook) zložený z dielov –
 // podvozok (pásy, dve kolesá, guľa, dve nohy, trojnožka), trup (kocka, guľa, kotol, plechovka), hlava (ďalekohľad,
 // sklenená kupola, guľa, televízor, žiadna – oči na trupe), počet očí, rozmery, ramená, drobnosti (komín, štítok, nity,
-// svetielka), farby, hrdza a doplnok. randomLook(semienko) ho vygeneruje, robotModel z neho postaví kĺby (stromček),
+// svetielka), farby a doplnok. randomLook(semienko) ho vygeneruje, robotModel z neho postaví kĺby (stromček),
 // diely z hladkých tvarov a úchyty pre náradie (ruky, nosič na chrbte, temeno); robotPose dá pózu podľa toho, čo robí.
 // Sieť stavia client/robot3d.ts (hra aj /debug → Robots); polohu ruky (lampáš, lano saní) vie spočítať aj test (mountAt).
 // Päť ručne naladených robotov (Hrdzavec, Kotúľ, Kotlík, Plecháčik, Hranáč) sú predvoľby generátora (PRESETS).
@@ -29,16 +29,15 @@ export type Edges = typeof EDGES[number];
 // Rozmery robota sú pre všetkých rovnaké (FRAME): výška, šírka a hĺbka trupu, výška spodku trupu nad zemou, poloha
 // pliec, dĺžka a hrúbka rúk. Generátor mení len tvary a vzhľad. Číselné vlastnosti genómu sú preto len tvarové:
 // výška trupu (krk ju vyrovná, celková výška ostáva), zaoblenie, veľkosť hlavy (zmenšená, ak by sa nezmestila),
-// veľkosť očí a hrdza.
+// a veľkosť očí.
 export const NUM = {
   bh: { min: 0.24, max: 0.34, def: 0.28, name: 'Výška trupu' },
   round: { min: 0, max: 1, def: 0.35, name: 'Zaoblenie' },
   headS: { min: 0.8, max: 1.3, def: 1, name: 'Veľkosť hlavy' },
-  eyeS: { min: 0.7, max: 1.4, def: 1, name: 'Veľkosť očí' },
-  wear: { min: 0, max: 1, def: 0.3, name: 'Hrdza' }
+  eyeS: { min: 0.7, max: 1.4, def: 1, name: 'Veľkosť očí' }
 } as const;
 export type NumKey = keyof typeof NUM;
-export const NUM_KEYS: readonly NumKey[] = ['bh', 'round', 'headS', 'eyeS', 'wear'];
+export const NUM_KEYS: readonly NumKey[] = ['bh', 'round', 'headS', 'eyeS'];
 // Spoločné rozmery (políčka): výška po temeno, spodok trupu nad zemou, šírka a hĺbka trupu, plece (x, výška nad zemou, z),
 // dĺžka a hrúbka ramena
 export const FRAME = { height: 0.75, bottom: 0.2, bw: 0.32, depth: 0.3, shoulder: [0.215, 0.42, 0.02] as V3, arm: 0.24, armT: 0.02 } as const;
@@ -47,7 +46,7 @@ export type FlagKey = keyof typeof FLAGS;
 export const FLAG_KEYS: readonly FlagKey[] = ['chimney', 'panel', 'rivets', 'leds'];
 export interface RobotLook {
   readonly loco: Loco; readonly body: BodyShape; readonly head: HeadKind; readonly eyes: 1 | 2; readonly edges: Edges;
-  readonly bh: number; readonly round: number; readonly headS: number; readonly eyeS: number; readonly wear: number;
+  readonly bh: number; readonly round: number; readonly headS: number; readonly eyeS: number;
   readonly chimney: boolean; readonly panel: boolean; readonly rivets: boolean; readonly leds: boolean;
   readonly paint: string; readonly accent: string; readonly eye: string; readonly acc: Accessory;
 }
@@ -62,7 +61,7 @@ export const PART_NAMES: { readonly loco: Readonly<Record<Loco, string>>; readon
 export const ACCESSORIES = PART_NAMES.acc;
 
 const BASE: RobotLook = {
-  loco: 'treads', body: 'box', head: 'bino', eyes: 2, edges: 'soft', bh: 0.3, round: 0.33, headS: 1, eyeS: 1, wear: 0.45,
+  loco: 'treads', body: 'box', head: 'bino', eyes: 2, edges: 'soft', bh: 0.3, round: 0.33, headS: 1, eyeS: 1,
   chimney: false, panel: true, rivets: true, leds: false, paint: '#d9a441', accent: '#5b6b73', eye: '#9fe7ff', acc: 'none'
 };
 // Predvoľby: ručne naladené roboty
@@ -70,10 +69,10 @@ export type PresetId = 'hrdzavec' | 'kotul' | 'kotlik' | 'plechacik' | 'hranac';
 export interface Preset { readonly name: string; readonly desc: string; readonly look: RobotLook }
 export const PRESETS: Readonly<Record<PresetId, Preset>> = {
   hrdzavec: { name: 'Hrdzavec', desc: 'Hranatý záhradník na pásoch, oči ako ďalekohľad na krku.', look: BASE },
-  kotul: { name: 'Kotúľ', desc: 'Guľatý robotík, ktorý sa vozí na jednej guli. Jedno veľké oko pod sklom.', look: { ...BASE, loco: 'ball', body: 'ball', head: 'dome', eyes: 1, bh: 0.34, headS: 1.15, wear: 0.15, panel: true, paint: '#f1efe6', accent: '#e0734f', eye: '#7cf0b0', acc: 'antenna' } },
-  kotlik: { name: 'Kotlík', desc: 'Malý kotol na troch tenkých nohách, okrúhle okienko a komínik.', look: { ...BASE, loco: 'legs3', body: 'barrel', head: 'none', eyes: 1, eyeS: 1.3, wear: 0.6, chimney: true, panel: false, paint: '#6f9a7a', accent: '#c7923e', eye: '#ffd36b' } },
-  plechacik: { name: 'Plecháčik', desc: 'Plechovka na krátkych nožičkách, okrúhla hlava a dve okrúhle oči.', look: { ...BASE, loco: 'legs2', body: 'can', head: 'ball', eyes: 2, bh: 0.26, headS: 1.15, eyeS: 0.9, wear: 0.3, rivets: false, leds: true, paint: '#7fa7d9', accent: '#e9d8a6', eye: '#ffb3c7', acc: 'sprout' } },
-  hranac: { name: 'Hranáč', desc: 'Hranatý stavebný robot s ostrými hranami, na pásoch, s televízorom namiesto hlavy.', look: { ...BASE, edges: 'sharp', head: 'tv', eyes: 2, bh: 0.28, headS: 1.1, wear: 0.5, leds: true, paint: '#e7c86a', accent: '#3d4448', eye: '#ffd36b', acc: 'none' } }
+  kotul: { name: 'Kotúľ', desc: 'Guľatý robotík, ktorý sa vozí na jednej guli. Jedno veľké oko pod sklom.', look: { ...BASE, loco: 'ball', body: 'ball', head: 'dome', eyes: 1, bh: 0.34, headS: 1.15, panel: true, paint: '#f1efe6', accent: '#e0734f', eye: '#7cf0b0', acc: 'antenna' } },
+  kotlik: { name: 'Kotlík', desc: 'Malý kotol na troch tenkých nohách, okrúhle okienko a komínik.', look: { ...BASE, loco: 'legs3', body: 'barrel', head: 'none', eyes: 1, eyeS: 1.3, chimney: true, panel: false, paint: '#6f9a7a', accent: '#c7923e', eye: '#ffd36b' } },
+  plechacik: { name: 'Plecháčik', desc: 'Plechovka na krátkych nožičkách, okrúhla hlava a dve okrúhle oči.', look: { ...BASE, loco: 'legs2', body: 'can', head: 'ball', eyes: 2, bh: 0.26, headS: 1.15, eyeS: 0.9, rivets: false, leds: true, paint: '#7fa7d9', accent: '#e9d8a6', eye: '#ffb3c7', acc: 'sprout' } },
+  hranac: { name: 'Hranáč', desc: 'Hranatý stavebný robot s ostrými hranami, na pásoch, s televízorom namiesto hlavy.', look: { ...BASE, edges: 'sharp', head: 'tv', eyes: 2, bh: 0.28, headS: 1.1, leds: true, paint: '#e7c86a', accent: '#3d4448', eye: '#ffd36b', acc: 'none' } }
 };
 export const PRESET_IDS: readonly PresetId[] = ['hrdzavec', 'kotul', 'kotlik', 'plechacik', 'hranac'];
 // Farby na výber (náter, doplnková farba, oči) – milé, trochu vyblednuté
@@ -93,7 +92,7 @@ export function robotLook(v: unknown): RobotLook {
   const flag = (k: FlagKey): boolean => { const x = j[k]; return typeof x === 'boolean' ? x : d[k]; };
   return {
     loco: oneOf(LOCOS, j['loco']) ?? d.loco, body: oneOf(BODIES, j['body']) ?? d.body, head: oneOf(HEADS, j['head']) ?? d.head, edges: oneOf(EDGES, j['edges']) ?? d.edges, eyes: j['eyes'] === 1 ? 1 : j['eyes'] === 2 ? 2 : d.eyes,
-    bh: num('bh'), round: num('round'), headS: num('headS'), eyeS: num('eyeS'), wear: num('wear'),
+    bh: num('bh'), round: num('round'), headS: num('headS'), eyeS: num('eyeS'),
     chimney: flag('chimney'), panel: flag('panel'), rivets: flag('rivets'), leds: flag('leds'),
     paint: color(j['paint'], d.paint), accent: color(j['accent'], d.accent), eye: color(j['eye'], d.eye), acc: oneOf(ACCS, j['acc']) ?? d.acc
   };
@@ -129,7 +128,6 @@ export function randomLook(seed: number): RobotLook {
   let accent = pick(r, ACCENTS); if (accent === paint) accent = must(ACCENTS[0]);
   return robotLook({
     ...nums, loco, body, head, edges: r() < 0.35 ? 'sharp' : 'soft', eyes: head === 'bino' ? (r() < 0.85 ? 2 : 1) : head === 'none' || head === 'dome' ? (r() < 0.7 ? 1 : 2) : (r() < 0.75 ? 2 : 1),
-    wear: r3(r() * 0.8),
     chimney: r() < 0.25, panel: r() < 0.6, rivets: r() < 0.6, leds: r() < 0.35,
     paint, accent, eye: pick(r, EYES), acc: weighted<Accessory>(r, [['none', 4], ['antenna', 2], ['hat', 1.5], ['sprout', 1.5]])
   });
@@ -418,7 +416,6 @@ function details(b: Builder, L: Built, body: JointId, H: Hull, eyesOnBody: boole
     for (const k of [0, 1, 2]) b.add(body, { k: 'sphere', r: 0.025 + k * 0.012 }, [x + k * 0.01, y + 0.15 + k * 0.05, z], 'glass', undefined, 'steam');
   }
 }
-// Hrdza nie sú diely: je to textúra v nátere (client/robot3d.ts) – škvrny podľa wear.
 
 // ---------- podvozok ----------
 // Postaví podvozok a vráti, v akej výške je spodok trupu
@@ -774,7 +771,7 @@ export function robotModel(look0: RobotLook, simple = false): RobotModel {
 // ---------- póza ----------
 // Čo robot práve robí (ako CharOpts postavičky): fáza kroku (rastie s prejdenou dráhou), plazenie, tanec, hrabanie (čas),
 // výška skoku, čas (žmurkanie, rozhliadanie), náradie v ruke
-export interface PoseOpts { phase?: number; t?: number; crawl?: boolean; dance?: boolean; dig?: number; digWith?: ToolId | null; use?: { tool: ToolId; t: number } | null; arm?: ArmTarget | null; jz?: number; hold?: HoldKind | null; walking?: boolean }
+export interface PoseOpts { phase?: number; t?: number; crawl?: boolean; dance?: boolean; dig?: number; digWith?: ToolId | null; use?: { tool: ToolId; t: number } | null; arm?: ArmTarget | null; jump?: { h: number; up: number; land: number } | null; jz?: number; hold?: HoldKind | null; walking?: boolean }
 export interface JointPose { r: V3; d?: V3 }
 // pour = ako veľmi je krhla naklonená (0–1, voda tečie od ~0,6); rigid = zavesené náradie drží pevne (nevisí podľa gravitácie)
 export interface RobotPose { readonly joints: ReadonlyMap<JointId, JointPose>; readonly blink: number; readonly steam: number; readonly pour: number; readonly rigid: boolean }
@@ -942,6 +939,8 @@ export function jointSpeed(id: JointId): number {
   if (id === 'head' || id === 'neck' || id === 'eye') return 6;
   return Infinity;
 }
+// Najväčšia rýchlosť posunu kĺbu (políčka/s): koreň sleduje skok presne, trup pruží rýchlo, ostatné pomaly
+export const jointSlide = (id: JointId): number => (id === 'root' ? Infinity : id === 'body' ? 3 : 0.8);
 // Orezanie otočenia kĺbu ramena do rozsahu (ostatné kĺby bez zmeny)
 export function clampJoint(id: JointId, r: V3): V3 {
   const kind = /^shoulder/.test(id) ? 'shoulder' : /^elbow/.test(id) ? 'elbow' : /^hand/.test(id) ? 'hand' : null;
@@ -989,6 +988,23 @@ export function robotPose(m: RobotModel, o: PoseOpts): RobotPose {
   if (o.dance) { bodyR = [0, sin(t * 3) * 0.5, sin(t * 6) * 0.12]; bodyD = [0, Math.abs(sin(t * 6)) * 0.04, 0]; }
   // pri plazení sa kolesové roboty predklonia; roboty na nohách si čupnú (nohy sa pokrčia, chodidlá ostanú na zemi)
   if (crawl && roll) bodyR = [bodyR[0] + 0.35, bodyR[1], bodyR[2]];
+  // Skok (jump: výška h v jednotkách robota, čas od odrazu up a od dopadu land; skupinu robota do výšky h dvíha ten,
+  // kto ho kreslí). Kolesové a pásové roboty: trup sa na pružení najprv prikrčí, vyrazí hore prvý a podvozok ho
+  // dobehne (najviac 7 cm za ním); pri dopade sa trup prepruží. Roboty na nohách: prikrčenie (nohy sa pokrčia – IK),
+  // odraz, vo vzduchu pritiahnuté nohy (tuck), dopad do pokrčených kolien.
+  let rootD: V3 = [0, 0, 0], tuck = 0;
+  const jp = o.jump;
+  if (jp) {
+    const sm = (x: number, a: number, b: number): number => ease((x - a) / (b - a)), bump = (x: number, a: number, b: number): number => (x <= a || x >= b ? 0 : sin((Math.PI * (x - a)) / (b - a)));
+    if (jp.h > 0) {
+      const bodyW = jp.h * sm(jp.up, 0.02, 0.11) - 0.045 * bump(jp.up, 0, 0.09);
+      const chasW = Math.max(0, Math.min(jp.h, Math.max(jp.h * (roll ? sm(jp.up, 0.06, 0.2) : sm(jp.up, 0.05, 0.15)), bodyW - 0.07)));
+      rootD = [0, chasW - jp.h, 0];
+      bodyD = [bodyD[0], bodyD[1] + bodyW - chasW, bodyD[2]];
+      if (!roll) tuck = 0.045 * Math.min(1, jp.h / 0.2) * sm(jp.up, 0.1, 0.2);
+    } else bodyD = [bodyD[0], bodyD[1] - 0.05 * bump(jp.land, 0, 0.22), bodyD[2]];
+  }
+  set('root', [0, 0, 0], rootD);
   set('body', bodyR, bodyD);
   // krk: pri plazení zasunutý, inak sa hlava zvedavo rozhliada
   const look = o.dance ? 0 : sin(t * 0.7) * 0.35 * (walk ? 0.3 : 1);
@@ -1047,7 +1063,7 @@ export function robotPose(m: RobotModel, o: PoseOpts): RobotPose {
       // členok voči bedru (v súradniciach trupu): výška nad zemou + zdvih kroku, dopredu / dozadu podľa kroku;
       // kývanie trupu do strán dvíha a spúšťa bedrá
       const dz = walk ? stride * sin(th) : 0, lift = walk ? (crawl ? 0.012 : 0.03) * Math.max(0, cos(th)) : 0;
-      const dy = LEG2.ankle + lift - bodyY - hip.p[1] - hip.p[0] * sin(bodyR[2]);
+      const dy = LEG2.ankle + lift + tuck - bodyY - hip.p[1] - hip.p[0] * sin(bodyR[2]);
       const d = Math.max(Math.abs(l1 - l2) + 1e-4, Math.min((l1 + l2) * 0.995, Math.hypot(dy, dz)));
       const phiD = Math.atan2(dz, -dy), beta = Math.acos(Math.max(-1, Math.min(1, (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d))));
       const phi1 = phiD + beta, phi12 = Math.atan2(dz - l1 * sin(phi1), -(dy + l1 * cos(phi1)));
@@ -1062,7 +1078,7 @@ export function robotPose(m: RobotModel, o: PoseOpts): RobotPose {
       const l1 = Math.hypot(...K0), l2 = Math.hypot(...F0), lift = walk ? (crawl ? 0.012 : 0.03) * Math.max(0, sin(ph + (i * 2 * Math.PI) / 3)) : 0;
       // chodidlo voči bedru: ako v pokoji, o toľko vyššie, o koľko trup klesol (+ zdvih kroku)
       // (kývanie trupu do strán dvíha a spúšťa bedrá – aj to noha vyrovná)
-      const u = K0[0] + F0[0], v = K0[1] + F0[1] - bodyD[1] + lift - hip.p[0] * sin(bodyR[2]);
+      const u = K0[0] + F0[0], v = K0[1] + F0[1] - bodyD[1] + lift + tuck - hip.p[0] * sin(bodyR[2]);
       const d = Math.max(Math.abs(l1 - l2) + 1e-4, Math.min((l1 + l2) * 0.995, Math.hypot(u, v)));
       const a1 = Math.atan2(v, u) + Math.acos(Math.max(-1, Math.min(1, (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d))));
       const a2 = Math.atan2(v - l1 * sin(a1), u - l1 * cos(a1));

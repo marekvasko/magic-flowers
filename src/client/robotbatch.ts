@@ -4,24 +4,25 @@
 //    textúry (4 texely = 1 matica 4×4 vo svete), ktorú update() po každej póze prepíše z matíc skupín kĺbov;
 //  - náradie: jedna sieť na kus (hýbe sa ako bežný objekt – v ruke, na nosiči, v lete);
 //  - kvapky vody z krhly: malé siete.
-// Materiály (shader sveta s ROBOT – svetlo, tiene, tma, hrdza) dodá render3d.ts.
+// Materiály (shader sveta s ROBOT – svetlo, tiene, tma) dodá render3d.ts.
 import * as THREE from 'three';
 import type { BatchItem, RobotBackend } from './robot3d.ts';
 
+export type BatchMesh = THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
 export interface BatchMaterials {
   skin: THREE.Material;        // telo: matice kĺbov z textúry (uniform jointTex)
   skinGlass: THREE.Material;   // sklo tela (priehľadné)
   rigid: THREE.Material;       // náradie a kvapky: bežná matica objektu
   jointTex: THREE.IUniform<THREE.Texture | null>;
-  // vrstvy siete (ako sprity: mimo mapy tieňov, v zrkadle vody áno)
-  layers: (o: THREE.Object3D) => void;
+  // každá vytvorená sieť (render3d jej nastaví vrstvy a zapamätá si ju, aby ju vedel nakresliť aj do mapy tieňov)
+  added: (m: BatchMesh, kind: 'skin' | 'glass' | 'rigid') => void;
 }
 
-// Zlúči položky do jednej geometrie: poloha a normála v súradniciach kĺbu, farba, žiarenie, priehľadnosť, hrdza, číslo kĺbu
+// Zlúči položky do jednej geometrie: poloha a normála v súradniciach kĺbu, farba, žiarenie, priehľadnosť, číslo kĺbu
 function merge(items: readonly BatchItem[], jointOf: (it: BatchItem) => number): THREE.BufferGeometry {
   let n = 0, ni = 0;
   for (const it of items) { const c = it.geo.getAttribute('position').count; n += c; ni += it.geo.index ? it.geo.index.count : c; }
-  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), col = new Float32Array(n * 3), emis = new Float32Array(n), alpha = new Float32Array(n), rust = new Float32Array(n), joint = new Float32Array(n);
+  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), col = new Float32Array(n * 3), emis = new Float32Array(n), alpha = new Float32Array(n), joint = new Float32Array(n);
   const index = n > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
   const v = new THREE.Vector3(), nm = new THREE.Matrix3();
   let o = 0, oi = 0;
@@ -32,7 +33,7 @@ function merge(items: readonly BatchItem[], jointOf: (it: BatchItem) => number):
       v.fromBufferAttribute(p, k).applyMatrix4(it.local); pos.set([v.x, v.y, v.z], (o + k) * 3);
       v.fromBufferAttribute(q, k).applyMatrix3(nm).normalize(); nor.set([v.x, v.y, v.z], (o + k) * 3);
       col.set(it.color, (o + k) * 3);
-      emis[o + k] = it.emis; alpha[o + k] = it.alpha; rust[o + k] = it.rust; joint[o + k] = j;
+      emis[o + k] = it.emis; alpha[o + k] = it.alpha; joint[o + k] = j;
     }
     if (it.geo.index) for (let k = 0; k < it.geo.index.count; k++) index[oi++] = it.geo.index.getX(k) + o;
     else for (let k = 0; k < p.count; k++) index[oi++] = o + k;
@@ -44,7 +45,6 @@ function merge(items: readonly BatchItem[], jointOf: (it: BatchItem) => number):
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   g.setAttribute('emis', new THREE.BufferAttribute(emis, 1));
   g.setAttribute('alpha', new THREE.BufferAttribute(alpha, 1));
-  g.setAttribute('rust', new THREE.BufferAttribute(rust, 1));
   g.setAttribute('joint', new THREE.BufferAttribute(joint, 1));
   g.setIndex(new THREE.BufferAttribute(index, 1));
   return g;
@@ -58,14 +58,13 @@ const DROP_GEO = new THREE.IcosahedronGeometry(0.008, 0);
   DROP_GEO.setAttribute('color', new THREE.BufferAttribute(c, 3));
   DROP_GEO.setAttribute('emis', new THREE.BufferAttribute(one(0), 1));
   DROP_GEO.setAttribute('alpha', new THREE.BufferAttribute(one(1), 1));
-  DROP_GEO.setAttribute('rust', new THREE.BufferAttribute(one(0), 1));
 }
 
 export function robotBackend(mats: BatchMaterials): RobotBackend {
-  const mesh = (g: THREE.BufferGeometry, m: THREE.Material): THREE.Mesh => {
-    const me = new THREE.Mesh(g, m);
+  const mesh = (g: THREE.BufferGeometry, m: THREE.Material, kind: 'skin' | 'glass'): BatchMesh => {
+    const me: BatchMesh = new THREE.Mesh(g, m);
     me.frustumCulled = false; // vrcholy posúva shader (matice kĺbov) – obálka geometrie neplatí
-    mats.layers(me);
+    mats.added(me, kind);
     return me;
   };
   return {
@@ -84,8 +83,8 @@ export function robotBackend(mats: BatchMaterials): RobotBackend {
       const tex = new THREE.DataTexture(data, 4, Math.max(1, nodes.length), THREE.RGBAFormat, THREE.FloatType);
       tex.minFilter = tex.magFilter = THREE.NearestFilter; tex.generateMipmaps = false; tex.needsUpdate = true;
       mats.jointTex.value = tex;
-      const objects = [mesh(gs, mats.skin)];
-      if (gg) { const m = mesh(gg, mats.skinGlass); m.renderOrder = 2; objects.push(m); }
+      const objects = [mesh(gs, mats.skin, 'skin')];
+      if (gg) { const m = mesh(gg, mats.skinGlass, 'glass'); m.renderOrder = 2; objects.push(m); }
       return {
         objects,
         update() { for (const [i, node] of nodes.entries()) node.matrixWorld.toArray(data, i * 16); tex.needsUpdate = true; },
@@ -93,10 +92,10 @@ export function robotBackend(mats: BatchMaterials): RobotBackend {
       };
     },
     tool(items) {
-      const g = merge(items, () => 0), m = new THREE.Mesh(g, mats.rigid);
-      mats.layers(m);
+      const g = merge(items, () => 0), m: BatchMesh = new THREE.Mesh(g, mats.rigid);
+      mats.added(m, 'rigid');
       return { objects: [m], dispose() { g.dispose(); } };
     },
-    drop() { const m = new THREE.Mesh(DROP_GEO, mats.rigid); mats.layers(m); return m; }
+    drop() { const m: BatchMesh = new THREE.Mesh(DROP_GEO, mats.rigid); mats.added(m, 'rigid'); return m; }
   };
 }

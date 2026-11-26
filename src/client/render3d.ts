@@ -27,9 +27,10 @@ import * as Z from '../shared/zorder.ts';
 import type { SurfaceKind } from '../shared/zorder.ts';
 import type { CtxAction, Pt, ViewState } from './state.ts';
 import * as RM from '../shared/robotmodel.ts';
-import { RUST_GLSL, buildRobot } from './robot3d.ts';
+import { buildRobot } from './robot3d.ts';
 import type { Robot3D } from './robot3d.ts';
 import { robotBackend } from './robotbatch.ts';
+import type { BatchMesh } from './robotbatch.ts';
 
 type V3 = [number, number, number];
 const uni = <T>(value: T): THREE.IUniform<T> => ({ value });
@@ -112,10 +113,10 @@ const VERT = `
 #ifdef VOX
 attribute vec2 aoUv;
 #elif defined(ROBOT)
-// robot hráča (#194, robotbatch.ts): farba, žiarenie, priehľadnosť a hrdza vo vrcholoch; ROBOT_SKIN = telo, ktorého
+// robot hráča (#194, robotbatch.ts): farba, žiarenie a priehľadnosť vo vrcholoch; ROBOT_SKIN = telo, ktorého
 // vrcholy nesú číslo kĺbu a maticu kĺbu (vo svete) čítajú z textúry
-attribute vec3 color; attribute float emis; attribute float alpha; attribute float rust;
-varying vec3 vObj; varying float vRust; varying float vAlpha;
+attribute vec3 color; attribute float emis; attribute float alpha;
+varying float vAlpha;
 #ifdef ROBOT_SKIN
 attribute float joint; uniform sampler2D jointTex;
 #endif
@@ -138,8 +139,11 @@ void main() {
 #endif
   vec4 wp = jm * vec4(position, 1.0);
   vec3 nrm = normalize(mat3(jm) * normal); // robot sa otáča – normála do sveta
-  vColor = color; vAo = 1.0; vEmis = emis; vTex = 0.0; vUv = vec2(0.0); vUv2 = vec2(0.0);
-  vObj = position; vRust = rust; vAlpha = alpha;
+  // tieňovanie stien podľa smeru vo svete – tie isté hodnoty ako kocky sveta (FACE_SHADE: vrch 1, boky x 0,62,
+  // boky z 0,8, spodok 0,5), plynulo medzi nimi pre šikmé steny
+  vAo = nrm.x * nrm.x * 0.62 + nrm.z * nrm.z * 0.8 + nrm.y * nrm.y * (nrm.y > 0.0 ? 1.0 : 0.5);
+  vColor = color; vEmis = emis; vTex = 0.0; vUv = vec2(0.0); vUv2 = vec2(0.0);
+  vAlpha = alpha;
 #else
   vec4 wp = modelMatrix * vec4(position, 1.0);
   vec3 nrm = normal;
@@ -182,9 +186,8 @@ uniform sampler2D grassMap; uniform vec3 grassBase; uniform vec3 grassTip;
 uniform sampler2D grassMask; uniform float grassOn;
 ${GRASS_TINT_GLSL}
 #ifdef ROBOT
-varying vec3 vObj; varying float vRust; varying float vAlpha;
+varying float vAlpha;
 uniform float fade; // 0–1: robot sa objavuje / mizne (rozptýlené bodky namiesto priehľadnosti)
-${RUST_GLSL}
 #endif
 void main() {
 #ifdef VOX
@@ -199,9 +202,7 @@ void main() {
   vec3 base = (sat > 0.12 ? gc.rgb : mix(grassBase, grassTip, gc.r)) * vColor; float em = 0.0, ao = vAo, tx = 1.0;
 #elif defined(ROBOT)
   if (fade < 1.0 && fade <= fract(dot(floor(gl_FragCoord.xy), vec2(0.7548776662, 0.5698402910)))) discard;
-  vec3 base = vColor; float em = vEmis, ao = 1.0, tx = 0.0;
-  // hrdza v nátere: hranaté fľaky jednej farby (šum po kockách ako textúry sveta, bez zrnenia)
-  if (vRust > 0.0) base = mix(base, vec3(0.58, 0.29, 0.12), 0.9 * step(0.5, rustMask(floor(vObj * 28.0) / 28.0 + 0.018, vRust)));
+  vec3 base = vColor; float em = vEmis, ao = vAo, tx = 0.0; // vAo = tieňovanie steny podľa jej smeru
 #else
   vec3 base = vTex > 0.5 ? texture2D(map, vUv).rgb * vColor : vColor;
   float em = vEmis, ao = vAo, tx = vTex;
@@ -217,7 +218,7 @@ void main() {
   float darkSun = sunMode > 0.5 ? groundSun * LES_SUN_K : forestSun();
   float sunV = darkOn >= 1.0 ? darkSun : darkOn > 0.0 ? mix(sunVisibility(vFacing), darkSun, darkOn) : sunVisibility(vFacing);
 #ifdef ROBOT
-  sunV *= smoothstep(0.02, 0.5, vFacing); // oblé diely: slnko slabne k hrane tieňa plynulo (svet má len rovné steny)
+  sunV *= clamp(vFacing * 1.4, 0.0, 1.0); // slnko podľa natočenia steny k nemu (šikmé steny robota dostanú menej)
 #endif
   // osvetlená zem v tme (pokus): okrem slnka aj denné svetlo záhrady (sunFill) – v slnku je zem jasná ako v záhrade
   // okolité svetlo z pologule (#190): vrchy dostanú farbu oblohy, spodky svetlo odrazené od zeme, steny niečo medzi
@@ -497,6 +498,7 @@ export interface CharObj {
   // hráč je 3D robot (#194): robot, kľúč vzhľadu (pri zmene sa postaví nový), materiály, miznutie, natočenie,
   // posledná fáza kroku (ide / stojí) a náradie (v ruke, vlastnené)
   robot?: Robot3D; rkey?: string; rmats?: THREE.Material[]; rfade?: THREE.IUniform<number>; ryaw?: number; lastPhase?: number;
+  rjoint?: THREE.IUniform<THREE.Texture | null>; rmeshes?: Map<BatchMesh, 'skin' | 'glass' | 'rigid'>; rsig?: string;
   held?: D.ToolId | null; carriedKey?: string;
 }
 type CharId = number | string; // id hráča (na ladiacej stránke odtlačok kľúča) alebo 'me', 'babka', 'master'
@@ -1288,6 +1290,32 @@ void main() {
   }
   // Pokus (Les divov): slnko ako skutočný tieň stromov, len na zemi (1), alebo pôvodné škvrny zo šumu (0, MF_LES_SUN = 'dapple')
   const lesSunMode = (): number => window.MF_LES_SUN === 'dapple' ? 0 : 1;
+  // Roboty hráčov (#194) vrhajú tieň ako všetko ostatné: po svete sa do mapy tieňov dokreslia ich siete – telo
+  // s maticami kĺbov z textúry (spoločný materiál sveta ich nevie), náradie bežným materiálom hĺbky. Sklo tieň nevrhá.
+  const robotDepth = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: 'void main() { gl_FragColor = vec4(0.0); }', defines: { ROBOT: 1, ROBOT_SKIN: 1 }, uniforms: { ...worldU, jointTex: uni<THREE.Texture | null>(null) }, side: THREE.BackSide, colorWrite: false });
+  let robotsMoved = false, robotShadowAt = 0;
+  function robotShadows(): void {
+    const auto = renderer.autoClear;
+    renderer.autoClear = false;
+    lightCam.layers.enable(1);
+    for (const o of chars.values()) {
+      const r = o.robot;
+      if (!r || !r.group.visible || !o.rmeshes || !o.rjoint) continue;
+      for (const [m, kind] of o.rmeshes) {
+        // sieť náradia, ktoré už robot nemá (vymenené), nie je pod jeho skupinou – zo zoznamu vypadne
+        let p: THREE.Object3D | null = m, on = false;
+        while (p) { if (p === r.group) { on = true; break; } p = p.parent; }
+        if (!on) { o.rmeshes.delete(m); continue; }
+        if (kind === 'glass' || !m.visible) continue;
+        const mat = m.material;
+        if (kind === 'skin') { must(robotDepth.uniforms['jointTex']).value = o.rjoint.value; robotDepth.uniformsNeedUpdate = true; m.material = robotDepth; } else m.material = shadowDepthMat;
+        renderer.render(m, lightCam);
+        m.material = mat;
+      }
+    }
+    lightCam.layers.disable(1);
+    renderer.autoClear = auto;
+  }
   let shadowDirty = true, lastShadowKey = '';
   function updateShadowMap(min: number, se: number): void {
     const u = worldU;
@@ -1323,9 +1351,10 @@ void main() {
     renderer.setClearColor(0xffffff, 1);
     renderer.clear();
     renderer.render(scene, lightCam);
+    scene.overrideMaterial = oldOverride;
+    robotShadows();
     renderer.setRenderTarget(null);
     renderer.setClearColor(oldClear, oldAlpha);
-    scene.overrideMaterial = oldOverride;
     if (zone && D.isDark(S.area)) buildSunRays(zone, dir);
   }
 
@@ -1624,8 +1653,8 @@ void main() {
   }
   // ---------- Roboty hráčov (#194) ----------
   // Robot z robot3d.ts so zlúčenými sieťami (robotbatch.ts) a shaderom sveta (ROBOT): svetlo, tiene sveta naň, lampáše
-  // a tma ako na všetkom ostatnom. Je na vrstvách spritov (nie v mape tieňov – pod ním je tieň postavičky; v zrkadle
-  // vody áno). Je 1,5× väčší ako v /debug: kreslená postavička bola plochý obrázok, ktorý šikmá kamera neskracuje,
+  // a tma ako na všetkom ostatnom, steny tieňované podľa smeru ako kocky sveta. Vrhá skutočný tieň (robotShadows)
+  // a je v zrkadle vody. Je 1,5× väčší ako v /debug: kreslená postavička bola plochý obrázok, ktorý šikmá kamera neskracuje,
   // 3D model áno – s touto mierkou je robot na obrazovke asi taký vysoký, ako bývala postavička.
   const ROBOT_SCALE = 1.5;
   const HEX6 = /^#[0-9a-f]{6}$/i;
@@ -1637,9 +1666,9 @@ void main() {
   function dropRobot(o: CharObj): void {
     o.robot?.dispose();
     for (const m of o.rmats ?? []) m.dispose();
-    delete o.robot; delete o.rmats; delete o.rfade; delete o.rkey; delete o.carriedKey;
+    delete o.robot; delete o.rmats; delete o.rfade; delete o.rkey; delete o.carriedKey; delete o.rjoint; delete o.rmeshes; delete o.rsig;
   }
-  function drawRobot(o: CharObj, ro: RobotOpts, look: Partial<Look> | null, x: number, y: number, z: number, a: number, phase: number, opts: CharOpts & { seat?: { x: number; z: number; y: number } | null }, dt: number): void {
+  function drawRobot(o: CharObj, ro: RobotOpts, look: Partial<Look> | null, x: number, y: number, z: number, a: number, phase: number, opts: CharOpts & { jz?: number; seat?: { x: number; z: number; y: number } | null }, dt: number): void {
     const key = ro.name + '|' + (look?.shirt ?? '') + '|' + (look?.hat ? 1 : 0);
     if (!o.robot || o.rkey !== key) {
       dropRobot(o);
@@ -1647,8 +1676,9 @@ void main() {
       const skin = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { ROBOT: 1, ROBOT_SKIN: 1 }, uniforms: u });
       const skinGlass = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { ROBOT: 1, ROBOT_SKIN: 1 }, uniforms: u, transparent: true, depthWrite: false });
       const rigid = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { ROBOT: 1 }, uniforms: { ...worldU, fade } });
-      o.robot = buildRobot(robotLookOf(ro.name, look), robotBackend({ skin, skinGlass, rigid, jointTex, layers: m => { m.layers.set(1); m.layers.enable(2); } }), { simple: true });
-      o.rmats = [skin, skinGlass, rigid]; o.rfade = fade; o.rkey = key;
+      const meshes = new Map<BatchMesh, 'skin' | 'glass' | 'rigid'>();
+      o.robot = buildRobot(robotLookOf(ro.name, look), robotBackend({ skin, skinGlass, rigid, jointTex, added: (m, kind) => { m.layers.set(1); m.layers.enable(2); meshes.set(m, kind); } }), { simple: true });
+      o.rmats = [skin, skinGlass, rigid]; o.rfade = fade; o.rkey = key; o.rjoint = jointTex; o.rmeshes = meshes;
       o.robot.group.scale.setScalar(ROBOT_SCALE);
       scene.add(o.robot.group);
     }
@@ -1664,7 +1694,12 @@ void main() {
     else if (o.held !== ro.held) { r.switchTool(ro.held); o.held = ro.held; }
     const walking = !opts.dance && !opts.seat && Math.abs(phase - (o.lastPhase ?? phase)) > 1e-4;
     o.lastPhase = phase;
-    r.pose({ phase, t: ro.t, walking, crawl: !!opts.crawl, dance: !!opts.dance, dig: opts.dig || 0, use: ro.use && !r.switching() ? ro.use : null }, step);
+    // jz: výška skoku v jednotkách robota (skupinu dvíha poloha vyššie; póza z nej robí pruženie a pokrčenie nôh)
+    // pohol sa robot? (poloha, natočenie, krok, alebo práve niečo robí) → mapu tieňov treba prekresliť
+    const sig = `${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)},${o.ryaw.toFixed(1)},${phase.toFixed(1)}`;
+    if (sig !== o.rsig || opts.dance || opts.dig || ro.use || r.switching()) robotsMoved = true;
+    o.rsig = sig;
+    r.pose({ phase, t: ro.t, walking, crawl: !!opts.crawl, dance: !!opts.dance, dig: opts.dig || 0, jz: (opts.jz ?? 0) / ROBOT_SCALE, use: ro.use && !r.switching() ? ro.use : null }, step);
   }
 
   // ---------- Svetlo ----------
@@ -2019,6 +2054,10 @@ void main() {
     if (Math.abs(vd - viewDiag) > 0.01) { viewDiag = vd; resize(); }
     lighting(min, se);
     let tp = statsOn ? performance.now() : 0;
+    // roboty sa hýbu → ich tiene tiež: mapu tieňov prekresli najviac 20× za sekundu (v temnom lese netreba – tam
+    // slnko svieti len na zem a prekreslenie by znova počítalo lúče)
+    if (robotsMoved && !D.isDark(S.area) && now - robotShadowAt > 50) { shadowDirty = true; robotShadowAt = now; }
+    robotsMoved = false;
     updateShadowMap(min, se);
     if (statsOn) passMs.shadow = performance.now() - tp;
     placeCamera(dt);
@@ -2109,7 +2148,9 @@ void main() {
     // kto sedí v loďke, je nakreslený v jej obrázku – vlastná postavička, tieň aj röntgen sa skryjú (meno ostane)
     for (const id of seated) { const o = chars.get(id); if (o) o.sp.visible = o.shadow.visible = o.ghost.visible = false; }
     // robot je vidieť tam, kde by bola postavička (dohľad v tme, fúrik, loďka); objavuje sa a mizne s ňou; röntgen nemá
-    for (const o of chars.values()) if (o.robot) { o.robot.group.visible = o.sp.visible; if (o.rfade) o.rfade.value = o.vis; o.ghost.visible = false; }
+    // (kde slnko vrhá tiene, má robot skutočný tieň z mapy tieňov – okrúhly tieň postavičky netreba)
+    const realShadow = worldU.shadowOn.value > 0.5 && !D.isDark(S.area);
+    for (const o of chars.values()) if (o.robot) { o.robot.group.visible = o.sp.visible; if (o.rfade) o.rfade.value = o.vis; o.ghost.visible = false; if (realShadow) o.shadow.visible = false; }
     spiders3d.update(dt, t, lights); // pavučiny, nory a pavúky (#57)
     // tráva sa kýve vo vetre a rozostupuje sa pred postavičkami (#192)
     const pushers: GrassPusher[] = [];

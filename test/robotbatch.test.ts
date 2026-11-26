@@ -15,7 +15,7 @@ const LOOKS: [string, RobotLook][] = [
 ];
 const TOOLS: readonly ToolId[] = ['hoe', 'can', 'pick', 'lamp'];
 function mats(): BatchMaterials {
-  return { skin: new THREE.MeshBasicMaterial(), skinGlass: new THREE.MeshBasicMaterial(), rigid: new THREE.MeshBasicMaterial(), jointTex: { value: null }, layers: o => { o.layers.set(1); o.layers.enable(2); } };
+  return { skin: new THREE.MeshBasicMaterial(), skinGlass: new THREE.MeshBasicMaterial(), rigid: new THREE.MeshBasicMaterial(), jointTex: { value: null }, added: o => { o.layers.set(1); o.layers.enable(2); } };
 }
 // siete pod objektom: objekt, materiál, počet trojuholníkov a atribúty geometrie
 interface Attr { count: number; getX: (k: number) => number }
@@ -26,7 +26,7 @@ function meshes(o: THREE.Object3D): M[] {
     const g: unknown = c instanceof THREE.Mesh ? c.geometry : null, material: unknown = c instanceof THREE.Mesh ? c.material : null;
     if (!(g instanceof THREE.BufferGeometry)) return;
     const attr = new Map<string, Attr>();
-    for (const n of ['position', 'normal', 'color', 'emis', 'alpha', 'rust', 'joint']) { const a: unknown = g.hasAttribute(n) ? g.getAttribute(n) : null; if (!(a instanceof THREE.BufferAttribute)) continue; const arr: unknown = a.array, size = a.itemSize; if (arr instanceof Float32Array) attr.set(n, { count: a.count, getX: k => arr[k * size] ?? NaN }); }
+    for (const n of ['position', 'normal', 'color', 'emis', 'alpha', 'joint']) { const a: unknown = g.hasAttribute(n) ? g.getAttribute(n) : null; if (!(a instanceof THREE.BufferAttribute)) continue; const arr: unknown = a.array, size = a.itemSize; if (arr instanceof Float32Array) attr.set(n, { count: a.count, getX: k => arr[k * size] ?? NaN }); }
     out.push({ o: c, material, tris: (g.index ? g.index.count : attr.get('position')?.count ?? 0) / 3, attr });
   });
   return out;
@@ -46,7 +46,7 @@ test('zlúčený robot: telo je jedna sieť (+ sklo), má tie isté trojuholník
     const rows = tex.image.height;
     for (const x of bm) {
       const joint = at(x, 'joint'), n = at(x, 'position').count;
-      for (const a of ['normal', 'color', 'emis', 'alpha', 'rust', 'joint']) assert.strictEqual(at(x, a).count, n, `${name}: atribút ${a}`);
+      for (const a of ['normal', 'color', 'emis', 'alpha', 'joint']) assert.strictEqual(at(x, a).count, n, `${name}: atribút ${a}`);
       for (let k = 0; k < joint.count; k++) { const j = joint.getX(k); assert.ok(Number.isInteger(j) && j >= 0 && j < rows, `${name}: kĺb ${j} z ${rows}`); }
       assert.ok(x.o.layers.isEnabled(1) && x.o.layers.isEnabled(2) && !x.o.layers.isEnabled(0), name + ': vrstvy');
     }

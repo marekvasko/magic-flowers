@@ -107,12 +107,10 @@ test('generátor: rovnaké semienko = rovnaký robot, je platný a dav má všet
   for (const l of looks) assert.notStrictEqual(l.paint, l.accent);
 });
 
-test('hrdza nie sú diely (je to textúra v nátere): model je pre každú ošúchanosť rovnaký, len vzhľad sa líši', () => {
+test('model je pre ten istý genóm vždy rovnaký; hrdza už nie je (ani diely, ani v genóme)', () => {
   const base = RM.PRESETS.hrdzavec.look;
-  const parts = (wear: number): number => RM.robotModel({ ...base, wear }).parts.length;
-  assert.strictEqual(parts(0), parts(1));
-  assert.ok(!RM.robotModel({ ...base, wear: 1 }).parts.some(p => p.m === 'rust'));
   assert.deepStrictEqual(RM.robotModel(base), RM.robotModel(base));
+  assert.ok(!('wear' in base) && !('wear' in RM.randomLook(3)) && !('wear' in RM.robotLook({ wear: 1 })));
 });
 
 const TOOLS: readonly ToolId[] = ['hoe', 'can', 'pick', 'lamp'];
@@ -258,5 +256,38 @@ test('jednoduchý štýl (hra): tie isté kĺby (okrem článkov pásov), úchyt
     // oči, viečka a držiaky náradia ostali
     assert.ok(s.parts.some(p => p.m === 'eye') && s.parts.some(p => p.tag === 'lid'), name);
     for (const t of ['hoe', 'can', 'pick', 'lamp']) assert.ok(s.parts.some(p => p.tag === 'holder:' + t), `${name}: držiak ${t}`);
+  }
+});
+
+test('skok: kolesový robot sa najprv prikrčí, trup vyrazí prvý a podvozok ho dobehne, pri dopade sa prepruží; robot na nohách pritiahne nohy a dopadne do pokrčených', () => {
+  const y = (m: RM.RobotModel, o: RM.PoseOpts, j: string): number => RM.jointMatrix(m, RM.robotPose(m, o), j)[3][1];
+  const d = (m: RM.RobotModel, o: RM.PoseOpts, j: string): number => RM.robotPose(m, o).joints.get(j)?.d?.[1] ?? 0;
+  for (const p of ['hrdzavec', 'kotul', 'hranac'] as const) {
+    const m = RM.robotModel(RM.PRESETS[p].look), rest = y(m, {}, 'body');
+    // tesne po odraze: podvozok ešte stojí (koreň ruší výšku skoku), trup je nižšie ako v pokoji
+    const a: RM.PoseOpts = { jump: { h: 0.1, up: 0.03, land: 9 } };
+    assert.ok(Math.abs(d(m, a, 'root') + 0.1) < 0.02, `${p}: podvozok pri odraze ${d(m, a, 'root')}`);
+    assert.ok(y(m, a, 'body') < rest - 0.1 - 0.01, `${p}: trup sa pri odraze neprikrčil`);
+    // o chvíľu: trup je pred podvozkom (pruženie natiahnuté), najviac o 7 cm
+    const b: RM.PoseOpts = { jump: { h: 0.4, up: 0.1, land: 9 } };
+    assert.ok(d(m, b, 'body') > 0.03 && d(m, b, 'body') <= 0.0701, `${p}: trup pred podvozkom ${d(m, b, 'body')}`);
+    assert.ok(d(m, b, 'root') < 0 && d(m, b, 'root') > -0.4, p);
+    // vo vzduchu po dobehnutí: všetko vo výške skoku
+    const c: RM.PoseOpts = { jump: { h: 0.6, up: 0.3, land: 9 } };
+    assert.ok(Math.abs(d(m, c, 'root')) < 1e-9 && Math.abs(d(m, c, 'body')) < 1e-9, p);
+    // dopad: trup sa prepruží dolu a vráti sa
+    assert.ok(d(m, { jump: { h: 0, up: 0.6, land: 0.1 } }, 'body') < -0.03, p + ': dopad');
+    assert.ok(Math.abs(d(m, { jump: { h: 0, up: 0.9, land: 0.5 } }, 'body')) < 1e-9, p);
+    // podvozok nikdy nie je pod zemou: koreň najviac o výšku skoku nižšie
+    for (let up = 0; up < 0.5; up += 0.01) { const h = Math.max(0.001, 5.6 * up - 11.5 * up * up) / 1.5; assert.ok(d(m, { jump: { h, up, land: 9 } }, 'root') >= -h - 1e-9, `${p}: podvozok pod zemou v čase ${up}`); }
+  }
+  for (const p of ['plechacik', 'kotlik'] as const) {
+    const m = RM.robotModel(RM.PRESETS[p].look), foot = p === 'plechacik' ? 'footL' : 'foot0';
+    const gap = (o: RM.PoseOpts): number => y(m, o, 'body') - y(m, o, foot);
+    assert.ok(gap({ jump: { h: 0.4, up: 0.3, land: 9 } }) < gap({}) - 0.03, `${p}: nohy vo vzduchu nie sú pritiahnuté`);
+    // dopad: chodidlo na zemi, trup nižšie (pokrčené nohy)
+    const land: RM.PoseOpts = { jump: { h: 0, up: 0.6, land: 0.1 } };
+    assert.ok(Math.abs(y(m, land, foot) - y(m, {}, foot)) < 0.004, `${p}: chodidlo pri dopade nie je na zemi`);
+    assert.ok(y(m, land, 'body') < y(m, {}, 'body') - 0.03, `${p}: trup pri dopade neklesol`);
   }
 });
