@@ -131,47 +131,25 @@ void main() {
 }`;
 const VOX_GLSL = `
 uniform sampler2D voxColor; uniform sampler2D voxAo;`;
-const FRAG = `
-precision highp float;
+// Svetlo sveta v bode vPos (okolie, slnko s mapou tieňov, lampáše, šero lesa, tma Lesa divov). Počíta ho fragment shader
+// sveta (FRAG) a tráva vo vrcholoch trsov (grass3d.ts, #196) – ten istý kód, takže tráva svieti presne ako zem pod ňou.
+// Číta vPos, vShadow, vFacing a vUp (vo fragmente interpolované, vo vrcholoch trávy práve zapísané).
+const LIGHT_GLSL = `
 #ifndef SHADOW_TAPS
 #define SHADOW_TAPS 16
 #endif
-uniform sampler2D map; uniform sampler2D shadowMap;
-uniform vec3 ambient; uniform vec3 ambUp; uniform vec3 ambDown; uniform vec3 sunColor; uniform vec3 lampColor; uniform vec3 emisColor;
-uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount; uniform float opacity;
+uniform sampler2D shadowMap;
+uniform vec3 ambient; uniform vec3 ambUp; uniform vec3 ambDown; uniform vec3 sunColor; uniform vec3 lampColor;
+uniform vec4 lights[${MAX_LIGHTS}]; uniform int lightCount;
 uniform float shadowOn; uniform vec2 shadowTexel; uniform float shadowRadius;
 uniform vec3 gloom; uniform vec3 gloomFog;
 uniform float darkOn; uniform float sunMode; uniform vec3 sunFill; uniform vec4 eye; uniform vec2 eyeLit; uniform vec3 darkFog; uniform sampler2D canopy; uniform vec2 areaSize; uniform vec4 sunZone;
-varying vec3 vColor; varying float vAo; varying float vEmis; varying float vTex; varying float vFacing; varying float vUp;
-varying vec2 vUv; varying vec3 vPos; varying vec4 vShadow; varying vec2 vUv2;
+varying float vFacing; varying float vUp; varying vec3 vPos; varying vec4 vShadow;
 ${SHADOW_GLSL}
 ${GLOOM_GLSL}
 ${DARK_GLSL}
-#ifdef VOX
-${VOX_GLSL}
-#endif
-#ifdef GRASS
-uniform sampler2D grassMap; uniform vec3 grassBase; uniform vec3 grassTip;
-#endif
-uniform sampler2D grassMask; uniform float grassOn;
-${GRASS_TINT_GLSL}
-void main() {
-#ifdef VOX
-  vec4 tc = texture2D(voxColor, vUv);
-  vec3 base = tc.rgb; float em = tc.a, ao = texture2D(voxAo, vUv2).r, tx = 0.0; // modely nie sú zem
-#elif defined(GRASS)
-  // 3D tráva (grass3d.ts): steblá z obrázka trsov, svieti ako zem
-  // steblá sú sivé (jas = od farby zeme po farbu špičky), farebné sú len kvietky
-  vec4 gc = texture2D(grassMap, vUv);
-  if (gc.a < 0.5) discard;
-  float sat = max(gc.r, max(gc.g, gc.b)) - min(gc.r, min(gc.g, gc.b));
-  vec3 base = (sat > 0.12 ? gc.rgb : mix(grassBase, grassTip, gc.r)) * vColor; float em = 0.0, ao = vAo, tx = 1.0;
-#else
-  vec3 base = vTex > 0.5 ? texture2D(map, vUv).rgb * vColor : vColor;
-  float em = vEmis, ao = vAo, tx = vTex;
-  // zem pod 3D trávou (grass3d.ts): rovnaké farebné fľaky ako trsy – zem a steblá sú jeden koberec
-  if (grassOn > 0.5 && tx > 0.5 && vUp > 0.5) base *= mix(vec3(1.0), grassTint(vPos.xz) * GRASS_GROUND_K, texture2D(grassMask, vPos.xz / areaSize).r);
-#endif
+// light = svetlo na povrch, haze = koľko oparu hustého lesa (gloomFog), fogK = koľko tmy za dohľadom (darkFog); tx > 0.5 = zem
+void lighting(float tx, out vec3 light, out float haze, out float fogK) {
   float gm = gloomAt(vPos.z);
   // darkOn 0–1: koľko tmy Lesa divov (pri severnom okraji Lesa na pomedzí postupne pribúda, opar Lesa na pomedzí ubúda)
   // slnko v tme: sunMode 1 = skutočný tieň (mapa tieňov cez stromy), ale svieti len na zem; 0 = škvrny z šumu (forestSun)
@@ -183,7 +161,7 @@ void main() {
   // osvetlená zem v tme (pokus): okrem slnka aj denné svetlo záhrady (sunFill) – v slnku je zem jasná ako v záhrade
   // okolité svetlo z pologule (#190): vrchy dostanú farbu oblohy, spodky svetlo odrazené od zeme, steny niečo medzi
   vec3 ambH = ambient * mix(ambDown, ambUp, vUp * 0.5 + 0.5);
-  vec3 light = (ambH + sunColor * sunV + sunFill * groundSun * LES_SUN_K) * (1.0 - gm * (1.0 - darkOn));
+  light = (ambH + sunColor * sunV + sunFill * groundSun * LES_SUN_K) * (1.0 - gm * (1.0 - darkOn));
   // Svetlo lampášov (aj slabé svetlo okolo hráča) je guľa okolo zdroja – na vrchy obrovských stromov nedosiahne.
   // Dohľad v tme (kde začína tma) sa však meria po zemi: vrchy kmeňov pri hráčovi sú tmavé drevo, nie čierne diery.
   float lamp = 0.0;
@@ -193,15 +171,40 @@ void main() {
     lamp += 1.0 - smoothstep(0.0, lights[i].w, d);
   }
   light += lampColor * lamp;
-  float fogK = 0.0;
+  fogK = 0.0;
   if (darkOn > 0.0) {
     float d = mix(distance(vPos, eye.xyz), distance(vPos.xz, eye.xz), darkOn);
     light += vec3(0.8, 0.85, 1.0) * eyeLit.y * darkOn * (1.0 - smoothstep(0.0, eyeLit.x, distance(vPos, eye.xyz))); // slabé svetlo okolo hráča
     fogK = darkOn * smoothstep(eye.w * 0.6, eye.w * 1.15, d) * (1.0 - clamp(lamp * 1.6, 0.0, 1.0));
     fogK *= 1.0 - groundSun; // zem v slnku vidno aj za dohľadom (pokus)
   }
+  haze = gm * 0.3 * (1.0 - darkOn); // v hustom lese visí opar
+}`;
+const FRAG = `
+precision highp float;
+uniform sampler2D map; uniform vec3 emisColor; uniform float opacity;
+varying vec3 vColor; varying float vAo; varying float vEmis; varying float vTex;
+varying vec2 vUv; varying vec2 vUv2;
+${LIGHT_GLSL}
+#ifdef VOX
+${VOX_GLSL}
+#endif
+uniform sampler2D grassMask; uniform float grassOn;
+${GRASS_TINT_GLSL}
+void main() {
+#ifdef VOX
+  vec4 tc = texture2D(voxColor, vUv);
+  vec3 base = tc.rgb; float em = tc.a, ao = texture2D(voxAo, vUv2).r, tx = 0.0; // modely nie sú zem
+#else
+  vec3 base = vTex > 0.5 ? texture2D(map, vUv).rgb * vColor : vColor;
+  float em = vEmis, ao = vAo, tx = vTex;
+  // zem pod 3D trávou (grass3d.ts): rovnaké farebné fľaky ako trsy – zem a steblá sú jeden koberec
+  if (grassOn > 0.5 && tx > 0.5 && vUp > 0.5) base *= mix(vec3(1.0), grassTint(vPos.xz) * GRASS_GROUND_K, texture2D(grassMask, vPos.xz / areaSize).r);
+#endif
+  vec3 light; float haze, fogK;
+  lighting(tx, light, haze, fogK);
   vec3 col = base * ao * light;
-  col = mix(col, gloomFog, gm * 0.3 * (1.0 - darkOn)); // v hustom lese visí opar
+  col = mix(col, gloomFog, haze);
   col = mix(col, darkFog, fogK);
   col = max(col, base * emisColor * em); // svietiace veci (okná, oheň, živica) vidno aj v tme za dohľadom
   // zoslabený objekt: časť do výšky hráča (pne, kmene na zemi, kry) ostane plná, priehľadné je len to nad ňou
@@ -2001,7 +2004,7 @@ void main() {
     // tráva sa kýve vo vetre a rozostupuje sa pred postavičkami (#192)
     const pushers: GrassPusher[] = [];
     for (const o of chars.values()) if (o.alive && o.sp.visible) pushers.push({ x: o.sp.position.x, y: o.sp.position.y, z: o.sp.position.z, r: 0.4 });
-    grass3d.update(t, pushers, { x: camTarget.x, z: camTarget.z });
+    grass3d.update(t, pushers, { x: camTarget.x, z: camTarget.z }, camera);
 
     const fading = updateFades(dt, meO ? meO.h ?? 1 : 1);
     const lit = zip3(curAmb, curSun, (a, s) => Math.min(1.2, a + s * 0.7));
@@ -2092,7 +2095,7 @@ void main() {
   // ---------- Častice a blčanie svetiel ----------
   const sceneBefore = new Set(scene.children);
   const particles = createParticles({ scene, camera, renderer, S, ripple });
-  const grass3d = createGrass3d({ THREE, scene, frag: FRAG, world: worldU, mask: worldU.grassMask, maskOn: worldU.grassOn });
+  const grass3d = createGrass3d({ THREE, scene, light: LIGHT_GLSL, water: { y: W.WATER_Y, tan: Math.tan(PITCH) }, world: worldU, mask: worldU.grassMask, maskOn: worldU.grassOn });
   const particleObjs = scene.children.filter(o => !sceneBefore.has(o)); // objekty častíc (ladiaca stránka ich vie skryť)
   const boat3d = createBoat3d({ THREE, scene, camera, S, dir8, yaw: () => yaw, light: (x, y, z) => lightAt(x, y, z, lastLights, lastLights.length) });
   const spiders3d = createSpiders3d({ THREE, scene, S, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, renderer, world: worldU, maxLights: MAX_LIGHTS, fine: () => grid && grid.fine });
