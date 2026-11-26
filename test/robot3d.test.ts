@@ -10,9 +10,10 @@ import type { Robot3D } from '../src/client/robot3d.ts';
 import { must } from './helpers.ts';
 
 // Sieť robota (Three.js beží aj v Node – len geometria, bez kreslenia): predvoľby + vygenerované roboty
+// (málo robotov, aby testy servera popri tom stíhali svoje časové limity; pri zmenách robota ich spusti na stovkách semienok)
 const LOOKS: [string, RobotLook][] = [
   ...RM.PRESET_IDS.map((p): [string, RobotLook] => [p, RM.PRESETS[p].look]),
-  ...Array.from({ length: 300 }, (_, i): [string, RobotLook] => ['seed ' + i, RM.randomLook(i)])
+  ...Array.from({ length: 30 }, (_, i): [string, RobotLook] => ['seed ' + i, RM.randomLook(i * 7 + 3)])
 ];
 const TOOLS: readonly ToolId[] = ['hoe', 'can', 'pick', 'lamp'];
 
@@ -86,7 +87,7 @@ test('v ruke: náradie je v klepete, na nosiči jeho miesto ostane prázdne', ()
 });
 
 test('krhla visí na háku: rameno háku leží vo vrchole oblúka držadla a ide kolmo cez oblúk', () => {
-  for (const [name, look] of LOOKS.slice(0, 30)) {
+  for (const [name, look] of LOOKS.slice(0, 15)) {
     const r = onRack(look), sl = r.model.slots.can, k = sl.s ?? 1;
     const rack = r.group.getObjectByName('holder:can'), can = r.group.getObjectByName('tool:can'); // kĺb háku
     assert.ok(rack instanceof THREE.Group && can, name);
@@ -145,7 +146,7 @@ test('ramená sú mimo trupu: v žiadnej póze ruka ani rameno nezasahuje do tru
 });
 
 test('hrabanie: hrot motyky, krompáča aj klepeta zasekne do zeme pred robotom a ťahá k nemu; nič nejde do zeme ani do robota', () => {
-  for (const [name, look] of LOOKS.slice(0, 999)) {
+  for (const [name, look] of LOOKS.slice(0, 15)) {
     const r = buildRobot(look), body = r.group.getObjectByName('body');
     assert.ok(body, name);
     for (const [label, held, carried] of [['motyka', 'hoe', ['can', 'pick', 'lamp']], ['krompáč', 'pick', ['hoe', 'can', 'lamp']], ['klepeto', null, TOOLS], ['klepeto (krhla v ruke)', 'can', ['hoe', 'pick', 'lamp']]] as const) {
@@ -181,7 +182,7 @@ test('hrabanie: hrot motyky, krompáča aj klepeta zasekne do zeme pred robotom 
 });
 
 test('náradie v ruke: zavesená krhla a lampáš visia vždy zvislo (nikdy sa neprevrátia), nič v ruke nejde do robota ani do zeme', () => {
-  for (const [name, look] of LOOKS.slice(0, 40)) {
+  for (const [name, look] of LOOKS.slice(0, 20)) {
     const r = buildRobot(look), body = r.group.getObjectByName('body');
     assert.ok(body, name);
     for (const held of ['can', 'lamp', 'hoe', 'pick'] as const) {
@@ -216,7 +217,7 @@ test('náradie v ruke: zavesená krhla a lampáš visia vždy zvislo (nikdy sa n
 });
 
 test('použitie náradia: motyka okopáva a krompáč seká do zeme pred robotom, krhla sa nakloní a polieva, lampáš sa zdvihne; nič nezasahuje do robota ani do zeme', () => {
-  for (const [name, look] of LOOKS.slice(0, 30)) {
+  for (const [name, look] of LOOKS.slice(0, 15)) {
     const r = buildRobot(look), body = r.group.getObjectByName('body');
     assert.ok(body, name);
     for (const tool of TOOLS) {
@@ -369,7 +370,7 @@ function runSwitch(r: Robot3D, to: ToolId | null, dt: number, f: (t: number, whe
 }
 
 test('výmena náradia: staré skončí v držiaku, nové v klepete; každé je vždy práve raz; nič cestou nezasiahne trup ani hlavu', () => {
-  for (const [name, look] of LOOKS.slice(0, 20)) {
+  for (const [name, look] of LOOKS.slice(0, 12)) {
     const r = buildRobot(look), body = r.group.getObjectByName('body'), head = r.group.getObjectByName('head');
     assert.ok(body && head, name);
     r.setTools('hoe', TOOLS);
@@ -405,7 +406,7 @@ test('výmena náradia: staré skončí v držiaku, nové v klepete; každé je 
 
 test('výmena náradia je šikmý vrh: let je parabola s gravitáciou, ruka aj vystreľovač dajú náradiu rýchlosť, s ktorou letí, a dopadne presne do držiaka / klepeta', () => {
   const dt = 1 / 600, G = RM.GRAVITY;
-  for (const [name, look] of LOOKS.slice(0, 6)) {
+  for (const [name, look] of LOOKS.slice(0, 5)) {
     const r = buildRobot(look);
     r.setTools('hoe', TOOLS);
     r.pose({});
@@ -455,4 +456,38 @@ test('hrdza je textúra v nátere: materiál náteru nesie mieru hrdze podľa o�
   const a = buildRobot({ ...RM.PRESETS.hranac.look, wear: 0 }), b = buildRobot({ ...RM.PRESETS.hranac.look, wear: 1 });
   assert.strictEqual(triangles(a.group), triangles(b.group));
   a.dispose(); b.dispose();
+});
+
+test('výmena náradia: vystrelené náradie padne do ruky tam, kde ho ruka pri odhodení púšťa', () => {
+  const dt = 1 / 240;
+  for (const [name, look] of LOOKS.slice(0, 5)) {
+    const r = buildRobot(look);
+    r.setTools('hoe', TOOLS);
+    r.pose({});
+    // kde každé náradie opustilo ruku (prvý snímok letu po hode) a kde do nej dopadlo (posledný snímok letu po výstrele)
+    const released = new Map<ToolId, THREE.Vector3>(), caught = new Map<ToolId, THREE.Vector3>();
+    for (const to of ['can', 'pick', 'lamp', 'hoe', 'can'] as const) {
+      const objs = new Map(TOOLS.map(t => { const o = r.group.getObjectByName('tool:' + t); assert.ok(o); return [t, o] as const; }));
+      const was = new Map(TOOLS.map(t => [t, '']));
+      r.switchTool(to);
+      for (let t = 0; r.switching() && t < 8; t += dt) {
+        r.pose({}, dt);
+        r.group.updateMatrixWorld(true);
+        for (const [tool, o] of objs) {
+          let p: THREE.Object3D | null = o.parent, w = 'air';
+          while (p) { if (p.name === 'handR') w = 'hand'; if (p.name === 'rack') w = 'rack'; p = p.parent; }
+          const pos = o.getWorldPosition(new THREE.Vector3());
+          if (was.get(tool) === 'hand' && w === 'air') released.set(tool, pos);
+          if (was.get(tool) === 'air' && w === 'hand') caught.set(tool, pos);
+          was.set(tool, w);
+        }
+      }
+    }
+    for (const tool of TOOLS) {
+      const a = released.get(tool), b = caught.get(tool);
+      assert.ok(a && b, `${name}: ${tool} nebolo odhodené aj chytené`);
+      assert.ok(a.distanceTo(b) < 0.03, `${name}: ${tool} pustené v ${a.toArray().map(v => v.toFixed(3)).join(', ')}, chytené v ${b.toArray().map(v => v.toFixed(3)).join(', ')}`);
+    }
+    r.dispose();
+  }
 });

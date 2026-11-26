@@ -555,7 +555,7 @@ function head(b: Builder, L: Built, body: JointId, H: Hull, s: number, nl: numbe
     const eye = b.joint('eye', body, [0, y, 0]);
     if (L.eyes === 1) b.roundEye(eye, [0, 0, H.front(y) + 0.005], r * 1.25, 0, 'accent', L.rivets);
     else for (const sx of [-1, 1]) { const yaw = L.body === 'box' ? 0 : Math.asin(Math.min(0.8, (sx * r * 1.15) / H.hx)); b.roundEye(eye, [sx * r * 1.15, 0, H.front(y) * Math.cos(yaw) + 0.005], r, yaw, 'accent'); }
-    return { j: top, p: [0, (H.top - H.hy) + 0.005, 0], back: H.hz * 1.05 + 0.012, half: 0 }; // trup (s horným lemom) siaha až po temeno – nosič ďalej dozadu ako pri širokej hlave
+    return { j: top, p: [0, (H.top - H.hy) + 0.005, 0], back: H.hz * 1.05 + 0.03, half: 0 }; // trup (s horným lemom) siaha až po temeno – nosič ďalej dozadu ako pri širokej hlave
   }
   const neck = b.joint('neck', body, [0, H.top, L.head === 'bino' ? -0.02 : 0]);
   if (nl > 0.005) {
@@ -829,7 +829,8 @@ function useTool(m: RobotModel, tool: ToolId, s: number): UseState {
 //    veľkosťou), náradie pustí a ruka ešte dobehne. Náradie letí po parabole (gravitácia GRAVITY) a padne do svojho
 //    držiaka, ktorý sa vopred natočil proti smeru dopadu (rúčka vkĺzne do puzdra);
 //  - výstrel: držiak sa natočí do smeru v0, krátkym zdvihom (stroke) náradie zrýchli na |v0| a pustí; parabola končí
-//    v klepete, ktoré čaká v bode chytenia natočené rovnako ako letiace náradie.
+//    v klepete, ktoré čaká presne tam, kde to isté náradie pri odhodení púšťa, natočené rovnako ako letiace náradie
+//    (výstrel je tá istá parabola ako hod, opačným smerom).
 // Počas letu sa náradie neotáča (okrem malého rovnomerného dotočenia) – smer mu dá ruka alebo držiak.
 // Časy v sekundách, dĺžky v políčkach. V hre bude výmena chvíľu trvať (herná mechanika neskôr).
 export const GRAVITY = 9.8;
@@ -838,7 +839,6 @@ export const SWAP = {
   swingFrom: 0.5,                // hod: natiahnutá ruka sa rozbieha od tohto uhla (rad od zvislice dolu, dopredu)…
   follow: 0.6,                   // …a po pustení ešte dobieha o tento uhol, kým zastane
   reach: 0.93,                   // ako veľmi je ruka pri švihu natiahnutá (podiel dĺžky ramena)
-  catchAt: { f: 0.14, y: 0.03 }, // kde klepeto čaká na náradie
   aim: 0.3,                      // natočenie držiaka pred výstrelom
   stroke: 0.05,                  // zdvih vystreľovača
   apex: 0.3                      // vrchol dráhy nad temenom robota

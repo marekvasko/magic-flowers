@@ -298,6 +298,7 @@ export function buildRobot(look: RobotLook): Robot3D {
     dir: THREE.Vector3; speed: number; // smer a veľkosť štartovej rýchlosti
     L: number; tau: number;          // dráha a čas zrýchlenia vystreľovača; pri hode tau = čas švihu po pustenie
     swing?: { from: number; at: number; omega: number; tauF: number; R: number; g: number }; // švih ruky: uhly, uhlová rýchlosť pri pustení, dobeh
+    catchArm?: RM.ArmTarget;         // kde klepeto čaká na vystrelené náradie (= kde ho pri hode púšťa)
     target: THREE.Matrix4;           // kde a ako náradie skončí (v súradniciach trupu)
     T: number;
   }
@@ -331,14 +332,16 @@ export function buildRobot(look: RobotLook): Robot3D {
     return { tool, yaw, h, phi, aim, dir, speed, L: 0, tau: (2 * (at - from)) / omega, target: probeSlot(tool, aim, ZERO), T: b.T, swing: { from, at, omega, tauF: (2 * RM.SWAP.follow) / omega, ...sw } };
   }
   // Výstrel: držiak (puzdro) sa natočí do smeru štartovej rýchlosti, zdvihom SWAP.stroke náradie zrýchli a pustí.
-  // Klepeto čaká v bode SWAP.catchAt natočené ako letiace náradie (os klepeta v smere výstrelu).
+  // Klepeto čaká presne tam, kde ruka to isté náradie pri odhodení púšťa (koniec švihu z planToss), natočené ako letiace
+  // náradie – výstrel je teda tá istá parabola ako hod, len opačným smerom.
   function planLaunch(tool: ToolId): Plan {
-    const { h, yaw } = throwPlane(tool), staff = staffTool(tool), at = RM.SWAP.catchAt, rest = restAxis(tool), L = RM.SWAP.stroke;
+    const toss = planToss(tool), g = must(toss.swing), { h, yaw } = toss, staff = staffTool(tool), rest = restAxis(tool), L = RM.SWAP.stroke;
     const a = UP.clone().multiplyScalar(3).add(h).normalize(), aim = new THREE.Quaternion(), p0 = new THREE.Vector3(), p1 = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
-    let phi: number | null = null, b = RM.ballistic([0, 0, 0], [0, 0, 0], 1), target = new THREE.Matrix4();
+    let phi: number | null = null, b = RM.ballistic([0, 0, 0], [0, 0, 0], 1), target = new THREE.Matrix4(), arm = swingAt(toss, g, g.at);
     for (let k = 0; k < 4; k++) {
       phi = staff ? Math.atan2(a.y, a.dot(h)) : null;
-      target = probeHeld(tool, { yaw, f: at.f, y: at.y, phi });
+      arm = swingAt({ yaw, phi }, g, g.at);
+      target = probeHeld(tool, arm);
       target.decompose(p1, q, sc);
       if (staff) aim.setFromUnitVectors(rest, a);
       probeSlot(tool, aim, a.clone().multiplyScalar(L)).decompose(p0, q, sc);
@@ -346,7 +349,7 @@ export function buildRobot(look: RobotLook): Robot3D {
       a.set(...b.v0).normalize();
     }
     const speed = Math.hypot(...b.v0);
-    return { tool, yaw, h, phi, aim, dir: a.clone(), speed, L, tau: (2 * L) / speed, target, T: b.T };
+    return { tool, yaw, h, phi, aim, dir: a.clone(), speed, L, tau: (2 * L) / speed, target, T: b.T, catchArm: arm };
   }
   // Let: náradie je dieťa trupu; poloha = šikmý vrh z miesta, kde ho ruka / držiak naozaj pustili, do cieľa; natočenie sa
   // rovnomerne dotočí do cieľového (smer už sedí, mení sa najviac otočenie okolo vlastnej osi); mierka z nosiča (0,75) na ruku (1)
@@ -406,7 +409,7 @@ export function buildRobot(look: RobotLook): Robot3D {
       return swingAt(p, g, ang);
     }
     const l = sw.launch;
-    if (l && sw.t < sw.tCatch + 0.05) return { yaw: l.yaw, f: RM.SWAP.catchAt.f, y: RM.SWAP.catchAt.y, phi: l.phi };
+    if (l?.catchArm && sw.t < sw.tCatch + 0.05) return l.catchArm;
     return null;
   }
   // držiaky podľa fázy výmeny (po nastavení kĺbov)
