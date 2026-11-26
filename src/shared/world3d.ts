@@ -1090,3 +1090,11 @@ export function nearestWater(tiles: readonly GroundTile[], px: number, pz: numbe
 
 // farby lístia stromu v danom období (pre padajúce lístie); ihličnany a zima → null
 export const leafMats = (kind: string, se: number): readonly MatId[] | null => lookup(LEAVES, kind)?.[se] || null;
+
+// 3D tráva (grass3d.ts, #196) – poradie trsov spredu dozadu: koreň bližšie ku kamere (menší priemet do smeru pohľadu dir) ide skôr. Kamera je
+// ortogonálna a celý trs má hĺbku koreňa, takže toto poradie je presné – trs nakreslený neskôr je vždy za skoršími.
+export function frontToBack(root: ArrayLike<number>, dir: { x: number; y: number; z: number }): Uint32Array {
+  const n = Math.floor(root.length / 4), key = new Float32Array(n), order = new Uint32Array(n);
+  for (let i = 0; i < n; i++) { key[i] = (root[i * 4] ?? 0) * dir.x + (root[i * 4 + 1] ?? 0) * dir.y + (root[i * 4 + 2] ?? 0) * dir.z; order[i] = i; }
+  return order.sort((a, b) => (key[a] ?? 0) - (key[b] ?? 0) || a - b);
+}
