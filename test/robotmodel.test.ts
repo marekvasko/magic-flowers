@@ -237,3 +237,25 @@ test('kĺby sa nehýbu okamžite: animácie náradia, hrabanie ani tanec nepotre
     }
   }
 });
+
+test('jednoduchý štýl (hra): tie isté kĺby (okrem článkov pásov), úchyty, rozmery a miesta náradia, ale menej dielov, bez drobností a všetko s plochými stenami', () => {
+  for (const [name, look] of LOOKS.slice(0, 60)) {
+    const d = RM.robotModel(look), s = RM.robotModel(look, true);
+    // (pásy majú v jednoduchom štýle menej, väčších článkov – ich kĺby sa líšia)
+    const noTrack = (m: RM.RobotModel): RM.Joint[] => m.joints.filter(j => !j.id.startsWith('track'));
+    assert.deepStrictEqual(noTrack(s), noTrack(d), name + ': kĺby');
+    assert.deepStrictEqual(s.mounts, d.mounts, name + ': úchyty');
+    assert.deepStrictEqual(s.slots, d.slots, name + ': miesta náradia');
+    assert.strictEqual(s.height, d.height, name);
+    assert.deepStrictEqual(s.shoulder, d.shoulder, name);
+    assert.ok(s.parts.length < d.parts.length, `${name}: ${s.parts.length} dielov oproti ${d.parts.length}`);
+    assert.ok(s.parts.every(p => p.flat), name + ': diel bez plochých stien');
+    for (const p of s.parts) {
+      const sh = p.shape;
+      assert.ok(!(sh.k === 'torus' && sh.t < 0.009) && !(sh.k === 'cyl' && sh.r < 0.014) && !(sh.k === 'sphere' && sh.r < 0.0135 && p.tag !== 'led' && p.m !== 'eye' && p.m !== 'lens'), `${name}: drobnosť ${JSON.stringify(sh)}`);
+    }
+    // oči, viečka a držiaky náradia ostali
+    assert.ok(s.parts.some(p => p.m === 'eye') && s.parts.some(p => p.tag === 'lid'), name);
+    for (const t of ['hoe', 'can', 'pick', 'lamp']) assert.ok(s.parts.some(p => p.tag === 'holder:' + t), `${name}: držiak ${t}`);
+  }
+});

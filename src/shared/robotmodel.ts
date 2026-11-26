@@ -202,12 +202,27 @@ class Builder {
   parts: Part[] = [];
   wheels: Wheel[] = [];
   tracks: Track[] = [];
-  readonly sharp: boolean;
-  constructor(sharp: boolean) { this.sharp = sharp; }
+  readonly sharp: boolean; readonly simple: boolean;
+  constructor(sharp: boolean, simple: boolean) { this.sharp = sharp; this.simple = simple; }
   joint(id: JointId, parent: JointId, p: V3): JointId { this.joints.push({ id, parent, p }); return id; }
   // ostré hrany: kocky bez zaoblenia, väčšie valce osemboké a gule mnohosteny (sklo, guma a oči ostanú hladké)
+  // Jednoduchý štýl (hra): svet je z hranatých kociek s plochými farbami, preto bez drobností (nity, skrutky, tenké
+  // obruče, odlesky, ostrohy pásov), tenké tyčky hrubšie a štvorhranné, všetko s málo stenami a plochým tieňovaním.
   add(j: JointId, shape: Shape, p: V3, m: Mat, r?: V3, tag?: string): void {
     let sh = shape;
+    if (this.simple) {
+      // (oči a zreničky ostávajú vždy – robia robotovi tvár)
+      if (sh.k === 'sphere' && m !== 'eye' && m !== 'lens' && ((sh.r < 0.0135 && tag !== 'led') || (m === 'glass' && sh.r < 0.02))) return;
+      if (sh.k === 'torus' && sh.t < 0.009) return;
+      if (sh.k === 'box' && Math.min(...sh.s) < 0.009) return;
+      if (sh.k === 'cyl' && sh.r < 0.016) { if (sh.h < 0.03) return; sh = { ...sh, r: Math.max(sh.r, 0.014), ...(sh.r2 !== undefined ? { r2: Math.max(sh.r2, 0.014) } : {}), n: 4 }; }
+      if (sh.k === 'box') sh = { ...sh, r: Math.min(sh.r, Math.min(...sh.s) * 0.18) };
+      else if (sh.k === 'cyl' && sh.n === undefined) sh = { ...sh, n: sh.r < 0.03 ? 6 : 8 };
+      else if (sh.k === 'sphere' && sh.n === undefined && m !== 'glass') sh = { ...sh, n: sh.r < 0.04 ? 5 : 8 };
+      else if (sh.k === 'capsule' && sh.n === undefined) sh = { ...sh, n: 5 };
+      this.parts.push({ j, shape: sh, p, m, ...(r ? { r } : {}), ...(tag ? { tag } : {}), flat: true });
+      return;
+    }
     if (this.sharp && HARD.includes(m)) {
       if (sh.k === 'box') sh = { ...sh, r: Math.min(sh.r, 0.004) };
       else if (sh.k === 'cyl' && sh.r >= 0.025 && sh.n === undefined) sh = { ...sh, n: 8 };
@@ -394,7 +409,8 @@ function chassis(b: Builder, L: Built, H: Hull): Chassis {
     // a dvoch pojazdových koliesok dole; bočný kryt s nitmi. Články sa pri jazde posúvajú po slučke (póza).
     // Užšie pásy (0,07) väčšinou pod okrajom trupu, aby ramená visiace vedľa trupu išli mimo nich.
     const R = (FRAME.bottom - 0.034) / 2, y0 = R + 0.009, tl = Math.max(0.32, hz * 2 + 0.1), zf = tl / 2 - R, zb = -zf, tw = 0.07, x = hx - tw / 2 - 0.004;
-    const Ls = zf - zb, n = Math.max(18, Math.round((2 * Ls + 2 * Math.PI * R) / 0.03));
+    // (v jednoduchom štýle menej, väčších článkov)
+    const Ls = zf - zb, n = b.simple ? Math.max(10, Math.round((2 * Ls + 2 * Math.PI * R) / 0.055)) : Math.max(18, Math.round((2 * Ls + 2 * Math.PI * R) / 0.03));
     for (const sx of [-1, 1]) {
       const side = sx > 0 ? 'L' : 'R', links: { j: JointId; s0: number }[] = [];
       const tr: Track = { x: sx * x, y: y0, R, zb, zf, links };
@@ -702,7 +718,8 @@ function rack(b: Builder, body: JointId, H: Hull, headBack: number): Record<Tool
   slots.lamp = { j: lj, p: [0, 0.005, 0], s: TOOL_ON_BACK };
   return { hoe: must(slots.hoe), pick: must(slots.pick), can: must(slots.can), lamp: must(slots.lamp) };
 }
-export function robotModel(look0: RobotLook): RobotModel {
+// simple = jednoduchý štýl pre hru (menej drobností, hranaté ploché diely); rozmery, kĺby a úchyty sú rovnaké
+export function robotModel(look0: RobotLook, simple = false): RobotModel {
   const L0 = robotLook(look0);
   // spoločné rozmery; robot bez hlavy má vyšší trup (po spoločnú výšku), hlavu nahrádza vrchnák
   const base: Built = { ...L0, bw: FRAME.bw, bd: FRAME.depth / FRAME.bw, arm: FRAME.arm, armT: FRAME.armT };
@@ -711,7 +728,7 @@ export function robotModel(look0: RobotLook): RobotModel {
   const minHead = headSize(base, 0.8).up + (L0.head === 'bino' ? 0.04 : 0);
   const L: Built = L0.head === 'none' ? { ...base, bh: FRAME.height - FRAME.bottom - lid(hull(base)) - 0.005 }
     : { ...base, bh: Math.min(L0.bh, FRAME.height - FRAME.bottom - lid(hull(base)) - minHead) };
-  const b = new Builder(L.edges === 'sharp'), H = hull(L);
+  const b = new Builder(L.edges === 'sharp', simple), H = hull(L);
   const ch = chassis(b, L, H), bottom = ch.bottom;
   const body = b.joint('body', 'root', [0, bottom + H.bottom, 0]);
   trunk(b, L, body, H);

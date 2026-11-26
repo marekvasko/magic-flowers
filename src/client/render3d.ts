@@ -200,11 +200,8 @@ void main() {
 #elif defined(ROBOT)
   if (fade < 1.0 && fade <= fract(dot(floor(gl_FragCoord.xy), vec2(0.7548776662, 0.5698402910)))) discard;
   vec3 base = vColor; float em = vEmis, ao = 1.0, tx = 0.0;
-  // hrdza v nátere: škvrny zo šumu podľa miesta na diele (ako v /debug – robot3d.ts)
-  if (vRust > 0.0) {
-    float rk = rustMask(vObj, vRust), rg = rNoise(vObj * 140.0);
-    base = mix(base * (1.0 - 0.35 * smoothstep(0.0, 0.5, rk) * (1.0 - rk)), mix(vec3(0.42, 0.17, 0.06), vec3(0.72, 0.36, 0.13), rg), rk);
-  }
+  // hrdza v nátere: hranaté fľaky jednej farby (šum po kockách ako textúry sveta, bez zrnenia)
+  if (vRust > 0.0) base = mix(base, vec3(0.58, 0.29, 0.12), 0.9 * step(0.5, rustMask(floor(vObj * 28.0) / 28.0 + 0.018, vRust)));
 #else
   vec3 base = vTex > 0.5 ? texture2D(map, vUv).rgb * vColor : vColor;
   float em = vEmis, ao = vAo, tx = vTex;
@@ -1650,7 +1647,7 @@ void main() {
       const skin = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { ROBOT: 1, ROBOT_SKIN: 1 }, uniforms: u });
       const skinGlass = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { ROBOT: 1, ROBOT_SKIN: 1 }, uniforms: u, transparent: true, depthWrite: false });
       const rigid = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, defines: { ROBOT: 1 }, uniforms: { ...worldU, fade } });
-      o.robot = buildRobot(robotLookOf(ro.name, look), robotBackend({ skin, skinGlass, rigid, jointTex, layers: m => { m.layers.set(1); m.layers.enable(2); } }));
+      o.robot = buildRobot(robotLookOf(ro.name, look), robotBackend({ skin, skinGlass, rigid, jointTex, layers: m => { m.layers.set(1); m.layers.enable(2); } }), { simple: true });
       o.rmats = [skin, skinGlass, rigid]; o.rfade = fade; o.rkey = key;
       o.robot.group.scale.setScalar(ROBOT_SCALE);
       scene.add(o.robot.group);

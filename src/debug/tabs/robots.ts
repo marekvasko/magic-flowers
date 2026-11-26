@@ -67,7 +67,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
   const seed0 = Number.parseInt(p('rs') ?? '', 10);
   const st: {
     mode: Mode; anim: typeof ANIMS[number]; held: ToolId | null; carried: Set<ToolId>; night: boolean;
-    one: RM.PresetId | null; seed: number; look: RobotLook; yaw: number; zoom: number;
+    one: RM.PresetId | null; seed: number; look: RobotLook; yaw: number; zoom: number; simple: boolean;
   } = {
     mode: MODES.find(m => m === p('rv')) ?? 'generator',
     anim: ANIMS.find(a => a === p('ra')) ?? 'idle',
@@ -78,13 +78,14 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
     seed: Number.isFinite(seed0) ? seed0 >>> 0 : 1,
     look: RM.PRESETS.hrdzavec.look,
     yaw: Number(p('ry') ?? '0.35') || 0,
-    zoom: Math.max(1, Math.min(3, Number.parseInt(p('rz') ?? '1', 10) || 1))
+    zoom: Math.max(1, Math.min(3, Number.parseInt(p('rz') ?? '1', 10) || 1)),
+    simple: p('rd') !== '0' // štýl ako v hre (jednoduchý) alebo so všetkými drobnosťami
   };
   st.look = parseLook(p('rg')) ?? RM.randomLook(st.seed);
   const save = (): void => {
     ctx.setParam('rv', st.mode); ctx.setParam('ra', st.anim); ctx.setParam('rh', st.held ?? 'none');
     ctx.setParam('rc', [...st.carried].join(',')); ctx.setParam('rn', st.night ? 1 : null); ctx.setParam('rf', st.one);
-    ctx.setParam('rs', st.seed); ctx.setParam('rg', JSON.stringify(st.look)); ctx.setParam('ry', st.yaw.toFixed(2)); ctx.setParam('rz', st.zoom > 1 ? st.zoom : null);
+    ctx.setParam('rs', st.seed); ctx.setParam('rg', JSON.stringify(st.look)); ctx.setParam('ry', st.yaw.toFixed(2)); ctx.setParam('rz', st.zoom > 1 ? st.zoom : null); ctx.setParam('rd', st.simple ? null : 0);
   };
 
   const bar = h('div', { class: 'rb-bar' }), panel = h('div', { class: 'rb-panel' });
@@ -126,16 +127,16 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
     names.replaceChildren(); tags.replaceChildren();
     if (st.mode === 'presets') {
       const ids = st.one ? [st.one] : RM.PRESET_IDS;
-      ids.forEach((s, i) => { addBot({ r: buildRobot(RM.PRESETS[s].look), x: (i - (ids.length - 1) / 2) * 1.0, z: 0 }); });
+      ids.forEach((s, i) => { addBot({ r: buildRobot(RM.PRESETS[s].look, undefined, { simple: st.simple }), x: (i - (ids.length - 1) / 2) * 1.0, z: 0 }); });
       names.replaceChildren(...ids.map(s => h('div', null, RM.PRESETS[s].name)));
     } else if (st.mode === 'generator') {
-      addBot({ r: buildRobot(st.look), x: 0, z: 0 });
+      addBot({ r: buildRobot(st.look, undefined, { simple: st.simple }), x: 0, z: 0 });
     } else {
       for (let i = 0; i < CROWD; i++) {
         const seed = (st.seed + i) >>> 0;
         const tag = h('div', { class: 'rb-tag', title: 'Open in the generator', onclick: () => { st.seed = seed; st.look = RM.randomLook(seed); st.mode = 'generator'; save(); rebuild(); } }, '#' + seed);
         tags.appendChild(tag);
-        addBot({ r: buildRobot(RM.randomLook(seed)), x: ((i % 4) - 1.5) * 1.15, z: (Math.floor(i / 4) - 1) * 1.25, tag });
+        addBot({ r: buildRobot(RM.randomLook(seed), undefined, { simple: st.simple }), x: ((i % 4) - 1.5) * 1.15, z: (Math.floor(i / 4) - 1) * 1.25, tag });
       }
     }
     while (lampLights.length < robots.length) { const l = new THREE.PointLight(0xffb04a, 0, 2.5, 1.6); scene.add(l); lampLights.push(l); }
@@ -159,6 +160,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
       seg(ANIMS, ANIMS.indexOf(st.anim), i => { st.anim = must(ANIMS[i]); save(); renderBar(); }),
       seg(['Day', 'Night'], st.night ? 1 : 0, i => { st.night = !!i; save(); light(); renderBar(); }),
       seg(['1×', '2×', '3×'], st.zoom - 1, i => { st.zoom = i + 1; save(); renderBar(); }),
+      seg(['Game style', 'Detailed'], st.simple ? 0 : 1, i => { st.simple = !i; save(); rebuild(); }),
       // výmena náradia s animáciou: staré letí na nosič, nové z nosiča do ruky (obe sú vlastnené – sú v „On back“)
       h('label', null, 'In hand', seg(['—', ...TOOLS.map(t => TOOL_NAME[t])], st.held ? TOOLS.indexOf(st.held) + 1 : 0, i => {
         const to = TOOLS[i - 1] ?? null;
@@ -181,7 +183,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
     st.look = RM.robotLook(l); save();
     for (const o of robots) o.r.dispose();
     robots = [];
-    addBot({ r: buildRobot(st.look), x: 0, z: 0 });
+    addBot({ r: buildRobot(st.look, undefined, { simple: st.simple }), x: 0, z: 0 });
     if (panelToo) renderPanel(); else stats.textContent = statText();
   }
   const copyMsg = h('span', { class: 'muted' });

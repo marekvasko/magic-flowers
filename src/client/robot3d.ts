@@ -215,8 +215,9 @@ export interface Robot3D {
   mountWorld(id: MountId, out?: THREE.Vector3): THREE.Vector3;
   dispose(): void;
 }
-export function buildRobot(look: RobotLook, backend?: RobotBackend): Robot3D {
-  const model = RM.robotModel(look), mats = materials(model.look), bl = batchLook(model.look);
+// opts.simple: jednoduchý štýl pre hru (RM.robotModel) – hranatý, bez drobností, aby robot sedel do sveta z kociek
+export function buildRobot(look: RobotLook, backend?: RobotBackend, opts: { simple?: boolean } = {}): Robot3D {
+  const model = RM.robotModel(look, !!opts.simple), mats = materials(model.look), bl = batchLook(model.look);
   const group = new THREE.Group(); group.name = `robot:${model.look.loco}/${model.look.body}/${model.look.head}`;
   const joints = new Map<JointId, THREE.Group>();
   const jointBase = new Map<THREE.Object3D, readonly [number, number, number]>(), partBase = new Map<THREE.Object3D, THREE.Vector3>();

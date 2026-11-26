@@ -529,3 +529,24 @@ test('nohy: chodidlá stoja na zemi a nohy nejdú do zeme ani do trupu – v sto
     r.dispose();
   }
 });
+
+test('jednoduchý štýl (hra): menej trojuholníkov, náradie na nosiči sa nedotýka trupu, hlavy ani iného náradia, výmena náradia funguje', () => {
+  for (const [name, look] of LOOKS.slice(0, 12)) {
+    const d = buildRobot(look), r = buildRobot(look, undefined, { simple: true });
+    d.setTools(null, TOOLS); r.setTools(null, TOOLS);
+    assert.ok(triangles(r.group) < triangles(d.group) * 0.8, `${name}: ${triangles(r.group)} oproti ${triangles(d.group)}`);
+    r.pose({});
+    r.group.updateMatrixWorld(true);
+    const body = r.group.getObjectByName('body'), head = r.group.getObjectByName('head');
+    assert.ok(body && head, name);
+    const trunk = boxes(body, true), hd = boxes(head, true), tb = TOOLS.map(t => { const o = r.group.getObjectByName('tool:' + t); assert.ok(o); return boxes(o); });
+    for (const [i, t] of TOOLS.entries()) {
+      assert.ok(!hits(tb[i] ?? [], trunk) && !hits(tb[i] ?? [], hd), `${name}: ${t} zasahuje do robota`);
+      for (let k = i + 1; k < TOOLS.length; k++) assert.ok(!hits(tb[i] ?? [], tb[k] ?? []), `${name}: ${t} zasahuje do ${TOOLS[k]}`);
+    }
+    r.switchTool('can');
+    for (let k = 0; r.switching() && k < 600; k++) r.pose({}, 1 / 60);
+    assert.ok(!r.switching(), name);
+    d.dispose(); r.dispose();
+  }
+});
