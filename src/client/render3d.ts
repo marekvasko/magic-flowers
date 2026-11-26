@@ -59,8 +59,14 @@ const vec2 PD[16] = vec2[16](
   vec2(-0.916, 0.458), vec2(-0.815, -0.879), vec2(-0.383, 0.277), vec2(0.975, 0.756),
   vec2(0.443, -0.975), vec2(0.537, -0.474), vec2(-0.265, -0.419), vec2(0.792, 0.191),
   vec2(-0.242, 0.997), vec2(-0.814, 0.914), vec2(0.200, 0.786), vec2(0.144, -0.141));
+#ifdef SUN_VIS_GIVEN
+float sunVisGiven = 1.0; // tráva (grass3d.ts): svetlo sa vo vrchole počíta dvakrát – v tieni (0) a na slnku (1); tieň doplní pixel
+#endif
 float sunVisibility(float facing) {
   if (shadowOn < 0.5 || facing <= 0.02) return 0.0;           // noc alebo stena odvrátená od slnka
+#ifdef SUN_VIS_GIVEN
+  return sunVisGiven;
+#else
   vec3 sc = vShadow.xyz / vShadow.w * 0.5 + 0.5;
   if (sc.x < 0.0 || sc.x > 1.0 || sc.y < 0.0 || sc.y > 1.0 || sc.z > 1.0) return 1.0;
   // disk natočený podľa miesta vo svete – namiesto pásov jemný, stabilný prechod
@@ -72,6 +78,7 @@ float sunVisibility(float facing) {
     lit += sc.z - 0.0008 <= d ? 1.0 : 0.0;
   }
   return lit / float(SHADOW_TAPS);
+#endif
 }`;
 // Stmievanie smerom na sever (Les na pomedzí, D.gloomAt): gloom = (od ktorého z, najviac, exponent); max 0 = vypnuté.
 // Ubúda okolité svetlo aj slnko, svetlo lampášov nie.
@@ -2095,7 +2102,7 @@ void main() {
   // ---------- Častice a blčanie svetiel ----------
   const sceneBefore = new Set(scene.children);
   const particles = createParticles({ scene, camera, renderer, S, ripple });
-  const grass3d = createGrass3d({ THREE, scene, light: LIGHT_GLSL, water: { y: W.WATER_Y, tan: Math.tan(PITCH) }, world: worldU, mask: worldU.grassMask, maskOn: worldU.grassOn });
+  const grass3d = createGrass3d({ THREE, scene, light: LIGHT_GLSL, shadow: SHADOW_GLSL, water: { y: W.WATER_Y, tan: Math.tan(PITCH) }, world: worldU, mask: worldU.grassMask, maskOn: worldU.grassOn });
   const particleObjs = scene.children.filter(o => !sceneBefore.has(o)); // objekty častíc (ladiaca stránka ich vie skryť)
   const boat3d = createBoat3d({ THREE, scene, camera, S, dir8, yaw: () => yaw, light: (x, y, z) => lightAt(x, y, z, lastLights, lastLights.length) });
   const spiders3d = createSpiders3d({ THREE, scene, S, groundY, lightAt, spriteTex, makeSprite, project, camera, camTarget, renderer, world: worldU, maxLights: MAX_LIGHTS, fine: () => grid && grid.fine });
