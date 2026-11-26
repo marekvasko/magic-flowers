@@ -491,3 +491,41 @@ test('výmena náradia: vystrelené náradie padne do ruky tam, kde ho ruka pri 
     r.dispose();
   }
 });
+
+test('nohy: chodidlá stoja na zemi a nohy nejdú do zeme ani do trupu – v stoji, pri chôdzi, plazení aj tanci', () => {
+  const walkers = LOOKS.filter(([, l]) => l.loco === 'legs2' || l.loco === 'legs3');
+  assert.ok(walkers.length >= 6);
+  for (const [name, look] of walkers) {
+    const r = buildRobot(look), body = r.group.getObjectByName('body');
+    assert.ok(body, name);
+    r.setTools(null, TOOLS);
+    const poses: [string, RM.PoseOpts][] = [['stoj', {}], ['plazenie v stoji', { crawl: true }],
+      ...[0, 1, 2, 3, 4, 5, 6, 7].flatMap((k): [string, RM.PoseOpts][] => [['chôdza ' + k, { walking: true, phase: (k * Math.PI) / 4 }], ['plazenie ' + k, { crawl: true, walking: true, phase: (k * Math.PI) / 4 }]]),
+      ['tanec', { dance: true, t: 0.26 }]];
+    for (const [pose, o] of poses) {
+      r.pose(o);
+      r.group.updateMatrixWorld(true);
+      const legs: THREE.Object3D[] = [], feet: THREE.Object3D[] = [];
+      body.traverse(c => { if (/^hip/.test(c.name)) legs.push(c); if (/^foot/.test(c.name)) feet.push(c); });
+      assert.strictEqual(feet.length, look.loco === 'legs2' ? 2 : 3, name);
+      const msg = `${name} (${look.loco}/${look.body}), ${pose}`;
+      // 1) nič z nôh nie je pod zemou; každé chodidlo je na zemi alebo najviac o zdvih kroku nad ňou
+      const stepping = !!o.walking;
+      for (const f of feet) {
+        const low = new THREE.Box3().setFromObject(f, true).min.y;
+        assert.ok(low > -0.006, `${msg}: chodidlo pod zemou (${low.toFixed(3)})`);
+        // pri tanci robot poskakuje (trup vyskočí vyššie, ako nohy dočiahnu) – chodidlá sa smú odlepiť
+        assert.ok(low < (o.dance ? 0.06 : stepping ? 0.04 : 0.006), `${msg}: chodidlo vo vzduchu (${low.toFixed(3)})`);
+      }
+      for (const l of legs) assert.ok(new THREE.Box3().setFromObject(l, true).min.y > -0.006, `${msg}: noha pod zemou`);
+      if (stepping) assert.ok(feet.some(f => new THREE.Box3().setFromObject(f, true).min.y < 0.006), `${msg}: žiadne chodidlo nestojí na zemi`);
+      // 2) nohy od kolena dolu nejdú do trupu (stehno je k trupu pripojené v bedre – tam sa ho dotýka)
+      const rest: Solid[] = [];
+      for (const part of body.children) if (part instanceof THREE.Mesh && part.name !== 'armmount') rest.push(...solids(part));
+      const knees: THREE.Object3D[] = [];
+      body.traverse(c => { if (/^knee/.test(c.name)) knees.push(c); });
+      for (const k of knees) for (const a of solids(k)) for (const b of rest) assert.ok(!touch(a, b), `${msg}: ${a.what} zasahuje do ${b.what}`);
+    }
+    r.dispose();
+  }
+});

@@ -497,16 +497,23 @@ function chassis(b: Builder, L: Built, H: Hull): Chassis {
   const bottom = FRAME.bottom;
   return { bottom, out: H.hx * 0.88 + 0.025, top: bottom, front: H.hz * 0.7 + 0.05 };
 }
+// Dve nohy: dĺžka stehna a predkolenia, výška členka nad zemou a výška topánky
+const LEG2 = { thigh: 0.095, shin: 0.085, ankle: 0.04, sole: 0.05 } as const;
 // nohy na trupe (bedrá sa kývu s trupom)
 function legs(b: Builder, L: Built, body: JointId, H: Hull, bottom: number): void {
   const yb = -H.bottom;
   if (L.loco === 'legs2') {
-    const len = bottom - 0.05;
+    // dve nohy s kolenom a členkom: stehno → koleno → predkolenie → členok s topánkou. Nohy sú spolu dlhšie ako výška
+    // bedra nad členkom, takže koleno je vždy trochu pokrčené dopredu; uhly dáva póza (IK – chodidlá stoja na zemi).
     for (const sx of [-1, 1]) {
-      const hip = b.joint('hip' + (sx > 0 ? 'L' : 'R'), body, [sx * Math.max(0.06, H.hx * 0.45), yb, 0]);
+      const side = sx > 0 ? 'L' : 'R', hip = b.joint('hip' + side, body, [sx * Math.max(0.06, H.hx * 0.45), yb, 0]);
       b.add(hip, { k: 'sphere', r: 0.032 }, [0, 0, 0], 'dark');
-      b.add(hip, { k: 'capsule', r: 0.028, h: Math.max(0.01, len - 0.05) }, [0, -len / 2, 0], 'metal');
-      b.add(hip, { k: 'box', s: [0.08, 0.05, 0.12], r: 0.022 }, [0, -len - 0.025, 0.02], 'accent');
+      b.add(hip, { k: 'capsule', r: 0.026, h: LEG2.thigh - 0.04 }, [0, -LEG2.thigh / 2, 0], 'metal');
+      const knee = b.joint('knee' + side, hip, [0, -LEG2.thigh, 0]);
+      b.add(knee, { k: 'sphere', r: 0.026 }, [0, 0, 0], 'accent');
+      b.add(knee, { k: 'capsule', r: 0.022, h: LEG2.shin - 0.04 }, [0, -LEG2.shin / 2, 0], 'metal');
+      const foot = b.joint('foot' + side, knee, [0, -LEG2.shin, 0]);
+      b.add(foot, { k: 'box', s: [0.08, 0.05, 0.12], r: 0.022 }, [0, LEG2.sole / 2 - LEG2.ankle, 0.02], 'accent');
     }
   } else if (L.loco === 'legs3') {
     // trojnožka: koleno vonku, chodidlo trochu bližšie pod trupom
@@ -520,7 +527,10 @@ function legs(b: Builder, L: Built, body: JointId, H: Hull, bottom: number): voi
       b.add(knee, { k: 'sphere', r: 0.022 }, [0, 0, 0], 'accent');
       const foot: V3 = [-ax * 0.25, -(bottom + 0.02) * 0.58 + 0.01, -az * 0.25];
       b.rod(knee, [0, 0, 0], foot, 0.013, 'metal');
-      b.add(knee, { k: 'cyl', r: 0.04, r2: 0.03, h: 0.018 }, [foot[0], foot[1] - 0.005, foot[2]], 'dark');
+      // chodidlo má vlastný kĺb (členok), aby pri pokrčení nohy ostalo naplocho na zemi
+      const fj = b.joint('foot' + i, knee, foot);
+      b.add(fj, { k: 'sphere', r: 0.016 }, [0, 0, 0], 'accent');
+      b.add(fj, { k: 'cyl', r: 0.04, r2: 0.03, h: 0.018 }, [0, -0.005, 0], 'dark');
     }
   }
 }
@@ -885,7 +895,7 @@ export function jointSpeed(id: JointId): number {
   if (/^shoulder/.test(id)) return 10;
   if (/^elbow/.test(id)) return 12;
   if (/^hand/.test(id)) return 14;
-  if (/^(hip|knee)/.test(id)) return 12;
+  if (/^(hip|knee|foot)/.test(id)) return 12;
   if (id === 'body') return 5;
   if (id === 'head' || id === 'neck' || id === 'eye') return 6;
   return Infinity;
@@ -900,6 +910,14 @@ export function clampJoint(id: JointId, r: V3): V3 {
     return Math.max(lo, Math.min(hi, r[i]));
   };
   return [c(0), c(1), c(2)];
+}
+const JMAP = new WeakMap<RobotModel, Map<JointId, Joint>>();
+function jointMap(m: RobotModel): Map<JointId, Joint> { let s = JMAP.get(m); if (!s) JMAP.set(m, s = new Map(m.joints.map(j => [j.id, j]))); return s; }
+// Otočenie o uhol ang okolo osi w (jednotkový vektor) ako Eulerove uhly XYZ
+function axisEuler(w: V3, ang: number): V3 {
+  const c = cos(ang), sn = sin(ang), k = 1 - c, [x, y, z] = w;
+  const m13 = k * x * z + sn * y, m23 = k * y * z - sn * x, m33 = c + k * z * z, m12 = k * x * y - sn * z, m11 = c + k * x * x;
+  return [Math.atan2(-m23, m33), Math.asin(Math.max(-1, Math.min(1, m13))), Math.atan2(-m12, m11)];
 }
 const IDS = new WeakMap<RobotModel, Set<JointId>>();
 function jointIds(m: RobotModel): Set<JointId> { let s = IDS.get(m); if (!s) IDS.set(m, s = new Set(m.joints.map(j => j.id))); return s; }
@@ -920,12 +938,15 @@ export function robotPose(m: RobotModel, o: PoseOpts): RobotPose {
     set(l.j, [q.a, 0, 0], [0, q.y - q0.y, q.z - q0.z]);
   }
   // trup: pohupovanie, predklon pri plazení, tanec
-  const bob = roll ? (walk ? Math.abs(sin(ph * 2)) * 0.008 : 0) : Math.abs(sw) * 0.025;
+  // roboty na nohách sa pri kroku trochu prikrčia (nie nadvihnú – nohy by na zem nedočiahli)
+  const bob = roll ? (walk ? Math.abs(sin(ph * 2)) * 0.008 : 0) : -Math.abs(sw) * 0.012;
   const crawl = o.crawl ? 1 : 0;
   let bodyR: V3 = [walk && m.look.loco === 'ball' ? 0.18 : 0, 0, walk && !roll ? sw * 0.06 : 0];
-  let bodyD: V3 = [0, bob - crawl * (roll ? 0.04 : 0.09), 0];
+  // na nohách si čupne: dve nohy o 6 cm, trojnožka o 4 cm (viac by kolená išli do trupu)
+  let bodyD: V3 = [0, bob - crawl * (roll ? 0.04 : m.look.loco === 'legs3' ? 0.04 : 0.06), 0];
   if (o.dance) { bodyR = [0, sin(t * 3) * 0.5, sin(t * 6) * 0.12]; bodyD = [0, Math.abs(sin(t * 6)) * 0.04, 0]; }
-  if (crawl) bodyR = [bodyR[0] + 0.35, bodyR[1], bodyR[2]];
+  // pri plazení sa kolesové roboty predklonia; roboty na nohách si čupnú (nohy sa pokrčia, chodidlá ostanú na zemi)
+  if (crawl && roll) bodyR = [bodyR[0] + 0.35, bodyR[1], bodyR[2]];
   set('body', bodyR, bodyD);
   // krk: pri plazení zasunutý, inak sa hlava zvedavo rozhliada
   const look = o.dance ? 0 : sin(t * 0.7) * 0.35 * (walk ? 0.3 : 1);
@@ -971,10 +992,39 @@ export function robotPose(m: RobotModel, o: PoseOpts): RobotPose {
   set('shoulderR', armR); set('shoulderL', armL);
   set('elbowR', elbR); set('elbowL', elbL);
   set('handR', handR); set('handL', handL);
-  // nohy (chôdza): bedrá sa kývu striedavo; trojnožka Kotlíka cupitá po jednej nohe
+  // Nohy: IK – chodidlá stoja na zemi, nech trup klesne (plazenie), pohupuje sa alebo poskakuje (tanec); pri chôdzi sa
+  // chodidlo zdvihne, prenesie dopredu a položí. Dve nohy sa ohýbajú v kolene dopredu, trojnožka kolenami von.
   if (!roll) {
-    set('hipL', [walk ? -sw * 0.5 : 0, 0, 0]); set('hipR', [walk ? sw * 0.5 : 0, 0, 0]);
-    for (let i = 0; i < 3; i++) { const k = walk ? sin(ph + (i * 2 * Math.PI) / 3) : 0; set('hip' + i, [k * 0.25, 0, 0], [0, Math.max(0, k) * 0.03, 0]); }
+    const jm = jointMap(m), bodyY = (jm.get('body')?.p[1] ?? 0) + bodyD[1];
+    for (const [side, th] of [['L', ph], ['R', ph + Math.PI]] as const) {
+      const hip = jm.get('hip' + side), knee = jm.get('knee' + side), foot = jm.get('foot' + side);
+      if (!hip || !knee || !foot) continue;
+      const l1 = -knee.p[1], l2 = -foot.p[1], stride = crawl ? 0.03 : 0.045;
+      // členok voči bedru (v súradniciach trupu): výška nad zemou + zdvih kroku, dopredu / dozadu podľa kroku;
+      // kývanie trupu do strán dvíha a spúšťa bedrá
+      const dz = walk ? stride * sin(th) : 0, lift = walk ? (crawl ? 0.012 : 0.03) * Math.max(0, cos(th)) : 0;
+      const dy = LEG2.ankle + lift - bodyY - hip.p[1] - hip.p[0] * sin(bodyR[2]);
+      const d = Math.max(Math.abs(l1 - l2) + 1e-4, Math.min((l1 + l2) * 0.995, Math.hypot(dy, dz)));
+      const phiD = Math.atan2(dz, -dy), beta = Math.acos(Math.max(-1, Math.min(1, (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d))));
+      const phi1 = phiD + beta, phi12 = Math.atan2(dz - l1 * sin(phi1), -(dy + l1 * cos(phi1)));
+      set('hip' + side, [-phi1, 0, 0]); set('knee' + side, [-(phi12 - phi1), 0, 0]); set('foot' + side, [phi12, 0, 0]);
+    }
+    for (let i = 0; i < 3; i++) {
+      const hip = jm.get('hip' + i), knee = jm.get('knee' + i), foot = jm.get('foot' + i);
+      if (!hip || !knee || !foot) continue;
+      // rovina nohy: smer von od stredu (e) a hore; os otáčania w = e × hore (kladný uhol dvíha nohu von a hore)
+      const r0 = Math.hypot(hip.p[0], hip.p[2]), e: V3 = [hip.p[0] / r0, 0, hip.p[2] / r0], w: V3 = [-e[2], 0, e[0]];
+      const K0 = [knee.p[0] * e[0] + knee.p[2] * e[2], knee.p[1]] as const, F0 = [foot.p[0] * e[0] + foot.p[2] * e[2], foot.p[1]] as const;
+      const l1 = Math.hypot(...K0), l2 = Math.hypot(...F0), lift = walk ? (crawl ? 0.012 : 0.03) * Math.max(0, sin(ph + (i * 2 * Math.PI) / 3)) : 0;
+      // chodidlo voči bedru: ako v pokoji, o toľko vyššie, o koľko trup klesol (+ zdvih kroku)
+      // (kývanie trupu do strán dvíha a spúšťa bedrá – aj to noha vyrovná)
+      const u = K0[0] + F0[0], v = K0[1] + F0[1] - bodyD[1] + lift - hip.p[0] * sin(bodyR[2]);
+      const d = Math.max(Math.abs(l1 - l2) + 1e-4, Math.min((l1 + l2) * 0.995, Math.hypot(u, v)));
+      const a1 = Math.atan2(v, u) + Math.acos(Math.max(-1, Math.min(1, (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d))));
+      const a2 = Math.atan2(v - l1 * sin(a1), u - l1 * cos(a1));
+      const d1 = a1 - Math.atan2(K0[1], K0[0]), d2 = a2 - Math.atan2(F0[1], F0[0]);
+      set('hip' + i, axisEuler(w, d1)); set('knee' + i, axisEuler(w, d2 - d1)); set('foot' + i, axisEuler(w, -d2));
+    }
   }
   // žmurkanie: každé ~4 s na 0,15 s (0 = otvorené, 1 = zavreté)
   const bt = ((t % 4.1) + 4.1) % 4.1;
