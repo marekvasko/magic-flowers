@@ -195,6 +195,7 @@ function alignY(n: V3): V3 {
 }
 
 // Stavba modelu: kĺby a diely
+const HAT_BRIM = 0.11; // polomer striešky klobúčika
 const HARD: readonly Mat[] = ['paint', 'accent', 'metal', 'dark'];
 class Builder {
   joints: Joint[] = [{ id: 'root', parent: null, p: [0, 0, 0] }];
@@ -282,7 +283,7 @@ class Builder {
       this.add(j, { k: 'cyl', r: 0.008, h: 0.16 }, [x, y + 0.08, z], 'dark', undefined, 'antenna');
       this.add(j, { k: 'sphere', r: 0.028 }, [x, y + 0.17, z], 'eye', undefined, 'antenna');
     } else if (acc === 'hat') {
-      this.add(j, { k: 'cyl', r: 0.13, h: 0.015 }, [x, y + 0.008, z], 'accent');
+      this.add(j, { k: 'cyl', r: HAT_BRIM, h: 0.015 }, [x, y + 0.008, z], 'accent');
       this.add(j, { k: 'cyl', r: 0.075, r2: 0.07, h: 0.09 }, [x, y + 0.055, z], 'accent');
       this.add(j, { k: 'cyl', r: 0.077, h: 0.02 }, [x, y + 0.03, z], 'rust');
     } else if (acc === 'sprout') {
@@ -561,7 +562,7 @@ function head(b: Builder, L: Built, body: JointId, H: Hull, s: number, nl: numbe
     const eye = b.joint('eye', body, [0, y, 0]);
     if (L.eyes === 1) b.roundEye(eye, [0, 0, H.front(y) + 0.005], r * 1.25, 0, 'accent', L.rivets);
     else for (const sx of [-1, 1]) { const yaw = L.body === 'box' ? 0 : Math.asin(Math.min(0.8, (sx * r * 1.15) / H.hx)); b.roundEye(eye, [sx * r * 1.15, 0, H.front(y) * Math.cos(yaw) + 0.005], r, yaw, 'accent'); }
-    return { j: top, p: [0, (H.top - H.hy) + 0.005, 0], back: 0, half: 0 };
+    return { j: top, p: [0, (H.top - H.hy) + 0.005, 0], back: H.hz * 1.05 + 0.012, half: 0 }; // trup (s horným lemom) siaha až po temeno – nosič ďalej dozadu ako pri širokej hlave
   }
   const neck = b.joint('neck', body, [0, H.top, L.head === 'bino' ? -0.02 : 0]);
   if (nl > 0.005) {
@@ -630,7 +631,7 @@ function arms(b: Builder, L: Built, body: JointId, H: Hull, ch: Chassis, hd: { b
   const half = Math.max(t * 1.35, GRIP_R + 0.003 + Math.max(0.012, t * 0.6) + 0.004), clawDrop = t * 0.45 + 0.018 + (GRIP_R + 0.003) * 2 + 0.012;
   let swingBack = 1;
   if (sx - half < RACK_OUT) {
-    const rackFront = Math.min(-H.front(0) - 0.016, -hd.back + 0.015) - 0.016; // z čela puzdier
+    const rackFront = Math.min(-H.front(0) - 0.016, -hd.back - 0.03) - 0.016; // z čela puzdier
     const room = sz - 0.022 - (rackFront + 0.008), len = arm * 1.05 + clawDrop;
     swingBack = Math.max(0, Math.min(1, Math.asin(Math.max(0, Math.min(1, room / len))) / 0.5));
   }
@@ -655,41 +656,45 @@ const RACK_W = 0.3, TOOL_ON_BACK = 0.75;
 // hrúbka 0,008) mínus polomer háku 0,005
 export const CAN_HOOK = 0.02 + 0.035 - 0.008 - 0.005;
 function rack(b: Builder, body: JointId, H: Hull, headBack: number): Record<ToolId, Mount> {
-  // doska tesne za chrbtom; keď hlava prečnieva dozadu viac ako trup, posunie sa ďalej, aby rúčky v puzdrách išli za hlavou
-  const hh = Math.max(0.14, Math.min(0.2, H.hy * 1.5)), back = -H.front(0), bz = Math.min(back - 0.016, -headBack + 0.015);
+  // doska tesne za chrbtom; keď hlava siaha dozadu skoro ako trup alebo viac, posunie sa ďalej, aby rúčky v puzdrách
+  // išli za hlavou a vystrelené náradie ju pri stúpaní minulo
+  const hh = Math.max(0.14, Math.min(0.2, H.hy * 1.5)), back = -H.front(0), bz = Math.min(back - 0.016, -headBack - 0.03);
   const j = b.joint('rack', body, [0, 0, bz]);
   b.add(j, { k: 'box', s: [RACK_W * 0.8, hh, 0.02], r: 0.006 }, [0, 0, 0], 'accent');
   // úchyty k trupu (dlhšie, keď je doska odsunutá)
   const bl = back - bz + 0.012;
   for (const x of [-1, 1]) for (const y of [-1, 1]) b.add(j, { k: 'box', s: [0.022, 0.022, bl], r: 0.004 }, [x * RACK_W * 0.25, y * hh * 0.32, bl / 2], 'dark');
   const slots: Partial<Record<ToolId, Mount>> = {};
-  // puzdrá: rúra s obručou hore, mierne vyklonené do strán, objímka k doske
+  // Každý držiak je vlastný kĺb (holder:<náradie>) – vystreľovač: pri výmene náradia sa natočí do smeru výstrelu
+  // (puzdro okolo svojho stredu) a krátkym zdvihom pozdĺž neho náradie vymrští (client/robot3d.ts počíta dráhu).
+  // puzdrá: rúra s obručou hore, mierne vyklonené do strán; otočný čap k doske ostáva na nosiči
   for (const [tool, sx] of [['hoe', -1], ['pick', 1]] as const) {
-    const tilt = -sx * 0.1, qx = sx * RACK_W * 0.43, qy = -hh * 0.1, qz = -0.04, len = 0.15;
+    const tilt = -sx * 0.1, qx = sx * RACK_W * 0.43, qy = -hh * 0.1, qz = -0.05, len = 0.15;
     const ux = -Math.sin(tilt), uy = Math.cos(tilt); // os puzdra (hore)
-    const hold = 'holder:' + tool;
-    b.add(j, { k: 'cyl', r: 0.024, h: len }, [qx, qy, qz], 'dark', [0, 0, tilt], hold);
-    b.add(j, { k: 'torus', r: 0.025, t: 0.006 }, [qx + ux * len / 2, qy + uy * len / 2, qz], 'metal', [0, 0, tilt], hold);
-    b.add(j, { k: 'torus', r: 0.026, t: 0.005 }, [qx, qy, qz], 'accent', [0, 0, tilt], hold);
-    // objímka priamo medzi puzdrom a doskou (nie do strany, kde visí krhla a lampáš)
-    b.add(j, { k: 'box', s: [0.018, 0.034, 0.012], r: 0.003 }, [qx, qy, -0.013], 'dark', undefined, hold);
+    const hold = 'holder:' + tool, hj = b.joint(hold, j, [qx, qy, qz]);
+    b.add(hj, { k: 'cyl', r: 0.024, h: len }, [0, 0, 0], 'dark', [0, 0, tilt], hold);
+    b.add(hj, { k: 'torus', r: 0.025, t: 0.006 }, [ux * len / 2, uy * len / 2, 0], 'metal', [0, 0, tilt], hold);
+    b.add(hj, { k: 'torus', r: 0.026, t: 0.005 }, [0, 0, 0], 'accent', [0, 0, tilt], hold);
+    // čap priamo medzi puzdrom a doskou (nie do strany, kde visí krhla a lampáš)
+    b.add(j, { k: 'box', s: [0.016, 0.02, 0.018], r: 0.003 }, [qx, qy, -0.017], 'dark', undefined, hold);
     // náradie: rúčka zasunutá do puzdra, hlavica trčí nad ním; motyka čepeľou dozadu (nie do trupu)
-    slots[tool] = { j, p: [qx + ux * (len / 2 - 0.05), qy + uy * (len / 2 - 0.05), qz], r: tool === 'hoe' ? [0, Math.PI, -tilt] : [0, 0, tilt], s: TOOL_ON_BACK };
+    slots[tool] = { j: hj, p: [ux * (len / 2 - 0.05), uy * (len / 2 - 0.05), 0], r: tool === 'hoe' ? [0, Math.PI, -tilt] : [0, 0, tilt], s: TOOL_ON_BACK };
   }
   const top = hh / 2 - 0.012;
   // krhla: hák z jednej strany – stĺpik od dosky, rameno naprieč (pozdĺž x) so zahnutým koncom. Oblúk držadla krhly
   // (v rovine yz, kolmo na rameno) je na ramene navlečený tak, že rameno leží vo vrchole oblúka; hubica smeruje dozadu.
-  const cx = -0.035, cz = -0.07, px = cx + 0.03, ex = cx - 0.024;
-  b.add(j, { k: 'cyl', r: 0.005, h: -cz }, [px, top, cz / 2], 'metal', [Math.PI / 2, 0, 0], 'holder:can');   // stĺpik
-  b.add(j, { k: 'sphere', r: 0.0065 }, [px, top, cz], 'metal', undefined, 'holder:can');                       // ohyb
-  b.add(j, { k: 'cyl', r: 0.005, h: px - ex }, [(px + ex) / 2, top, cz], 'metal', [0, 0, Math.PI / 2], 'holder:can'); // rameno
-  b.add(j, { k: 'cyl', r: 0.005, h: 0.024 }, [ex, top + 0.01, cz], 'metal', undefined, 'holder:can');          // zahnutý koniec
-  slots.can = { j, p: [cx, top - CAN_HOOK * TOOL_ON_BACK, cz], r: [0, Math.PI, 0], s: TOOL_ON_BACK };
+  // Kĺb háku je v strede ramena; celý hák sa pri výstrele vysunie v smere letu.
+  const cx = -0.035, cz = -0.07, px = 0.03, ex = -0.024, cj = b.joint('holder:can', j, [cx, top, cz]);
+  b.add(cj, { k: 'cyl', r: 0.005, h: -cz }, [px, 0, -cz / 2], 'metal', [Math.PI / 2, 0, 0], 'holder:can');   // stĺpik
+  b.add(cj, { k: 'sphere', r: 0.0065 }, [px, 0, 0], 'metal', undefined, 'holder:can');                        // ohyb
+  b.add(cj, { k: 'cyl', r: 0.005, h: px - ex }, [(px + ex) / 2, 0, 0], 'metal', [0, 0, Math.PI / 2], 'holder:can'); // rameno
+  b.add(cj, { k: 'cyl', r: 0.005, h: 0.024 }, [ex, 0.01, 0], 'metal', undefined, 'holder:can');               // zahnutý koniec
+  slots.can = { j: cj, p: [0, -CAN_HOOK * TOOL_ON_BACK, 0], r: [0, Math.PI, 0], s: TOOL_ON_BACK };
   // lampáš: kolík dozadu so zahnutým koncom; krúžok lampáša je na ňom navlečený
-  const lx = 0.05;
-  b.add(j, { k: 'cyl', r: 0.005, h: 0.09 }, [lx, top, -0.045], 'metal', [Math.PI / 2, 0, 0], 'holder:lamp');
-  b.add(j, { k: 'cyl', r: 0.005, h: 0.022 }, [lx, top + 0.009, -0.09], 'metal', undefined, 'holder:lamp');
-  slots.lamp = { j, p: [lx, top + 0.005, -0.068], s: TOOL_ON_BACK };
+  const lx = 0.05, lj = b.joint('holder:lamp', j, [lx, top, -0.068]);
+  b.add(lj, { k: 'cyl', r: 0.005, h: 0.09 }, [0, 0, 0.023], 'metal', [Math.PI / 2, 0, 0], 'holder:lamp');
+  b.add(lj, { k: 'cyl', r: 0.005, h: 0.022 }, [0, 0.009, -0.022], 'metal', undefined, 'holder:lamp');
+  slots.lamp = { j: lj, p: [0, 0.005, 0], s: TOOL_ON_BACK };
   return { hoe: must(slots.hoe), pick: must(slots.pick), can: must(slots.can), lamp: must(slots.lamp) };
 }
 export function robotModel(look0: RobotLook): RobotModel {
@@ -707,7 +712,10 @@ export function robotModel(look0: RobotLook): RobotModel {
   trunk(b, L, body, H);
   legs(b, L, body, H, bottom);
   const fit = fitHead(L, bottom + H.bottom + H.top, H.hx);
-  const top = head(b, L, body, H, fit.s, fit.nl);
+  const top0 = head(b, L, body, H, fit.s, fit.nl);
+  // klobúčik má širokú striešku (0,13) – siaha dozadu ďalej ako hlava; nosič a vystrelené náradie ju musia minúť
+  // (náradie dopadá do držiaka šikmo, preto ešte 3 cm navyše)
+  const top = L.acc === 'hat' ? { ...top0, back: Math.max(top0.back, HAT_BRIM + 0.03 - (L.head === 'bino' ? -0.02 : 0) - top0.p[2]) } : top0;
   details(b, L, body, H, L.head === 'none');
   const { sx, sy, sz, arm, swingBack } = arms(b, L, body, H, ch, top);
   const slots = rack(b, body, H, top.back);
@@ -722,7 +730,7 @@ export function robotModel(look0: RobotLook): RobotModel {
 // ---------- póza ----------
 // Čo robot práve robí (ako CharOpts postavičky): fáza kroku (rastie s prejdenou dráhou), plazenie, tanec, hrabanie (čas),
 // výška skoku, čas (žmurkanie, rozhliadanie), náradie v ruke
-export interface PoseOpts { phase?: number; t?: number; crawl?: boolean; dance?: boolean; dig?: number; digWith?: ToolId | null; use?: { tool: ToolId; t: number } | null; swap?: 'toss' | 'catch' | null; jz?: number; hold?: HoldKind | null; walking?: boolean }
+export interface PoseOpts { phase?: number; t?: number; crawl?: boolean; dance?: boolean; dig?: number; digWith?: ToolId | null; use?: { tool: ToolId; t: number } | null; arm?: ArmTarget | null; jz?: number; hold?: HoldKind | null; walking?: boolean }
 export interface JointPose { r: V3; d?: V3 }
 // pour = ako veľmi je krhla naklonená (0–1, voda tečie od ~0,6); rigid = zavesené náradie drží pevne (nevisí podľa gravitácie)
 export interface RobotPose { readonly joints: ReadonlyMap<JointId, JointPose>; readonly blink: number; readonly steam: number; readonly pour: number; readonly rigid: boolean }
@@ -818,34 +826,67 @@ function useTool(m: RobotModel, tool: ToolId, s: number): UseState {
   // lampáš: ruka sa zdvihne pred seba nad hlavu (lampáš visí na krúžku dolu), kýve sa, potom ho spustí
   const up = s < 0.25 ? ease(s / 0.25) : s < 0.75 ? 1 : 1 - ease((s - 0.75) / 0.25);
   const low: Target = { y: sy - 0.17, z: sz + 0.15, phi: 0 }, high: Target = { y: sy + 0.1, z: sz + 0.15 + Math.sin(s * 12) * 0.015 * up, phi: 1.2 };
-  return { arm: ik(m, lerpT(low, high, up)), spread: 0.24, wrist: Math.PI / 2, pour: 0, head: -0.35 * up };
+  return { arm: ik(m, lerpT(low, high, up)), spread: 0.24, wrist: -Math.PI / 2, pour: 0, head: -0.35 * up };
 }
 
-// ---------- výmena náradia ----------
-// Ruka na nosič na chrbte nedočiahne. Pri výmene preto robot držané náradie zdvihne a prehodí cez plece dozadu
-// (toss) – letí po pevnej dráhe do svojho držiaka – a nosič vystrelí nové náradie dopredu ponad hlavu priamo do klepeta
-// (catch: ruka čaká hore pred robotom). Časy v sekundách; v hre bude výmena chvíľu trvať (herná mechanika neskôr).
-export const SWAP = { toss: 0.4, flight: 0.75, prep: 0.45, settle: 0.3, apex: 0.45 } as const; // apex: vrchol letu nad temenom
-// celkový čas výmeny (z náradia from na to; null = prázdna ruka)
-export function swapTime(from: ToolId | null, to: ToolId | null): number {
-  const launch = from ? SWAP.toss + SWAP.flight : 0;
-  return to ? Math.max(launch, SWAP.prep) + SWAP.flight + SWAP.settle : launch;
+// ---------- výmena náradia: fyzika ----------
+// Ruka na nosič na chrbte nedočiahne, náradie sa preto hádže. Všetko sa deje v zvislej rovine, ktorá prechádza držiakom
+// náradia na nosiči a pravým plecom (rameno sa do nej natočí), v súradniciach trupu:
+//  - odhodenie: ruka (IK) zrýchľuje náradie po priamke v smere štartovej rýchlosti v0 (bez otáčania) a pustí ho, keď má
+//    rýchlosť v0; náradie letí po parabole (gravitácia GRAVITY) a padne do svojho držiaka, ktorý sa vopred natočil
+//    proti smeru dopadu (rúčka vkĺzne do puzdra);
+//  - výstrel: držiak sa natočí do smeru v0, krátkym zdvihom (stroke) náradie zrýchli na |v0| a pustí; parabola končí
+//    v klepete, ktoré čaká v bode chytenia natočené rovnako ako letiace náradie.
+// Počas letu sa náradie neotáča (okrem malého rovnomerného dotočenia) – smer mu dá ruka alebo držiak.
+// Časy v sekundách, dĺžky v políčkach. V hre bude výmena chvíľu trvať (herná mechanika neskôr).
+export const GRAVITY = 9.8;
+export const SWAP = {
+  wind: 0.35,                    // náprah: ruka do začiatku hodu, držiak sa natočí
+  tossT: 0.14,                   // trvanie zrýchlenia ruky pri hode
+  tossAt: { f: 0.16, y: 0.06 },  // kde ruka (úchop) náradie pustí: pred plecom (f) a nad ním (y), v rovine hodu
+  catchAt: { f: 0.14, y: 0.03 }, // kde klepeto čaká na náradie
+  aim: 0.3,                      // natočenie držiaka pred výstrelom
+  stroke: 0.05,                  // zdvih vystreľovača
+  apex: 0.3                      // vrchol dráhy nad temenom robota
+} as const;
+// Šikmý vrh: z bodu p0 do bodu p1 cez vrchol vo výške apex (najmenej kúsok nad oboma bodmi) → štartová rýchlosť,
+// čas letu a rýchlosť pri dopade
+export function ballistic(p0: V3, p1: V3, apex: number): { v0: V3; T: number; vEnd: V3 } {
+  const top = Math.max(apex, p0[1] + 0.02, p1[1] + 0.02);
+  const vy = Math.sqrt(2 * GRAVITY * (top - p0[1])), T = vy / GRAVITY + Math.sqrt((2 * (top - p1[1])) / GRAVITY);
+  const v0: V3 = [(p1[0] - p0[0]) / T, vy, (p1[2] - p0[2]) / T];
+  return { v0, T, vEnd: [v0[0], vy - GRAVITY * T, v0[2]] };
 }
-// ruka pri prehodení (nad plecom) a pri chytaní (pred robotom, odklonená do strany, aby chytené náradie viselo mimo trupu)
-const SWAP_POSE: Readonly<Record<'toss' | 'catch', Target>> = { toss: { y: 0.15, z: 0.03, phi: 2.6 }, catch: { y: 0.1, z: 0.19, phi: 1.3 } };
+export const ballisticAt = (p0: V3, v0: V3, t: number): V3 => [p0[0] + v0[0] * t, p0[1] + v0[1] * t - 0.5 * GRAVITY * t * t, p0[2] + v0[2] * t];
+// Cieľ pravej ruky v zvislej rovine cez plece natočenej o yaw (okolo zvislej osi; 0 = dopredu): úchop (stred klepeta)
+// má byť f pred plecom a y nad ním; phi = natočenie ruky (os klepeta mieri pod uhlom phi nad smer dopredu),
+// null = ruka v predĺžení predlaktia so zápästím otočeným o 90° (os klepeta vodorovne naprieč, von od trupu – zavesené náradie)
+export interface ArmTarget { yaw: number; f: number; y: number; phi: number | null }
+export function armPlane(m: RobotModel, a: ArmTarget): { sh: V3; el: V3; hd: V3 } {
+  const g = -m.mounts.handR.p[1], [, sy, sz] = m.shoulder;
+  let phi = a.phi ?? 1.2, r = ikArm(m, sy + a.y + g * cos(phi), sz + a.f - g * sin(phi), phi);
+  if (a.phi === null) for (let i = 0; i < 8; i++) { phi += r.hd; r = ikArm(m, sy + a.y + g * cos(phi), sz + a.f - g * sin(phi), phi); }
+  // plece: otočenie Ry(yaw) · Rx(th) ako Eulerove uhly XYZ (lakeť a zápästie sa ďalej ohýbajú okolo osi kolmej na rovinu)
+  const th = r.sh, cy = cos(a.yaw), sn = sin(a.yaw);
+  const sh: V3 = [Math.atan2(sin(th), cy * cos(th)), Math.asin(Math.max(-1, Math.min(1, sn * cos(th)))), Math.atan2(-sn * sin(th), cy)];
+  return { sh: clampJoint('shoulderR', sh), el: clampJoint('elbowR', [r.el, 0, 0]), hd: clampJoint('handR', a.phi === null ? [0, -Math.PI / 2, 0] : [r.hd, 0, 0]) }; // zápästie −90°: os klepeta (hubica krhly) mieri von od trupu
+}
 
 // ---------- obmedzenia kĺbov ----------
 // Rozsah otočenia kĺbov ramena (Euler x, y, z v radiánoch, pravá strana; ľavá má y a z zrkadlovo): plece sa zdvihne
-// dopredu až nad hlavu, dozadu len trochu, do strán málo; lakeť sa ohýba len jedným smerom; zápästie má obmedzený
+// dopredu až nad hlavu, dozadu len trochu, do strán a okolo zvislej osi obmedzene (rovina hodu pri výmene náradia); lakeť sa ohýba len jedným smerom; zápästie má obmedzený
 // sklon aj otočenie. Póza (aj IK) sa do nich vždy oreže.
 type Range = readonly [number, number];
 export const JOINT_LIMITS: Readonly<Record<'shoulder' | 'elbow' | 'hand', readonly [Range, Range, Range]>> = {
-  shoulder: [[-3.0, 0.9], [-0.3, 0.3], [-0.6, 0.1]],
+  shoulder: [[-3.0, 0.9], [-1.1, 1.1], [-1.1, 0.4]],
   elbow: [[-2.5, 0], [0, 0], [0, 0]],
   hand: [[-2.2, 2.2], [-1.7, 1.7], [-0.2, 0.2]]
 };
 // Najväčšia rýchlosť kĺbu (rad/s): kĺby sa nehýbu okamžite – robot3d ich ťahá k póze najviac touto rýchlosťou.
 // Kolesá a články pásu idú presne s dráhou (Infinity).
+// Hod: ruka dlhá 0,24 políčka musí náradiu dať ~3 políčka/s, čo je ~20 rad/s v pleci (rýchlosť / rameno páky) –
+// viac, ako kĺby bežne smú. Počas krátkeho zrýchlenia pri hode preto kĺby pravej ruky smú až THROW_SPEED.
+export const THROW_SPEED = 24;
 export function jointSpeed(id: JointId): number {
   if (/^shoulder/.test(id)) return 10;
   if (/^elbow/.test(id)) return 12;
@@ -907,7 +948,7 @@ export function robotPose(m: RobotModel, o: PoseOpts): RobotPose {
   let wristR = 0;
   if (o.hold === 'staff') { armR = fwd(0.4 + sw * 0.12); elbR = [-1.05, 0, 0]; }
   // zavesené náradie nesie trochu bokom (rameno odklonené von), aby viselo mimo trupu aj podvozku
-  if (o.hold === 'hang') { armR = [-(0.75 + sw * 0.1), 0, -0.24]; elbR = [-0.85, 0, 0]; wristR = Math.PI / 2; }
+  if (o.hold === 'hang') { armR = [-(0.75 + sw * 0.1), 0, -0.24]; elbR = [-0.85, 0, 0]; wristR = -Math.PI / 2; } // zápästie −90°: os klepeta (hubica krhly) mieri von od trupu
   // pri tanci a plazení ruka so zaveseným náradím (krhla, lampáš) ostane v polohe nesenia
   const carry = o.hold === 'hang';
   if (o.dance) { if (!carry) { armR = [-2.6 + sin(t * 6) * 0.3, 0, -0.3]; elbR = [-0.4, 0, 0]; } armL = [-2.6 - sin(t * 6) * 0.3, 0, 0.3]; elbL = [-0.4, 0, 0]; }
@@ -922,11 +963,8 @@ export function robotPose(m: RobotModel, o: PoseOpts): RobotPose {
     if (left) { armL = [a.sh, 0, 0]; elbL = [a.el, 0, 0]; handL = [a.hd, 0, 0]; }
     else { armR = [a.sh, 0, 0]; elbR = [a.el, 0, 0]; handR = [a.hd, 0, 0]; armL = fwd(0.3); elbL = [-0.5, 0, 0]; }
   }
-  // výmena náradia: ruka hore (prehodenie dozadu) alebo hore pred robotom (chytanie)
-  if (o.swap) {
-    const tg = SWAP_POSE[o.swap], [, sy, sz] = m.shoulder, a = ik(m, { y: sy + tg.y, z: sz + tg.z, phi: tg.phi });
-    armR = [a.sh, 0, -0.24]; elbR = [a.el, 0, 0]; handR = [a.hd, 0, 0]; // ruka odklonená do strany, náradie mimo trupu
-  }
+  // cieľ pravej ruky zadaný priamo (výmena náradia: hod a chytanie v rovine hodu)
+  if (o.arm) { const a = armPlane(m, o.arm); armR = a.sh; elbR = a.el; handR = a.hd; }
   // použitie náradia v pravej ruke (vlastný pohyb každého náradia)
   let pour = 0, rigid = false;
   if (o.use) {

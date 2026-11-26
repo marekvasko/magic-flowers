@@ -93,7 +93,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
   const info = h('div', { class: 'rb-info muted' },
     'Procedural robot generator for ', h('a', { href: 'https://github.com/marekvasko/magic-flowers/issues/194', target: '_blank' }, '#194'),
     ': a robot is a genome of parts (chassis, body, head, eyes, details), sizes and colours; a seed gives a random one, the five presets are hand-tuned genomes. ',
-    `Every robot has the same dimensions (${RM.FRAME.height} tiles tall, same shoulders, arm length and hand positions) – only shapes and looks change. The selected tool is in the right gripper; every other owned tool has its own place on the back rack (motyka and krompáč in the holster tubes, krhla and lampáš on the hooks). Switching tools (In hand) is animated: the robot tosses the held tool over its shoulder into its holder and the rack catapults the new one over its head into the gripper. Drag to rotate; 1 grid square = 1 tile.`);
+    `Every robot has the same dimensions (${RM.FRAME.height} tiles tall, same shoulders, arm length and hand positions) – only shapes and looks change. The selected tool is in the right gripper; every other owned tool has its own place on the back rack (motyka and krompáč in the holster tubes, krhla and lampáš on the hooks). Switching tools (In hand) is real projectile physics: the arm accelerates the held tool and lets go, it flies a parabola into its holder; the new tool's holder aims, kicks it out and it falls on a parabola into the waiting gripper. Drag to rotate; 1 grid square = 1 tile.`);
   el.replaceChildren(h('div', { class: 'rb' }, bar, main, info));
 
   // ---------- scéna ----------
@@ -255,9 +255,9 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
     // kamera: izometrická ako v hre, otočená o yaw
     const single = st.mode === 'generator' || (st.mode === 'presets' && !!st.one);
     const span = st.mode === 'crowd' ? 5.4 : single ? 1.5 : 4.4, asp = w / hh;
-    const vw = Math.max(span, (st.mode === 'crowd' ? 3.6 : single ? 1.15 : 1.6) * asp) / 2 / st.zoom, vh = vw / asp;
+    const vw = Math.max(span, (st.mode === 'crowd' ? 3.6 : single ? 1.45 : 1.6) * asp) / 2 / st.zoom, vh = vw / asp; // jeden robot: vidno aj let náradia nad hlavou
     Object.assign(cam, { left: -vw, right: vw, top: vh, bottom: -vh }); cam.updateProjectionMatrix();
-    const cy = st.mode === 'crowd' ? 0.1 : st.zoom > 1 ? 0.25 : 0.38;
+    const cy = st.mode === 'crowd' ? 0.1 : st.zoom > 1 ? 0.25 : single ? 0.5 : 0.38;
     cam.position.set(Math.sin(st.yaw) * Math.cos(PITCH) * 20, Math.sin(PITCH) * 20 + cy, Math.cos(st.yaw) * Math.cos(PITCH) * 20); cam.lookAt(0, cy, 0);
     const walking = st.anim === 'walk' || st.anim === 'crawl';
     dist += dt * (walking ? (st.anim === 'crawl' ? 15 : 30) : 0); // fáza kroku: ~10 za políčko, 3 políčka/s

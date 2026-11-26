@@ -127,8 +127,9 @@ export interface Robot3D {
   readonly group: THREE.Group; readonly model: RobotModel;
   // náradie: held = v ruke, carried = ostatné vlastnené (na chrbte; held sa na chrbte nezobrazí)
   setTools(held: ToolId | null, carried: readonly ToolId[]): void;
-  // výmena náradia s animáciou (RM.SWAP): držané náradie prehodí dozadu do jeho držiaka, nosič vystrelí nové náradie
-  // ponad hlavu do klepeta. Náradie to musí mať na nosiči (inak sa vymení hneď). Priebeh posúva pose(o, dt).
+  // výmena náradia s fyzikou (RM.SWAP, šikmý vrh): ruka držané náradie rozbehne a pustí – po parabole padne do svojho
+  // držiaka; držiak nového náradia sa natočí, vymrští ho a to po parabole dopadne do čakajúceho klepeta.
+  // Náradie to musí mať na nosiči (inak sa vymení hneď). Priebeh posúva pose(o, dt).
   switchTool(to: ToolId | null): void;
   readonly switching: () => boolean;
   // dt (s): kĺby sa k póze ťahajú najviac rýchlosťou RM.jointSpeed (nehýbu sa okamžite); bez dt sa nastavia hneď
@@ -194,10 +195,11 @@ export function buildRobot(look: RobotLook): Robot3D {
     frame.rotation.set(...g.r); frame.add(obj);
     pivot.add(frame); hand.add(pivot);
     hanging = RM.TOOL_HOLD[tool] === 'hang' ? pivot : null;
-    heldObj = obj;
+    heldObj = obj; heldPivot = pivot;
     lamp = tool === 'lamp' ? obj : null;
   }
-  function dropHeld(): void { const pv = heldObj?.parent?.parent; pv?.removeFromParent(); heldObj = null; hanging = null; lamp = null; }
+  let heldPivot: THREE.Group | null = null;           // úchop v klepete (kĺb zaveseného náradia → natočenie rúčky → náradie)
+  function dropHeld(): void { heldPivot?.removeFromParent(); heldPivot = null; heldObj = null; hanging = null; lamp = null; }
   function setTools(held: ToolId | null, carried: readonly ToolId[]): void {
     for (const t of tools) {
       t.removeFromParent();
@@ -212,88 +214,205 @@ export function buildRobot(look: RobotLook): Robot3D {
     }
     held0 = held;
   }
-  // ---------- výmena náradia (let po pevnej dráhe) ----------
-  // Let: náradie je dieťa robota (group), poloha a natočenie z matíc v súradniciach robota. Dráha je parabola od začiatku
-  // k cieľu (cieľ sa čita v každom snímku – ruka sa môže hýbať, náradie aj tak skončí presne v klepete), vrchol vysoko
-  // nad hlavou (aj dlhá motyka ju minie) a oblúk do strany (na strane ruky, mimo hlavy); natočenie sa plynulo mení
-  // z polohy na nosiči do polohy v ruke; mierka z nosiča (0,75) na ruku (1).
-  interface Flight { obj: THREE.Object3D; t0: number; start: THREE.Matrix4; target: () => THREE.Object3D; land: () => void }
-  const flights: Flight[] = [];
-  interface Swap { t: number; from: ToolId | null; to: ToolId | null; launch: number; end: number; tossed: boolean; launched: boolean; marker: THREE.Object3D | null }
-  let swap: Swap | null = null;
-  const inv = new THREE.Matrix4(), mB = new THREE.Matrix4();
-  const pA = new THREE.Vector3(), pB = new THREE.Vector3(), qA = new THREE.Quaternion(), qB = new THREE.Quaternion(), sA = new THREE.Vector3(), sB = new THREE.Vector3();
-  const ease3 = (x: number): number => x * x * (3 - 2 * x);
-  const local = (o: THREE.Object3D, out: THREE.Matrix4): THREE.Matrix4 => out.multiplyMatrices(inv.copy(group.matrixWorld).invert(), o.matrixWorld);
-  function fly(obj: THREE.Object3D, target: () => THREE.Object3D, land: () => void, t0: number): void {
-    group.updateMatrixWorld(true);
-    const start = local(obj, new THREE.Matrix4());
-    group.add(obj); obj.matrixAutoUpdate = true;
-    flights.push({ obj, t0, start, target, land });
+  // ---------- výmena náradia: šikmý vrh v súradniciach trupu ----------
+  const bodyJ = must(joints.get('body')), rackJ = must(joints.get('rack'));
+  const holders: Record<ToolId, THREE.Group> = { hoe: must(joints.get('holder:hoe')), can: must(joints.get('holder:can')), pick: must(joints.get('holder:pick')), lamp: must(joints.get('holder:lamp')) };
+  const armJ = [must(joints.get('shoulderR')), must(joints.get('elbowR')), must(joints.get('handR'))] as const;
+  const ease3 = (x: number): number => { const c = Math.max(0, Math.min(1, x)); return c * c * (3 - 2 * c); };
+  const tmpM = new THREE.Matrix4(), UP = new THREE.Vector3(0, 1, 0), ZERO = new THREE.Vector3(), ID = new THREE.Quaternion();
+  // matica objektu v súradniciach trupu
+  const inBody = (o: THREE.Object3D): THREE.Matrix4 => { group.updateMatrixWorld(true); return new THREE.Matrix4().multiplyMatrices(tmpM.copy(bodyJ.matrixWorld).invert(), o.matrixWorld); };
+  const v3 = (v: THREE.Vector3): [number, number, number] => [v.x, v.y, v.z];
+  // Kde a ako by bolo náradie v ruke pri danom cieli ruky (ruka sa na chvíľu nastaví, prečíta sa a vráti späť)
+  function probeHeld(tool: ToolId, a: RM.ArmTarget): THREE.Matrix4 {
+    const saved = armJ.map(g => g.quaternion.clone()), lb = lastBar.clone(), temp = !heldObj, hq = hanging?.quaternion.clone();
+    if (temp) attachHeld(tool, new THREE.Group());
+    const r = RM.armPlane(model, a);
+    armJ[0].rotation.set(...r.sh); armJ[1].rotation.set(...r.el); armJ[2].rotation.set(...r.hd);
+    hang(false, 0);
+    const m = inBody(must(heldObj ?? undefined));
+    armJ.forEach((g, k) => g.quaternion.copy(must(saved[k])));
+    lastBar.copy(lb);
+    if (temp) dropHeld(); else if (hanging && hq) hanging.quaternion.copy(hq);
+    return m;
   }
-  function stepFlights(t: number): void {
-    for (let i = flights.length - 1; i >= 0; i--) {
-      const f = must(flights[i]), k = Math.max(0, Math.min(1, (t - f.t0) / RM.SWAP.flight));
-      group.updateMatrixWorld(true);
-      f.start.decompose(pA, qA, sA); local(f.target(), mB).decompose(pB, qB, sB);
-      const top = model.height * model.scale + RM.SWAP.apex, h = Math.max(0.08, top - Math.max(pA.y, pB.y));
-      const arc = 4 * k * (1 - k);
-      // najprv preč od robota (z nosiča dozadu, z ruky dopredu), na konci prilieta zo svojej strany
-      f.obj.position.lerpVectors(pA, pB, k); f.obj.position.y += h * arc; f.obj.position.x += Math.sign(pA.x + pB.x) * 0.1 * arc;
-      f.obj.position.z += Math.sign(pA.z) * 0.2 * arc * (1 - k) + Math.sign(pB.z) * 0.2 * arc * k;
-      f.obj.quaternion.slerpQuaternions(qA, qB, ease3(k));
-      f.obj.scale.lerpVectors(sA, sB, k);
-      if (k >= 1) { flights.splice(i, 1); f.land(); }
+  // Kde a ako je náradie v držiaku natočenom o aim a vysunutom o d
+  function setHolder(tool: ToolId, aim: THREE.Quaternion, d: THREE.Vector3): void {
+    const h = holders[tool], b = must(jointBase.get(h));
+    h.quaternion.copy(aim); h.position.set(b[0] + d.x, b[1] + d.y, b[2] + d.z);
+  }
+  function probeSlot(tool: ToolId, aim: THREE.Quaternion, d: THREE.Vector3): THREE.Matrix4 {
+    const h = holders[tool], q = h.quaternion.clone(), p = h.position.clone();
+    setHolder(tool, aim, d);
+    const m = inBody(slots[tool]);
+    h.quaternion.copy(q); h.position.copy(p);
+    return m;
+  }
+  // Rovina hodu náradia: zvislá, cez jeho držiak a pravé plece; h = smer od držiaka k plecu (dopredu), yaw = jej natočenie
+  function throwPlane(tool: ToolId): { h: THREE.Vector3; yaw: number } {
+    const hb = must(jointBase.get(holders[tool])), rb = must(jointBase.get(rackJ));
+    const h = new THREE.Vector3(-model.shoulder[0] - (hb[0] + rb[0]), 0, model.shoulder[2] - (hb[2] + rb[2])).normalize();
+    return { h, yaw: Math.atan2(h.x, h.z) };
+  }
+  // vrchol dráhy (v súradniciach trupu): nad temenom robota
+  const apexY = (): number => model.height / model.scale - must(jointBase.get(bodyJ))[1] + RM.SWAP.apex;
+  const restAxis = (tool: ToolId): THREE.Vector3 => UP.clone().applyQuaternion(slots[tool].quaternion); // os puzdra v pokoji
+  const staffTool = (tool: ToolId): boolean => RM.TOOL_HOLD[tool] === 'staff';
+  interface Plan {
+    tool: ToolId; yaw: number; h: THREE.Vector3;
+    phi: number | null;              // natočenie ruky pri pustení / chytení
+    aim: THREE.Quaternion;           // natočenie držiaka
+    dir: THREE.Vector3; speed: number; // smer a veľkosť štartovej rýchlosti
+    L: number; tau: number;          // dráha a čas zrýchlenia (ruky alebo vystreľovača)
+    target: THREE.Matrix4;           // kde a ako náradie skončí (v súradniciach trupu)
+    T: number;
+  }
+  // Odhodenie: ruka pustí náradie v bode SWAP.tossAt; náradie sa cestou neotáča, preto ho ruka drží už natočené tak,
+  // ako dopadne – proti smeru dopadu (a = −v pri dopade), a držiak sa natočí rovnako. Pár iterácií (smer dopadu závisí
+  // od bodu pustenia a ten od natočenia ruky).
+  function planToss(tool: ToolId): Plan {
+    const { h, yaw } = throwPlane(tool), staff = staffTool(tool), at = RM.SWAP.tossAt, rest = restAxis(tool);
+    const a = UP.clone(), aim = new THREE.Quaternion(), p0 = new THREE.Vector3(), p1 = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+    let phi: number | null = null, b = RM.ballistic([0, 0, 0], [0, 0, 0], 1);
+    for (let k = 0; k < 4; k++) {
+      phi = staff ? Math.atan2(a.y, a.dot(h)) : null;
+      probeHeld(tool, { yaw, f: at.f, y: at.y, phi }).decompose(p0, q, sc);
+      if (staff) aim.setFromUnitVectors(rest, a);
+      probeSlot(tool, aim, ZERO).decompose(p1, q, sc);
+      b = RM.ballistic(v3(p0), v3(p1), apexY());
+      a.set(-b.vEnd[0], -b.vEnd[1], -b.vEnd[2]).normalize();
     }
+    const dir = new THREE.Vector3(...b.v0), speed = dir.length(); dir.normalize();
+    return { tool, yaw, h, phi, aim, dir, speed, L: (speed * RM.SWAP.tossT) / 2, tau: RM.SWAP.tossT, target: probeSlot(tool, aim, ZERO), T: b.T };
   }
+  // Výstrel: držiak (puzdro) sa natočí do smeru štartovej rýchlosti, zdvihom SWAP.stroke náradie zrýchli a pustí.
+  // Klepeto čaká v bode SWAP.catchAt natočené ako letiace náradie (os klepeta v smere výstrelu).
+  function planLaunch(tool: ToolId): Plan {
+    const { h, yaw } = throwPlane(tool), staff = staffTool(tool), at = RM.SWAP.catchAt, rest = restAxis(tool), L = RM.SWAP.stroke;
+    const a = UP.clone().multiplyScalar(3).add(h).normalize(), aim = new THREE.Quaternion(), p0 = new THREE.Vector3(), p1 = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+    let phi: number | null = null, b = RM.ballistic([0, 0, 0], [0, 0, 0], 1), target = new THREE.Matrix4();
+    for (let k = 0; k < 4; k++) {
+      phi = staff ? Math.atan2(a.y, a.dot(h)) : null;
+      target = probeHeld(tool, { yaw, f: at.f, y: at.y, phi });
+      target.decompose(p1, q, sc);
+      if (staff) aim.setFromUnitVectors(rest, a);
+      probeSlot(tool, aim, a.clone().multiplyScalar(L)).decompose(p0, q, sc);
+      b = RM.ballistic(v3(p0), v3(p1), apexY());
+      a.set(...b.v0).normalize();
+    }
+    const speed = Math.hypot(...b.v0);
+    return { tool, yaw, h, phi, aim, dir: a.clone(), speed, L, tau: (2 * L) / speed, target, T: b.T };
+  }
+  // Let: náradie je dieťa trupu; poloha = šikmý vrh z miesta, kde ho ruka / držiak naozaj pustili, do cieľa; natočenie sa
+  // rovnomerne dotočí do cieľového (smer už sedí, mení sa najviac otočenie okolo vlastnej osi); mierka z nosiča (0,75) na ruku (1)
+  interface Flight { obj: THREE.Group; t0: number; T: number; p0: [number, number, number]; v0: [number, number, number]; q0: THREE.Quaternion; s0: number; q1: THREE.Quaternion; s1: number; land: () => void }
+  const flights: Flight[] = [];
+  function fly(obj: THREE.Group, target: THREE.Matrix4, t0: number, land: () => void): void {
+    const p = new THREE.Vector3(), q0 = new THREE.Quaternion(), sc = new THREE.Vector3(), p1 = new THREE.Vector3(), q1 = new THREE.Quaternion(), s1 = new THREE.Vector3();
+    inBody(obj).decompose(p, q0, sc); target.decompose(p1, q1, s1);
+    const b = RM.ballistic(v3(p), v3(p1), apexY());
+    bodyJ.add(obj);
+    flights.push({ obj, t0, T: b.T, p0: v3(p), v0: b.v0, q0, s0: sc.x, q1, s1: s1.x, land });
+  }
+  function stepFlights(t: number): boolean {
+    let landed = false;
+    for (let k = flights.length - 1; k >= 0; k--) {
+      const f = must(flights[k]), tt = Math.min(f.T, t - f.t0), u = tt / f.T;
+      f.obj.position.set(...RM.ballisticAt(f.p0, f.v0, tt));
+      f.obj.quaternion.slerpQuaternions(f.q0, f.q1, u);
+      f.obj.scale.setScalar(f.s0 + (f.s1 - f.s0) * u);
+      if (t - f.t0 >= f.T) { flights.splice(k, 1); f.land(); landed = true; }
+    }
+    return landed;
+  }
+  // Priebeh výmeny (časy od začiatku): náprah → zrýchlenie ruky → pustenie (tRel) → let do držiaka (tLand);
+  // natočenie držiaka nového náradia → zdvih (od tStroke) → pustenie (tOut) → let do klepeta → chytenie
+  interface Swap {
+    t: number; from: ToolId | null; to: ToolId | null;
+    toss: Plan | null; tRel: number; tLand: number; released: boolean;
+    launch: Plan | null; tAim: number; tStroke: number; tOut: number; tCatch: number; out: boolean;
+  }
+  let swap: Swap | null = null;
   function switchTool(to: ToolId | null): void {
     const from = swap ? swap.to : held0;
     if (swap || from === to) { if (from !== to) { const owned = [...stored.keys(), ...(held0 ? [held0] : [])]; setTools(to, owned); } return; }
     if (to && !stored.has(to)) { setTools(to, [...stored.keys(), ...(from ? [from] : [])]); return; } // nie je na nosiči – hneď
-    const launch = from ? RM.SWAP.toss + RM.SWAP.flight : 0;
-    swap = { t: 0, from, to, launch, end: RM.swapTime(from, to), tossed: !from, launched: !to, marker: null };
+    const toss = from ? planToss(from) : null, tRel = toss ? RM.SWAP.wind + toss.tau : 0, tLand = toss ? tRel + toss.T : 0;
+    swap = { t: 0, from, to, toss, tRel, tLand, released: !toss, launch: null, tAim: Infinity, tStroke: Infinity, tOut: Infinity, tCatch: Infinity, out: !to };
+    if (!toss && to) planOut(swap, 0);
   }
-  function stepSwap(dt: number): 'toss' | 'catch' | null {
+  // naplánuje výstrel (ruka už musí byť prázdna): natočenie od času t, zdvih po dopade odhodeného náradia
+  function planOut(sw: Swap, t: number): void {
+    if (!sw.to) return;
+    sw.launch = planLaunch(sw.to);
+    sw.tAim = t; sw.tStroke = Math.max(t + RM.SWAP.aim, sw.tLand + 0.05, t + 0.45); sw.tOut = sw.tStroke + sw.launch.tau; sw.tCatch = sw.tOut + sw.launch.T;
+  }
+  // cieľ ruky podľa fázy výmeny (pred výpočtom pózy)
+  function swapArm(dt: number): RM.ArmTarget | null {
     const sw = swap;
     if (!sw) return null;
     sw.t += dt;
-    // 1) prehodenie držaného náradia dozadu do jeho držiaka
-    if (!sw.tossed && sw.t >= RM.SWAP.toss && sw.from && heldObj) {
-      sw.tossed = true;
-      const obj = heldObj, from = sw.from;
-      group.updateMatrixWorld(true);
-      group.attach(obj); dropHeld(); held0 = null;
-      fly(obj, () => slots[from], () => { slots[from].add(obj); obj.position.set(0, 0, 0); obj.quaternion.identity(); obj.scale.setScalar(1); stored.set(from, obj); }, RM.SWAP.toss);
+    const p = sw.toss;
+    if (p && !sw.released) {
+      // náprah na začiatok hodu, potom rovnomerne zrýchlený pohyb po priamke v smere v0 až do bodu pustenia
+      const u = Math.max(0, Math.min(1, (sw.t - RM.SWAP.wind) / p.tau)), back = p.L * (1 - u * u), at = RM.SWAP.tossAt;
+      return { yaw: p.yaw, f: at.f - p.dir.dot(p.h) * back, y: at.y - p.dir.y * back, phi: p.phi };
     }
-    // 2) výstrel nového náradia z nosiča do klepeta (cieľ = značka v klepete, kde náradie bude držané)
-    if (!sw.launched && sw.to && sw.t >= sw.launch) {
-      sw.launched = true;
-      const to = sw.to, obj = must(stored.get(to)), marker = new THREE.Group();
-      stored.delete(to);
-      attachHeld(to, marker); sw.marker = marker; held0 = null;
+    const l = sw.launch;
+    if (l && sw.t < sw.tCatch + 0.05) return { yaw: l.yaw, f: RM.SWAP.catchAt.f, y: RM.SWAP.catchAt.y, phi: l.phi };
+    return null;
+  }
+  // držiaky podľa fázy výmeny (po nastavení kĺbov)
+  const hq = new THREE.Quaternion(), hd = new THREE.Vector3();
+  function swapHolders(): void {
+    const sw = swap;
+    if (!sw) return;
+    const p = sw.toss, l = sw.launch;
+    // držiak odhodeného náradia: natočí sa proti dopadu, po dopade sa s náradím vráti
+    if (p) setHolder(p.tool, hq.slerpQuaternions(ID, p.aim, sw.t < sw.tLand ? ease3(sw.t / RM.SWAP.wind) : 1 - ease3((sw.t - sw.tLand) / 0.3)), ZERO);
+    // držiak nového náradia: natočí sa do smeru výstrelu, zdvih s = L·u² (na konci rýchlosť |v0|), potom sa vráti
+    if (l) {
+      const k = sw.t < sw.tOut ? ease3((sw.t - sw.tAim) / RM.SWAP.aim) : 1 - ease3((sw.t - sw.tOut - 0.1) / 0.3);
+      const u = Math.max(0, Math.min(1, (sw.t - sw.tStroke) / l.tau)), d = sw.t < sw.tOut ? l.L * u * u : l.L * (1 - ease3((sw.t - sw.tOut) / 0.15));
+      setHolder(l.tool, hq.slerpQuaternions(ID, l.aim, k), hd.copy(l.dir).multiplyScalar(d));
+    }
+  }
+  // udalosti výmeny (po nastavení kĺbov a zaveseného náradia): pustenie z ruky, výstrel z držiaka, dopady
+  function swapEvents(): void {
+    const sw = swap;
+    if (!sw) return;
+    if (!sw.released && sw.toss && sw.t >= sw.tRel && heldObj) {
+      sw.released = true;
+      const obj = heldObj, from = sw.toss.tool, target = sw.toss.target;
       group.updateMatrixWorld(true);
-      group.attach(obj);
-      fly(obj, () => marker, () => {
-        dropHeld(); // odstráni úchop so značkou
-        attachHeld(to, obj); held0 = to;
-      }, sw.launch);
+      bodyJ.attach(obj); dropHeld(); held0 = null;
+      fly(obj, target, sw.tRel, () => { slots[from].add(obj); obj.position.set(0, 0, 0); obj.quaternion.identity(); obj.scale.setScalar(1); stored.set(from, obj); });
+      planOut(sw, sw.t);
+    }
+    if (!sw.out && sw.launch && sw.t >= sw.tOut) {
+      sw.out = true;
+      const to = sw.launch.tool, obj = must(stored.get(to));
+      stored.delete(to);
+      group.updateMatrixWorld(true);
+      bodyJ.attach(obj);
+      fly(obj, sw.launch.target, sw.tOut, () => { attachHeld(to, obj); held0 = to; hang(false, 0); });
     }
     stepFlights(sw.t);
-    const catching = sw.to && sw.t >= sw.launch - RM.SWAP.prep && sw.t < sw.launch + RM.SWAP.flight + 0.05;
-    const tossing = sw.from && sw.t < RM.SWAP.toss + 0.1;
-    if (sw.t >= sw.end && !flights.length) swap = null;
-    return tossing ? 'toss' : catching ? 'catch' : null;
+    const end = sw.to ? sw.tCatch + 0.3 : sw.tLand + 0.3;
+    if (sw.t >= end && !flights.length) swap = null;
   }
   let held0: ToolId | null = null;
   const q = new THREE.Quaternion(), up = new THREE.Vector3(), bar = new THREE.Vector3(), side = new THREE.Vector3(), lastBar = new THREE.Vector3(0, 0, 1), basis = new THREE.Matrix4();
   const cur = new Map<THREE.Object3D, { r: [number, number, number]; d: [number, number, number] }>();
   const step = (a: number, b: number, max: number): number => a + Math.max(-max, Math.min(max, b - a));
   function pose(o: PoseOpts, dt?: number): void {
-    const sw = stepSwap(dt ?? 0);
-    const P = RM.robotPose(model, { ...o, swap: o.swap !== undefined ? o.swap : sw, use: o.use !== undefined ? o.use : null, hold: o.hold !== undefined ? o.hold : held0 ? RM.TOOL_HOLD[held0] : null, digWith: o.digWith !== undefined ? o.digWith : held0 });
+    const arm = o.arm !== undefined ? o.arm : swapArm(dt ?? 0);
+    // zrýchlenie ruky pri hode: kĺby pravej ruky smú rýchlejšie (RM.THROW_SPEED)
+    const throwing = !!swap?.toss && !swap.released && swap.t >= RM.SWAP.wind;
+    const P = RM.robotPose(model, { ...o, arm, use: o.use !== undefined ? o.use : null, hold: o.hold !== undefined ? o.hold : held0 ? RM.TOOL_HOLD[held0] : null, digWith: o.digWith !== undefined ? o.digWith : held0 });
     for (const [id, g] of joints) {
       const jp = P.joints.get(id), base = must(jointBase.get(g)), tr = jp?.r ?? [0, 0, 0], td = jp?.d ?? [0, 0, 0];
-      const sp = RM.jointSpeed(id), c = cur.get(g);
+      const sp = throwing && (g === armJ[0] || g === armJ[1] || g === armJ[2]) ? RM.THROW_SPEED : RM.jointSpeed(id), c = cur.get(g);
       if (!c || dt === undefined || !Number.isFinite(sp)) cur.set(g, { r: [tr[0], tr[1], tr[2]], d: [td[0], td[1], td[2]] });
       else {
         const a = sp * dt, l = 0.8 * dt; // posun (pohupovanie, prikrčenie) najviac 0,8 políčka/s
@@ -311,25 +430,29 @@ export function buildRobot(look: RobotLook): Robot3D {
       s.position.set(b.x + f * 0.03, b.y - 0.05 + f * 0.15, b.z); s.scale.setScalar(0.4 + f);
       const sm = steamMats[k]; if (sm) sm.opacity = 0.35 * (1 - f);
     }
-    // Zavesené náradie (krhla, lampáš) visí vždy zvislo dolu (gravitácia), držadlo je čo najbližšie k osi klepeta (z ruky)
-    // a nikdy sa neprevráti: os y kĺbu = hore vo svete, os z = os klepeta premietnutá do vodorovnej roviny (keď je klepeto
-    // zvislo, použije sa os x ruky); znamienko osi z ostáva ako v predošlom snímku, aby náradie neprehodilo o 180°.
-    if (hanging && P.rigid) hanging.quaternion.identity(); // pri polievaní drží krhlu pevne v klepete a nakláňa ju
-    else if (hanging) {
-      group.updateMatrixWorld(true);
-      hand.getWorldQuaternion(q).invert();
-      up.set(0, 1, 0).applyQuaternion(q);
-      bar.set(0, 0, 1).addScaledVector(up, -up.z);
-      if (bar.lengthSq() < 0.04) bar.set(1, 0, 0).addScaledVector(up, -up.x);
-      bar.normalize();
-      if (bar.dot(lastBar) < 0) bar.negate();
-      lastBar.copy(bar);
-      side.crossVectors(up, bar);
-      basis.makeBasis(side, up, bar);
-      hanging.quaternion.setFromRotationMatrix(basis);
-      hanging.rotateX(Math.sin((o.phase ?? 0) * 2) * (o.walking ? 0.12 : 0));
-    }
+    swapHolders();
+    hang(P.rigid, Math.sin((o.phase ?? 0) * 2) * (o.walking ? 0.12 : 0));
+    swapEvents();
     water(P.pour, o.use?.t ?? o.t ?? 0);
+  }
+  // Zavesené náradie (krhla, lampáš) visí vždy zvislo dolu (gravitácia), držadlo je čo najbližšie k osi klepeta (z ruky)
+  // a nikdy sa neprevráti: os y kĺbu = hore vo svete, os z = os klepeta premietnutá do vodorovnej roviny.
+  function hang(rigid: boolean, sway: number): void {
+    if (!hanging) return;
+    if (rigid) { hanging.quaternion.identity(); return; } // pri polievaní drží krhlu pevne v klepete a nakláňa ju
+    group.updateMatrixWorld(true);
+    hand.getWorldQuaternion(q).invert();
+    up.set(0, 1, 0).applyQuaternion(q);
+    // os klepeta premietnutá do vodorovnej roviny – vždy v tom istom zmysle, takže sa náradie neprevráti; len keď je
+    // klepeto skoro zvislo, použije sa os x ruky (v zmysle bližšom k predošlému smeru)
+    bar.set(0, 0, 1).addScaledVector(up, -up.z);
+    if (bar.lengthSq() < 0.04) { bar.set(1, 0, 0).addScaledVector(up, -up.x); if (bar.dot(lastBar) < 0) bar.negate(); }
+    bar.normalize();
+    lastBar.copy(bar);
+    side.crossVectors(up, bar);
+    basis.makeBasis(side, up, bar);
+    hanging.quaternion.setFromRotationMatrix(basis);
+    hanging.rotateX(sway);
   }
   // voda z ružice krhly pri polievaní: kvapky padajú po parabole, kým je krhla naklonená
   const dropMat = new THREE.MeshStandardMaterial({ color: col('#8fd3ff'), roughness: 0.1, transparent: true, opacity: 0.8 });

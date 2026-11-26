@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import * as THREE from 'three';
+import { OBB } from 'three/addons/math/OBB.js';
 import * as RM from '../src/shared/robotmodel.ts';
 import type { RobotLook } from '../src/shared/robotmodel.ts';
 import type { ToolId } from '../src/shared/data.ts';
 import { buildRobot } from '../src/client/robot3d.ts';
 import type { Robot3D } from '../src/client/robot3d.ts';
+import { must } from './helpers.ts';
 
 // Sieť robota (Three.js beží aj v Node – len geometria, bez kreslenia): predvoľby + vygenerované roboty
 const LOOKS: [string, RobotLook][] = [
@@ -58,7 +60,14 @@ test('nosič: uložené náradie nezasahuje do seba navzájom, do nosiča (okrem
       assert.ok(!hits(a, hd), `${name}: ${t} zasahuje do hlavy`);
       for (let k = i + 1; k < TOOLS.length; k++) assert.ok(!hits(a, tb[k] ?? []), `${name}: ${t} zasahuje do ${TOOLS[k]}`);
       // nosič: doska, úchyty a držiaky iného náradia (svoj držiak náradie drží, tam sa dotýka)
-      const rackParts = (rack?.children ?? []).filter(c => c instanceof THREE.Mesh && c.name !== 'holder:' + t);
+      const rackParts: THREE.Object3D[] = [];
+      const walkRack = (o: THREE.Object3D): void => {
+        if (o.name === 'holder:' + t || o.name.startsWith('tool:')) return; // svoj držiak (kĺb aj čap) a náradie
+        if (o instanceof THREE.Mesh) rackParts.push(o);
+        for (const c of o.children) walkRack(c);
+      };
+      if (rack) walkRack(rack);
+      assert.ok(rackParts.length > 8, name);
       for (const c of rackParts) assert.ok(!hits(a, boxes(c)), `${name}: ${t} zasahuje do nosiča (${c.name || 'doska / úchyt'})`);
     }
     r.dispose();
@@ -79,8 +88,8 @@ test('v ruke: náradie je v klepete, na nosiči jeho miesto ostane prázdne', ()
 test('krhla visí na háku: rameno háku leží vo vrchole oblúka držadla a ide kolmo cez oblúk', () => {
   for (const [name, look] of LOOKS.slice(0, 30)) {
     const r = onRack(look), sl = r.model.slots.can, k = sl.s ?? 1;
-    const rack = r.group.getObjectByName('rack'), can = r.group.getObjectByName('tool:can');
-    assert.ok(rack && can, name);
+    const rack = r.group.getObjectByName('holder:can'), can = r.group.getObjectByName('tool:can'); // kĺb háku
+    assert.ok(rack instanceof THREE.Group && can, name);
     // stred ramena háku (v súradniciach nosiča) a jeho smer (pozdĺž x) v súradniciach modelu krhly
     const hook = can.worldToLocal(rack.localToWorld(new THREE.Vector3(sl.p[0], sl.p[1] + RM.CAN_HOOK * k, sl.p[2])));
     const along = can.worldToLocal(rack.localToWorld(new THREE.Vector3(sl.p[0] + 0.01, sl.p[1] + RM.CAN_HOOK * k, sl.p[2]))).sub(hook).normalize();
@@ -279,37 +288,156 @@ test('modely náradia sú celé: žiadny diel nevisí vo vzduchu (každý sa dot
   r.dispose();
 });
 
-test('výmena náradia: držané letí do svojho držiaka, nové z nosiča ponad hlavu do klepeta; nikdy nie je dvakrát ani nezmizne a cestou nič nezasiahne', () => {
+// Presnejší dotyk ako obálky podľa osí: hranaté diely ako natočené kvádre (OBB), guľaté (gule, kupoly, sploštené gule –
+// hlava, vrchnák kotla) ako elipsoidy: bod je vnútri, keď po prevode do priestoru jednotkovej gule má dĺžku < 1.
+// Valce (trup kotla a plechovky, obruče hlavy) presne: bod je vnútri, keď je v miestnych súradniciach do polomeru a výšky.
+type Solid = ({ obb: OBB } | { ball: THREE.Matrix4 } | { cyl: THREE.Matrix4; r: number; h: number; obb: OBB }) & { what?: string };
+function solids(o: THREE.Object3D): Solid[] {
+  const out: Solid[] = [];
+  o.traverse(c => {
+    const g: unknown = c instanceof THREE.Mesh ? c.geometry : null;
+    if (!(g instanceof THREE.BufferGeometry)) return;
+    g.computeBoundingBox();
+    const b = g.boundingBox?.clone();
+    if (!b) return;
+    const n0 = out.length;
+    const rad = g instanceof THREE.SphereGeometry || g instanceof THREE.IcosahedronGeometry ? g.parameters.radius : 0, size = b.getSize(new THREE.Vector3());
+    if (rad > 0) {
+      // kupola (pologuľa) = guľa s polomerom rad okolo počiatku; inak polosi z obálky (natiahnutie je zapečené v geometrii)
+      const ax = b.min.y > -1e-6 ? new THREE.Vector3(rad, rad, rad) : size.clone().multiplyScalar(0.5);
+      out.push({ ball: new THREE.Matrix4().multiplyMatrices(c.matrixWorld, new THREE.Matrix4().makeScale(Math.max(1e-4, ax.x - 0.002), Math.max(1e-4, ax.y - 0.002), Math.max(1e-4, ax.z - 0.002))).invert() });
+    } else {
+      const obb = new OBB().fromBox3(b.clone().expandByScalar(-0.002)).applyMatrix4(c.matrixWorld);
+      if (g instanceof THREE.CylinderGeometry && c instanceof THREE.Mesh) out.push({ cyl: c.matrixWorld.clone().invert(), r: Math.max(g.parameters.radiusTop, g.parameters.radiusBottom) - 0.002, h: g.parameters.height - 0.004, obb });
+      // prstenec ležiaci v rovine xz (obruč) ako nízky valec
+      else if (g instanceof THREE.TorusGeometry && c instanceof THREE.Mesh && size.y < size.x * 0.5) out.push({ cyl: c.matrixWorld.clone().invert(), r: g.parameters.radius + g.parameters.tube - 0.002, h: size.y - 0.004, obb });
+      else out.push({ obb });
+    }
+    for (let k = n0; k < out.length; k++) must(out[k]).what = `${c.parent?.name ?? ''}/${c.name || g.type}`;
+  });
+  return out;
+}
+// body na povrchu a vnútri kvádra (mriežka 3 × 3 × 3)
+function samples(a: OBB): THREE.Vector3[] {
+  const out: THREE.Vector3[] = [], e = a.rotation.elements;
+  for (const x of [-1, 0, 1]) for (const y of [-1, 0, 1]) for (const z of [-1, 0, 1]) {
+    out.push(new THREE.Vector3(
+      a.center.x + e[0] * x * a.halfSize.x + e[3] * y * a.halfSize.y + e[6] * z * a.halfSize.z,
+      a.center.y + e[1] * x * a.halfSize.x + e[4] * y * a.halfSize.y + e[7] * z * a.halfSize.z,
+      a.center.z + e[2] * x * a.halfSize.x + e[5] * y * a.halfSize.y + e[8] * z * a.halfSize.z));
+  }
+  return out;
+}
+const inBall = (inv: THREE.Matrix4, p: THREE.Vector3): boolean => p.clone().applyMatrix4(inv).lengthSq() < 1;
+// stred a konce polosí elipsoidu vo svete
+const ballPoints = (inv: THREE.Matrix4): THREE.Vector3[] => { const m = inv.clone().invert(); return [[0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].map(([x, y, z]) => new THREE.Vector3(x, y, z).applyMatrix4(m)); };
+type Cyl = { cyl: THREE.Matrix4; r: number; h: number };
+const inCyl = (c: Cyl, p: THREE.Vector3): boolean => { const q = p.clone().applyMatrix4(c.cyl); return Math.abs(q.y) < c.h / 2 && Math.hypot(q.x, q.z) < c.r; };
+// body na plášti, podstavách a osi valca
+function cylPoints(c: Cyl): THREE.Vector3[] {
+  const m = c.cyl.clone().invert(), out: THREE.Vector3[] = [];
+  for (const y of [-0.5, 0, 0.5]) { out.push(new THREE.Vector3(0, y * c.h, 0).applyMatrix4(m)); for (let k = 0; k < 8; k++) out.push(new THREE.Vector3(Math.cos(k * Math.PI / 4) * c.r, y * c.h, Math.sin(k * Math.PI / 4) * c.r).applyMatrix4(m)); }
+  return out;
+}
+const points = (a: Solid): THREE.Vector3[] => 'cyl' in a ? cylPoints(a) : 'ball' in a ? ballPoints(a.ball) : samples(a.obb);
+const inside = (a: Solid, p: THREE.Vector3): boolean => 'cyl' in a ? inCyl(a, p) : 'ball' in a ? inBall(a.ball, p) : a.obb.containsPoint(p);
+// dva kvádre presne; inak (guľaté a valcové diely) bod jedného vnútri druhého
+function touch(a: Solid, b: Solid): boolean {
+  if ('obb' in a && 'obb' in b) { if (!a.obb.intersectsOBB(b.obb)) return false; if (!('cyl' in a) && !('cyl' in b)) return true; }
+  return points(a).some(p => inside(b, p)) || points(b).some(p => inside(a, p));
+}
+// Výmena náradia krok po kroku: v každom snímku zavolá f(čas, náradie → kde je: 'hand' | 'rack' | 'air')
+function runSwitch(r: Robot3D, to: ToolId | null, dt: number, f: (t: number, where: Map<ToolId, string>) => void): number {
+  r.switchTool(to);
+  let t = 0;
+  while (r.switching() && t < 8) {
+    r.pose({}, dt); t += dt;
+    r.group.updateMatrixWorld(true);
+    const where = new Map<ToolId, string>();
+    for (const tool of TOOLS) {
+      const all: THREE.Object3D[] = [];
+      r.group.traverse(o => { if (o.name === 'tool:' + tool) all.push(o); });
+      assert.strictEqual(all.length, 1, `${tool} je ${all.length}×`);
+      let p: THREE.Object3D | null = all[0]?.parent ?? null, w = 'air';
+      while (p) { if (p.name === 'handR') w = 'hand'; if (p.name === 'rack') w = 'rack'; p = p.parent; }
+      where.set(tool, w);
+    }
+    f(t, where);
+  }
+  assert.ok(!r.switching(), 'výmena neskončila');
+  return t;
+}
+
+test('výmena náradia: staré skončí v držiaku, nové v klepete; každé je vždy práve raz; nič cestou nezasiahne trup ani hlavu', () => {
   for (const [name, look] of LOOKS.slice(0, 20)) {
     const r = buildRobot(look), body = r.group.getObjectByName('body'), head = r.group.getObjectByName('head');
     assert.ok(body && head, name);
     r.setTools('hoe', TOOLS);
     r.pose({});
-    for (const [from, to] of [['hoe', 'can'], ['can', 'pick'], ['pick', null], [null, 'lamp']] as const) {
+    for (const [from, to] of [['hoe', 'can'], ['can', 'pick'], ['pick', 'lamp'], ['lamp', null], [null, 'hoe']] as const) {
+      const flew = new Set<ToolId>();
+      runSwitch(r, to, 1 / 60, (t, where) => {
+        const rest: Solid[] = [];
+        for (const part of [...body.children, ...head.children]) if (part instanceof THREE.Mesh && part.name !== 'armmount') rest.push(...solids(part));
+        const hit = (tb: Solid[]): string | null => { for (const a of tb) for (const b of rest) if (touch(a, b)) return `${a.what} × ${b.what}` + ('obb' in a ? ` @ ${a.obb.center.toArray().map(v => v.toFixed(3)).join(',')} half ${a.obb.halfSize.toArray().map(v => v.toFixed(3)).join(',')}` : '') + ('cyl' in b ? ` cyl r ${b.r.toFixed(3)} h ${b.h.toFixed(3)} at ${b.obb.center.toArray().map(v => v.toFixed(3)).join(',')}` : ''); return null; };
+        // náradie, ktoré sa práve vymieňa (v ruke pri hode, v natočenom držiaku, vo vzduchu), nezasahuje do trupu ani hlavy
+        for (const tool of [from, to]) {
+          if (!tool) continue;
+          if (where.get(tool) === 'air') flew.add(tool);
+          const o = r.group.getObjectByName('tool:' + tool), tb = o ? solids(o) : [];
+          const h = hit(tb);
+          assert.ok(!h, `${name} ${from}→${to}, t ${t.toFixed(2)}: ${tool} (${where.get(tool)}) zasahuje do robota: ${h}`);
+        }
+      });
+      for (const tool of [from, to]) if (tool) assert.ok(flew.has(tool), `${name} ${from}→${to}: ${tool} neletelo`);
+      const where = new Map<ToolId, string>();
+      runSwitch(r, to, 1 / 60, (_t, w) => { for (const [k, v] of w) where.set(k, v); }); // už je vymenené – nič sa nestane
+      r.pose({}, 1 / 60); r.group.updateMatrixWorld(true);
+      for (const tool of TOOLS) {
+        let p: THREE.Object3D | null = r.group.getObjectByName('tool:' + tool) ?? null, w = 'air';
+        while (p) { if (p.name === 'handR') w = 'hand'; if (p.name === 'rack') w = 'rack'; p = p.parent; }
+        assert.strictEqual(w, tool === to ? 'hand' : 'rack', `${name} ${from}→${to}: ${tool} je ${w}`);
+      }
+    }
+    r.dispose();
+  }
+});
+
+test('výmena náradia je šikmý vrh: let je parabola s gravitáciou, ruka aj vystreľovač dajú náradiu rýchlosť, s ktorou letí, a dopadne presne do držiaka / klepeta', () => {
+  const dt = 1 / 600, G = RM.GRAVITY;
+  for (const [name, look] of LOOKS.slice(0, 6)) {
+    const r = buildRobot(look);
+    r.setTools('hoe', TOOLS);
+    r.pose({});
+    for (const [from, to] of [['hoe', 'pick'], ['pick', 'can'], ['can', 'lamp'], ['lamp', 'hoe']] as const) {
+      // dráha oboch kusov náradia (svet = súradnice trupu, robot stojí)
+      const objs = [from, to].map(tool => { const o = r.group.getObjectByName('tool:' + tool); assert.ok(o); return o; });
+      const track: { p: THREE.Vector3; air: boolean }[][] = [[], []];
       r.switchTool(to);
-      const dt = 1 / 60, total = RM.swapTime(from, to);
-      let flew = false;
-      for (let k = 0; k * dt < total + 0.5; k++) {
+      for (let t = 0; r.switching() && t < 8; t += dt) {
         r.pose({}, dt);
         r.group.updateMatrixWorld(true);
-        // každé náradie je v robotovi práve raz
-        for (const t of TOOLS) { let n = 0; r.group.traverse(o => { if (o.name === 'tool:' + t) n++; }); assert.strictEqual(n, 1, `${name} ${from}→${to}: ${t} je ${n}×`); }
-        // letiace náradie (dieťa robota) nezasahuje do trupu ani hlavy
-        for (const c of r.group.children) {
-          if (!c.name.startsWith('tool:')) continue;
-          flew = true;
-          const inv = body.matrixWorld.clone().invert(), tb: THREE.Box3[] = [], rest: THREE.Box3[] = [];
-          c.traverse(o => { if (o instanceof THREE.Mesh) tb.push(localBox(o, inv)); });
-          for (const part of [...body.children, ...head.children]) if (part instanceof THREE.Mesh) rest.push(localBox(part, inv));
-          assert.ok(!tb.some(a => rest.some(b => a.intersectsBox(b))), `${name} ${from}→${to}: letiace ${c.name} zasahuje do robota`);
-        }
+        for (const [k, o] of objs.entries()) track[k]?.push({ p: o.getWorldPosition(new THREE.Vector3()), air: o.parent?.name === 'body' });
       }
-      assert.ok(flew, `${name} ${from}→${to}: nič neletelo`);
-      assert.ok(!r.switching(), `${name} ${from}→${to}: výmena neskončila`);
-      // na konci: nové náradie v klepete, staré v držiaku
-      const held = to ? r.group.getObjectByName('tool:' + to) : null;
-      if (to) { assert.ok(held, name); let p: THREE.Object3D | null = held; let inHand = false; while (p) { if (p.name === 'handR') inHand = true; p = p.parent; } assert.ok(inHand, `${name}: ${to} nie je v ruke`); }
-      if (from) { const st = r.group.getObjectByName('tool:' + from); let p: THREE.Object3D | null = st ?? null, onRack = false; while (p) { if (p.name === 'rack') onRack = true; p = p.parent; } assert.ok(onRack, `${name}: ${from} nie je na nosiči`); }
+      assert.ok(!r.switching(), name);
+      for (const [i, tool] of [from, to].entries()) {
+        const tr = track[i] ?? [], a = tr.findIndex(x => x.air), b = tr.findLastIndex(x => x.air), msg = `${name} ${from}→${to}, ${tool}`;
+        const vel = (k: number): THREE.Vector3 => must(tr[k]).p.clone().sub(must(tr[k - 1]).p).divideScalar(dt); // rýchlosť v čase k − ½
+        assert.ok(a > 3 && b > a + 50 && b < tr.length - 1, msg + ': chýba let');
+        // 1) vo vzduchu: zrýchlenie = gravitácia (druhá diferencia polohy), žiadne iné
+        for (let k = a + 1; k < b; k += 7) {
+          const acc = vel(k + 1).sub(vel(k)).divideScalar(dt);
+          assert.ok(Math.abs(acc.y + G) < 0.03 * G && Math.hypot(acc.x, acc.z) < 0.03 * G, `${msg}: zrýchlenie vo vzduchu ${acc.toArray().map(v => v.toFixed(2)).join(', ')}`);
+        }
+        // 2) pustenie: rýchlosť, ktorú náradiu dala ruka / vystreľovač (predĺžená do okamihu pustenia), je rýchlosť,
+        //    s ktorou letí (vrátená o gravitáciu do toho istého okamihu)
+        const vHand = vel(a - 1).add(vel(a - 1).sub(vel(a - 2))), vFly = vel(a + 2); vFly.y += G * 2 * dt;
+        assert.ok(vFly.length() > 1.5, `${msg}: štartová rýchlosť ${vFly.length().toFixed(2)}`);
+        assert.ok(vHand.distanceTo(vFly) < 0.08 * vFly.length(), `${msg}: pri pustení ${vHand.toArray().map(v => v.toFixed(2)).join(', ')} → ${vFly.toArray().map(v => v.toFixed(2)).join(', ')}`);
+        // 3) dopad: náradie doletí tam, kde ostane (držiak / klepeto) – bez skoku
+        const stepFly = must(tr[b]).p.distanceTo(must(tr[b - 1]).p), jump = must(tr[b + 1]).p.distanceTo(must(tr[b]).p);
+        assert.ok(jump < stepFly + 0.004, `${msg}: pri dopade skok ${jump.toFixed(4)} (krok letu ${stepFly.toFixed(4)})`);
+      }
     }
     r.dispose();
   }

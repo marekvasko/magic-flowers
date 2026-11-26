@@ -212,7 +212,7 @@ test('obmedzenia kĺbov: plece, lakeť ani zápästie nikdy nevyjdú z rozsahu (
   }
   // lakeť sa ohýba len jedným smerom, plece dozadu len trochu
   assert.deepStrictEqual(RM.clampJoint('elbowR', [0.5, 0, 0]), [0, 0, 0]);
-  assert.deepStrictEqual(RM.clampJoint('shoulderL', [1.5, 0, 0.9]), [0.9, 0, 0.6]);
+  assert.deepStrictEqual(RM.clampJoint('shoulderL', [1.5, 0, 1.4]), [0.9, 0, 1.1]);
 });
 
 test('kĺby sa nehýbu okamžite: animácie náradia, hrabanie ani tanec nepotrebujú kĺb rýchlejší, ako dovolí jointSpeed', () => {
