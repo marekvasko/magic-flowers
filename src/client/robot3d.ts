@@ -352,7 +352,7 @@ export function buildRobot(look: RobotLook): Robot3D {
     return { tool, yaw, h, phi, aim, dir: a.clone(), speed, L, tau: (2 * L) / speed, target, T: b.T, catchArm: arm };
   }
   // Let: náradie je dieťa trupu; poloha = šikmý vrh z miesta, kde ho ruka / držiak naozaj pustili, do cieľa; natočenie sa
-  // rovnomerne dotočí do cieľového (smer už sedí, mení sa najviac otočenie okolo vlastnej osi); mierka z nosiča (0,75) na ruku (1)
+  // rovnomerne dotočí do cieľového (smer už sedí, mení sa najviac otočenie okolo vlastnej osi); náradie je na nosiči rovnako veľké ako v ruke
   interface Flight { obj: THREE.Group; t0: number; T: number; p0: [number, number, number]; v0: [number, number, number]; q0: THREE.Quaternion; s0: number; q1: THREE.Quaternion; s1: number; land: () => void }
   const flights: Flight[] = [];
   function fly(obj: THREE.Group, target: THREE.Matrix4, t0: number, land: () => void): void {

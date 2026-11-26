@@ -621,7 +621,7 @@ function head(b: Builder, L: Built, body: JointId, H: Hull, s: number, nl: numbe
 // obručami a hrdzou) o polovicu šírky ramena (guľa plecia, klepeto). Ak pod ramenom trčí podvozok (veľké kolesá, guľa),
 // ruka sa skráti, aby visela nad ním; keby bola príliš krátka, plece sa posunie von za podvozok na držiaku.
 // Dozadu ruka pri chôdzi kýve menej, ak by narazila do puzdier nosiča.
-const RACK_OUT = 0.3 * 0.43 + 0.024 + 0.012; // najďalej od stredu na nosiči (puzdro + rezerva)
+const RACK_OUT = 0.35 * 0.43 + 0.024 + 0.012; // najďalej od stredu na nosiči (puzdro + rezerva; 0,35 = RACK_W)
 function arms(b: Builder, L: Built, body: JointId, H: Hull, ch: Chassis, hd: { back: number; half: number }): { sx: number; sy: number; sz: number; arm: number; swingBack: number } {
   // plece je pre všetkých na tom istom mieste (FRAME.shoulder) – trup aj hlava sú užšie, podvozok pod ramenom nič nemá
   const t = FRAME.armT, [sx, shY, sz] = FRAME.shoulder, sy = shY - (ch.bottom + H.bottom), arm = FRAME.arm;
@@ -634,7 +634,7 @@ function arms(b: Builder, L: Built, body: JointId, H: Hull, ch: Chassis, hd: { b
   const half = Math.max(t * 1.35, GRIP_R + 0.003 + Math.max(0.012, t * 0.6) + 0.004), clawDrop = t * 0.45 + 0.018 + (GRIP_R + 0.003) * 2 + 0.012;
   let swingBack = 1;
   if (sx - half < RACK_OUT) {
-    const rackFront = Math.min(-H.front(0) - 0.016, -hd.back - 0.03) - 0.016; // z čela puzdier
+    const rackFront = Math.min(-H.front(0) - 0.03, -hd.back - 0.045) - 0.016; // z čela puzdier
     const room = sz - 0.022 - (rackFront + 0.008), len = arm * 1.05 + clawDrop;
     swingBack = Math.max(0, Math.min(1, Math.asin(Math.max(0, Math.min(1, room / len))) / 0.5));
   }
@@ -654,14 +654,16 @@ export const TOOL_HOLD: Readonly<Record<ToolId, HoldKind>> = { hoe: 'staff', pic
 // nad ostatným náradím) – a medzi nimi pod sebou nič; hore vpravo od stredu priečka na dvoch stĺpikoch, na ktorej visí
 // krhla za oblúk držadla (hubicou dozadu), vľavo od stredu kolík so zahnutým koncom, na ktorom visí lampáš za krúžok.
 // Prázdny držiak je vidieť, takže je jasné, kam čo patrí.
-const RACK_W = 0.3, TOOL_ON_BACK = 0.75;
+// Náradie je na nosiči rovnako veľké ako v ruke (TOOL_ON_BACK = 1); nosič je taký široký, aby sa medzi puzdrá zmestili
+// krhla (priemer 0,13) a lampáš (0,09) vedľa seba.
+const RACK_W = 0.35, TOOL_ON_BACK = 1;
 // Kde v modeli krhly (client/robot3d.ts) leží hák: vnútro vrcholu oblúka držadla (stred oblúka y 0,02, polomer 0,035,
 // hrúbka 0,008) mínus polomer háku 0,005
 export const CAN_HOOK = 0.02 + 0.035 - 0.008 - 0.005;
 function rack(b: Builder, body: JointId, H: Hull, headBack: number): Record<ToolId, Mount> {
   // doska tesne za chrbtom; keď hlava siaha dozadu skoro ako trup alebo viac, posunie sa ďalej, aby rúčky v puzdrách
   // išli za hlavou a vystrelené náradie ju pri stúpaní minulo
-  const hh = Math.max(0.14, Math.min(0.2, H.hy * 1.5)), back = -H.front(0), bz = Math.min(back - 0.016, -headBack - 0.03);
+  const hh = Math.max(0.14, Math.min(0.2, H.hy * 1.5)), back = -H.front(0), bz = Math.min(back - 0.03, -headBack - 0.045);
   const j = b.joint('rack', body, [0, 0, bz]);
   b.add(j, { k: 'box', s: [RACK_W * 0.8, hh, 0.02], r: 0.006 }, [0, 0, 0], 'accent');
   // úchyty k trupu (dlhšie, keď je doska odsunutá)
@@ -687,14 +689,14 @@ function rack(b: Builder, body: JointId, H: Hull, headBack: number): Record<Tool
   // krhla: hák z jednej strany – stĺpik od dosky, rameno naprieč (pozdĺž x) so zahnutým koncom. Oblúk držadla krhly
   // (v rovine yz, kolmo na rameno) je na ramene navlečený tak, že rameno leží vo vrchole oblúka; hubica smeruje dozadu.
   // Kĺb háku je v strede ramena; celý hák sa pri výstrele vysunie v smere letu.
-  const cx = -0.035, cz = -0.07, px = 0.03, ex = -0.024, cj = b.joint('holder:can', j, [cx, top, cz]);
+  const cx = -0.052, cz = -0.085, px = 0.03, ex = -0.024, cj = b.joint('holder:can', j, [cx, top, cz]);
   b.add(cj, { k: 'cyl', r: 0.005, h: -cz }, [px, 0, -cz / 2], 'metal', [Math.PI / 2, 0, 0], 'holder:can');   // stĺpik
   b.add(cj, { k: 'sphere', r: 0.0065 }, [px, 0, 0], 'metal', undefined, 'holder:can');                        // ohyb
   b.add(cj, { k: 'cyl', r: 0.005, h: px - ex }, [(px + ex) / 2, 0, 0], 'metal', [0, 0, Math.PI / 2], 'holder:can'); // rameno
   b.add(cj, { k: 'cyl', r: 0.005, h: 0.024 }, [ex, 0.01, 0], 'metal', undefined, 'holder:can');               // zahnutý koniec
   slots.can = { j: cj, p: [0, -CAN_HOOK * TOOL_ON_BACK, 0], r: [0, Math.PI, 0], s: TOOL_ON_BACK };
   // lampáš: kolík dozadu so zahnutým koncom; krúžok lampáša je na ňom navlečený
-  const lx = 0.05, lj = b.joint('holder:lamp', j, [lx, top, -0.068]);
+  const lx = 0.072, lj = b.joint('holder:lamp', j, [lx, top, -0.068]);
   b.add(lj, { k: 'cyl', r: 0.005, h: 0.09 }, [0, 0, 0.023], 'metal', [Math.PI / 2, 0, 0], 'holder:lamp');
   b.add(lj, { k: 'cyl', r: 0.005, h: 0.022 }, [0, 0.009, -0.022], 'metal', undefined, 'holder:lamp');
   slots.lamp = { j: lj, p: [0, 0.005, 0], s: TOOL_ON_BACK };
@@ -718,7 +720,7 @@ export function robotModel(look0: RobotLook): RobotModel {
   const top0 = head(b, L, body, H, fit.s, fit.nl);
   // klobúčik má širokú striešku (0,13) – siaha dozadu ďalej ako hlava; nosič a vystrelené náradie ju musia minúť
   // (náradie dopadá do držiaka šikmo, preto ešte 5 cm navyše)
-  const top = L.acc === 'hat' ? { ...top0, back: Math.max(top0.back, HAT_BRIM + 0.05 - (L.head === 'bino' ? -0.02 : 0) - top0.p[2]) } : top0;
+  const top = L.acc === 'hat' ? { ...top0, back: Math.max(top0.back, HAT_BRIM + 0.065 - (L.head === 'bino' ? -0.02 : 0) - top0.p[2]) } : top0;
   details(b, L, body, H, L.head === 'none');
   const { sx, sy, sz, arm, swingBack } = arms(b, L, body, H, ch, top);
   const slots = rack(b, body, H, top.back);
@@ -970,6 +972,8 @@ export function robotPose(m: RobotModel, o: PoseOpts): RobotPose {
   // plazenie: trup sa predkloní a zníži – ruka so zaveseným náradím sa zdvihne viac (predlaktie trochu hore), aby nedrhlo o zem
   if (crawl && !o.dig) { if (carry) { armR = [-1.35, 0, -0.24]; elbR = [-0.75, 0, 0]; } else armR = fwd(0.9); armL = fwd(0.9); }
   let handR: V3 = [0, o.dance && !carry ? 0 : wristR, 0], handL: V3 = [0, 0, 0];
+  // pri tanci drží zápästie palicu (motyku, krompáč) zvislo nad hlavou – inak by mierila dozadu do náradia na nosiči
+  if (o.dance && o.hold === 'staff') handR = [-armR[0] - elbR[0] - Math.PI / 2, 0, 0];
   // hrabanie: motyka / krompáč (pravá ruka) alebo samotné klepeto (ľavá ruka, keď pravá nesie krhlu či lampáš) robí
   // ťah pred robotom – zdvihne sa, natiahne dopredu, zasekne do zeme a ťahá k robotovi (digArm)
   if (o.dig) {
