@@ -248,10 +248,13 @@ test('jednoduchý štýl (hra): tie isté kĺby (okrem článkov pásov), úchyt
     assert.deepStrictEqual(s.shoulder, d.shoulder, name);
     assert.ok(s.parts.every(p => p.flat), name + ': diel bez plochých stien');
     // len kvádre s ostrými hranami; kolesá a guľa podvozku sú osemboké hranoly
+    const kit = (v: number): boolean => Math.abs(v - RM.CUBE / 4) < 1e-9 || (v > RM.CUBE / 2 - 1e-9 && Math.abs(v / (RM.CUBE / 2) - Math.round(v / (RM.CUBE / 2))) < 1e-6);
     for (const p of s.parts) {
       const sh = p.shape, wheel = /^(wheel|ball|caster)/.test(p.j);
       if (wheel) assert.ok(sh.k === 'box' || ((sh.k === 'cyl' || sh.k === 'sphere') && (sh.n ?? 99) <= 8), `${name}: koleso ${JSON.stringify(sh)}`);
-      else assert.ok(sh.k === 'box' && sh.r === 0 && Math.min(...sh.s) >= 0.009, `${name}: ${p.j} nie je kváder: ${JSON.stringify(sh)}`);
+      // … inak len kvádre a zúžené dieliky v mierke stavebnice (#182): rozmery sú štvrtina alebo násobky polovice minikocky
+      else if (sh.k === 'cyl') assert.ok(sh.n === 4 && sh.r2 !== undefined && sh.r2 <= sh.r && [sh.r * Math.SQRT2, sh.r2 * Math.SQRT2, sh.h].every(kit), `${name}: ${p.j} nie je zúžený dielik: ${JSON.stringify(sh)}`);
+      else assert.ok(sh.k === 'box' && sh.r === 0 && sh.s.every(kit) && sh.s.filter(v => v < RM.CUBE / 2 - 1e-9).length <= 1, `${name}: ${p.j} nie je kváder zo stavebnice: ${JSON.stringify(sh)}`);
     }
     // oči, viečka a držiaky náradia ostali
     assert.ok(s.parts.some(p => p.m === 'eye') && s.parts.some(p => p.tag === 'lid'), name);

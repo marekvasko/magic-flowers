@@ -41,7 +41,8 @@ function geometry(s: Shape): THREE.BufferGeometry {
     // Málo polygónov (robotov je na ploche veľa): počet stien podľa veľkosti, gule ako dvadsaťsteny (malé nity a oči
     // 20 trojuholníkov, stredné 80, veľké 320) namiesto presných gúľ. S počtom stien n je diel mnohosten
     // (ostré hrany, ploché tieňovanie – materiál flatShading).
-    case 'cyl': g = new THREE.CylinderGeometry(s.r2 ?? s.r, s.r, s.h, s.n ?? segs(s.r, 90, 6, 16)); break;
+    // (štvorboký = zúžený dielik stavebnice: steny rovnobežné s osami, nie rohom dopredu)
+    case 'cyl': g = new THREE.CylinderGeometry(s.r2 ?? s.r, s.r, s.h, s.n ?? segs(s.r, 90, 6, 16)); if (s.n === 4) g.rotateY(Math.PI / 4); break;
     case 'sphere': g = s.n ? new THREE.SphereGeometry(s.r, s.n, Math.max(4, Math.round(s.n * 0.6))) : new THREE.IcosahedronGeometry(s.r, s.r < 0.02 ? 0 : s.r < 0.07 ? 1 : 2); if (s.s) g.scale(...s.s); break;
     case 'capsule': g = new THREE.CapsuleGeometry(s.r, s.h, 1, s.n ?? 6); break;
     case 'torus': g = new THREE.TorusGeometry(s.r, s.t, 4, segs(s.r, 100, 8, 16)); g.rotateX(Math.PI / 2); break;

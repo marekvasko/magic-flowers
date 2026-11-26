@@ -1656,7 +1656,7 @@ void main() {
   // a tma ako na všetkom ostatnom, steny tieňované podľa smeru ako kocky sveta. Vrhá skutočný tieň (robotShadows)
   // a je v zrkadle vody. Je 1,5× väčší ako v /debug: kreslená postavička bola plochý obrázok, ktorý šikmá kamera neskracuje,
   // 3D model áno – s touto mierkou je robot na obrazovke asi taký vysoký, ako bývala postavička.
-  const ROBOT_SCALE = 1.5;
+  const ROBOT_SCALE = RM.GAME_SCALE; // (minikocka sveta = RM.CUBE v jednotkách robota)
   const HEX6 = /^#[0-9a-f]{6}$/i;
   // vzhľad robota hráča: z mena (vždy ten istý robot pre to isté meno), farba košele je náter, klobúk ostáva klobúkom
   function robotLookOf(name: string, look: Partial<Look> | null): RM.RobotLook {

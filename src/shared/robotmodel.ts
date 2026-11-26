@@ -192,6 +192,11 @@ function alignY(n: V3): V3 {
   return [Math.atan2(n[2] / l, n[1] / l), 0, Math.asin(Math.max(-1, Math.min(1, -n[0] / l)))];
 }
 
+// Mierka sveta: v hre je robot zväčšený 1,5× a minikocka jemných modelov (domy, nábytok) má 1/8 políčka – v jednotkách
+// robota 1/12. Robot je teda vysoký 9 minikociek. Jednoduchý štýl skladá robota z rozmerov stavebnice dielikov (#182).
+export const GAME_SCALE = 1.5, CUBE = 0.125 / GAME_SCALE;
+export const kitSize = (d: number): number => (d < CUBE * 0.375 ? CUBE / 4 : Math.max(1, Math.round(d / (CUBE / 2))) * (CUBE / 2));
+
 // Stavba modelu: kĺby a diely
 const HAT_BRIM = 0.11; // polomer striešky klobúčika
 const HARD: readonly Mat[] = ['paint', 'accent', 'metal', 'dark'];
@@ -226,20 +231,36 @@ class Builder {
         else out(sh, p);
         return;
       }
-      const box = (sz: V3, dy = 0): void => { out({ k: 'box', s: sz, r: 0 }, [p[0], p[1] + dy, p[2]]); };
+      // rozmery v mierke stavebných dielikov sveta (#182): doska 1/4, doska / stĺpik 1/2, inak násobky polovice
+      // minikocky; najviac jeden rozmer smie byť štvrtinový (doska) – tenká tyčka je stĺpik 1/2 × 1/2
+      const box = (sz: V3, dy = 0): void => {
+        const q = sz.map(kitSize), thin = q.filter(v => v < CUBE / 2).length;
+        if (thin > 1) { const keep = sz.indexOf(Math.min(...sz)); q.forEach((v, i) => { if (v < CUBE / 2 && (thin === 3 || i !== keep)) q[i] = CUBE / 2; }); }
+        out({ k: 'box', s: [q[0] ?? 0, q[1] ?? 0, q[2] ?? 0], r: 0 }, [p[0], p[1] + dy, p[2]]);
+      };
+      // zúžený dielik (zrezaný ihlan so štvorcovou podstavou, ako „zúžený“ zo stavebnice): šikmé steny namiesto schodov
+      const taper = (base: number, top: number, hgt: number, dy = 0): void => {
+        const qb = kitSize(base), qt = Math.min(kitSize(top), qb);
+        out({ k: 'cyl', r: qb / Math.SQRT2, r2: qt / Math.SQRT2, h: kitSize(hgt), n: 4 }, [p[0], p[1] + dy, p[2]]);
+      };
       const K = 1.72; // strana hranola k polomeru valca (plocha podstavy ostane približne rovnaká)
       if (sh.k === 'box') box(sh.s);
+      else if (sh.k === 'cyl' && sh.r2 !== undefined && sh.r >= 0.03 && sh.r2 < 0.75 * sh.r) taper(K * sh.r, K * sh.r2, sh.h);
       else if (sh.k === 'cyl') { const side = (K * (sh.r + (sh.r2 ?? sh.r))) / 2; box([side, sh.h, side]); }
       else if (sh.k === 'capsule') box([K * sh.r, sh.h + 1.5 * sh.r, K * sh.r]);
       // obruč okolo trupu = doska o kúsok väčšia ako trup; natočená obruč (rám oka) menšia, aby rohy netrčali
       else if (sh.k === 'torus') { const side = (r ? 1.35 : 1.9) * (sh.r + sh.t); box([side, 2 * sh.t, side]); }
-      else if (sh.k === 'dome') box([K * sh.r, 0.8 * sh.r, K * sh.r], r ? 0 : 0.4 * sh.r);
+      else if (sh.k === 'dome') { if (r) box([K * sh.r, 0.8 * sh.r, K * sh.r]); else taper(K * sh.r, K * sh.r * 0.5, 0.8 * sh.r, kitSize(0.8 * sh.r) / 2); }
       else {
         // (sploštené gule – oči – sú doštičky, najmenej 1 cm hrubé)
         const sc = sh.s ?? [1, 1, 1], d: V3 = [Math.max(0.011, 1.8 * sh.r * sc[0]), Math.max(0.011, 1.8 * sh.r * sc[1]), Math.max(0.011, 1.8 * sh.r * sc[2])];
         if (sh.r >= 0.05 && !r && m !== 'glass' && Math.min(...d) >= 0.06) {
-          box([d[0], d[1] * 0.5, d[2]]);
-          for (const up of [-1, 1]) box([d[0] * 0.68, d[1] * 0.25, d[2] * 0.68], up * d[1] * 0.375);
+          // veľká guľa: kváder v strede a zúžený dielik hore (dole užší kváder – zúžený hore nohami by bol iný tvar)
+          const mid = kitSize(d[1] * 0.5), cap = kitSize(d[1] * 0.25);
+          box([d[0], mid, d[2]]);
+          if (Math.abs(d[0] - d[2]) < 0.01) taper(d[0], d[0] * 0.5, cap, (mid + cap) / 2);
+          else box([d[0] * 0.68, cap, d[2] * 0.68], (mid + cap) / 2);
+          box([d[0] * 0.68, cap, d[2] * 0.68], -(mid + cap) / 2);
         } else box([Math.max(0.011, d[0] * 0.83), Math.max(0.011, d[1] * 0.83), Math.max(0.011, d[2] * 0.83)]);
       }
       return;
@@ -560,7 +581,7 @@ function legs(b: Builder, L: Built, body: JointId, H: Hull, bottom: number): voi
       const kp: V3 = [ax * 0.6, -bottom * 0.42, az * 0.6];
       b.rod(hip, [0, 0, 0], kp, 0.014, 'metal');
       const knee = b.joint('knee' + i, hip, kp);
-      b.add(knee, { k: 'sphere', r: 0.022 }, [0, 0, 0], 'accent');
+      if (!b.simple) b.add(knee, { k: 'sphere', r: 0.022 }, [0, 0, 0], 'accent'); // (v jednoduchom štýle je koleno koniec stĺpika holene)
       const foot: V3 = [-ax * 0.25, -(bottom + 0.02) * 0.58 + 0.01, -az * 0.25];
       b.rod(knee, [0, 0, 0], foot, 0.013, 'metal');
       // chodidlo má vlastný kĺb (členok), aby pri pokrčení nohy ostalo naplocho na zemi
