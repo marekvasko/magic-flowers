@@ -6,7 +6,11 @@
 // Výkon (#196) – izometrická kamera (ortogonálna, pevný sklon) a trs s jednou hĺbkou dovoľujú tri skratky:
 //  1. svetlo sa počíta vo vrcholoch trsu, nie v každom pixeli – fragment shader je len obrázok × svetlo;
 //  2. trsy sú zoradené spredu dozadu podľa smeru pohľadu – z-buffer zahodí zakryté vrstvy skôr, než sa vyfarbia;
-//  3. tráva je rozdelená na kusy (CHUNK × CHUNK políčok) – kreslia sa len tie na obrazovke a v zrkadle vody len tie pri vode.
+//  3. tráva je rozdelená na kusy (CHUNK × CHUNK políčok) – kreslia sa len tie na obrazovke a v zrkadle vody len tie pri vode;
+//  4. hustota je v obrázku, nie v počte trsov: na obrazovke má každý trs rovnakú veľkosť, takže jeden trs sú dva chumáče
+//     stebiel vedľa seba v jednej ploche a trsov je polovica; plocha má o úsek na výšku menej. Spolu tretina trojuholníkov.
+//     Vietor, postavičky a farebné fľaky sa počítajú pre každý okraj trsu zvlášť, takže široký trs sa vlní a rozhŕňa
+//     po častiach. Pri holom políčku trs ukáže len jeden chumáč (polovicu obrázka), aby nič nepresahovalo.
 // Hustota podľa nastavenia zariadenia (menu → Tráva): vypnutá / menej / viac.
 import type * as THREE from 'three';
 import type { Ground } from '../shared/data.ts';
@@ -22,18 +26,19 @@ const isQuality = (q: string | null): q is GrassQuality => q != null && (QUALITY
 
 export const STENCIL_GRASS = 0x80; // bit v stencile: tu je tráva (röntgen postavičky sa cez trávu nekreslí)
 const MAX_PUSH = 8;                // koľko postavičiek naraz rozhŕňa trávu
-const SEG = 3;                     // úseky trsu na výšku (ohyb stebiel)
-const CELL = 64, COLS = 8, ROWS = 2; // obrázok trsov: 8 podôb, riadok 0 = tráva, 1 = lúka
+const SEG = 2;                     // úseky trsu na výšku (ohyb stebiel)
+const CELL = 64, CELL_W = 2 * CELL, COLS = 8, ROWS = 2; // obrázok trsov: 8 podôb, každá dva chumáče vedľa seba (šírka CELL_W, výška CELL); riadok 0 = tráva, 1 = lúka
+const MAX_W = 1.8;                 // najširší trs v blokoch
 const CHUNK = 8;                   // kus trávy (políčok na stranu) – jedna sieť, ktorá sa kreslí len vtedy, keď je na obrazovke
-const REACH = 1.2;                 // o koľko blokov trs najviac presiahne svoj koreň (šírka, ohyb vo vetre a pred postavičkou)
+const REACH = 1.6;                 // o koľko blokov trs najviac presiahne svoj koreň (šírka, ohyb vo vetre a pred postavičkou)
 const RESORT_COS = 0.9;            // o koľko sa môže pohľad otočiť (kosínus uhla), kým sa trsy zoradia nanovo
 
 // Druhy zeme s trávou: najviac trsov na políčko (menej / viac; koľko z nich vyrastie, určuje šum hustoty)
 // a výška trsu v blokoch (postavička má ~1,28, kolená ~0,35)
 interface Kind { n: Readonly<Record<'low' | 'high', number>>; h: number; row: number }
 const KINDS: Readonly<Partial<Record<Ground, Kind>>> = {
-  grass: { n: { low: 36, high: 72 }, h: 0.42, row: 0 }, // hustá ako lúka
-  meadow: { n: { low: 36, high: 72 }, h: 0.5, row: 1 },
+  grass: { n: { low: 16, high: 32 }, h: 0.42, row: 0 }, // hustá ako lúka
+  meadow: { n: { low: 16, high: 32 }, h: 0.5, row: 1 },
 };
 const TRAMPLED = 0.65;              // pri ceste je tráva udupaná (nižšia)
 
@@ -76,7 +81,7 @@ const fbm = (x: number, z: number, k: number): number => vnoise(x * 0.22, z * 0.
 const grassVert = (light: string): string => `
 precision highp sampler2D; // mapa tieňov sa číta vo vrcholoch
 attribute vec4 aRoot;   // koreň trsu (xyz); w = odtieň × 100 (celá časť) + náhodné číslo trsu (desatinná časť)
-attribute vec4 aShape;  // šírka, výška, ľavý dolný roh podoby v obrázku (u, v)
+attribute vec4 aShape;  // šírka, výška, ľavý okraj výrezu v obrázku (u), riadok obrázka (celá časť) + šírka výrezu 0–1 (desatinná časť; 0,5 = jeden chumáč)
 uniform mat4 shadowMatrix; uniform vec3 sunDir; uniform float shadowNormalBias;
 uniform float time; uniform vec2 wind; uniform vec2 cell; uniform float depthBias;
 uniform vec4 pushers[${MAX_PUSH}]; uniform int pusherCount;
@@ -90,9 +95,11 @@ void main() {
   vec3 right = normalize(vec3(viewMatrix[0][0], 0.0, viewMatrix[2][0]));
   // vietor: nárazy sú šum, ktorý sa sťahuje cez záhradu po vetre – kde práve fúka, tráva sa ohne viac a jej špičky
   // sa zalesknú (svetlé pruhy, ktoré sa prevaľujú cez lúku); každý trs sa navyše trochu kýve vo vlastnej fáze
+  // Počíta sa pre okraj pásu (base), nie pre stred trsu – široký trs sa tak vlní, rozhŕňa a farbí po častiach.
+  vec3 base = root + right * position.x * aShape.x;
   vec2 wd = normalize(wind);
-  float gust = gNoise(root.xz * 0.28 - wd * time * 0.9) * 0.7 + gNoise(root.xz * 0.7 - wd * time * 1.6 + 5.0) * 0.3;
-  float wave = sin(dot(root.xz, wind) * 4.0 - time * 2.1 + seed * 6.2832);
+  float gust = gNoise(base.xz * 0.28 - wd * time * 0.9) * 0.7 + gNoise(base.xz * 0.7 - wd * time * 1.6 + 5.0) * 0.3;
+  float wave = sin(dot(base.xz, wind) * 4.0 - time * 2.1 + seed * 6.2832);
   float sheen = smoothstep(0.5, 0.85, gust);
   vec2 bend = wd * (0.06 + 0.34 * gust) * (0.8 + 0.2 * wave);
   bend += vec2(sin(time * 3.3 + seed * 40.0), cos(time * 2.9 + seed * 23.0)) * 0.035; // drobné chvenie
@@ -101,24 +108,24 @@ void main() {
   for (int i = 0; i < ${MAX_PUSH}; i++) {
     if (i >= pusherCount) break;
     vec4 p = pushers[i];
-    vec2 d = root.xz - p.xz;
+    vec2 d = base.xz - p.xz;
     float dist = length(d);
     float f = (1.0 - smoothstep(0.08, p.w, dist)) * step(abs(root.y - p.y), 0.6);
     bend += d / max(dist, 0.001) * f * 0.55;
     squash = max(squash, f);
   }
   float h = aShape.y * (1.0 - 0.2 * squash), k = t * t;
-  vec3 wp = root + right * position.x * aShape.x;
+  vec3 wp = base;
   wp.xz += bend * h * k;
   wp.y += h * t * (1.0 - 0.45 * min(1.0, dot(bend, bend)) * k); // ohnuté steblo je nižšie
   wp.xz = clamp(wp.xz, vec2(0.01), areaSize - 0.01); // nič nepresahuje cez okraj mapy (trs pri okraji sa zúži)
-  vUv = aShape.zw + vec2(position.x + 0.5, t) * cell;
+  vUv = vec2(aShape.z + (position.x + 0.5) * cell.x * min(1.0, fract(aShape.w) / 0.998), (floor(aShape.w) + t) * cell.y);
   vPos = wp; vFacing = sunDir.y; vUp = mix(0.75, 1.0, t); // svieti takmer ako zem – spodok s ňou splynie
   vShadow = shadowMatrix * vec4(wp + vec3(0.0, shadowNormalBias, 0.0), 1.0);
   // svetlo, opar a tma tu vo vrchole (ten istý výpočet ako pixel zeme) – cez trs sa len interpolujú
   vec3 light; float haze, fogK;
   lighting(1.0, light, haze, fogK);
-  vec3 color = grassTint(root.xz) * tint * (1.0 + 0.22 * sheen * t) * mix(0.86, 1.0, t); // pri zemi o kúsok tmavší
+  vec3 color = grassTint(base.xz) * tint * (1.0 + 0.22 * sheen * t) * mix(0.86, 1.0, t); // pri zemi o kúsok tmavší
   vMul = color * light * (1.0 - haze) * (1.0 - fogK);
   vAdd = gloomFog * haze * (1.0 - fogK) + darkFog * fogK;
   // celý trs má hĺbku koreňa (ako sprity). Len spodok je o kúsok bližšie ku kamere, aby sa nebil so zemou – posun
@@ -164,7 +171,7 @@ export function createGrass3d(o: {
   try { const q = localStorage.getItem('mfGrass'); if (isQuality(q)) quality = q; } catch { /* súkromné okno bez úložiska */ }
 
   // ---- obrázok trsov (podľa obdobia) ----
-  const canvas = document.createElement('canvas'); canvas.width = CELL * COLS; canvas.height = CELL * ROWS;
+  const canvas = document.createElement('canvas'); canvas.width = CELL_W * COLS; canvas.height = CELL * ROWS;
   const ctx = must(canvas.getContext('2d') ?? undefined);
   const tex = new T3.CanvasTexture(canvas);
   tex.colorSpace = T3.NoColorSpace; tex.generateMipmaps = false; tex.minFilter = T3.LinearFilter; tex.magFilter = T3.LinearFilter;
@@ -187,21 +194,22 @@ export function createGrass3d(o: {
     const gc = new T3.Color(must(GROUND[se])), base = gc.clone().multiplyScalar(BASE_K), tip = gc.clone().lerp(new T3.Color(TIP_MIX), TIP_K);
     u.grassBase.value.set(base.r, base.g, base.b); u.grassTip.value.set(tip.r, tip.g, tip.b);
     for (let row = 0; row < ROWS; row++) for (let v = 0; v < COLS; v++) {
-      const x0 = v * CELL, y0 = row * CELL, n = row ? 15 : 14;
+      const x0 = v * CELL_W, y0 = row * CELL, n = row ? 30 : 28;
       const tips: [number, number][] = [];
       // široké mäkké steblá, väčšinou sklonené na jednu stranu (ako učesané vetrom); zadné tmavšie, predné svetlejšie
       for (let i = 0; i < n; i++) {
         const r = (k: number): number => hash(v * 31 + row, i, k);
-        const x = x0 + CELL * (0.16 + 0.68 * r(1)), h = CELL * (0.5 + 0.47 * r(2)), w = CELL * (0.08 + 0.06 * r(3));
-        const want = CELL * (0.1 + 0.22 * r(4)) * (r(6) < 0.2 ? -1 : 1) + (x - x0 - CELL / 2) * 0.25;
-        const lean = Math.max(x0 + 4, Math.min(x0 + CELL - 4, x + want)) - x; // špička ostane v políčku obrázka
+        const half = x0 + (i % 2) * CELL, x = half + CELL * (0.08 + 0.84 * r(1)), // každý chumáč (polovica obrázka) má svoje steblá
+          h = CELL * (0.5 + 0.47 * r(2)), w = CELL * (0.08 + 0.06 * r(3));
+        const want = CELL * (0.1 + 0.22 * r(4)) * (r(6) < 0.2 ? -1 : 1) + (x - half - CELL / 2) * 0.25;
+        const lean = Math.max(half + 3, Math.min(half + CELL - 3, x + want)) - x; // špička ostane vo svojom chumáči (dá sa ukázať aj sám)
         blade(x, y0 + 1, w, h - 2, lean, 0.25 + 0.75 * (i / (n - 1)) * (0.6 + 0.4 * r(5)));
         tips.push([x + lean, y0 + h - 3]);
       }
       // lúka: kvietky na niektorých steblách (v zime nie)
       if (row === 1) {
         const fc = must(FLOWERS[se]);
-        for (let i = 0; i < 2; i++) {
+        for (let i = 0; i < 4; i++) {
           const tp = tips[(hash(v, i, 9) * tips.length) | 0];
           if (!tp || hash(v, i, 10) < 0.3) continue;
           ctx.fillStyle = must(fc[(hash(v, i, 11) * fc.length) | 0]);
@@ -331,7 +339,10 @@ export function createGrass3d(o: {
             const hn = fbm(px, pz, 23);
             const th = kind.h * (0.55 + 0.55 * hn + 0.3 * r(3)) * trampled * (0.3 + 0.7 * edge * edge * (3 - 2 * edge));
             R.push(px, gy, pz, Math.round((0.94 + 0.12 * r(7)) * 100) + Math.min(0.999, r(4))); // farebné fľaky robí shader (grassTint)
-            S.push(Math.min(th * (1.2 + 0.5 * r(5)), 2 * bd + 0.1), th, ((r(6) * COLS) | 0) / COLS, kind.row / ROWS);
+            // Šírka podľa výšky (steblá majú stále rovnaký tvar). Pri holom susedovi, kde sa celý trs nezmestí, ukáže len
+            // jeden chumáč (polovicu obrázka) a ten sa podľa potreby zúži – nič nepresahuje cez okraj.
+            const full = Math.min(MAX_W, th * (2.4 + r(5))), room = 2 * bd + 0.1, one = room < full;
+            S.push(one ? Math.min(full / 2, room) : full, th, (((r(6) * COLS) | 0) + (one && r(8) < 0.5 ? 0.5 : 0)) / COLS, kind.row + (one ? 0.5 : 0.999));
           }
         }
         if (!R.length) continue;
