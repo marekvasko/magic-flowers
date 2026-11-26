@@ -717,6 +717,7 @@ export function create(api: Render3DApi): Render3D {
     for (const fm of fineMeshes) { scene.remove(fm); if (fm.depthTwin) scene.remove(fm.depthTwin); if (fm.solidPart) scene.remove(fm.solidPart); }
     const oldGeos = fineGeos;
     fineGeos = new Map();
+    clearImpostors(); // odtlačky tieňov držia geometriu starých modelov
     fineMeshes = g.fine.map(f => buildFine(f, se, oldGeos));
     for (const [data, e] of oldGeos) if (fineGeos.get(data) !== e) { e.geo.dispose(); e.color.dispose(); e.ao.dispose(); }
     buildCanopy();
@@ -1238,6 +1239,126 @@ void main() {
   lightCam.layers.set(0); // len svet a modely – nie sprity, tiene pod postavičkami ani hĺbkové dvojčatá
   // do mapy kreslíme zadné strany (svet je z uzavretých kociek) – povrchy samy seba nezatieňujú
   const shadowDepthMat = new THREE.MeshBasicMaterial({ side: THREE.BackSide, colorWrite: false });
+  // ---------- Tiene rovnakých modelov cez odtlačky (#198) ----------
+  // Slnko je ortogonálna kamera, takže rovnaký model (ten istý strom) vrhá na každom mieste ten istý tieň, len posunutý.
+  // Každý model, ktorý je vo svete viackrát, sa preto do mapy tieňov nekreslí toľkokrát, koľko ho je: jeho hĺbka z pohľadu
+  // slnka sa nakreslí raz do malého obrázka (odtlačok, v rovnakej mierke ako mapa tieňov) a do mapy sa potom každý kus
+  // otlačí jedným obdĺžnikom s posunutou hĺbkou. Les s 290 stromami z 28 modelov tak stojí 28 modelov, nie 290.
+  // Modely, ktoré sú vo svete raz (dom, stánok), a tie, čo sa do obrázka odtlačkov nezmestia, sa kreslia priamo.
+  const IMP_SIZE = 2048, IMP_MAX = 64, IMP_DIST = 80;
+  const impRT = new THREE.WebGLRenderTarget(IMP_SIZE, IMP_SIZE, { depthBuffer: true });
+  impRT.depthTexture = new THREE.DepthTexture(IMP_SIZE, IMP_SIZE);
+  const impScene = new THREE.Scene(), impCam = new THREE.OrthographicCamera(0, 1, 1, 0, 0.1, 200);
+  const impU = {
+    atlas: uni<THREE.Texture>(impRT.depthTexture), lightView: uni(new THREE.Matrix4()), lightProj: uni(new THREE.Matrix4()),
+    rects: uni(Array.from({ length: IMP_MAX }, () => new THREE.Vector4())), // obdĺžnik modelu v priestore slnka (okolo jeho počiatku)
+    slots: uni(Array.from({ length: IMP_MAX }, () => new THREE.Vector4())), // kde je jeho odtlačok v obrázku (uv)
+    range: uni(new THREE.Vector4()),                                        // near a rozsah hĺbky: odtlačky (xy), mapa tieňov (zw)
+  };
+  const impGeo = new THREE.InstancedBufferGeometry();
+  impGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0], 3));
+  impGeo.setIndex([0, 1, 2, 1, 3, 2]);
+  let impInst = new THREE.InstancedBufferAttribute(new Float32Array(4 * 256), 4); // poloha kusu vo svete (xyz) a číslo modelu (w)
+  impGeo.setAttribute('aInst', impInst);
+  const impMesh = new THREE.Mesh(impGeo, new THREE.ShaderMaterial({
+    uniforms: impU, colorWrite: false, side: THREE.DoubleSide,
+    vertexShader: `
+attribute vec4 aInst;
+uniform vec4 rects[${IMP_MAX}]; uniform vec4 slots[${IMP_MAX}]; uniform mat4 lightView; uniform mat4 lightProj;
+varying vec2 vAtlas; varying float vZ;
+void main() {
+  int k = int(aInst.w + 0.5);
+  vec3 lv = (lightView * vec4(aInst.xyz, 1.0)).xyz;
+  vAtlas = mix(slots[k].xy, slots[k].zw, position.xy); vZ = lv.z;
+  gl_Position = vec4((lightProj * vec4(lv.xy + mix(rects[k].xy, rects[k].zw, position.xy), lv.z, 1.0)).xy, 0.0, 1.0);
+}`,
+    fragmentShader: `
+uniform sampler2D atlas; uniform vec4 range;
+varying vec2 vAtlas; varying float vZ;
+void main() {
+  float d = texture2D(atlas, vAtlas).r;
+  if (d >= 1.0) discard; // mimo modelu
+  // hĺbka odtlačku → vzdialenosť od slnka pre model v počiatku → pre tento kus → hĺbka v mape tieňov
+  float z = d * range.y + range.x - ${IMP_DIST}.0 - vZ;
+  gl_FragDepth = clamp((z - range.z) / range.w, 0.0, 1.0);
+  gl_FragColor = vec4(1.0);
+}`,
+  }));
+  impMesh.frustumCulled = false;
+  const impBlit = new THREE.Scene();
+  impBlit.add(impMesh);
+  interface ImpModel { proxy: THREE.Mesh; lin: THREE.Matrix4; list: FineMesh[]; w: number; h: number; x0: number; y0: number }
+  const impModels = new Map<string, ImpModel>(), impKey = new WeakMap<FineMesh, string>();
+  const impR = new THREE.Vector3(), impUp = new THREE.Vector3(), impF = new THREE.Vector3(), impV = new THREE.Vector3(), impBox = new THREE.Box3();
+  function clearImpostors(): void { for (const m of impModels.values()) impScene.remove(m.proxy); impModels.clear(); }
+  // Nakreslí odtlačky a vráti modely, ktoré sa cez ne otlačia (tie sa potom do mapy tieňov nekreslia priamo).
+  function drawImpostors(): FineMesh[] {
+    for (const m of impModels.values()) { m.list.length = 0; m.proxy.visible = false; }
+    for (const f of fineMeshes) {
+      if (!f.visible || !f.layers.test(lightCam.layers)) continue;
+      const e = f.matrixWorld.elements;
+      let key = impKey.get(f);
+      if (key == null) { key = f.geometry.uuid + ':' + [0, 1, 2, 4, 5, 6, 8, 9, 10].map(i => (e[i] ?? 0).toFixed(3)).join(','); impKey.set(f, key); }
+      let m = impModels.get(key);
+      if (!m) {
+        const proxy = new THREE.Mesh(f.geometry, shadowDepthMat);
+        proxy.matrixAutoUpdate = false; proxy.frustumCulled = false;
+        impScene.add(proxy);
+        m = { proxy, lin: new THREE.Matrix4().copy(f.matrixWorld).setPosition(0, 0, 0), list: [], w: 0, h: 0, x0: 0, y0: 0 };
+        impModels.set(key, m);
+      }
+      m.list.push(f);
+    }
+    // mierka odtlačkov = mierka mapy tieňov (bod mapy na bod odtlačku)
+    const tx = (lightCam.right - lightCam.left) / SHADOW_SIZE, ty = (lightCam.top - lightCam.bottom) / SHADOW_SIZE;
+    impR.setFromMatrixColumn(lightCam.matrixWorld, 0); impUp.setFromMatrixColumn(lightCam.matrixWorld, 1); impF.setFromMatrixColumn(lightCam.matrixWorld, 2).negate();
+    const many = [...impModels.values()].filter(m => m.list.length > 1);
+    for (const m of many) {
+      // obdĺžnik modelu (s počiatkom v nule) pri pohľade zo slnka, zaokrúhlený na celé body a s okrajom
+      if (!m.proxy.geometry.boundingBox) m.proxy.geometry.computeBoundingBox();
+      impBox.makeEmpty();
+      const b = must(m.proxy.geometry.boundingBox ?? undefined);
+      for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) {
+        impV.set(x, y, z).applyMatrix4(m.lin);
+        impBox.expandByPoint(impV.set(impV.dot(impR), impV.dot(impUp), 0));
+      }
+      m.w = Math.ceil((impBox.max.x - impBox.min.x) / tx) + 2; m.h = Math.ceil((impBox.max.y - impBox.min.y) / ty) + 2;
+      m.x0 = impBox.min.x - tx; m.y0 = impBox.min.y - ty;
+    }
+    // poukladanie do obrázka po riadkoch, od najvyšších; čo sa nezmestí, kreslí sa priamo
+    many.sort((a, b) => b.h - a.h);
+    const used: ImpModel[] = [];
+    let sx = 0, sy = 0, rowH = 0, n = 0;
+    for (const m of many) {
+      if (used.length >= IMP_MAX || m.w > IMP_SIZE) continue;
+      if (sx + m.w > IMP_SIZE) { sx = 0; sy += rowH; rowH = 0; }
+      if (sy + m.h > IMP_SIZE) continue;
+      const k = used.length;
+      must(impU.rects.value[k]).set(m.x0, m.y0, m.x0 + m.w * tx, m.y0 + m.h * ty);
+      must(impU.slots.value[k]).set(sx / IMP_SIZE, sy / IMP_SIZE, (sx + m.w) / IMP_SIZE, (sy + m.h) / IMP_SIZE);
+      // model postavíme pred kameru odtlačkov tak, aby jeho obdĺžnik padol presne do jeho miesta v obrázku
+      impV.copy(lightCam.position).addScaledVector(impR, sx * tx - m.x0).addScaledVector(impUp, sy * ty - m.y0).addScaledVector(impF, IMP_DIST);
+      m.proxy.matrix.copy(m.lin).setPosition(impV); m.proxy.matrixWorldNeedsUpdate = true; m.proxy.visible = true;
+      sx += m.w; rowH = Math.max(rowH, m.h);
+      used.push(m); n += m.list.length;
+    }
+    if (!n) return [];
+    if (n > impInst.count) { impInst = new THREE.InstancedBufferAttribute(new Float32Array(4 * n * 2), 4); impGeo.setAttribute('aInst', impInst); }
+    const hidden: FineMesh[] = [];
+    used.forEach((m, k) => {
+      for (const f of m.list) { const e = f.matrixWorld.elements; impInst.setXYZW(hidden.length, e[12], e[13], e[14], k); hidden.push(f); }
+    });
+    impInst.needsUpdate = true; impGeo.instanceCount = n;
+    impCam.position.copy(lightCam.position); impCam.quaternion.copy(lightCam.quaternion);
+    impCam.left = 0; impCam.right = IMP_SIZE * tx; impCam.bottom = 0; impCam.top = IMP_SIZE * ty;
+    impCam.updateMatrixWorld(); impCam.updateProjectionMatrix();
+    impU.lightView.value.copy(lightCam.matrixWorldInverse); impU.lightProj.value.copy(lightCam.projectionMatrix);
+    impU.range.value.set(impCam.near, impCam.far - impCam.near, lightCam.near, lightCam.far - lightCam.near);
+    renderer.setRenderTarget(impRT);
+    renderer.clear();
+    renderer.render(impScene, impCam);
+    return hidden;
+  }
   const worldCorners: THREE.Vector3[] = [];
   // rohy sveta (pre kameru slnka) podľa veľkosti aktuálnej plochy
   function sizeWorld(): void {
@@ -1251,20 +1372,23 @@ void main() {
   }
   // Pokus (Les divov): slnko ako skutočný tieň stromov, len na zemi (1), alebo pôvodné škvrny zo šumu (0, MF_LES_SUN = 'dapple')
   const lesSunMode = (): number => window.MF_LES_SUN === 'dapple' ? 0 : 1;
-  let shadowDirty = true, lastShadowKey = '';
+  let shadowDirty = true, lastShadowKey = '', lastRaysKey = '';
   function updateShadowMap(min: number, se: number): void {
     const u = worldU;
-    const stepMin = Math.floor(min / D.MIN_PER_TICK) * D.MIN_PER_TICK; // slnko (a mapa tieňov) sa posúva v každom kroku – tiene idú plynulo
-    const key = se + ':' + stepMin + (layerOn('shadows') ? '' : ':off') + ':' + lesSunMode();
+    // Slnko (a mapa tieňov) sa posúva v každej snímke (#198) – tiene idú plynulo a každá snímka kreslí rovnako veľa.
+    // Kým čas stojí (MF_TIME), mapa sa nekreslí. Lúče v Lese divov (sieť z mapy tieňov) sa prestavajú len raz za krok.
+    const stepMin = Math.floor(min / D.MIN_PER_TICK) * D.MIN_PER_TICK;
+    const state = se + (layerOn('shadows') ? '' : ':off') + ':' + lesSunMode(), key = state + ':' + min, raysKey = state + ':' + stepMin;
     if (!shadowDirty && key === lastShadowKey) return;
-    shadowDirty = false; lastShadowKey = key;
-    clearSunRays();
-    const dir = W.sunDir(stepMin, se);
+    const rays = shadowDirty || raysKey !== lastRaysKey;
+    shadowDirty = false; lastShadowKey = key; lastRaysKey = raysKey;
+    const dir = W.sunDir(min, se);
+    if (rays || !dir || !layerOn('shadows')) clearSunRays();
     if (!dir || !layerOn('shadows')) { u.shadowOn.value = 0; return; }
     u.sunDir.value.set(dir.x, dir.y, dir.z); // rovnaké slnko ako mapa – odvrátené steny sedia s tieňom
     // temná plocha: slnko len v škvrnách cez koruny (shader), mapa tieňov netreba – stovky stromov by ju aj tak rozmazali
     // temná plocha: so škvrnami zo šumu (MF_LES_SUN = 'dapple') mapu tieňov netreba; inak skutočný tieň stromov na zemi
-    if (D.isDark(S.area) && !lesSunMode()) { u.shadowOn.value = 0; shadowDirty = true; return; }
+    if (D.isDark(S.area) && !lesSunMode()) { u.shadowOn.value = 0; shadowDirty = true; clearSunRays(); return; }
     u.shadowOn.value = 1;
     const zone = D.sunZone(S.area), center = zone ? new THREE.Vector3(zone.cx, 3, zone.cz) : new THREE.Vector3(S.W / 2, 3, S.H / 2);
     lightCam.position.copy(center).addScaledVector(new THREE.Vector3(dir.x, dir.y, dir.z), 80);
@@ -1281,15 +1405,20 @@ void main() {
     // posun po normále ~1 pixel mapy
     u.shadowNormalBias.value = Math.max(lightCam.right - lightCam.left, lightCam.top - lightCam.bottom) / SHADOW_SIZE * 1.5;
     const oldOverride = scene.overrideMaterial, oldClear = renderer.getClearColor(new THREE.Color()), oldAlpha = renderer.getClearAlpha();
+    renderer.setClearColor(0xffffff, 1);
+    scene.updateMatrixWorld();
+    const stamped = drawImpostors(); // modely, ktoré sú vo svete viackrát (stromy), idú do mapy cez odtlačky
+    for (const f of stamped) f.visible = false;
     scene.overrideMaterial = shadowDepthMat;
     renderer.setRenderTarget(shadowRT);
-    renderer.setClearColor(0xffffff, 1);
     renderer.clear();
     renderer.render(scene, lightCam);
+    for (const f of stamped) f.visible = true;
+    if (stamped.length) { const ac = renderer.autoClear; renderer.autoClear = false; renderer.render(impBlit, lightCam); renderer.autoClear = ac; }
     renderer.setRenderTarget(null);
     renderer.setClearColor(oldClear, oldAlpha);
     scene.overrideMaterial = oldOverride;
-    if (zone && D.isDark(S.area)) buildSunRays(zone, dir);
+    if (rays && zone && D.isDark(S.area)) buildSunRays(zone, dir);
   }
 
   // ---------- Lúče slnka z mapy tieňov (Les divov, MF_LES_SUN ≠ 'dapple') ----------
@@ -2147,7 +2276,7 @@ void main() {
       for (const m of [mat].flat()) if (m instanceof THREE.Material) m.dispose();
     });
     for (const t of texCache.values()) t.dispose();
-    groundTex.dispose(); shadowRT.dispose(); if (reflRT) reflRT.dispose(); if (maskTex) maskTex.dispose();
+    groundTex.dispose(); shadowRT.dispose(); impRT.dispose(); impGeo.dispose(); impMesh.material.dispose(); if (reflRT) reflRT.dispose(); if (maskTex) maskTex.dispose();
     renderer.dispose(); renderer.forceContextLoss();
   }
 
