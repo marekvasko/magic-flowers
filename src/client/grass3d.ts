@@ -4,7 +4,8 @@
 // a trsy za ňou ostanú za ňou – bez triedenia, pre všetkých hráčov, kvety aj zvieratá naraz.
 // Svetlo (okolie, slnko s mapou tieňov, lampáše, šero lesa) je to isté ako na svete (render3d.ts, LIGHT_GLSL).
 // Výkon (#196) – izometrická kamera (ortogonálna, pevný sklon) a trs s jednou hĺbkou dovoľujú tri skratky:
-//  1. svetlo sa počíta vo vrcholoch trsu, nie v každom pixeli – fragment shader je len obrázok × svetlo;
+//  1. svetlo sa počíta vo vrcholoch trsu, nie v každom pixeli – raz v tieni a raz na slnku; pixel si z mapy tieňov zistí
+//     len to, koľko slnka naň svieti, a obe svetlá zmieša (tiene na tráve sú tak ostré ako na zemi);
 //  2. trsy sú zoradené spredu dozadu podľa smeru pohľadu – z-buffer zahodí zakryté vrstvy skôr, než sa vyfarbia;
 //  3. tráva je rozdelená na kusy (CHUNK × CHUNK políčok) – kreslia sa len tie na obrazovke a v zrkadle vody len tie pri vode;
 //  4. hustota je v obrázku, nie v počte trsov: na obrazovke má každý trs rovnakú veľkosť, takže jeden trs sú dva chumáče
@@ -79,13 +80,14 @@ const fbm = (x: number, z: number, k: number): number => vnoise(x * 0.22, z * 0.
 
 // light = LIGHT_GLSL z render3d.ts (svetlo sveta v bode vPos)
 const grassVert = (light: string): string => `
-precision highp sampler2D; // mapa tieňov sa číta vo vrcholoch
+#define SUN_VIS_GIVEN
 attribute vec4 aRoot;   // koreň trsu (xyz); w = odtieň × 100 (celá časť) + náhodné číslo trsu (desatinná časť)
 attribute vec4 aShape;  // šírka, výška, ľavý okraj výrezu v obrázku (u), riadok obrázka (celá časť) + šírka výrezu 0–1 (desatinná časť; 0,5 = jeden chumáč)
 uniform mat4 shadowMatrix; uniform vec3 sunDir; uniform float shadowNormalBias;
 uniform float time; uniform vec2 wind; uniform vec2 cell; uniform float depthBias;
 uniform vec4 pushers[${MAX_PUSH}]; uniform int pusherCount;
-varying vec2 vUv; varying vec3 vMul; varying vec3 vAdd; // farba pixelu = obrázok trsu × vMul + vAdd
+// farba pixelu = obrázok trsu × mul + add; S = v tieni, L = na slnku (pixel ich zmieša podľa mapy tieňov)
+varying vec2 vUv; varying vec3 vMulS; varying vec3 vAddS; varying vec3 vMulL; varying vec3 vAddL;
 ${light}
 ${GRASS_TINT_GLSL}
 void main() {
@@ -122,12 +124,13 @@ void main() {
   vUv = vec2(aShape.z + (position.x + 0.5) * cell.x * min(1.0, fract(aShape.w) / 0.998), (floor(aShape.w) + t) * cell.y);
   vPos = wp; vFacing = sunDir.y; vUp = mix(0.75, 1.0, t); // svieti takmer ako zem – spodok s ňou splynie
   vShadow = shadowMatrix * vec4(wp + vec3(0.0, shadowNormalBias, 0.0), 1.0);
-  // svetlo, opar a tma tu vo vrchole (ten istý výpočet ako pixel zeme) – cez trs sa len interpolujú
-  vec3 light; float haze, fogK;
-  lighting(1.0, light, haze, fogK);
+  // svetlo, opar a tma tu vo vrchole (ten istý výpočet ako pixel zeme), raz bez slnka a raz so slnkom – cez trs sa interpolujú
   vec3 color = grassTint(base.xz) * tint * (1.0 + 0.22 * sheen * t) * mix(0.86, 1.0, t); // pri zemi o kúsok tmavší
-  vMul = color * light * (1.0 - haze) * (1.0 - fogK);
-  vAdd = gloomFog * haze * (1.0 - fogK) + darkFog * fogK;
+  vec3 light; float haze, fogK;
+  sunVisGiven = 0.0; lighting(1.0, light, haze, fogK);
+  vMulS = color * light * (1.0 - haze) * (1.0 - fogK); vAddS = gloomFog * haze * (1.0 - fogK) + darkFog * fogK;
+  sunVisGiven = 1.0; lighting(1.0, light, haze, fogK);
+  vMulL = color * light * (1.0 - haze) * (1.0 - fogK); vAddL = gloomFog * haze * (1.0 - fogK) + darkFog * fogK;
   // celý trs má hĺbku koreňa (ako sprity). Len spodok je o kúsok bližšie ku kamere, aby sa nebil so zemou – posun
   // musí byť malý a len pri zemi, inak by trsy tesne za postavičkou presvitali cez jej telo.
   vec4 cp = projectionMatrix * viewMatrix * vec4(wp, 1.0);
@@ -136,15 +139,20 @@ void main() {
   gl_Position = cp;
 }`;
 // steblá sú v obrázku sivé (jas = od farby zeme po farbu špičky), farebné sú len kvietky
-const GRASS_FRAG = `
+// shadow = SHADOW_GLSL z render3d.ts (mäkký tieň z mapy tieňov v bode vPos)
+const grassFrag = (shadow: string): string => `
 precision highp float;
 uniform sampler2D grassMap; uniform vec3 grassBase; uniform vec3 grassTip;
-varying vec2 vUv; varying vec3 vMul; varying vec3 vAdd;
+uniform sampler2D shadowMap; uniform float shadowOn; uniform vec2 shadowTexel; uniform float shadowRadius;
+varying vec2 vUv; varying vec3 vMulS; varying vec3 vAddS; varying vec3 vMulL; varying vec3 vAddL;
+varying vec3 vPos; varying vec4 vShadow;
+${shadow}
 void main() {
   vec4 gc = texture2D(grassMap, vUv);
   if (gc.a < 0.5) discard;
   float sat = max(gc.r, max(gc.g, gc.b)) - min(gc.r, min(gc.g, gc.b));
-  gl_FragColor = vec4((sat > 0.12 ? gc.rgb : mix(grassBase, grassTip, gc.r)) * vMul + vAdd, 1.0);
+  float sun = sunVisibility(1.0); // odvrátené slnko a noc rieši už vrchol (obe svetlá sú vtedy rovnaké)
+  gl_FragColor = vec4((sat > 0.12 ? gc.rgb : mix(grassBase, grassTip, gc.r)) * mix(vMulS, vMulL, sun) + mix(vAddS, vAddL, sun), 1.0);
 }`;
 
 export interface GrassPusher { x: number; y: number; z: number; r: number }
@@ -160,7 +168,7 @@ export interface Grass3d {
 
 export function createGrass3d(o: {
   THREE: Three; scene: THREE.Scene;
-  light: string;                      // LIGHT_GLSL (render3d.ts)
+  light: string; shadow: string;      // LIGHT_GLSL a SHADOW_GLSL (render3d.ts)
   water: { y: number; tan: number };  // výška hladiny a tangens sklonu kamery – ktoré kusy trávy sa môžu zrkadliť vo vode
   world: { [name: string]: THREE.IUniform };
   mask: THREE.IUniform<THREE.Texture | null>; maskOn: THREE.IUniform<number>; // maska políčok s trávou pre zem (render3d.ts)
@@ -236,7 +244,7 @@ export function createGrass3d(o: {
     pushers: { value: Array.from({ length: MAX_PUSH }, () => new T3.Vector4()) }, pusherCount: { value: 0 },
   };
   const material = new T3.ShaderMaterial({
-    vertexShader: grassVert(o.light), fragmentShader: GRASS_FRAG, defines: { SHADOW_TAPS: 4 }, uniforms: u, side: T3.DoubleSide,
+    vertexShader: grassVert(o.light), fragmentShader: grassFrag(o.shadow), defines: { SHADOW_TAPS: 4 }, uniforms: u, side: T3.DoubleSide,
     // označí v stencile, kde je tráva – röntgen postavičky (render3d.ts) sa tam nekreslí, nohy v tráve ostanú skryté
     stencilWrite: true, stencilRef: STENCIL_GRASS, stencilWriteMask: STENCIL_GRASS, stencilFunc: T3.AlwaysStencilFunc, stencilZPass: T3.ReplaceStencilOp,
   });
