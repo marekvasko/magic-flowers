@@ -1,7 +1,8 @@
 // 3D robot hráča (#194): Three.js sieť z opisu shared/robotmodel.ts – kĺby sú skupiny, diely hladké siete s materiálmi
 // podľa vzhľadu (náter, doplnková farba, svetlo očí, hrdza). Náradie: to, ktoré hráč drží, je v pravej ruke
 // (lampáš visí kolmo dole, svieti), ostatné vlastnené náradie je na nosiči na chrbte.
-// Zatiaľ ho kreslí /debug → Robots; v hre nahradí 2D postavičku v ďalšej fáze (#194 P2).
+// Kreslí ho /debug → Robots (každý diel vlastná sieť so štandardným materiálom Three.js) aj hra (render3d.ts): tam
+// dostane „backend“ (RobotBackend), ktorý diely zlúči do jednej siete so shaderom sveta – kĺby ostávajú skupiny.
 import * as THREE from 'three';
 import * as RM from '../shared/robotmodel.ts';
 import type { JointId, Mat, MountId, Part, PoseOpts, RobotLook, RobotModel, Shape } from '../shared/robotmodel.ts';
@@ -50,12 +51,43 @@ function geometry(s: Shape): THREE.BufferGeometry {
   return g;
 }
 
+// tá istá geometria s plochými stenami (každý trojuholník vlastné normály) – pre ostré diely v zlúčenej sieti
+const FLAT = new Map<THREE.BufferGeometry, THREE.BufferGeometry>();
+function flatGeometry(g: THREE.BufferGeometry): THREE.BufferGeometry {
+  let f = FLAT.get(g);
+  if (!f) { f = g.index ? g.toNonIndexed() : g.clone(); f.computeVertexNormals(); FLAT.set(g, f); }
+  return f;
+}
+
+// ---------- backend (hra) ----------
+// Diel pre zlúčenú sieť: geometria, kĺb (skupina), ku ktorému patrí, poloha voči nemu, farba (sRGB 0–1 bez prevodu –
+// shader sveta ráta priamo v sRGB), či svieti, priehľadnosť a miera hrdze
+export type RGB = [number, number, number];
+export interface BatchItem { geo: THREE.BufferGeometry; node: THREE.Object3D | null; local: THREE.Matrix4; color: RGB; emis: number; alpha: number; rust: number }
+export interface RobotBackend {
+  // telo robota: všetky diely v jednej (dvoch – nepriehľadné a sklo) sieti; update() po každej póze prenesie polohy kĺbov
+  body(items: BatchItem[]): { objects: THREE.Object3D[]; update(): void; dispose(): void };
+  // náradie: jedna sieť na kus (node = null, polohy voči náradiu)
+  tool(items: BatchItem[]): { objects: THREE.Object3D[]; dispose(): void };
+  drop(): THREE.Mesh; // kvapka vody z krhly
+}
+const rgb = (h: string): RGB => { const n = parseInt(h.slice(1), 16); return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; };
+// farby dielov podľa vzhľadu (ako materials(), ale len farba – svetlo ráta shader sveta)
+function batchLook(look: RobotLook): Record<Mat, { color: RGB; emis: number; alpha: number; rust: number }> {
+  const w = look.wear * 0.25, p = rgb(look.paint), o = rgb('#8a6a4a'), paint: RGB = [p[0] + (o[0] - p[0]) * w, p[1] + (o[1] - p[1]) * w, p[2] + (o[2] - p[2]) * w];
+  const m = (color: RGB, emis = 0, alpha = 1, rust = 0): { color: RGB; emis: number; alpha: number; rust: number } => ({ color, emis, alpha, rust });
+  return {
+    paint: m(paint, 0, 1, look.wear), accent: m(rgb(look.accent), 0, 1, look.wear * 0.7), metal: m(rgb('#a9b0b4')), dark: m(rgb('#3a3f43')), rubber: m(rgb('#2c2a28')),
+    eye: m(rgb(look.eye), 1), lens: m(rgb('#101518')), glass: m(rgb('#e8f6ff'), 0, 0.35), rust: m(rgb('#a4532a')), warm: m(rgb('#ffb54a'), 1), leaf: m(rgb('#5aa646')), pot: m(rgb('#b8643c'))
+  };
+}
+
 // ---------- materiály ----------
 const col = (h: string): THREE.Color => new THREE.Color(h);
 // Hrdza ako textúra v nátere (bez dielov navyše a bez UV): v shaderi sa z polohy na povrchu dielu ráta šum v troch
 // mierkach; kde prekročí prah (podľa wear – čím ošúchanejší robot, tým viac), náter prejde cez tmavší lem do hrdzavej
 // farby so zrnením a povrch je tam drsnejší a nekovový. wear = 0 → žiadna hrdza. Miera je v userData.rust.
-const RUST_GLSL = `
+export const RUST_GLSL = `
 float rHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float rNoise(vec3 x) {
   vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
@@ -108,40 +140,53 @@ function materials(look: RobotLook): Record<Mat, THREE.MeshStandardMaterial> {
 // ---------- náradie ----------
 // Model náradia: úchop (rúčka) je v počiatku, náradie ide pozdĺž +y (v ruke dopredu)
 const TOOL_FREE = new WeakMap<THREE.Group, () => void>(); // uvoľnenie sietí a materiálov náradia
-function toolMesh(id: ToolId): THREE.Group {
+type ToolMat = 'wood' | 'steel' | 'tin' | 'iron' | 'flame';
+const TOOL_MAT: Readonly<Record<ToolMat, { color: string; metal: number; rough: number; emis?: boolean }>> = {
+  wood: { color: '#9a6a3c', metal: 0.1, rough: 0.6 }, steel: { color: '#b7bec2', metal: 0.5, rough: 0.35 }, tin: { color: '#6aa0b8', metal: 0.35, rough: 0.4 },
+  iron: { color: '#3b3532', metal: 0.4, rough: 0.6 }, flame: { color: '#fff1c4', metal: 0.1, rough: 0.6, emis: true }
+};
+function toolMesh(id: ToolId, backend?: RobotBackend): THREE.Group {
   const g = new THREE.Group(); g.name = 'tool:' + id;
-  const own: { dispose: () => void }[] = [];
+  const own: { dispose: () => void }[] = [], items: BatchItem[] = [];
   TOOL_FREE.set(g, () => { for (const o of own) o.dispose(); });
-  const m = (c: string, extra: THREE.MeshStandardMaterialParameters = {}): THREE.MeshStandardMaterial => new THREE.MeshStandardMaterial({ color: col(c), roughness: 0.6, metalness: 0.1, ...extra });
-  const wood = m('#9a6a3c'), steel = m('#b7bec2', { metalness: 0.5, roughness: 0.35 });
-  const add = (geo: THREE.BufferGeometry, mat: THREE.Material, p: [number, number, number], r?: [number, number, number]): THREE.Mesh => {
-    const me = new THREE.Mesh(geo, mat); me.position.set(...p); if (r) me.rotation.set(...r); me.castShadow = true; g.add(me); own.push(geo, mat); return me;
+  const mats = new Map<ToolMat, THREE.MeshStandardMaterial>();
+  const std = (k: ToolMat): THREE.MeshStandardMaterial => {
+    let m = mats.get(k);
+    if (!m) { const d = TOOL_MAT[k]; m = new THREE.MeshStandardMaterial({ color: col(d.color), roughness: d.rough, metalness: d.metal, ...(d.emis ? { emissive: col('#ffb347'), emissiveIntensity: 2.2, transparent: true, opacity: 0.9 } : {}) }); mats.set(k, m); own.push(m); }
+    return m;
+  };
+  // diel náradia: v /debug vlastná sieť, v hre položka zlúčenej siete (pomenovaný diel ostane ako prázdny bod – plameň lampáša)
+  const add = (geo: THREE.BufferGeometry, k: ToolMat, p: [number, number, number], r?: [number, number, number], name?: string): void => {
+    own.push(geo);
+    if (!backend) { const me = new THREE.Mesh(geo, std(k)); me.position.set(...p); if (r) me.rotation.set(...r); me.castShadow = true; if (name) me.name = name; g.add(me); return; }
+    const local = new THREE.Matrix4().compose(new THREE.Vector3(...p), new THREE.Quaternion().setFromEuler(new THREE.Euler(...(r ?? [0, 0, 0]))), new THREE.Vector3(1, 1, 1));
+    items.push({ geo, node: null, local, color: rgb(TOOL_MAT[k].color), emis: TOOL_MAT[k].emis ? 1 : 0, alpha: 1, rust: 0 });
+    if (name) { const mark = new THREE.Object3D(); mark.name = name; mark.position.set(...p); g.add(mark); }
   };
   if (id === 'hoe') {
-    add(new THREE.CylinderGeometry(0.011, 0.011, 0.42, 6), wood, [0, 0.12, 0]);
-    add(roundedBox(0.1, 0.012, 0.07, 0.005), steel, [0, 0.33, 0.035]);
-    add(new THREE.CylinderGeometry(0.016, 0.016, 0.03, 6), steel, [0, 0.33, 0.005], [Math.PI / 2, 0, 0]);
+    add(new THREE.CylinderGeometry(0.011, 0.011, 0.42, 6), 'wood', [0, 0.12, 0]);
+    add(roundedBox(0.1, 0.012, 0.07, 0.005), 'steel', [0, 0.33, 0.035]);
+    add(new THREE.CylinderGeometry(0.016, 0.016, 0.03, 6), 'steel', [0, 0.33, 0.005], [Math.PI / 2, 0, 0]);
   } else if (id === 'pick') {
-    add(new THREE.CylinderGeometry(0.012, 0.012, 0.38, 6), wood, [0, 0.1, 0]);
-    for (const s of [-1, 1]) add(new THREE.ConeGeometry(0.016, 0.11, 6), steel, [s * 0.055, 0.29, 0], [0, 0, -s * 1.4]);
-    add(roundedBox(0.04, 0.035, 0.035, 0.008), steel, [0, 0.29, 0]);
+    add(new THREE.CylinderGeometry(0.012, 0.012, 0.38, 6), 'wood', [0, 0.1, 0]);
+    for (const s of [-1, 1]) add(new THREE.ConeGeometry(0.016, 0.11, 6), 'steel', [s * 0.055, 0.29, 0], [0, 0, -s * 1.4]);
+    add(roundedBox(0.04, 0.035, 0.035, 0.008), 'steel', [0, 0.29, 0]);
   } else if (id === 'can') {
     // krhla: oblúk držadla sedí na vrchu tela (konce oblúka v y 0,02 = vrch tela), telo pod ním,
     // hubica od spodku tela šikmo hore dopredu, na nej ružica
-    const tin = m('#6aa0b8', { metalness: 0.35, roughness: 0.4 });
-    add(new THREE.TorusGeometry(0.035, 0.008, 4, 8, Math.PI), tin, [0, 0.02, 0], [0, Math.PI / 2, 0]);
-    add(new THREE.CylinderGeometry(0.06, 0.065, 0.09, 10), tin, [0, -0.025, 0]);
-    add(new THREE.CylinderGeometry(0.008, 0.013, 0.13, 6), tin, [0, -0.015, 0.09], [1.0, 0, 0]);
-    add(new THREE.ConeGeometry(0.022, 0.025, 6, 1, true), tin, [0, 0.025, 0.145], [-0.55, 0, 0]);
+    add(new THREE.TorusGeometry(0.035, 0.008, 4, 8, Math.PI), 'tin', [0, 0.02, 0], [0, Math.PI / 2, 0]);
+    add(new THREE.CylinderGeometry(0.06, 0.065, 0.09, 10), 'tin', [0, -0.025, 0]);
+    add(new THREE.CylinderGeometry(0.008, 0.013, 0.13, 6), 'tin', [0, -0.015, 0.09], [1.0, 0, 0]);
+    add(new THREE.ConeGeometry(0.022, 0.025, 6, 1, true), 'tin', [0, 0.025, 0.145], [-0.55, 0, 0]);
   } else {
     // lampáš: krúžok, strieška, sklo so svetlom, spodok; visí dole z úchopu
-    const iron = m('#3b3532', { metalness: 0.4 });
-    add(new THREE.TorusGeometry(0.018, 0.004, 4, 8), iron, [0, -0.015, 0]);
-    add(new THREE.ConeGeometry(0.045, 0.035, 8), iron, [0, -0.045, 0]);
-    add(new THREE.CylinderGeometry(0.03, 0.03, 0.07, 8), m('#fff1c4', { emissive: col('#ffb347'), emissiveIntensity: 2.2, transparent: true, opacity: 0.9 }), [0, -0.1, 0]).name = 'flame';
-    for (let i = 0; i < 4; i++) { const a = (i / 4) * Math.PI * 2 + Math.PI / 4; add(new THREE.BoxGeometry(0.006, 0.075, 0.006), iron, [Math.cos(a) * 0.033, -0.1, Math.sin(a) * 0.033]); }
-    add(new THREE.CylinderGeometry(0.04, 0.035, 0.015, 8), iron, [0, -0.142, 0]);
+    add(new THREE.TorusGeometry(0.018, 0.004, 4, 8), 'iron', [0, -0.015, 0]);
+    add(new THREE.ConeGeometry(0.045, 0.035, 8), 'iron', [0, -0.045, 0]);
+    add(new THREE.CylinderGeometry(0.03, 0.03, 0.07, 8), 'flame', [0, -0.1, 0], undefined, 'flame');
+    for (let i = 0; i < 4; i++) { const a = (i / 4) * Math.PI * 2 + Math.PI / 4; add(new THREE.BoxGeometry(0.006, 0.075, 0.006), 'iron', [Math.cos(a) * 0.033, -0.1, Math.sin(a) * 0.033]); }
+    add(new THREE.CylinderGeometry(0.04, 0.035, 0.015, 8), 'iron', [0, -0.142, 0]);
   }
+  if (backend) { const h = backend.tool(items); g.add(...h.objects); own.push(h); }
   return g;
 }
 // Úchop náradia: bod na rúčke / držadle (v súradniciach modelu náradia), ktorý je v strede klepeta, a natočenie, ktoré
@@ -170,8 +215,8 @@ export interface Robot3D {
   mountWorld(id: MountId, out?: THREE.Vector3): THREE.Vector3;
   dispose(): void;
 }
-export function buildRobot(look: RobotLook): Robot3D {
-  const model = RM.robotModel(look), mats = materials(model.look);
+export function buildRobot(look: RobotLook, backend?: RobotBackend): Robot3D {
+  const model = RM.robotModel(look), mats = materials(model.look), bl = batchLook(model.look);
   const group = new THREE.Group(); group.name = `robot:${model.look.loco}/${model.look.body}/${model.look.head}`;
   const joints = new Map<JointId, THREE.Group>();
   const jointBase = new Map<THREE.Object3D, readonly [number, number, number]>(), partBase = new Map<THREE.Object3D, THREE.Vector3>();
@@ -187,8 +232,9 @@ export function buildRobot(look: RobotLook): Robot3D {
   const flatMats = new Map<Mat, THREE.MeshStandardMaterial>();
   // (clone neprenáša úpravu shadera – hrdza sa na kópiu náteru pridá znova)
   const flatMat = (m: Mat): THREE.MeshStandardMaterial => { let f = flatMats.get(m); if (!f) { f = mats[m].clone(); f.flatShading = true; const w: unknown = mats[m].userData['rust']; if (typeof w === 'number') rusty(f, w); flatMats.set(m, f); } return f; };
-  const tagged = new Map<string, THREE.Mesh[]>();
-  const partMesh = (p: Part): THREE.Mesh => {
+  const tagged = new Map<string, THREE.Object3D[]>(), items: BatchItem[] = [];
+  const tag = (t: string, o: THREE.Object3D): void => { let a = tagged.get(t); if (!a) tagged.set(t, a = []); a.push(o); partBase.set(o, o.position.clone()); };
+  const partMesh = (p: Part): THREE.Object3D => {
     // para má každý obláčik vlastný materiál (mení sa mu priehľadnosť)
     const mat = p.tag === 'steam' ? mats[p.m].clone() : p.flat ? flatMat(p.m) : mats[p.m];
     if (p.tag === 'steam') steamMats.push(mat);
@@ -196,10 +242,23 @@ export function buildRobot(look: RobotLook): Robot3D {
     me.position.set(...p.p); if (p.r) me.rotation.set(...p.r);
     if (p.tag) me.name = p.tag; // napr. holder:hoe – držiak náradia na nosiči
     me.castShadow = p.m !== 'glass'; me.receiveShadow = true;
-    if (p.tag) { let a = tagged.get(p.tag); if (!a) tagged.set(p.tag, a = []); a.push(me); partBase.set(me, me.position.clone()); }
+    if (p.tag) tag(p.tag, me);
     return me;
   };
-  for (const p of model.parts) must(joints.get(p.j)).add(partMesh(p));
+  // hra (backend): diely sa nezaradia ako siete, ale ako položky zlúčenej siete; diel, ktorý sa hýbe zvlášť (viečko,
+  // para…), má vlastnú prázdnu skupinu, ostatné patria priamo kĺbu
+  const partItem = (p: Part): void => {
+    const joint = must(joints.get(p.j)), geo = p.flat ? flatGeometry(geometry(p.shape)) : geometry(p.shape), look1 = bl[p.m];
+    const pos = new THREE.Vector3(...p.p), rot = new THREE.Quaternion().setFromEuler(new THREE.Euler(...(p.r ?? [0, 0, 0])));
+    if (p.tag) {
+      const node = new THREE.Group(); node.name = p.tag; node.position.copy(pos); node.quaternion.copy(rot); joint.add(node);
+      tag(p.tag, node);
+      items.push({ geo, node, local: new THREE.Matrix4(), ...look1 });
+    } else items.push({ geo, node: joint, local: new THREE.Matrix4().compose(pos, rot, new THREE.Vector3(1, 1, 1)), ...look1 });
+  };
+  for (const p of model.parts) { if (backend) partItem(p); else must(joints.get(p.j)).add(partMesh(p)); }
+  const bodyH = backend ? backend.body(items) : null;
+  if (bodyH) group.add(...bodyH.objects);
   // viečka sú zavreté posunuté dole (oči zakryjú), otvorené hore
   const lids = tagged.get('lid') ?? [];
   const mountGroup = (id: MountId): THREE.Group => {
@@ -239,11 +298,11 @@ export function buildRobot(look: RobotLook): Robot3D {
       TOOL_FREE.get(t)?.();
     }
     tools.length = 0; stored.clear(); dropHeld(); flights.length = 0; swap = null;
-    if (held) { const t = toolMesh(held); tools.push(t); attachHeld(held, t); }
+    if (held) { const t = toolMesh(held, backend); tools.push(t); attachHeld(held, t); }
     // ostatné vlastnené náradie na svojom mieste na nosiči (rúčkou v puzdre alebo zavesené na háčiku)
     for (const c of new Set(carried)) {
       if (c === held) continue;
-      const t = toolMesh(c); slots[c].add(t); tools.push(t); stored.set(c, t);
+      const t = toolMesh(c, backend); slots[c].add(t); tools.push(t); stored.set(c, t);
     }
     held0 = held;
   }
@@ -473,7 +532,6 @@ export function buildRobot(look: RobotLook): Robot3D {
       g.rotation.set(...n.r);
       g.position.set(base[0] + n.d[0], base[1] + n.d[1], base[2] + n.d[2]);
     }
-    group.position.y = o.jz ?? 0;
     for (const l of lids) l.position.y = must(partBase.get(l)).y - P.blink * 0.03;
     for (const [k, s] of (tagged.get('steam') ?? []).entries()) {
       const b = must(partBase.get(s)), f = (P.steam + k / 3) % 1;
@@ -484,6 +542,7 @@ export function buildRobot(look: RobotLook): Robot3D {
     hang(P.rigid, Math.sin((o.phase ?? 0) * 2) * (o.walking ? 0.12 : 0));
     swapEvents();
     water(P.pour, o.use?.t ?? o.t ?? 0);
+    if (bodyH) { group.updateMatrixWorld(true); bodyH.update(); } // matice kĺbov do zlúčenej siete
   }
   // Zavesené náradie (krhla, lampáš) visí vždy zvislo dolu (gravitácia), držadlo je čo najbližšie k osi klepeta (z ruky)
   // a nikdy sa neprevráti: os y kĺbu = hore vo svete, os z = os klepeta premietnutá do vodorovnej roviny.
@@ -507,7 +566,7 @@ export function buildRobot(look: RobotLook): Robot3D {
   // voda z ružice krhly pri polievaní: kvapky padajú po parabole, kým je krhla naklonená
   const dropMat = new THREE.MeshStandardMaterial({ color: col('#8fd3ff'), roughness: 0.1, transparent: true, opacity: 0.8 });
   const dropGeo = new THREE.IcosahedronGeometry(0.008, 0);
-  const drops = Array.from({ length: 12 }, () => { const d = new THREE.Mesh(dropGeo, dropMat); d.name = 'water'; d.visible = false; group.add(d); return d; });
+  const drops = Array.from({ length: 12 }, () => { const d = backend ? backend.drop() : new THREE.Mesh(dropGeo, dropMat); d.name = 'water'; d.visible = false; group.add(d); return d; });
   const rose = new THREE.Vector3(), roseDir = new THREE.Vector3(), dp = new THREE.Vector3();
   function water(pour: number, t: number): void {
     const can = pour > 0.55 ? group.getObjectByName('tool:can') : undefined;
@@ -527,7 +586,7 @@ export function buildRobot(look: RobotLook): Robot3D {
     if (id === 'handR' && lamp) { const f = lamp.getObjectByName('flame'); if (f) return f.getWorldPosition(out); }
     return (id === 'handR' ? hand : must(joints.get(model.mounts[id].j))).getWorldPosition(out);
   }
-  function dispose(): void { for (const m of [...Object.values(mats), ...steamMats, ...flatMats.values(), dropMat]) m.dispose(); dropGeo.dispose(); for (const t of tools) TOOL_FREE.get(t)?.(); group.removeFromParent(); }
+  function dispose(): void { for (const m of [...Object.values(mats), ...steamMats, ...flatMats.values(), dropMat]) m.dispose(); dropGeo.dispose(); bodyH?.dispose(); for (const t of tools) TOOL_FREE.get(t)?.(); group.removeFromParent(); }
   setTools(null, []);
   pose({});
   return { group, model, setTools, switchTool, switching: () => swap !== null, pose, mountWorld, dispose };

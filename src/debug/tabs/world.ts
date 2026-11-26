@@ -103,7 +103,7 @@ export function mount(el: HTMLElement, ctx0: TabCtx): TabInstance {
   const others = new Map<string, Walker>();
   const S: Omit<ViewState, 'others'> & { others: Map<string, Walker> } = {
     W: D.W, H: D.H, tiles: [], area: 'garden', tilesGen: 0, worldGen: 0, tick: 0, day: 1, weather: 'sun',
-    me: { x: D.W / 2, y: D.H / 2, dir: 0, phase: 0, moving: false, jz: 0, jv: 0, crawl: false }, look: null, name: '', id: -1, myEmote: null, mySi: -1, sel: '',
+    me: { x: D.W / 2, y: D.H / 2, dir: 0, phase: 0, moving: false, jz: 0, jv: 0, crawl: false }, look: null, name: '', id: -1, myEmote: null, mySi: -1, sel: '', inv: {},
     others, anchors: {}, fx: [], screenFx: [], bubbles: {}, tapMark: null, kbd: false,
     // pavúky (#57, #99): render3d ich kreslí vždy, tu zatiaľ prázdne (pavučiny ani pavúky sa sem nenačítavajú)
     webs: [], homes: [], websGen: 0, corner: [], cornerGen: 0, spiders: new Map(), objects: []

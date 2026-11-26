@@ -264,7 +264,7 @@ export function mount(el: HTMLElement, ctx: TabCtx): TabInstance {
     for (const l of lampLights) l.intensity = 0;
     for (const [i, o] of robots.entries()) {
       const jump = st.anim === 'jump' ? Math.max(0, Math.sin(t * 3 + i)) * 0.35 : 0;
-      o.r.group.position.set(o.x, 0, o.z);
+      o.r.group.position.set(o.x, jump, o.z); // výšku skoku nastavuje ten, kto robota kreslí
       // „use tool“: vlastný pohyb náradia v ruke (motyka okopáva, krompáč seká, krhla polieva, lampáš svieti), bez náradia hrabe klepetom
       const use = st.anim === 'use tool' && st.held && !o.r.switching() ? { tool: st.held, t: t + i * 0.37 } : null;
       o.r.pose({ phase: dist + i, t: t + i * 1.7, walking, crawl: st.anim === 'crawl', dance: st.anim === 'dance', dig: st.anim === 'dig' || (st.anim === 'use tool' && !st.held) ? t : 0, use, jz: jump }, dt);
