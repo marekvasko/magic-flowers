@@ -442,3 +442,17 @@ test('výmena náradia je šikmý vrh: let je parabola s gravitáciou, ruka aj v
     r.dispose();
   }
 });
+
+test('hrdza je textúra v nátere: materiál náteru nesie mieru hrdze podľa ošúchanosti, žiadne hrdzavé diely navyše', () => {
+  const rustOf = (wear: number): number[] => {
+    const r = buildRobot({ ...RM.PRESETS.hranac.look, wear }), out = new Set<number>();
+    r.group.traverse(o => { const m: unknown = o instanceof THREE.Mesh ? o.material : null; if (m instanceof THREE.MeshStandardMaterial && typeof m.userData['rust'] === 'number') out.add(m.userData['rust']); });
+    r.dispose();
+    return [...out].sort((a, b) => a - b);
+  };
+  assert.deepStrictEqual(rustOf(0), [0]);
+  assert.deepStrictEqual(rustOf(1), [0.7, 1]); // doplnková farba hrdzavie menej ako náter
+  const a = buildRobot({ ...RM.PRESETS.hranac.look, wear: 0 }), b = buildRobot({ ...RM.PRESETS.hranac.look, wear: 1 });
+  assert.strictEqual(triangles(a.group), triangles(b.group));
+  a.dispose(); b.dispose();
+});

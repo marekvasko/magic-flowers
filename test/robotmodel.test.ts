@@ -107,11 +107,11 @@ test('generátor: rovnaké semienko = rovnaký robot, je platný a dav má všet
   for (const l of looks) assert.notStrictEqual(l.paint, l.accent);
 });
 
-test('hrdza: viac ošúchaný robot má viac škvŕn, nový žiadnu; model je pre ten istý genóm rovnaký', () => {
+test('hrdza nie sú diely (je to textúra v nátere): model je pre každú ošúchanosť rovnaký, len vzhľad sa líši', () => {
   const base = RM.PRESETS.hrdzavec.look;
-  const rust = (wear: number): number => RM.robotModel({ ...base, wear }).parts.filter(p => p.m === 'rust').length;
-  assert.strictEqual(rust(0), 0);
-  assert.ok(rust(1) > rust(0.4) && rust(0.4) > 0);
+  const parts = (wear: number): number => RM.robotModel({ ...base, wear }).parts.length;
+  assert.strictEqual(parts(0), parts(1));
+  assert.ok(!RM.robotModel({ ...base, wear: 1 }).parts.some(p => p.m === 'rust'));
   assert.deepStrictEqual(RM.robotModel(base), RM.robotModel(base));
 });
 

@@ -52,14 +52,46 @@ function geometry(s: Shape): THREE.BufferGeometry {
 
 // ---------- materiály ----------
 const col = (h: string): THREE.Color => new THREE.Color(h);
-// Materiály robota podľa vzhľadu; ošúchaný náter je o kúsok tmavší a do hneda
+// Hrdza ako textúra v nátere (bez dielov navyše a bez UV): v shaderi sa z polohy na povrchu dielu ráta šum v troch
+// mierkach; kde prekročí prah (podľa wear – čím ošúchanejší robot, tým viac), náter prejde cez tmavší lem do hrdzavej
+// farby so zrnením a povrch je tam drsnejší a nekovový. wear = 0 → žiadna hrdza. Miera je v userData.rust.
+const RUST_GLSL = `
+float rHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float rNoise(vec3 x) {
+  vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(rHash(i), rHash(i + vec3(1, 0, 0)), f.x), mix(rHash(i + vec3(0, 1, 0)), rHash(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(rHash(i + vec3(0, 0, 1)), rHash(i + vec3(1, 0, 1)), f.x), mix(rHash(i + vec3(0, 1, 1)), rHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+float rustMask(vec3 p, float wear) {
+  float n = 0.55 * rNoise(p * 9.0) + 0.3 * rNoise(p * 23.0 + 7.0) + 0.15 * rNoise(p * 61.0 + 3.0);
+  float th = 0.86 - 0.5 * wear;
+  return wear <= 0.0 ? 0.0 : smoothstep(th, th + 0.07, n);
+}`;
+function rusty(m: THREE.MeshStandardMaterial, wear: number): THREE.MeshStandardMaterial {
+  m.userData['rust'] = wear;
+  m.onBeforeCompile = shader => {
+    shader.uniforms['uRust'] = { value: wear };
+    shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vRustP;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvRustP = position;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vRustP; uniform float uRust;' + RUST_GLSL)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        float rustK = rustMask(vRustP, uRust), rustG = rNoise(vRustP * 140.0);
+        vec3 rustC = mix(vec3(0.42, 0.17, 0.06), vec3(0.72, 0.36, 0.13), rustG);
+        diffuseColor.rgb = mix(diffuseColor.rgb * (1.0 - 0.35 * smoothstep(0.0, 0.5, rustK) * (1.0 - rustK)), rustC, rustK);`)
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.95, rustK);')
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor *= 1.0 - rustK;');
+  };
+  m.customProgramCacheKey = () => 'rust';
+  return m;
+}
+// Materiály robota podľa vzhľadu; ošúchaný náter je o kúsok tmavší a do hneda, s hrdzavými škvrnami (rusty)
 function materials(look: RobotLook): Record<Mat, THREE.MeshStandardMaterial> {
   const rustCol = col('#a4532a'), paint = col(look.paint).lerp(col('#8a6a4a'), look.wear * 0.25);
   const std = (c: THREE.Color | string, rough: number, metal: number, extra: THREE.MeshStandardMaterialParameters = {}): THREE.MeshStandardMaterial =>
     new THREE.MeshStandardMaterial({ color: typeof c === 'string' ? col(c) : c, roughness: rough, metalness: metal, ...extra });
   return {
-    paint: std(paint, 0.55, 0.1),
-    accent: std(col(look.accent), 0.5, 0.25),
+    paint: rusty(std(paint, 0.55, 0.1), look.wear),
+    accent: rusty(std(col(look.accent), 0.5, 0.25), look.wear * 0.7),
     metal: std('#a9b0b4', 0.35, 0.55),
     dark: std('#3a3f43', 0.6, 0.3),
     rubber: std('#2c2a28', 0.9, 0),
@@ -153,7 +185,8 @@ export function buildRobot(look: RobotLook): Robot3D {
   }
   // materiály s plochým tieňovaním pre ostré diely (mnohosteny), jeden na druh materiálu
   const flatMats = new Map<Mat, THREE.MeshStandardMaterial>();
-  const flatMat = (m: Mat): THREE.MeshStandardMaterial => { let f = flatMats.get(m); if (!f) { f = mats[m].clone(); f.flatShading = true; flatMats.set(m, f); } return f; };
+  // (clone neprenáša úpravu shadera – hrdza sa na kópiu náteru pridá znova)
+  const flatMat = (m: Mat): THREE.MeshStandardMaterial => { let f = flatMats.get(m); if (!f) { f = mats[m].clone(); f.flatShading = true; const w: unknown = mats[m].userData['rust']; if (typeof w === 'number') rusty(f, w); flatMats.set(m, f); } return f; };
   const tagged = new Map<string, THREE.Mesh[]>();
   const partMesh = (p: Part): THREE.Mesh => {
     // para má každý obláčik vlastný materiál (mení sa mu priehľadnosť)
@@ -263,27 +296,39 @@ export function buildRobot(look: RobotLook): Robot3D {
     phi: number | null;              // natočenie ruky pri pustení / chytení
     aim: THREE.Quaternion;           // natočenie držiaka
     dir: THREE.Vector3; speed: number; // smer a veľkosť štartovej rýchlosti
-    L: number; tau: number;          // dráha a čas zrýchlenia (ruky alebo vystreľovača)
+    L: number; tau: number;          // dráha a čas zrýchlenia vystreľovača; pri hode tau = čas švihu po pustenie
+    swing?: { from: number; at: number; omega: number; tauF: number; R: number; g: number }; // švih ruky: uhly, uhlová rýchlosť pri pustení, dobeh
     target: THREE.Matrix4;           // kde a ako náradie skončí (v súradniciach trupu)
     T: number;
   }
-  // Odhodenie: ruka pustí náradie v bode SWAP.tossAt; náradie sa cestou neotáča, preto ho ruka drží už natočené tak,
-  // ako dopadne – proti smeru dopadu (a = −v pri dopade), a držiak sa natočí rovnako. Pár iterácií (smer dopadu závisí
-  // od bodu pustenia a ten od natočenia ruky).
+  // Švih: kde je úchop, keď je natiahnutá ruka pod uhlom ang (od zvislice dolu, dopredu). Palicu drží zápästie stále
+  // rovnako natočenú (phi) – úchop je o g posunutý v smere ruky; zavesené náradie visí na ruke v predĺžení predlaktia.
+  function swingAt(p: { yaw: number; phi: number | null }, sw: { R: number; g: number }, ang: number): RM.ArmTarget {
+    if (p.phi === null) return { yaw: p.yaw, f: (sw.R + sw.g) * Math.sin(ang), y: -(sw.R + sw.g) * Math.cos(ang), phi: null };
+    return { yaw: p.yaw, f: sw.R * Math.sin(ang) + sw.g * Math.sin(p.phi), y: -sw.R * Math.cos(ang) - sw.g * Math.cos(p.phi), phi: p.phi };
+  }
+  // Odhodenie: švih spodom. Náradie sa pri ňom neotáča (len posúva po oblúku), takže jeho rýchlosť je rýchlosť ruky:
+  // kolmá na ruku, veľká omega × dĺžka ruky. Pustí sa pod uhlom, kde tento smer = smer štartovej rýchlosti v0 šikmého
+  // vrhu do držiaka, a švih je načasovaný tak, aby tam ruka mala omega = |v0| / dĺžka. Náradie drží ruka už natočené tak,
+  // ako dopadne – proti smeru dopadu (a = −v pri dopade), a držiak sa natočí rovnako. Pár iterácií (všetko závisí od
+  // bodu pustenia a ten od uhla).
   function planToss(tool: ToolId): Plan {
-    const { h, yaw } = throwPlane(tool), staff = staffTool(tool), at = RM.SWAP.tossAt, rest = restAxis(tool);
+    const { h, yaw } = throwPlane(tool), staff = staffTool(tool), rest = restAxis(tool);
+    const sw = { R: model.armLen * 1.05 * RM.SWAP.reach, g: -model.mounts.handR.p[1] }, lever = staff ? sw.R : sw.R + sw.g;
     const a = UP.clone(), aim = new THREE.Quaternion(), p0 = new THREE.Vector3(), p1 = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
-    let phi: number | null = null, b = RM.ballistic([0, 0, 0], [0, 0, 0], 1);
-    for (let k = 0; k < 4; k++) {
+    let phi: number | null = null, at = 1.7, b = RM.ballistic([0, 0, 0], [0, 0, 0], 1);
+    for (let k = 0; k < 6; k++) {
       phi = staff ? Math.atan2(a.y, a.dot(h)) : null;
-      probeHeld(tool, { yaw, f: at.f, y: at.y, phi }).decompose(p0, q, sc);
+      probeHeld(tool, swingAt({ yaw, phi }, sw, at)).decompose(p0, q, sc);
       if (staff) aim.setFromUnitVectors(rest, a);
       probeSlot(tool, aim, ZERO).decompose(p1, q, sc);
       b = RM.ballistic(v3(p0), v3(p1), apexY());
       a.set(-b.vEnd[0], -b.vEnd[1], -b.vEnd[2]).normalize();
+      at = Math.atan2(b.v0[1], b.v0[0] * h.x + b.v0[2] * h.z); // rýchlosť ruky (cos, sin) uhla = smer v0 v rovine hodu
     }
     const dir = new THREE.Vector3(...b.v0), speed = dir.length(); dir.normalize();
-    return { tool, yaw, h, phi, aim, dir, speed, L: (speed * RM.SWAP.tossT) / 2, tau: RM.SWAP.tossT, target: probeSlot(tool, aim, ZERO), T: b.T };
+    const omega = speed / lever, from = Math.min(RM.SWAP.swingFrom, at - 0.8);
+    return { tool, yaw, h, phi, aim, dir, speed, L: 0, tau: (2 * (at - from)) / omega, target: probeSlot(tool, aim, ZERO), T: b.T, swing: { from, at, omega, tauF: (2 * RM.SWAP.follow) / omega, ...sw } };
   }
   // Výstrel: držiak (puzdro) sa natočí do smeru štartovej rýchlosti, zdvihom SWAP.stroke náradie zrýchli a pustí.
   // Klepeto čaká v bode SWAP.catchAt natočené ako letiace náradie (os klepeta v smere výstrelu).
@@ -352,11 +397,13 @@ export function buildRobot(look: RobotLook): Robot3D {
     const sw = swap;
     if (!sw) return null;
     sw.t += dt;
-    const p = sw.toss;
-    if (p && !sw.released) {
-      // náprah na začiatok hodu, potom rovnomerne zrýchlený pohyb po priamke v smere v0 až do bodu pustenia
-      const u = Math.max(0, Math.min(1, (sw.t - RM.SWAP.wind) / p.tau)), back = p.L * (1 - u * u), at = RM.SWAP.tossAt;
-      return { yaw: p.yaw, f: at.f - p.dir.dot(p.h) * back, y: at.y - p.dir.y * back, phi: p.phi };
+    const p = sw.toss, g = p?.swing;
+    if (p && g && sw.t < sw.tRel + g.tauF) {
+      // náprah (ruka klesne na začiatok švihu), švih s rovnomerným uhlovým zrýchlením až po pustenie (tam má omega),
+      // potom dobeh s rovnomerným spomalením
+      const u = Math.max(0, Math.min(1, (sw.t - RM.SWAP.wind) / p.tau)), s = sw.t - sw.tRel;
+      const ang = s < 0 ? g.from + (g.at - g.from) * u * u : g.at + g.omega * s - (g.omega / (2 * g.tauF)) * s * s;
+      return swingAt(p, g, ang);
     }
     const l = sw.launch;
     if (l && sw.t < sw.tCatch + 0.05) return { yaw: l.yaw, f: RM.SWAP.catchAt.f, y: RM.SWAP.catchAt.y, phi: l.phi };
@@ -408,7 +455,7 @@ export function buildRobot(look: RobotLook): Robot3D {
   function pose(o: PoseOpts, dt?: number): void {
     const arm = o.arm !== undefined ? o.arm : swapArm(dt ?? 0);
     // zrýchlenie ruky pri hode: kĺby pravej ruky smú rýchlejšie (RM.THROW_SPEED)
-    const throwing = !!swap?.toss && !swap.released && swap.t >= RM.SWAP.wind;
+    const throwing = !!swap?.toss?.swing && swap.t >= RM.SWAP.wind && swap.t < swap.tRel + swap.toss.swing.tauF + 0.05;
     const P = RM.robotPose(model, { ...o, arm, use: o.use !== undefined ? o.use : null, hold: o.hold !== undefined ? o.hold : held0 ? RM.TOOL_HOLD[held0] : null, digWith: o.digWith !== undefined ? o.digWith : held0 });
     for (const [id, g] of joints) {
       const jp = P.joints.get(id), base = must(jointBase.get(g)), tr = jp?.r ?? [0, 0, 0], td = jp?.d ?? [0, 0, 0];

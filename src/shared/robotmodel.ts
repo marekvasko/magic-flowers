@@ -380,14 +380,7 @@ function details(b: Builder, L: Built, body: JointId, H: Hull, eyesOnBody: boole
     for (const k of [0, 1, 2]) b.add(body, { k: 'sphere', r: 0.025 + k * 0.012 }, [x + k * 0.01, y + 0.15 + k * 0.05, z], 'glass', undefined, 'steam');
   }
 }
-// škvrny hrdze: náhodné body na povrchu trupu, koľko podľa wear (najviac 9)
-function rust(b: Builder, L: Built, body: JointId, H: Hull): void {
-  const r = rng(hashStr(JSON.stringify(L)) ^ 0x9e3779b9), n = Math.round(L.wear * 9);
-  for (let i = 0; i < n; i++) {
-    const a = r() * Math.PI * 2, v = r() * 1.6 - 0.8, q = H.at(a, v), k = 0.022 + r() * 0.022;
-    b.add(body, { k: 'sphere', r: k, s: [1 + r() * 0.6, 0.12, 0.8 + r() * 0.5] }, q.p, 'rust', alignY(q.n));
-  }
-}
+// Hrdza nie sú diely: je to textúra v nátere (client/robot3d.ts) – škvrny podľa wear.
 
 // ---------- podvozok ----------
 // Postaví podvozok a vráti, v akej výške je spodok trupu
@@ -714,13 +707,12 @@ export function robotModel(look0: RobotLook): RobotModel {
   const fit = fitHead(L, bottom + H.bottom + H.top, H.hx);
   const top0 = head(b, L, body, H, fit.s, fit.nl);
   // klobúčik má širokú striešku (0,13) – siaha dozadu ďalej ako hlava; nosič a vystrelené náradie ju musia minúť
-  // (náradie dopadá do držiaka šikmo, preto ešte 3 cm navyše)
-  const top = L.acc === 'hat' ? { ...top0, back: Math.max(top0.back, HAT_BRIM + 0.03 - (L.head === 'bino' ? -0.02 : 0) - top0.p[2]) } : top0;
+  // (náradie dopadá do držiaka šikmo, preto ešte 5 cm navyše)
+  const top = L.acc === 'hat' ? { ...top0, back: Math.max(top0.back, HAT_BRIM + 0.05 - (L.head === 'bino' ? -0.02 : 0) - top0.p[2]) } : top0;
   details(b, L, body, H, L.head === 'none');
   const { sx, sy, sz, arm, swingBack } = arms(b, L, body, H, ch, top);
   const slots = rack(b, body, H, top.back);
   b.accessory(L.acc, top.j, top.p);
-  rust(b, L, body, H);
   const mounts: Record<MountId, Mount> = { handR: MOUNT_HAND('handR', b.gripY), handL: MOUNT_HAND('handL', b.gripY), back: { j: 'rack', p: [0, 0, -0.03] }, top: { j: top.j, p: top.p } };
   const m0: RobotModel = { look: L, joints: b.joints, parts: b.parts, wheels: b.wheels, tracks: b.tracks, slots, mounts, swingBack, shoulder: [sx, sy, sz], armLen: arm, front: Math.max(ch.front, H.front(0)), height: 0, scale: 1, gait: L.loco === 'legs2' || L.loco === 'legs3' ? 'walk' : 'roll' };
   const h0 = mountAt(m0, null, 'top')[1], scale = Math.max(HEIGHT_MIN, Math.min(HEIGHT_MAX, h0)) / h0;
@@ -832,9 +824,10 @@ function useTool(m: RobotModel, tool: ToolId, s: number): UseState {
 // ---------- výmena náradia: fyzika ----------
 // Ruka na nosič na chrbte nedočiahne, náradie sa preto hádže. Všetko sa deje v zvislej rovine, ktorá prechádza držiakom
 // náradia na nosiči a pravým plecom (rameno sa do nej natočí), v súradniciach trupu:
-//  - odhodenie: ruka (IK) zrýchľuje náradie po priamke v smere štartovej rýchlosti v0 (bez otáčania) a pustí ho, keď má
-//    rýchlosť v0; náradie letí po parabole (gravitácia GRAVITY) a padne do svojho držiaka, ktorý sa vopred natočil
-//    proti smeru dopadu (rúčka vkĺzne do puzdra);
+//  - odhodenie: švih spodom – ruka klesne (náprah) a natiahnutá sa okolo pleca rozbieha dopredu a hore; zápästie drží
+//    náradie stále rovnako natočené. V bode oblúka, kde je rýchlosť ruky presne štartová rýchlosť v0 (smerom aj
+//    veľkosťou), náradie pustí a ruka ešte dobehne. Náradie letí po parabole (gravitácia GRAVITY) a padne do svojho
+//    držiaka, ktorý sa vopred natočil proti smeru dopadu (rúčka vkĺzne do puzdra);
 //  - výstrel: držiak sa natočí do smeru v0, krátkym zdvihom (stroke) náradie zrýchli na |v0| a pustí; parabola končí
 //    v klepete, ktoré čaká v bode chytenia natočené rovnako ako letiace náradie.
 // Počas letu sa náradie neotáča (okrem malého rovnomerného dotočenia) – smer mu dá ruka alebo držiak.
@@ -842,8 +835,9 @@ function useTool(m: RobotModel, tool: ToolId, s: number): UseState {
 export const GRAVITY = 9.8;
 export const SWAP = {
   wind: 0.35,                    // náprah: ruka do začiatku hodu, držiak sa natočí
-  tossT: 0.14,                   // trvanie zrýchlenia ruky pri hode
-  tossAt: { f: 0.16, y: 0.06 },  // kde ruka (úchop) náradie pustí: pred plecom (f) a nad ním (y), v rovine hodu
+  swingFrom: 0.5,                // hod: natiahnutá ruka sa rozbieha od tohto uhla (rad od zvislice dolu, dopredu)…
+  follow: 0.6,                   // …a po pustení ešte dobieha o tento uhol, kým zastane
+  reach: 0.93,                   // ako veľmi je ruka pri švihu natiahnutá (podiel dĺžky ramena)
   catchAt: { f: 0.14, y: 0.03 }, // kde klepeto čaká na náradie
   aim: 0.3,                      // natočenie držiaka pred výstrelom
   stroke: 0.05,                  // zdvih vystreľovača
@@ -884,9 +878,9 @@ export const JOINT_LIMITS: Readonly<Record<'shoulder' | 'elbow' | 'hand', readon
 };
 // Najväčšia rýchlosť kĺbu (rad/s): kĺby sa nehýbu okamžite – robot3d ich ťahá k póze najviac touto rýchlosťou.
 // Kolesá a články pásu idú presne s dráhou (Infinity).
-// Hod: ruka dlhá 0,24 políčka musí náradiu dať ~3 políčka/s, čo je ~20 rad/s v pleci (rýchlosť / rameno páky) –
-// viac, ako kĺby bežne smú. Počas krátkeho zrýchlenia pri hode preto kĺby pravej ruky smú až THROW_SPEED.
-export const THROW_SPEED = 24;
+// Hod: ruka dlhá 0,24 políčka musí náradiu dať ~3 políčka/s, čo je ~14 rad/s v pleci (rýchlosť / rameno páky) –
+// viac, ako kĺby bežne smú. Počas švihu pri hode preto kĺby pravej ruky smú až THROW_SPEED.
+export const THROW_SPEED = 18;
 export function jointSpeed(id: JointId): number {
   if (/^shoulder/.test(id)) return 10;
   if (/^elbow/.test(id)) return 12;
