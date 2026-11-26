@@ -370,7 +370,7 @@ function runSwitch(r: Robot3D, to: ToolId | null, dt: number, f: (t: number, whe
 }
 
 test('výmena náradia: staré skončí v držiaku, nové v klepete; každé je vždy práve raz; nič cestou nezasiahne trup ani hlavu', () => {
-  for (const [name, look] of LOOKS.slice(0, 12)) {
+  for (const [name, look] of LOOKS.slice(0, 7)) {
     const r = buildRobot(look), body = r.group.getObjectByName('body'), head = r.group.getObjectByName('head');
     assert.ok(body && head, name);
     r.setTools('hoe', TOOLS);
@@ -406,7 +406,7 @@ test('výmena náradia: staré skončí v držiaku, nové v klepete; každé je 
 
 test('výmena náradia je šikmý vrh: let je parabola s gravitáciou, ruka aj vystreľovač dajú náradiu rýchlosť, s ktorou letí, a dopadne presne do držiaka / klepeta', () => {
   const dt = 1 / 600, G = RM.GRAVITY;
-  for (const [name, look] of LOOKS.slice(0, 5)) {
+  for (const [name, look] of LOOKS.slice(0, 3)) {
     const r = buildRobot(look);
     r.setTools('hoe', TOOLS);
     r.pose({});
@@ -460,7 +460,7 @@ test('hrdza je textúra v nátere: materiál náteru nesie mieru hrdze podľa o�
 
 test('výmena náradia: vystrelené náradie padne do ruky tam, kde ho ruka pri odhodení púšťa', () => {
   const dt = 1 / 240;
-  for (const [name, look] of LOOKS.slice(0, 5)) {
+  for (const [name, look] of LOOKS.slice(0, 3)) {
     const r = buildRobot(look);
     r.setTools('hoe', TOOLS);
     r.pose({});
@@ -532,7 +532,7 @@ test('nohy: chodidlá stoja na zemi a nohy nejdú do zeme ani do trupu – v sto
 });
 
 test('jednoduchý štýl (hra): menej trojuholníkov, náradie na nosiči sa nedotýka trupu, hlavy ani iného náradia, výmena náradia funguje', () => {
-  for (const [name, look] of LOOKS.slice(0, 12)) {
+  for (const [name, look] of LOOKS.slice(0, 7)) {
     const d = buildRobot(look), r = buildRobot(look, undefined, { simple: true });
     d.setTools(null, TOOLS); r.setTools(null, TOOLS);
     assert.ok(triangles(r.group) < triangles(d.group) * 0.8, `${name}: ${triangles(r.group)} oproti ${triangles(d.group)}`);

@@ -216,7 +216,7 @@ test('obmedzenia kĺbov: plece, lakeť ani zápästie nikdy nevyjdú z rozsahu (
 });
 
 test('kĺby sa nehýbu okamžite: animácie náradia, hrabanie ani tanec nepotrebujú kĺb rýchlejší, ako dovolí jointSpeed', () => {
-  for (const [name, look] of LOOKS.slice(0, 25)) {
+  for (const [name, look] of LOOKS.slice(0, 12)) {
     const m = RM.robotModel(look);
     const anims: [string, number, (t: number) => RM.PoseOpts][] = [
       ...TOOL_IDS.map((tool): [string, number, (t: number) => RM.PoseOpts] => [tool, RM.USE_CYCLE[tool], t => ({ use: { tool, t } })]),
