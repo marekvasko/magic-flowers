@@ -1,6 +1,6 @@
 // Stav klienta (#136): jeden objekt S zdieľaný hrou (game.ts) a 3D pohľadom (render3d.ts, spiders3d.ts, particles3d.ts).
 // V konzole je to window.MF – jediný ladiaci háčik klienta (README).
-import type { AreaId, BrewHint, Ground, ItemId, Look, MasterPos, PotionId, SpeciesId } from '../shared/data.ts';
+import type { AreaId, BrewHint, Ground, ItemId, Look, MasterPos, PotionId, SpeciesId, ToolId } from '../shared/data.ts';
 import type { WebOverrides } from '../shared/webs.ts';
 import type { Other } from '../shared/players.ts';
 import type { BatchesView, CornerView, PlayerView, ServerMessage, SpiderKind, TileView, VehicleView, WebView } from '../shared/protocol.ts';
@@ -46,6 +46,7 @@ export interface ClientState {
   me: Me; crawlKey: boolean; crawlTgl: boolean; myEmote: PlayerView['e']; mySi?: number;
   others: Map<number, OtherPlayer>; inv: Partial<Record<ItemId, number>>; coins: number; water: number; recipes: string[]; seen: SpeciesId[]; vily: boolean;
   fb?: BatchesView; fbTick?: number; storageFb?: BatchesView; storageTick?: number;
+  toolUse?: { tool: ToolId; at: number } | null; // posledné použitie náradia (robot ukáže jeho pohyb, #194)
   sel: ItemId | ''; area: AreaId; areaSeq: number; W: number; H: number; tilesGen: number; worldGen?: number; storageRate: number;
   icehouse: Icehouse; dielna: { built: boolean; loom: boolean }; loom: MsgOf<'me'>['loom']; eternal: boolean; names: string[];
   dock?: Dock; // mólo a loďka (#160): stavba, poloha loďky, kto v nej sedí, zima
@@ -68,7 +69,7 @@ export interface ClientState {
 // Stav, ktorý kreslí 3D pohľad (render3d.ts, spiders3d.ts, particles3d.ts): hra mu dá celé S, ladiaca stránka /debug
 // (záložka World) len to, čo pohľad naozaj číta – bez stavu budov a hráčov s id podľa odtlačku kľúča (reťazec)
 export type ViewOther = Pick<OtherPlayer, 'x' | 'y' | 'name' | 'look' | 'a' | 'dir' | 'e' | 'phase' | 'jz' | 'cr' | 'lp' | 'si' | 'wb'> & { id: number | string };
-export type ViewState = Pick<ClientState, 'W' | 'H' | 'tiles' | 'objects' | 'area' | 'tilesGen' | 'tick' | 'day' | 'weather' | 'me' | 'look' | 'name' | 'id'
+export type ViewState = Pick<ClientState, 'inv' | 'toolUse' | 'W' | 'H' | 'tiles' | 'objects' | 'area' | 'tilesGen' | 'tick' | 'day' | 'weather' | 'me' | 'look' | 'name' | 'id'
   | 'myEmote' | 'sel' | 'anchors' | 'fx' | 'screenFx' | 'bubbles' | 'tapMark' | 'webs' | 'homes' | 'websGen' | 'corner' | 'cornerGen' | 'spiders'>
   & Partial<Pick<ClientState, 'icehouse' | 'dielna' | 'dock' | 'webLeft' | 'kbd' | 'mySi' | 'worldGen' | 'vehicles'>>
   & { others: ReadonlyMap<number | string, ViewOther> };

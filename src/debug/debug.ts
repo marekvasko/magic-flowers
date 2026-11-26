@@ -17,6 +17,7 @@ import type { Kid, TabCtx, TabInstance, TabModule } from './ui.ts';
     { id: 'room', label: 'Room' },
     { id: 'map', label: 'Map', todo: 'A top-down plan of every area: ground heights, paths, objects, gates and a grid as layers, a tile inspector and area stats, for any seed or for the selected room.' },
     { id: 'world', label: 'World', todo: 'A free camera over the whole rendered world of the selected room and area, with time, season and layer controls and visual debug helpers (bounding boxes, tile grid, tap areas, lights).' },
+    { id: 'robots', label: 'Robots' },
     { id: 'assets', label: 'Assets', todo: 'A 3D viewer with a list of every model (buildings, market stall, well, cauldron, icehouse, trees, bushes, rocks, flowers…), switchable season and rotation.' },
     { id: 'generators', label: 'Generators', todo: 'Seeds and parameter sliders for the procedural generators (trees first, their parameters already exist in World3D.TREE_PARAMS), area layouts side by side, and “copy parameters”.' },
     { id: 'market', label: 'Market', todo: 'Prices, stock and price history of the selected room, NPC state, festivals, contracts, and why each price is what it is.' },
@@ -94,7 +95,7 @@ import type { Kid, TabCtx, TabInstance, TabModule } from './ui.ts';
   // Keď modul ešte neexistuje, ukáže sa popis, čo v záložke bude.
   // záložka → modul (esbuild z nich spraví samostatné kúsky balíka)
   const LOADERS: Readonly<Partial<Record<string, () => Promise<TabModule>>>> = {
-    map: () => import('./tabs/map.ts'), world: () => import('./tabs/world.ts'), assets: () => import('./tabs/assets.ts'),
+    map: () => import('./tabs/map.ts'), world: () => import('./tabs/world.ts'), assets: () => import('./tabs/assets.ts'), robots: () => import('./tabs/robots.ts'),
     generators: () => import('./tabs/generators.ts'), market: () => import('./tabs/market.ts'), engine: () => import('./tabs/engine.ts'),
     journal: () => import('./tabs/journal.ts'), transport: () => import('./tabs/transport.ts'), cheats: () => import('./tabs/cheats.ts')
   };
