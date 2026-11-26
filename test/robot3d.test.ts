@@ -464,11 +464,11 @@ test('výmena náradia: vystrelené náradie padne do ruky tam, kde ho ruka pri 
     const r = buildRobot(look);
     r.setTools('hoe', TOOLS);
     r.pose({});
-    // kde každé náradie opustilo ruku (prvý snímok letu po hode) a kde do nej dopadlo (posledný snímok letu po výstrele)
+    // kde každé náradie opustilo ruku a kde do nej dopadlo
     const released = new Map<ToolId, THREE.Vector3>(), caught = new Map<ToolId, THREE.Vector3>();
     for (const to of ['can', 'pick', 'lamp', 'hoe', 'can'] as const) {
       const objs = new Map(TOOLS.map(t => { const o = r.group.getObjectByName('tool:' + t); assert.ok(o); return [t, o] as const; }));
-      const was = new Map(TOOLS.map(t => [t, '']));
+      const was = new Map(TOOLS.map(t => [t, ''])), prev = new Map<ToolId, THREE.Vector3>();
       r.switchTool(to);
       for (let t = 0; r.switching() && t < 8; t += dt) {
         r.pose({}, dt);
@@ -477,9 +477,10 @@ test('výmena náradia: vystrelené náradie padne do ruky tam, kde ho ruka pri 
           let p: THREE.Object3D | null = o.parent, w = 'air';
           while (p) { if (p.name === 'handR') w = 'hand'; if (p.name === 'rack') w = 'rack'; p = p.parent; }
           const pos = o.getWorldPosition(new THREE.Vector3());
-          if (was.get(tool) === 'hand' && w === 'air') released.set(tool, pos);
+          // pustené: posledná poloha v ruke; chytené: prvá poloha v ruke
+          if (was.get(tool) === 'hand' && w === 'air') { const q = prev.get(tool); if (q) released.set(tool, q); }
           if (was.get(tool) === 'air' && w === 'hand') caught.set(tool, pos);
-          was.set(tool, w);
+          was.set(tool, w); prev.set(tool, pos);
         }
       }
     }

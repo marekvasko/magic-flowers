@@ -238,7 +238,7 @@ test('kĺby sa nehýbu okamžite: animácie náradia, hrabanie ani tanec nepotre
   }
 });
 
-test('jednoduchý štýl (hra): tie isté kĺby (okrem článkov pásov), úchyty, rozmery a miesta náradia, ale menej dielov, bez drobností a všetko s plochými stenami', () => {
+test('jednoduchý štýl (hra): tie isté kĺby (okrem článkov pásov), úchyty, rozmery a miesta náradia, ale len z kvádrov, bez drobností a s plochými stenami', () => {
   for (const [name, look] of LOOKS.slice(0, 60)) {
     const d = RM.robotModel(look), s = RM.robotModel(look, true);
     // (pásy majú v jednoduchom štýle menej, väčších článkov – ich kĺby sa líšia)
@@ -248,11 +248,12 @@ test('jednoduchý štýl (hra): tie isté kĺby (okrem článkov pásov), úchyt
     assert.deepStrictEqual(s.slots, d.slots, name + ': miesta náradia');
     assert.strictEqual(s.height, d.height, name);
     assert.deepStrictEqual(s.shoulder, d.shoulder, name);
-    assert.ok(s.parts.length < d.parts.length, `${name}: ${s.parts.length} dielov oproti ${d.parts.length}`);
     assert.ok(s.parts.every(p => p.flat), name + ': diel bez plochých stien');
+    // len kvádre s ostrými hranami; kolesá a guľa podvozku sú osemboké hranoly
     for (const p of s.parts) {
-      const sh = p.shape;
-      assert.ok(!(sh.k === 'torus' && sh.t < 0.009) && !(sh.k === 'cyl' && sh.r < 0.014) && !(sh.k === 'sphere' && sh.r < 0.0135 && p.tag !== 'led' && p.m !== 'eye' && p.m !== 'lens'), `${name}: drobnosť ${JSON.stringify(sh)}`);
+      const sh = p.shape, wheel = /^(wheel|ball|caster)/.test(p.j);
+      if (wheel) assert.ok(sh.k === 'box' || ((sh.k === 'cyl' || sh.k === 'sphere') && (sh.n ?? 99) <= 8), `${name}: koleso ${JSON.stringify(sh)}`);
+      else assert.ok(sh.k === 'box' && sh.r === 0 && Math.min(...sh.s) >= 0.009, `${name}: ${p.j} nie je kváder: ${JSON.stringify(sh)}`);
     }
     // oči, viečka a držiaky náradia ostali
     assert.ok(s.parts.some(p => p.m === 'eye') && s.parts.some(p => p.tag === 'lid'), name);

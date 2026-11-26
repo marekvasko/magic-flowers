@@ -206,8 +206,10 @@ class Builder {
   constructor(sharp: boolean, simple: boolean) { this.sharp = sharp; this.simple = simple; }
   joint(id: JointId, parent: JointId, p: V3): JointId { this.joints.push({ id, parent, p }); return id; }
   // ostré hrany: kocky bez zaoblenia, väčšie valce osemboké a gule mnohosteny (sklo, guma a oči ostanú hladké)
-  // Jednoduchý štýl (hra): svet je z hranatých kociek s plochými farbami, preto bez drobností (nity, skrutky, tenké
-  // obruče, odlesky, ostrohy pásov), tenké tyčky hrubšie a štvorhranné, všetko s málo stenami a plochým tieňovaním.
+  // Jednoduchý štýl (hra): svet je z hranatých kociek s plochými farbami, preto je robot len z kvádrov – bez drobností
+  // (nity, skrutky, tenké obruče, odlesky, ostrohy pásov); valce, kapsuly a obruče sú hranoly, gule kocky (veľké gule
+  // tri kvádre na sebe – užší, širší, užší), oči štvorcové doštičky. Len kolesá ostávajú osemboké – hranaté koleso
+  // by sa pri otáčaní kývalo.
   add(j: JointId, shape: Shape, p: V3, m: Mat, r?: V3, tag?: string): void {
     let sh = shape;
     if (this.simple) {
@@ -215,12 +217,33 @@ class Builder {
       if (sh.k === 'sphere' && m !== 'eye' && m !== 'lens' && ((sh.r < 0.0135 && tag !== 'led') || (m === 'glass' && sh.r < 0.02))) return;
       if (sh.k === 'torus' && sh.t < 0.009) return;
       if (sh.k === 'box' && Math.min(...sh.s) < 0.009) return;
-      if (sh.k === 'cyl' && sh.r < 0.016) { if (sh.h < 0.03) return; sh = { ...sh, r: Math.max(sh.r, 0.014), ...(sh.r2 !== undefined ? { r2: Math.max(sh.r2, 0.014) } : {}), n: 4 }; }
-      if (sh.k === 'box') sh = { ...sh, r: Math.min(sh.r, Math.min(...sh.s) * 0.18) };
-      else if (sh.k === 'cyl' && sh.n === undefined) sh = { ...sh, n: sh.r < 0.03 ? 6 : 8 };
-      else if (sh.k === 'sphere' && sh.n === undefined && m !== 'glass') sh = { ...sh, n: sh.r < 0.04 ? 5 : 8 };
-      else if (sh.k === 'capsule' && sh.n === undefined) sh = { ...sh, n: 5 };
-      this.parts.push({ j, shape: sh, p, m, ...(r ? { r } : {}), ...(tag ? { tag } : {}), flat: true });
+      if (sh.k === 'cyl' && sh.r < 0.016) { if (sh.h < 0.03) return; sh = { ...sh, r: Math.max(sh.r, 0.014), ...(sh.r2 !== undefined ? { r2: Math.max(sh.r2, 0.014) } : {}) }; }
+      const out = (shape2: Shape, at: V3): void => { this.parts.push({ j, shape: shape2, p: at, m, ...(r ? { r } : {}), ...(tag ? { tag } : {}), flat: true }); };
+      if (/^(wheel|ball|caster)/.test(j)) {
+        // kolesá a guľa podvozku: osemboké hranoly (obruč pneumatiky ako nízky hranol)
+        if (sh.k === 'torus') out({ k: 'cyl', r: sh.r + sh.t, h: sh.t * 2.4, n: 8 }, p);
+        else if (sh.k === 'cyl') out({ ...sh, n: 8 }, p);
+        else if (sh.k === 'sphere') out({ ...sh, n: 6 }, p);
+        else if (sh.k === 'box') out({ ...sh, r: 0 }, p);
+        else out(sh, p);
+        return;
+      }
+      const box = (sz: V3, dy = 0): void => { out({ k: 'box', s: sz, r: 0 }, [p[0], p[1] + dy, p[2]]); };
+      const K = 1.72; // strana hranola k polomeru valca (plocha podstavy ostane približne rovnaká)
+      if (sh.k === 'box') box(sh.s);
+      else if (sh.k === 'cyl') { const side = (K * (sh.r + (sh.r2 ?? sh.r))) / 2; box([side, sh.h, side]); }
+      else if (sh.k === 'capsule') box([K * sh.r, sh.h + 1.5 * sh.r, K * sh.r]);
+      // obruč okolo trupu = doska o kúsok väčšia ako trup; natočená obruč (rám oka) menšia, aby rohy netrčali
+      else if (sh.k === 'torus') { const side = (r ? 1.35 : 1.9) * (sh.r + sh.t); box([side, 2 * sh.t, side]); }
+      else if (sh.k === 'dome') box([K * sh.r, 0.8 * sh.r, K * sh.r], r ? 0 : 0.4 * sh.r);
+      else {
+        // (sploštené gule – oči – sú doštičky, najmenej 1 cm hrubé)
+        const sc = sh.s ?? [1, 1, 1], d: V3 = [Math.max(0.011, 1.8 * sh.r * sc[0]), Math.max(0.011, 1.8 * sh.r * sc[1]), Math.max(0.011, 1.8 * sh.r * sc[2])];
+        if (sh.r >= 0.05 && !r && m !== 'glass' && Math.min(...d) >= 0.06) {
+          box([d[0], d[1] * 0.5, d[2]]);
+          for (const up of [-1, 1]) box([d[0] * 0.68, d[1] * 0.25, d[2] * 0.68], up * d[1] * 0.375);
+        } else box([Math.max(0.011, d[0] * 0.83), Math.max(0.011, d[1] * 0.83), Math.max(0.011, d[2] * 0.83)]);
+      }
       return;
     }
     if (this.sharp && HARD.includes(m)) {
@@ -743,7 +766,7 @@ export function robotModel(look0: RobotLook, simple = false): RobotModel {
   const slots = rack(b, body, H, top.back);
   b.accessory(L.acc, top.j, top.p);
   const mounts: Record<MountId, Mount> = { handR: MOUNT_HAND('handR', b.gripY), handL: MOUNT_HAND('handL', b.gripY), back: { j: 'rack', p: [0, 0, -0.03] }, top: { j: top.j, p: top.p } };
-  const m0: RobotModel = { look: L, joints: b.joints, parts: b.parts, wheels: b.wheels, tracks: b.tracks, slots, mounts, swingBack, shoulder: [sx, sy, sz], armLen: arm, front: Math.max(ch.front, H.front(0)), height: 0, scale: 1, gait: L.loco === 'legs2' || L.loco === 'legs3' ? 'walk' : 'roll' };
+  const m0: RobotModel = { look: L, joints: b.joints, parts: b.parts, wheels: b.wheels, tracks: b.tracks, slots, mounts, swingBack, shoulder: [sx, sy, sz], armLen: arm, front: Math.max(ch.front, H.front(0) + (L.head === 'none' ? 0.045 : 0)) /* oči na trupe trčia dopredu */, height: 0, scale: 1, gait: L.loco === 'legs2' || L.loco === 'legs3' ? 'walk' : 'roll' };
   const h0 = mountAt(m0, null, 'top')[1], scale = Math.max(HEIGHT_MIN, Math.min(HEIGHT_MAX, h0)) / h0;
   return { ...m0, scale, height: Math.round(h0 * scale * 1000) / 1000 };
 }
@@ -870,7 +893,7 @@ export const SWAP = {
   reach: 0.93,                   // ako veľmi je ruka pri švihu natiahnutá (podiel dĺžky ramena)
   aim: 0.3,                      // natočenie držiaka pred výstrelom
   stroke: 0.05,                  // zdvih vystreľovača
-  apex: 0.3                      // vrchol dráhy nad temenom robota
+  apex: 0.65                     // vrchol dráhy nad temenom robota
 } as const;
 // Šikmý vrh: z bodu p0 do bodu p1 cez vrchol vo výške apex (najmenej kúsok nad oboma bodmi) → štartová rýchlosť,
 // čas letu a rýchlosť pri dopade
@@ -907,9 +930,9 @@ export const JOINT_LIMITS: Readonly<Record<'shoulder' | 'elbow' | 'hand', readon
 };
 // Najväčšia rýchlosť kĺbu (rad/s): kĺby sa nehýbu okamžite – robot3d ich ťahá k póze najviac touto rýchlosťou.
 // Kolesá a články pásu idú presne s dráhou (Infinity).
-// Hod: ruka dlhá 0,24 políčka musí náradiu dať ~3 políčka/s, čo je ~14 rad/s v pleci (rýchlosť / rameno páky) –
-// viac, ako kĺby bežne smú. Počas švihu pri hode preto kĺby pravej ruky smú až THROW_SPEED.
-export const THROW_SPEED = 18;
+// Hod: ruka dlhá 0,24 políčka musí náradiu dať ~4,5 políčka/s (letí vysoko nad hlavu), čo je ~19 rad/s v pleci
+// (rýchlosť / rameno páky) – viac, ako kĺby bežne smú. Počas švihu pri hode preto kĺby pravej ruky smú až THROW_SPEED.
+export const THROW_SPEED = 26;
 export function jointSpeed(id: JointId): number {
   if (/^shoulder/.test(id)) return 10;
   if (/^elbow/.test(id)) return 12;
@@ -961,8 +984,8 @@ export function robotPose(m: RobotModel, o: PoseOpts): RobotPose {
   const bob = roll ? (walk ? Math.abs(sin(ph * 2)) * 0.008 : 0) : -Math.abs(sw) * 0.012;
   const crawl = o.crawl ? 1 : 0;
   let bodyR: V3 = [walk && m.look.loco === 'ball' ? 0.18 : 0, 0, walk && !roll ? sw * 0.06 : 0];
-  // na nohách si čupne: dve nohy o 6 cm, trojnožka o 4 cm (viac by kolená išli do trupu)
-  let bodyD: V3 = [0, bob - crawl * (roll ? 0.04 : m.look.loco === 'legs3' ? 0.04 : 0.06), 0];
+  // na nohách si čupne: dve nohy o 5 cm, trojnožka o 3 cm (viac by kolená išli do trupu)
+  let bodyD: V3 = [0, bob - crawl * (roll ? 0.04 : m.look.loco === 'legs3' ? 0.03 : 0.05), 0];
   if (o.dance) { bodyR = [0, sin(t * 3) * 0.5, sin(t * 6) * 0.12]; bodyD = [0, Math.abs(sin(t * 6)) * 0.04, 0]; }
   // pri plazení sa kolesové roboty predklonia; roboty na nohách si čupnú (nohy sa pokrčia, chodidlá ostanú na zemi)
   if (crawl && roll) bodyR = [bodyR[0] + 0.35, bodyR[1], bodyR[2]];
