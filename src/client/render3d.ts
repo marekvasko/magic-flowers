@@ -1293,7 +1293,7 @@ void main() {
   // Roboty hráčov (#194) vrhajú tieň ako všetko ostatné: po svete sa do mapy tieňov dokreslia ich siete – telo
   // s maticami kĺbov z textúry (spoločný materiál sveta ich nevie), náradie bežným materiálom hĺbky. Sklo tieň nevrhá.
   const robotDepth = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: 'void main() { gl_FragColor = vec4(0.0); }', defines: { ROBOT: 1, ROBOT_SKIN: 1 }, uniforms: { ...worldU, jointTex: uni<THREE.Texture | null>(null) }, side: THREE.BackSide, colorWrite: false });
-  let robotsMoved = false, robotShadowAt = 0;
+  let robotsMoved = false;
   function robotShadows(): void {
     const auto = renderer.autoClear;
     renderer.autoClear = false;
@@ -1696,7 +1696,7 @@ void main() {
     o.lastPhase = phase;
     // jz: výška skoku v jednotkách robota (skupinu dvíha poloha vyššie; póza z nej robí pruženie a pokrčenie nôh)
     // pohol sa robot? (poloha, natočenie, krok, alebo práve niečo robí) → mapu tieňov treba prekresliť
-    const sig = `${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)},${o.ryaw.toFixed(1)},${phase.toFixed(1)}`;
+    const sig = `${x.toFixed(3)},${y.toFixed(3)},${z.toFixed(3)},${o.ryaw.toFixed(2)},${phase.toFixed(2)}`;
     if (sig !== o.rsig || opts.dance || opts.dig || ro.use || r.switching()) robotsMoved = true;
     o.rsig = sig;
     r.pose({ phase, t: ro.t, walking, crawl: !!opts.crawl, dance: !!opts.dance, dig: opts.dig || 0, jz: (opts.jz ?? 0) / ROBOT_SCALE, use: ro.use && !r.switching() ? ro.use : null }, step);
@@ -2054,9 +2054,10 @@ void main() {
     if (Math.abs(vd - viewDiag) > 0.01) { viewDiag = vd; resize(); }
     lighting(min, se);
     let tp = statsOn ? performance.now() : 0;
-    // roboty sa hýbu → ich tiene tiež: mapu tieňov prekresli najviac 20× za sekundu (v temnom lese netreba – tam
-    // slnko svieti len na zem a prekreslenie by znova počítalo lúče)
-    if (robotsMoved && !D.isDark(S.area) && now - robotShadowAt > 50) { shadowDirty = true; robotShadowAt = now; }
+    // roboty sa hýbu → ich tiene tiež: mapa tieňov sa prekreslí v každej snímke, v ktorej sa niektorý robot pohol
+    // (tieň nesmie za robotom meškať); keď všetky stoja, mapa ostáva. V temnom lese netreba – tam slnko svieti len
+    // na zem a prekreslenie by znova počítalo lúče.
+    if (robotsMoved && !D.isDark(S.area)) shadowDirty = true;
     robotsMoved = false;
     updateShadowMap(min, se);
     if (statsOn) passMs.shadow = performance.now() - tp;
