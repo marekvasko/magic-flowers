@@ -1182,22 +1182,21 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
         const DK = D.DOCK; // mólo s loďkou (#160)
         buyRow(DK.icon, DK.name, 'Spoločná stavba pri jazierku s loďkou pre dvoch. Loďkou sa dostaneš aj tam, kam z brehu nikto nedočiahne. V zime leží prevrátená na móle.',
           S.dock?.built ? 'Stojí' : null, DK.price, DK.rep, () => { send({ t: 'build', id: 'dock' }); }, Art.icon('dock'));
-        // Záhony (#179): všetky druhy rovnako, líšia sa len rámom (prepínač v riadku); pokryvy po vedrách
+        // Záhony (#179): všetky druhy rovnako, líšia sa len rámom (rad ikon v riadku); pokryvy po vedrách
         body.appendChild(h('div', { class: 'row' }, h('b', null, `${D.ZAHON.icon} Záhony – kvety a kamene na jednom políčku`)));
-        { // jeden riadok: prepínač rámu nad cenou, ikona sa mení podľa výberu
-          const FRAME_LABEL: Readonly<Record<D.ZahonFrame, string>> = { drevo: 'Drevený', prut: 'Prútený', kamen: 'Kamenný', tehla: 'Tehlový' };
-          const pic = h('img', { src: Art.icon(`zahon_${zahonPick}`) }), name = h('b', null, `${D.ZAHON.icon} Záhon`);
-          const pick = h('select', { class: 'zpick', title: 'Rám záhonu' }, ...D.ZAHON_FRAMES.map(v => h('option', { value: v }, FRAME_LABEL[v])));
-          pick.value = zahonPick;
-          pick.addEventListener('change', () => {
-            if (!D.isZahonFrame(pick.value)) return;
-            zahonPick = pick.value; pic.src = Art.icon(`zahon_${zahonPick}`);
-          });
+        { // jeden riadok: pod popisom rad ikon rámov hneď vedľa ceny – ťuknutím vyberieš, názov sa mení podľa výberu
+          const name = h('b', null, '');
+          const opts = D.ZAHON_FRAMES.map(v => ({ v, b: h('button', { class: 'zopt', title: D.ZAHON_NAMES[v], onclick: () => { zahonPick = v; upd(); } }, h('img', { src: Art.icon(`zahon_${v}`) })) }));
+          const upd = (): void => {
+            name.textContent = `${D.ZAHON.icon} ${D.ZAHON_NAMES[zahonPick]}`;
+            for (const o of opts) o.b.classList.toggle('on', o.v === zahonPick);
+          };
+          upd();
           const btn = h('button', { class: 'btn', onclick: () => { send({ t: 'zahon', op: 'buy', v: zahonPick }); } }, D.ZAHON.price + '🪙');
           if (S.coins < D.ZAHON.price || lvl < D.ZAHON.rep) btn.disabled = true;
-          body.appendChild(h('div', { class: 'row' }, pic,
+          body.appendChild(h('div', { class: 'row zrow' },
             h('div', { class: 'info' }, name, h('small', null, `Na jedno políčko trávy, zaberie 1 miesto v povolení. Kvety a pokryvy v ňom rozložíš po bodoch, krhla poleje celý záhon naraz. · treba ⭐${String(D.ZAHON.rep)}`)),
-            h('div', { class: 'btns col' }, pick, btn)));
+            h('div', { class: 'zline' }, h('div', { class: 'zseg' }, ...opts.map(o => o.b)), btn)));
         }
         for (const c of D.COVER_IDS) {
           const C = D.COVERS[c];
