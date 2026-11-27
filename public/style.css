@@ -97,6 +97,13 @@ button { font: inherit; cursor: pointer; border: none; }
 .row .info b { display: block; font-size: 14.5px; }
 .row .info small { display: block; color: #7a6a4a; font-size: 12px; }
 .row .btns { display: flex; gap: 4px; }
+/* záhon na trhu (#179): rad ikon (rám) hneď vedľa ceny, vybraná má rámik */
+.row.zrow { flex-direction: column; align-items: stretch; gap: 6px; }
+.zrow .zline { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.zrow .zseg { display: flex; gap: 3px; background: #f6ead0; border-radius: 12px; padding: 3px; }
+.zrow .zopt { width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: 9px; background: transparent; border: 2px solid transparent; }
+.zrow .zopt.on { background: #fff; border-color: #8b5a2b; }
+.row .zopt img { width: 30px; height: 30px; }
 .btn { padding: 8px 10px; border-radius: 10px; background: #6b3fa0; color: #fff; font-weight: 700; font-size: 13px; white-space: nowrap; }
 .btn.alt { background: #3c7d3f; }
 .btn.gray { background: #b9a888; }
@@ -266,3 +273,9 @@ button { font: inherit; cursor: pointer; border: none; }
 .olegend span { display: inline-flex; align-items: center; gap: 4px; }
 .olegend i { width: 9px; height: 9px; border-radius: 3px; }
 .row.dead { background: #f6f1e8; }
+
+/* Priblížený záhon (#179): názov a stav hore a nápoveda nad lištou predmetov */
+.zbar { position: absolute; left: 50%; transform: translateX(-50%); max-width: calc(100% - 16px); top: calc(env(safe-area-inset-top) + 66px); display: flex; gap: 6px; align-items: center; z-index: 6; }
+.zbar .ztitle { min-width: 0; text-align: center; background: #fff8e7; border: 3px solid #8b5a2b; border-radius: 14px; padding: 5px 9px; font-weight: 700; font-size: 13px; line-height: 1.25; }
+.zbar .btn { flex: none; padding: 8px 10px; border-radius: 14px; font-size: 14px; }
+.zooming #toasts { top: calc(env(safe-area-inset-top) + 124px); } /* toasty pod lištou záhonu */

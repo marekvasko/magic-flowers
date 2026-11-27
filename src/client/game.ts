@@ -1,6 +1,8 @@
 // Čarovná záhrada – klient (#136: TypeScript, jeden balík esbuild; 3D pohľad sa načíta až po štarte ako ďalší kúsok)
 import * as D from '../shared/data.ts';
 import * as Obj from '../shared/objects.ts';
+import { createZahon } from './zahon.ts';
+import type { ClientZahon } from './zahon.ts';
 import * as Bk from '../shared/book.ts';
 import * as TR from './traderow.ts';
 import type { Level } from '../shared/book.ts';
@@ -44,7 +46,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     tiles: [], tick: 0, market: null, board: [], rep: 0, up: {}, canCap: 5, plotLimit: 8, plotsUsed: 0, maxActive: 1, orders: [], orderLimit: 2, box: {}, boxFb: {}, day: 1, min: 390, weather: 'sun', timeAt: 0, tickMs: 1000, daySeconds: 300, mode: 'running', storage: {},
     me: { x: D.SPAWN.x, y: D.SPAWN.y, dir: 0, phase: 0, moving: false, jz: 0, jv: 0, crawl: false }, crawlKey: false, crawlTgl: false, myEmote: null,
     others: new Map(), inv: {}, coins: 0, water: 20, recipes: [], seen: [], vily: false,
-    sel: 'hoe', area: 'garden', areaSeq: 0, W: D.W, H: D.H, tilesGen: 0, storageRate: D.STORAGE_AGE_RATE, icehouse: { built: false, ice: 0, bl: 0 }, dielna: { built: false, loom: false }, loom: { busy: false, mine: null, ready: 0 }, eternal: false, names: [], objects: [],
+    sel: 'hoe', area: 'garden', areaSeq: 0, W: D.W, H: D.H, tilesGen: 0, storageRate: D.STORAGE_AGE_RATE, icehouse: { built: false, ice: 0, bl: 0 }, dielna: { built: false, loom: false }, loom: { busy: false, mine: null, ready: 0 }, eternal: false, names: [], objects: [], zoom: null,
     keys: {}, stick: { x: 0, y: 0 }, path: null, pendingAct: null, tapMark: null, lastSent: '', sentAt: 0,
     fx: [], screenFx: [], bubbles: {}, modal: null, cauldron: [], brewed: null, brewHint: null, anchors: {}, joined: false,
     skyTaps: [], tipIdx: Math.floor(Math.random() * D.TIPS.length), stuckT: 0,
@@ -210,7 +212,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
       case 'brewed': S.brewed = m.k; S.brewHint = m.hint ?? null; S.cauldron = []; sfx(m.k === 'sliz' ? 'bad' : 'magic'); if (S.modal) S.modal.refresh(); break;
       case 'error': alert(m.text); S.joined = false; $('conn').classList.add('hidden'); break;
       case 'vehicles': Veh.onList(m.list); break; // fúrik a sane (#158)
-      case 'objects': S.objects = m.list; break; // pozemky budov (#178); políčka pozemkov prídu v správe tiles
+      case 'objects': S.objects = m.list; Zh?.refresh(); break; // pozemky budov (#178), záhony (#179); políčka pozemkov prídu v správe tiles
     }
   }
 
@@ -471,7 +473,12 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     }
     // mimo záhrady sa nepestuje ani nehľadá – použiť sa dá len elixír
     if (S.area !== 'garden') return sel.startsWith('po_') ? { i: '🧪', l: 'Použiť' } : null;
+    // záhon (#179): ťuknutie ho priblíži; záhon z lišty sa kladie na čistú trávu
+    // nástroje na celý záhon pracujú rovno v hre (krhla, kompost, krompáč), ostatné záhon priblížia
+    const zh = Obj.zahonAt({ list: S.objects }, tx, ty);
+    if (zh) return sel === 'pick' ? { i: '⛏️', l: 'Zrušiť záhon' } : sel === 'can' ? { i: '💧', l: 'Poliať záhon' } : sel === 'compost' ? { i: '🟤', l: 'Pohnojiť záhon' } : { i: D.ZAHON.icon, l: 'Záhon' };
     const s = t.s, p = s?.p;
+    if (sel.startsWith('zahon_')) return t.g === 'grass' && !s && !S.objects.some(o => Obj.inRect(Obj.objRect(o), tx, ty)) ? { i: D.ZAHON.icon, l: 'Položiť záhon' } : null;
     if (p && !p.d && D.stageOf(p) === 3) return (p.sp === 'papradie' && !D.isNight(curMin())) ? { i: '🌙', l: 'Čaká na noc' } : { i: '🧺', l: 'Zbierať' };
     if (sel === 'hoe') {
       if (p && p.d) return { i: '🧹', l: 'Vyčistiť' };
@@ -544,12 +551,19 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
 
   // kde je majster hodvábu teraz (podľa herného času, ako na serveri); null = je preč (leto, zima)
   const masterNow = (): D.MasterPos | null => D.masterAt(S.day, curMin(), S.dielna.loom); // po kúpe krosien už nechodí
-  const onDielnaLot = (tx: number, ty: number): boolean => Obj.inRect(Obj.lotRect({ list: S.objects, nid: 0 }, 'dielna'), tx, ty);
+  const onDielnaLot = (tx: number, ty: number): boolean => Obj.inRect(Obj.lotRect({ list: S.objects }, 'dielna'), tx, ty);
   function doAction(tx: number, ty: number): void {
     const a = ctxAction(tx, ty);
     if (!a) return;
     if (a.only) toast('Do ľadovne patrí len ľad 🧊 (a hodvábne prikrývky na izoláciu). Kvety ulož do skladu v domčeku – ľad v ľadovni ho chladí, takže v ňom vädnú 4× pomalšie.');
     if (a.ui) { openUI(a.ui); return; }
+    if (a.l === 'Záhon') { Zh?.open(tx, ty); sfx('pop'); return; }
+    if (a.l === 'Zrušiť záhon') { Zh?.destroyAt(tx, ty); return; }
+    if (a.l === 'Poliať záhon' || a.l === 'Pohnojiť záhon') {
+      const z = Obj.zahonAt({ list: S.objects }, tx, ty);
+      if (z) { send({ t: 'zahon', op: a.l === 'Poliať záhon' ? 'water' : 'compost', id: z.id }); sfx(a.l === 'Poliať záhon' ? 'water' : 'pop'); }
+      return;
+    }
     if (a.l === 'Hľadať' && !onTile(tx, ty)) { walkOnto(tx, ty); return; }
     if (a.info) {
       if (a.l === 'Huby') toast(D.isNight(curMin()) ? 'Huby slabo svietia… Skús tu zatancovať 💃' : 'Kruh z húb. Babka hovorí, že tu v noci tancujú víly. 🍄');
@@ -591,6 +605,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
   addEventListener('keydown', e => {
     if (!S.joined || S.asleep || S.areaFx || document.activeElement?.tagName === 'INPUT') return;
     S.kbd = true;
+    if (Zh?.active() && !S.modal && Zh.key(e.code)) { e.preventDefault(); return; } // priblížený záhon (#179): šípky, E, Esc
     const k = lookup(KEYMAP, e.code);
     if (k) { S.keys[k] = true; stopWalk(); e.preventDefault(); }
     if (e.code === 'Space') { if (!e.repeat) jump(); e.preventDefault(); }
@@ -619,12 +634,14 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
   const cv = $cv('cv'), ctx = ctx2d(cv);
   // Three.js kreslí do #gl, #cv zostáva navrchu ako prekrytie (mená, efekty) a prijíma dotyky
   let R3: Render3D | null = null;
+  let Zh: ClientZahon | null = null; // priblížený záhon (#179) – vznikne pri hracej ploche (gameEl)
+  let zahonPick: D.ZahonFrame = 'drevo'; // rám záhonu vybraný na trhu (ostane aj po prekreslení)
   $('rotL').onclick = () => { R3?.rotate(-1); };
   $('rotR').onclick = () => { R3?.rotate(1); };
   // 3D pohľad aj s Three.js je samostatný kúsok balíka (esbuild ho načíta až teraz)
   import('./render3d.ts').then(M => {
     const r3 = R3 = S.r3 = M.create({
-      S, searching, glCanvas: $cv('gl'), ov: cv, ovCtx: ctx, EMOJI, curMin, season, ctxAction, frontTile
+      S, searching, glCanvas: $cv('gl'), ov: cv, ovCtx: ctx, EMOJI, curMin, season, ctxAction, frontTile, zoomMarks: () => Zh?.marks() ?? []
     });
     r3.setStats(Fps.on);
   }).catch((e: unknown) => { console.error(e); toast('3D sa nepodarilo načítať – skús obnoviť stránku.'); });
@@ -677,6 +694,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     return { get on(): boolean { return on; }, set, tick };
   })();
   const gameEl = $('game'), joy = $('joy'), joyKnob = $('joyKnob');
+  Zh = createZahon({ S, root: gameEl, send, toast, pickSpot: (cx, cy) => R3?.pickSpot(cx, cy) ?? null, pan: (x0, y0, x1, y1) => { R3?.panZoom(x0, y0, x1, y1); }, endPan: () => R3?.endPan() ?? { dx: 0, dy: 0 }, sfx });
   const JOY_R = 50, DRAG_START = 10;
   const ptrs = new Map<number, { x0: number; y0: number; joy: boolean }>();
   let joyId: number | null = null, joyBase: Pt = { x: 0, y: 0 };
@@ -693,11 +711,13 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     e.preventDefault();
     try { cv.setPointerCapture(e.pointerId); } catch { /* ukazovateľ už zmizol */ }
     ptrs.set(e.pointerId, { x0: e.clientX, y0: e.clientY, joy: false });
+    if (Zh.active() && ptrs.size === 1) Zh.down(e.clientX, e.clientY); // priblížený záhon (#179): prst ide na body, nie na joystick
   });
   cv.addEventListener('pointermove', e => {
     const p = ptrs.get(e.pointerId);
     if (!p) return;
     const r = gameEl.getBoundingClientRect();
+    if (Zh.active()) { Zh.move(e.clientX, e.clientY); return; }
     if (e.pointerId === joyId) { joyMove(e.clientX - r.left, e.clientY - r.top); return; }
     if (joyId === null && !p.joy && Math.hypot(e.clientX - p.x0, e.clientY - p.y0) > DRAG_START) {
       joyId = e.pointerId; p.joy = true;
@@ -712,6 +732,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
     const p = ptrs.get(e.pointerId);
     if (!p) return;
     ptrs.delete(e.pointerId);
+    if (Zh.active() && e.pointerId !== joyId) { Zh.up(e.clientX, e.clientY, e.type === 'pointerup' && Math.hypot(e.clientX - p.x0, e.clientY - p.y0) <= DRAG_START); return; }
     if (e.pointerId === joyId) { endJoy(); return; }
     if (e.type === 'pointerup' && !p.joy && Math.hypot(e.clientX - p.x0, e.clientY - p.y0) <= DRAG_START) {
       if (joyId !== null) jump(); // ťuknutie druhým prstom počas riadenia joystickom = skok
@@ -722,7 +743,7 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
   cv.addEventListener('pointercancel', ptrEnd);
 
   // Ťuknutie na objekt: blízko → akcia hneď, ďaleko → dôjde tam a urobí ju
-  const GROUND = new Set(['Zarovnať', 'Kopať', 'Poliať', 'Sadiť', 'Pohnojiť', 'Vyčistiť', 'Použiť', 'Vysekať ľad']);
+  const GROUND = new Set(['Zarovnať', 'Kopať', 'Poliať', 'Sadiť', 'Pohnojiť', 'Vyčistiť', 'Použiť', 'Vysekať ľad', 'Položiť záhon']);
   const REACH = 1.7;
   function inReach(tx: number, ty: number): boolean { return Math.hypot(S.me.x - (tx + 0.5), S.me.y - (ty + 0.5)) <= REACH; }
   function stopWalk(): void { S.path = null; S.pendingAct = null; Veh.cancelWalk(); } // aj chôdza k fúriku (#158)
@@ -824,12 +845,12 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
 
   // ---------- Hotbar ----------
   function hotbarIds(): ItemId[] {
-    const order = (id: string): number => id === 'hoe' ? 0 : id === 'can' ? 1 : id === 'pick' ? 1.5 : id === 'lamp' ? 1.6 : id === 'compost' ? 2 : id.startsWith('seed_') || D.isWild(id) ? 3 : id.startsWith('fl_') ? 4 : id === 'wilted' ? 4.5 : id === 'silk' ? 4.6 : id === 'blanket' ? 4.7 : 5;
+    const order = (id: string): number => id === 'hoe' ? 0 : id === 'can' ? 1 : id === 'pick' ? 1.5 : id === 'lamp' ? 1.6 : id === 'compost' ? 2 : id.startsWith('zahon_') ? 2.5 : id.startsWith('cov_') ? 2.6 : id.startsWith('seed_') || D.isWild(id) ? 3 : id.startsWith('fl_') ? 4 : id === 'wilted' ? 4.5 : id === 'silk' ? 4.6 : id === 'blanket' ? 4.7 : 5;
     const spOrder: string[] = keys(D.SPECIES);
     const rank = (id: string): number => { const k = id.replace(/^(seed_|fl_|po_)/, ''); const i = spOrder.indexOf(k); return i < 0 ? 99 : i; };
     return keys(S.inv).filter(id => (S.inv[id] ?? 0) > 0).sort((a, b) => order(a) - order(b) || rank(a) - rank(b));
   }
-  function selectItem(id: ItemId | '' | undefined): void { if (id == null) return; S.sel = id; renderHotbar(); }
+  function selectItem(id: ItemId | '' | undefined): void { if (id == null) return; S.sel = id; renderHotbar(); Zh?.refresh(); }
   function renderHotbar(): void {
     const bar = $('hotbar');
     const ids = hotbarIds();
@@ -1161,6 +1182,27 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
         const DK = D.DOCK; // mólo s loďkou (#160)
         buyRow(DK.icon, DK.name, 'Spoločná stavba pri jazierku s loďkou pre dvoch. Loďkou sa dostaneš aj tam, kam z brehu nikto nedočiahne. V zime leží prevrátená na móle.',
           S.dock?.built ? 'Stojí' : null, DK.price, DK.rep, () => { send({ t: 'build', id: 'dock' }); }, Art.icon('dock'));
+        // Záhony (#179): všetky druhy rovnako, líšia sa len rámom (rad ikon v riadku); pokryvy po vedrách
+        body.appendChild(h('div', { class: 'row' }, h('b', null, `${D.ZAHON.icon} Záhony – kvety a kamene na jednom políčku`)));
+        { // jeden riadok: pod popisom rad ikon rámov hneď vedľa ceny – ťuknutím vyberieš, názov sa mení podľa výberu
+          const name = h('b', null, '');
+          const opts = D.ZAHON_FRAMES.map(v => ({ v, b: h('button', { class: 'zopt', title: D.ZAHON_NAMES[v], onclick: () => { zahonPick = v; upd(); } }, h('img', { src: Art.icon(`zahon_${v}`) })) }));
+          const upd = (): void => {
+            name.textContent = `${D.ZAHON.icon} ${D.ZAHON_NAMES[zahonPick]}`;
+            for (const o of opts) o.b.classList.toggle('on', o.v === zahonPick);
+          };
+          upd();
+          const btn = h('button', { class: 'btn', onclick: () => { send({ t: 'zahon', op: 'buy', v: zahonPick }); } }, D.ZAHON.price + '🪙');
+          if (S.coins < D.ZAHON.price || lvl < D.ZAHON.rep) btn.disabled = true;
+          body.appendChild(h('div', { class: 'row zrow' },
+            h('div', { class: 'info' }, name, h('small', null, `Na jedno políčko trávy, zaberie 1 miesto v povolení. Kvety a pokryvy v ňom rozložíš po bodoch, krhla poleje celý záhon naraz. · treba ⭐${String(D.ZAHON.rep)}`)),
+            h('div', { class: 'zline' }, h('div', { class: 'zseg' }, ...opts.map(o => o.b)), btn)));
+        }
+        for (const c of D.COVER_IDS) {
+          const C = D.COVERS[c];
+          buyRow('🪣', `${C.name} (vedro)`, `Pokryv do záhonu na ${D.COVER_BUCKET} bodov. Ťahom prsta ho rozložíš, prázdnou rukou zoberieš späť.`,
+            null, C.price, 0, () => { send({ t: 'zahon', op: 'bucket', c }); }, Art.icon(`cov_${c}`));
+        }
       } else {
         festivalBanner(body);
         if (!M.news.length) body.appendChild(h('p', null, 'Zatiaľ žiadne správy.'));
