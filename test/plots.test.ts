@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
 import { spawn } from 'node:child_process';
 import type { ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
@@ -13,7 +14,7 @@ import type { ClientMessage, ServerMessage } from '../src/shared/protocol.ts';
 import type { Plant, PlayerSave, SaveFile, Soil } from '../src/shared/save.ts';
 import * as Econ from '../src/server/economy.ts';
 import type { Tile } from '../src/server/world.ts';
-import { isMsg, must, parseMsg, partial, readJson } from './helpers.ts';
+import { isMsg, must, parseMsg, partial, portOf, readJson } from './helpers.ts';
 import type { MsgOf, MsgType } from './helpers.ts';
 
 // ---------- Spoločné povolenie na pole ----------
@@ -58,6 +59,8 @@ test('zarovnať: prázdne obrobené políčko môže zarovnať ktokoľvek, niele
 });
 
 // ---------- Server: migrácia osobných povolení a spoločný limit ----------
+// Voľný port od systému (náhodné porty z rozsahu sa občas zrazili s inými testami)
+function freePort(): Promise<number> { return new Promise(r => { const srv = net.createServer(); srv.listen(0, '127.0.0.1', () => { const p = portOf(srv); srv.close(() => { r(p); }); }); }); }
 type Server = ChildProcessByStdio<null, Readable, Readable>;
 function startServer(dataDir: string, port: number): Promise<Server> {
   const proc = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'src', 'server', 'server.ts')], {
@@ -99,7 +102,7 @@ function client(port: number): Client {
 
 test('server: osobné povolenia z verzie 4 prejdú na spoločné povolenie záhrady', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-plots-'));
-  const port = 41000 + Math.floor(Math.random() * 2000);
+  const port = await freePort();
   const map = D.buildMap(), tiles = map.map((): { s: Soil | null } => ({ s: null }));
   // Eva mala povolenie úrovne 1 (16), Ján úrovne 3 (48); spolu majú obrobených 48 políčok
   const plotIdx = map.map((g, i) => i).filter(i => D.TILLABLE[must(map[i])] && map[i] !== 'ring' && i < 25 * D.W);
@@ -168,7 +171,7 @@ test('server: osobné povolenia z verzie 4 prejdú na spoločné povolenie záhr
 
 test('server: divé semienko na cudzom políčku vyklíči bez správy, do herbára pribudne tomu, kto políčko prekopal', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-plots-'));
-  const port = 41000 + Math.floor(Math.random() * 2000);
+  const port = await freePort();
   const map = D.buildMap(), tiles = map.map((): { s: Soil | null } => ({ s: null }));
   // Eva prekopala políčko a zasadila divé semienko; Ján stojí vedľa, Eva ďaleko (na políčku s iným hráčom by elixír daroval)
   const free = map.map((g, i) => i).filter(i => map[i] === 'grass' && i >= 26 * D.W && i < 29 * D.W && (i % D.W) > 2 && (i % D.W) < 17);

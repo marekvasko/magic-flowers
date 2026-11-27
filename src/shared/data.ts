@@ -417,9 +417,49 @@ const POTION_DEF = {
 } as const satisfies Record<string, Potion>;
 export type PotionId = keyof typeof POTION_DEF;
 export const POTIONS: Readonly<Record<PotionId, Potion>> = POTION_DEF;
-// Predmety v batohu a v sklade: náradie, ľad, kompost, zvädnuté kvety, hodváb, prikrývka, semienka, kvety, elixíry a divé semienka
+// ---- Záhon (#179): kúpi sa na trhu (rovnaká cena a pravidlá pre všetky druhy, líšia sa len rámom), na záhone 8 × 8 bodov ----
+export type ZahonFrame = 'drevo' | 'prut' | 'kamen' | 'tehla';
+export const ZAHON_FRAMES: readonly ZahonFrame[] = ['drevo', 'prut', 'kamen', 'tehla'];
+export const ZAHON_NAMES: Readonly<Record<ZahonFrame, string>> = { drevo: 'Drevený záhon', prut: 'Prútený záhon', kamen: 'Kamenný záhon', tehla: 'Tehlový záhon' };
+export const ZAHON = { price: 40, rep: 1, icon: '🌷' } as const;
+// Tvar záhonu (#186): štvorec, šikmý (trojuholník, rám po uhlopriečke) a oblý (štvrťkruh) – rohové záhony, rovnaká cena
+export type ZahonShape = 'sq' | 'diag' | 'round';
+export type ZahonCorner = Exclude<ZahonShape, 'sq'>;
+export const ZAHON_SHAPES: readonly ZahonShape[] = ['sq', 'diag', 'round'];
+export const ZAHON_SHAPE_NAMES: Readonly<Record<ZahonCorner, string>> = { diag: 'Šikmý', round: 'Oblý' };
+export const isZahonCorner = (s: string): s is ZahonCorner => s === 'diag' || s === 'round';
+// Id záhonu v batohu: zahon_<rám> (štvorec) alebo zahon_<rám>_<tvar>
+export const zahonItem = (v: ZahonFrame, sh: ZahonShape): `zahon_${ZahonFrame}` | `zahon_${ZahonFrame}_${ZahonCorner}` => (sh === 'sq' ? `zahon_${v}` : `zahon_${v}_${sh}`);
+export function zahonOfItem(id: string): { v: ZahonFrame; sh: ZahonShape } | null {
+  const m = /^zahon_([a-z]+?)(?:_([a-z]+))?$/.exec(id), v = m?.[1] ?? '', sh = m?.[2];
+  if (!isZahonFrame(v)) return null;
+  if (sh === undefined) return { v, sh: 'sq' };
+  return isZahonCorner(sh) ? { v, sh } : null;
+}
+export function zahonName(v: ZahonFrame, sh: ZahonShape): string { return sh === 'sq' ? ZAHON_NAMES[v] : `${ZAHON_SHAPE_NAMES[sh]} ${ZAHON_NAMES[v].charAt(0).toLowerCase()}${ZAHON_NAMES[v].slice(1)}`; }
+// Pokryvy záhonu: kupujú sa po vedrách (COVER_BUCKET bodov), v batohu sa rátajú body
+export type CoverId = 'travnik' | 'strk' | 'okruhliaky' | 'kamen';
+export const COVERS: Readonly<Record<CoverId, { readonly name: string; readonly price: number }>> = {
+  travnik: { name: 'Trávnik', price: 8 }, strk: { name: 'Štrk', price: 6 }, okruhliaky: { name: 'Okruhliaky', price: 10 }, kamen: { name: 'Plochý kameň', price: 14 }
+};
+export const COVER_IDS: readonly CoverId[] = ['travnik', 'strk', 'okruhliaky', 'kamen'];
+export const COVER_BUCKET = 16;
+export const isZahonFrame = (s: string): s is ZahonFrame => (ZAHON_FRAMES as readonly string[]).includes(s);
+export const isCoverId = (s: string): s is CoverId => (COVER_IDS as readonly string[]).includes(s);
+// Ochranná zóna kvetu v záhone (#179): štvorec d × d bodov okolo kvetu (bod ≈ 12,5 cm, d ≈ skutočná vzdialenosť sadenia),
+// zóny dvoch kvetov sa nesmú prekrývať, nech sú to akékoľvek druhy. Vodné kvety sa do záhonu nesadia.
+export const ZAHON_SPACE: Readonly<Partial<Record<SpeciesId, number>>> = {
+  snezienka: 1, safran: 1, tulipan: 1, narcis: 1, konvalinka: 1, jesienka: 1,
+  harmancek: 2, mak: 2, nevadza: 2, plesnivec: 2,
+  cemerica: 3, levandula: 3, chryzantema: 3,
+  slnecnica: 4, astra: 4, papradie: 4, duhova: 4,
+  ruza: 6
+};
+
+// Predmety v batohu a v sklade: náradie, ľad, kompost, zvädnuté kvety, hodváb, prikrývka, semienka, kvety, elixíry, divé semienka,
+// záhony a pokryvy záhonov (#179)
 export type ItemId = ToolId | 'ice' | 'compost' | 'wilted' | 'silk' | 'blanket'
-  | `seed_${SpeciesId}` | `fl_${SpeciesId}` | `po_${PotionId}` | `wild_${Season}`;
+  | `seed_${SpeciesId}` | `fl_${SpeciesId}` | `po_${PotionId}` | `wild_${Season}` | `zahon_${ZahonFrame}` | `zahon_${ZahonFrame}_${ZahonCorner}` | `cov_${CoverId}`;
 // Je reťazec (zo správy, z uloženia) id druhu kvetu / predmetu?
 export const isSpeciesId = (s: string): s is SpeciesId => Object.hasOwn(SPECIES_DEF, s);
 export const isPotionId = (s: string): s is PotionId => Object.hasOwn(POTION_DEF, s);
@@ -428,6 +468,8 @@ export function isItemId(s: string): s is ItemId {
   if (s.startsWith('seed_')) return isSpeciesId(s.slice(5));
   if (s.startsWith('fl_')) return isSpeciesId(s.slice(3));
   if (s.startsWith('po_')) return isPotionId(s.slice(3));
+  if (s.startsWith('zahon_')) return !!zahonOfItem(s);
+  if (s.startsWith('cov_')) return isCoverId(s.slice(4));
   return /^wild_[0-3]$/.test(s);
 }
 // Druh kvetu v id semienka alebo kvetu ('seed_mak', 'fl_mak' → 'mak'), inak null
@@ -632,6 +674,8 @@ export function itemName(id: string): string {
   if (id.startsWith('seed_')) return 'Semienka: ' + (lookup(SPECIES, id.slice(5))?.name || '?');
   if (id.startsWith('fl_')) return lookup(SPECIES, id.slice(3))?.name || '?';
   if (id.startsWith('po_')) return lookup(POTIONS, id.slice(3))?.name || '?';
+  if (id.startsWith('zahon_')) { const z = zahonOfItem(id); return z ? zahonName(z.v, z.sh) : '?'; }
+  if (id.startsWith('cov_')) return lookup(COVERS, id.slice(4))?.name || '?';
   return id;
 }
 

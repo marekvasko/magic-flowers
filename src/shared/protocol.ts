@@ -4,9 +4,9 @@
 //  - ServerMessage: čo dostane klient (posiela server sám alebo ide z návrhov enginu cez ctx.emit)
 // Pokyny návrhov len pre server (joined, travel, me, scavStart, scavDone, pullStart, pullDone) klient nedostane;
 // typuje ich engine (fáza 3). Správa webbed ide aj klientovi.
-import type { AreaId, BrewHint, Ground, ItemId, Look, PotionId, SpeciesId, UpgradeId } from './data.ts';
+import type { AreaId, BrewHint, CoverId, Ground, ItemId, Look, PotionId, SpeciesId, UpgradeId, ZahonFrame, ZahonShape } from './data.ts';
 import type { Level } from './book.ts';
-import type { ActiveFestival, Contract, CornerArea, Dock, GardenObject, Icehouse, OrderSide, Plant, Soil, VehicleId, Weather, WorldMode } from './save.ts';
+import type { ActiveFestival, Contract, CornerArea, Dock, Icehouse, LotObject, OrderSide, Plant, Soil, VehicleId, ZahonObject, ZahonSpot, Weather, WorldMode } from './save.ts';
 
 // ---- Klient → server ----
 export type Emote = 'dance' | 'wave' | 'heart' | 'laugh' | 'flower';
@@ -15,7 +15,7 @@ export type ClientMessage =
   | { t: 'join'; room: string; name: string; look?: Look | null }   // bez vzhľadu: z uloženia alebo predvolený
   // a = presný smer pohľadu, cr = plazí sa, lp = drží lampáš, ar = poradie plochy (pohyb z predchádzajúcej plochy sa zahodí)
   | { t: 'move'; x: number; y: number; dir: number; a?: number | undefined; cr?: boolean; lp?: boolean; ar: number }
-  | { t: 'act'; x: number; y: number; item: ItemId | '' }   // '' = prázdna ruka
+  | { t: 'act'; x: number; y: number; item: ItemId | ''; rot?: number }   // '' = prázdna ruka; rot = otočenie rohového záhonu (#186)
   | { t: 'store' | 'unstore'; id: ItemId; n: number }
   // trh (#112): okamžitý nákup / predaj n kusov (lim = najhoršia cena za kus, ktorú hráč videl – drahšie nekúpi, lacnejšie
   // nepredá); limitná objednávka (Dopyt / Ponuka) n kusov za p za kus; zrušenie objednávky (id '<tovar>#<n>')
@@ -28,6 +28,7 @@ export type ClientMessage =
   | { t: 'brew'; items: ItemId[] }                          // tri kvety fl_*
   | { t: 'wish'; kind: WishKind }
   | { t: 'buyTool'; id: 'pick' | 'lamp' }
+  | ZahonMessage
   | { t: 'build'; id: 'icehouse' | 'dielna' | 'dock' }
   | { t: 'icehouse'; n: number }                            // vložiť ľad do ľadovne
   | { t: 'compostWilted' | 'buyLoom' | 'masterWeave' | 'loomStart' | 'loomTake' | 'jump' }
@@ -44,6 +45,10 @@ export type ClientMessageType = ClientMessage['t'];
 // Políčko, ako ho vidí klient: zem, na záhrade pôda (druh divej rastliny je skrytý ako 'wild'), v horách ľad a otvor vo vode
 export interface PlantView extends Omit<Plant, 'sp'> { sp: SpeciesId | 'wild' }
 export interface SoilView extends Omit<Soil, 'p'> { p: PlantView | null }
+// Záhon pre klienta (#179): divé semienko bez druhu, kým nevyklíči (ako na políčku)
+export interface ZahonSpotView extends Omit<ZahonSpot, 'p'> { p?: PlantView }
+export interface ZahonView extends Omit<ZahonObject, 'spots'> { spots: ZahonSpotView[] }
+export type ObjectView = LotObject | ZahonView;
 export interface TileView {
   g: Ground;
   s?: SoilView | null;
@@ -122,6 +127,15 @@ export interface VehicleView {
   dn?: string | null;
   rn?: string | null;
 }
+// Záhon (#179): kúpa na trhu a práca s bodmi v priblíženom pohľade (id = záhon, sx/sy = bod 1–6, spots = ťah prstom)
+export type ZahonMessage =
+  | { t: 'zahon'; op: 'buy'; v: ZahonFrame; sh?: ZahonShape }
+  | { t: 'zahon'; op: 'bucket'; c: CoverId }
+  | { t: 'zahon'; op: 'destroy' | 'water' | 'compost'; id: number }
+  | { t: 'zahon'; op: 'plant'; id: number; sx: number; sy: number; item: string }
+  | { t: 'zahon'; op: 'pick' | 'dig'; id: number; sx: number; sy: number }
+  | { t: 'zahon'; op: 'cover'; id: number; c: CoverId; spots: [number, number][] }
+  | { t: 'zahon'; op: 'uncover'; id: number; spots: [number, number][] };
 export type FxKind =
   | 'fairies' | 'glimmer' | 'dirt' | 'drops' | 'sparkle' | 'pop' | 'ice' | 'splash' | 'burp' | 'gift' | 'hearts' | 'wave' | 'brew'
   | 'gold' | 'rainbow' | 'cobweb';
@@ -161,7 +175,7 @@ export type ServerMessage =
   | { t: 'shove'; x: number; y: number }                   // stará pradlena hráča odhodila
   | { t: 'brewed'; k: PotionId; hint?: BrewHint }        // hint len pri slize (rada kotlíka)
   | ({ t: 'dock' } & Dock)                                 // mólo a loďka (#160): stavba, poloha loďky, kto v nej sedí, zima
-  | { t: 'objects'; list: GardenObject[] }                 // umiestnené objekty (#178): pozemky budov
+  | { t: 'objects'; list: ObjectView[] }                   // umiestnené objekty (#178, #179): pozemky budov, záhony
   | { t: 'error'; text: string }
   | { t: 'vehicles'; list: VehicleView[] };                 // fúrik a sane (#158): všetky, pri každej zmene
 export type ServerMessageType = ServerMessage['t'];

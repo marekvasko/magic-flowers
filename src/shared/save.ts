@@ -2,7 +2,7 @@
 // Typ opisuje existujúci formát, nemení ho (#122, fáza 2). Staršie verzie prevedie migrate() na tento tvar.
 // Kľúč hráča (PlayerKey) je meno malými písmenami; v uloženiach sa ním odkazuje na hráča (saves, vlastník pôdy, zákazky…).
 // test/save-v14.fixture.ts drží uloženie zo skutočného servera a prekladač ho kontroluje voči SaveFile (npm run typecheck).
-import type { AreaId, Batch, FestivalId, GiverId, Ground, ItemId, Look, SpeciesId, TillKind } from './data.ts';
+import type { AreaId, Batch, CoverId, FestivalId, GiverId, Ground, ItemId, Look, SpeciesId, TillKind, ZahonFrame, ZahonShape } from './data.ts';
 
 export type PlayerKey = string;
 export type Weather = 'sun' | 'rain' | 'snow';
@@ -235,7 +235,7 @@ export type Vehicles = Record<VehicleId, Vehicle>;
 // Zatiaľ len pozemky budov (kind 'lot', v = pre ktorú budovu). Pozemok ostane aj po postavení – drží polohu budovy.
 // Poloha (x, y) = ľavý horný roh na ploche area; o = kto objekt umiestnil (pozemky z generátora ho nemajú).
 export type LotFor = 'icehouse' | 'dielna';
-export interface GardenObject {
+export interface LotObject {
   id: number;
   area: AreaId;
   x: number;
@@ -244,6 +244,24 @@ export interface GardenObject {
   v: LotFor;
   o?: PlayerKey;
 }
+// Záhon (#179): jedno políčko, 8 × 8 bodov (sx, sy 0–7). Na bode je kvet (p) alebo pokryv (c). w = poliaty dnes (celý záhon
+// naraz), r = pohnojený kompostom; o = kto ho položil (do jeho herbára pribudnú divé kvety, ako pri prekopanom políčku).
+export interface ZahonSpot { sx: number; sy: number; p?: Plant; c?: CoverId }
+export interface ZahonObject {
+  id: number;
+  area: AreaId;
+  x: number;
+  y: number;
+  kind: 'zahon';
+  v: ZahonFrame;
+  sh?: ZahonShape;            // tvar (#186): bez neho štvorec; šikmý a oblý sú rohové záhony
+  rot?: 0 | 1 | 2 | 3;        // otočenie tvaru o 90° v smere hodinových ručičiek (nepoužíva sa pri štvorci)
+  w: number;
+  r: number;
+  spots: ZahonSpot[];
+  o: PlayerKey;
+}
+export type GardenObject = LotObject | ZahonObject;
 export interface Objects {
   list: GardenObject[];
   nid: number;
