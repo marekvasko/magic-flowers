@@ -1208,12 +1208,12 @@ import type { ClientState, CtxAction, Dir, FxParticle, MsgOf, OtherPlayer, Pt, U
         body.appendChild(h('div', { class: 'row' }, h('b', null, `${D.ZAHON.icon} Záhony – kvety a kamene na jednom políčku`)));
         { // jeden riadok: pod popisom rady ikon rámu a tvaru (#186) hneď vedľa ceny – ťuknutím vyberieš, názov sa mení podľa výberu
           const name = h('b', null, '');
-          const frames = D.ZAHON_FRAMES.map(v => ({ v, b: h('button', { class: 'zopt', title: D.ZAHON_NAMES[v], onclick: () => { zahonPick = v; upd(); } }, h('img', { src: '' })) }));
+          const frames = D.ZAHON_FRAMES.map(v => ({ v, b: h('button', { class: 'zopt', title: D.ZAHON_NAMES[v], onclick: () => { zahonPick = v; upd(); } }, h('img', { src: Art.icon(`zahon_${v}`) })) }));
           const shapes = D.ZAHON_SHAPES.map(sh => ({ sh, b: h('button', { class: 'zopt', title: D.zahonName(zahonPick, sh), onclick: () => { zahonShapePick = sh; upd(); } }, h('img', { src: '' })) }));
           const setImg = (b: HTMLElement, src: string): void => { const im = b.querySelector('img'); if (im) im.src = src; };
-          const upd = (): void => { // ikony rámov v zvolenom tvare a tvarov v zvolenom ráme
+          const upd = (): void => { // rámy vždy ako štvorcový záhon (dobre sa rozoznajú), tvary v zvolenom ráme
             name.textContent = `${D.ZAHON.icon} ${D.zahonName(zahonPick, zahonShapePick)}`;
-            for (const o of frames) { o.b.classList.toggle('on', o.v === zahonPick); setImg(o.b, Art.icon(D.zahonItem(o.v, zahonShapePick))); }
+            for (const o of frames) o.b.classList.toggle('on', o.v === zahonPick);
             for (const o of shapes) { o.b.classList.toggle('on', o.sh === zahonShapePick); setImg(o.b, Art.icon(D.zahonItem(zahonPick, o.sh))); o.b.title = D.zahonName(zahonPick, o.sh); }
           };
           upd();
