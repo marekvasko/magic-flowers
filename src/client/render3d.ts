@@ -743,7 +743,8 @@ export function create(api: Render3DApi): Render3D {
       const keep = y + 0.5 < top || (x + 0.5 - sx / 2) ** 2 + (z + 0.5 - sz / 2) ** 2 < R2;
       (keep ? trunk : crown)[i] = m;
     }
-    return { trunk: { sx, sy, sz, data: trunk }, crown: { sx, sy, sz, data: crown } };
+    // dieliky (#182): obe časti čítajú tvar z toho istého poľa – bunka, ktorá do časti nepatrí, je v nej prázdna
+    return { trunk: { sx, sy, sz, data: trunk, shape: f.shape }, crown: { sx, sy, sz, data: crown, shape: f.shape } };
   }
   const giantSplit = new Map<Uint8Array, { trunk: FineModel; crown: FineModel }>(); // dáta modelu obra → { trunk, crown }
   // Model s vypečenou textúrou (Mesher.bakeModel): sieť je len povrch zlúčený bez ohľadu na materiál a zatienenie,

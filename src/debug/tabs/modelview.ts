@@ -6,6 +6,9 @@ import * as THREE from 'three';
 import * as World3D from '../../shared/world3d.ts';
 import type { FineModel } from '../../shared/world3d.ts';
 import { must } from '../../shared/util.ts';
+import { SHAPES, FULL_COVER } from '../../shared/shapes.ts';
+import type { Shape } from '../../shared/shapes.ts';
+import { shadeOf } from '../../client/finebake.ts';
 import { Art } from '../../client/art.ts';
 
 type W3 = typeof World3D;
@@ -44,9 +47,11 @@ export function matName(W: W3, id: number): string {
 // ---------- sieť z minikociek ----------
 // Ako buildFine v render3d.ts: steny susediace s plnou minikockou sa vynechajú, pod modelom je zem,
 // farba × tieňovanie steny × AO v rohoch. 1 minikocka = 1 jednotka, model je vycentrovaný v x a z.
+// Dieliky (#182): steny tvaru podľa shapes.ts, tieňovanie podľa normály, bez AO; stena sa vynechá, keď ju sused zakrýva.
 export function meshModel(W: W3, f: FineModel, season: number): { geo: THREE.BufferGeometry; bounds: THREE.Box3; faces: number } {
   const { sx, sy, sz, data } = f;
   const get = (x: number, y: number, z: number): number => (y < 0 ? 1 : (x < 0 || z < 0 || x >= sx || y >= sy || z >= sz) ? 0 : data[(z * sy + y) * sx + x] ?? 0);
+  const shapeAt = (x: number, y: number, z: number): Shape | undefined => (f.shape && x >= 0 && y >= 0 && z >= 0 && x < sx && y < sy && z < sz ? SHAPES[f.shape[(z * sy + y) * sx + x] ?? 0] : undefined);
   const P: number[] = [], C: number[] = [], I: number[] = [];
   const box = { x0: Infinity, y0: Infinity, z0: Infinity, x1: -Infinity, y1: -Infinity, z1: -Infinity };
   const ox = -sx / 2, oz = -sz / 2;
@@ -61,9 +66,28 @@ export function meshModel(W: W3, f: FineModel, season: number): { geo: THREE.Buf
     if (!mc) { mc = hex(W.colorOf(m, season)); colors.set(m, mc); }
     const vary = 0.94 + W.hash(x, y, z) * 0.12;
     const emis = W.EMISSIVE[m] ? 1.12 : 1; // svietiace materiály trochu jasnejšie
+    const own = shapeAt(x, y, z);
+    if (own) {
+      for (const face of own.faces) {
+        if (face.side >= 0) {
+          const [ax, sg] = must(FACES[face.side]), q: V3 = [x, y, z];
+          q[ax] += sg;
+          const nb = shapeAt(...q), mine = own.cover[face.side] ?? 0, theirs = !get(...q) ? 0 : nb ? nb.cover[face.side ^ 1] ?? 0 : FULL_COVER;
+          if ((theirs & mine) === mine) continue;
+        }
+        const k = shadeOf([face.n[0], face.n[1], face.n[2]]) * vary * emis;
+        for (const pt of face.pts) { P.push(x + pt[0] + ox, y + pt[1], z + pt[2] + oz); C.push(Math.min(1, mc[0] * k), Math.min(1, mc[1] * k), Math.min(1, mc[2] * k)); }
+        for (let j = 1; j + 1 < face.pts.length; j++) I.push(vi, vi + j, vi + j + 1);
+        vi += face.pts.length;
+      }
+      continue;
+    }
     for (const [ax, sg] of FACES) {
       const n: V3 = [0, 0, 0]; n[ax] = sg;
-      if (get(x + n[0], y + n[1], z + n[2])) continue;
+      if (get(x + n[0], y + n[1], z + n[2])) { // sused zakrýva stenu: kocka celú, dielik len stranou, ktorou je k nám celý
+        const nb = shapeAt(x + n[0], y + n[1], z + n[2]);
+        if (!nb || (nb.full >> (ax * 2 + (sg > 0 ? 1 : 0))) & 1) continue;
+      }
       const [, ua, va] = AXES[ax];
       const shade = must(FACE_SHADE[ax === 0 ? (sg > 0 ? 0 : 1) : ax === 1 ? (sg > 0 ? 2 : 3) : (sg > 0 ? 4 : 5)]) * vary * emis;
       const corners = sg > 0 ? [[0, 0], [1, 0], [1, 1], [0, 1]] as const : [[0, 0], [0, 1], [1, 1], [1, 0]] as const;
