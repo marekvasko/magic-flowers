@@ -106,8 +106,8 @@ function area(b: { P: Float32Array; I: Uint16Array | Uint32Array }): number {
 }
 
 test('sieť: model bez dielikov sa vypečie rovnako s poľom tvarov aj bez neho', () => {
-  const f = must(W.FINE_MODELS.find(m => m.id === 'tree-' + must(W.TREE_KINDS[0]))).build(1, 0);
-  assert.strictEqual(f.shape, undefined, 'stromy sú len z kociek');
+  const f = must(W.FINE_MODELS.find(m => m.id === 'bush')).build(1, 0);
+  assert.strictEqual(f.shape, undefined, 'kry sú len z kociek');
   const a = bakeFine(f, 1), b = bakeFine({ ...f, shape: new Uint8Array(f.data.length) }, 1);
   assert.strictEqual(a.shaped, 0);
   assert.deepStrictEqual(a.quads, b.quads);
@@ -167,6 +167,8 @@ test('modely: budovy majú dieliky, otočenie ich otočí a sneh im nechá tvar'
     assert.deepStrictEqual(r.data, f.data);
     for (const v of b0.P) assert.ok(v >= 0 && v <= Math.max(f.sx, f.sy, f.sz));
   }
+  // stromy (aj obor z Lesa divov) majú skosené hrany, v každom období
+  for (const id of ['tree-' + must(W.TREE_KINDS[0]), 'tree-smrek', 'giant-0']) for (const se of [1, 3]) assert.ok(must(entry(id).build(se, 0).shape).some(v => v), `${id} ${se}`);
   // strecha domčeka je šikmá: vrchná bunka nad odkvapom je klin
   const house = entry('house').build(1, 0), kinds = new Set([...must(house.shape)].filter(v => v).map(v => must(SH.SHAPES[v]).family));
   assert.ok(kinds.has('klin') && kinds.has('platna') && kinds.has('narozie'));

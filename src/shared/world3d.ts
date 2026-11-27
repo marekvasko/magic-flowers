@@ -750,9 +750,15 @@ const treeCache = new Map<string, FineModel>();
 const treeCanvas = (kind: TreeKindAll): FineCanvas => kind === 'obor' ? fineCanvas(2, 2, GIANT_SY) : fineCanvas(1, 1, 44);
 const ALL_BUILD: { [K in TreeKindAll]: TreeBuild<K> } = { ...TREE_BUILD, obor: (C, se, p) => { giantBuild(C, se, p); } };
 const treeBuild = <K extends TreeKindAll>(kind: K, C: FineCanvas, se: number, p: TreeParamsOf<K>): void => { ALL_BUILD[kind](C, se, p); };
+// Skosené hrany stromu (#182): schody koruny, konárov a kmeňa vyplnia dieliky – zhora, zospodu aj v pôdoryse.
+// Strom ostáva v mriežke 1/8, len nie je zo samých kociek (o 10 – 20 % viac trojuholníkov).
+function softenTree(C: FineCanvas): void {
+  const mats = [...new Set(C.data)].filter(m => m);
+  C.slopes(mats); C.slopes(mats, { down: true }); C.round(mats);
+}
 export function treeModel(kind: TreeKindAll, season: number, rot: number, over?: TreeOverrides | null): FineModel {
   if (over) {
-    const C = treeCanvas(kind); treeBuild(kind, C, season, treeParams(kind, over));
+    const C = treeCanvas(kind); treeBuild(kind, C, season, treeParams(kind, over)); softenTree(C);
     let f = C.done();
     for (let i = 0; i < rot; i++) f = rotate90(f);
     return f;
@@ -761,7 +767,7 @@ export function treeModel(kind: TreeKindAll, season: number, rot: number, over?:
   const known = treeCache.get(key);
   if (known) return known;
   let f: FineModel;
-  if (rot === 0) { const C = treeCanvas(kind); treeBuild(kind, C, season, treeParams(kind)); f = C.done(); }
+  if (rot === 0) { const C = treeCanvas(kind); treeBuild(kind, C, season, treeParams(kind)); softenTree(C); f = C.done(); }
   else f = rotate90(treeModel(kind, season, rot - 1));
   treeCache.set(key, f);
   return f;
@@ -854,7 +860,7 @@ function giantModel(season: number, rot: number, v: number): FineModel {
   const known = giantCache.get(key);
   if (known) return known;
   let f: FineModel;
-  if (rot === 0) { const C = fineCanvas(2, 2, GIANT_SY); giantBuild(C, season, treeParams('obor', { shape: v })); f = C.done(); }
+  if (rot === 0) { const C = fineCanvas(2, 2, GIANT_SY); giantBuild(C, season, treeParams('obor', { shape: v })); softenTree(C); f = C.done(); }
   else f = rotate90(giantModel(season, rot - 1, v));
   giantCache.set(key, f);
   return f;
